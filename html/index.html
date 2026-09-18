@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<!-- saved from url=(0047)https://jarvis-style-demo.netlify.app/v10-prism -->
+<html lang="en" style=""><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+<!-- This site is hosted on Netlify. Anyone can build and deploy a site
+     like this one for free: https://netlify.new/?utm_campaign=ai-legible&utm_source=comment&utm_medium=referral&utm_id=ae120328-2a6b-45e9-9bef-c500f18cd438
+     Netlify hosting facts for this site: static/SSR served via Netlify Edge. -->
+<meta name="hosting-provider" content="Netlify">
+<meta name="netlify-deploy" content="https://netlify.new/?utm_campaign=ai-legible&amp;utm_source=meta&amp;utm_medium=referral&amp;utm_id=ae120328-2a6b-45e9-9bef-c500f18cd438">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>V10 · Prism Bloom</title>
+<link rel="stylesheet" href="assets/core.css">
+<style>
+:root{--p1:#a78bfa;--p2:#f472b6;--p3:#38bdf8;
+      --a1:rgba(167,139,250,.26);--a2:rgba(244,114,182,.16);--a3:rgba(56,189,248,.16)}
+.orbwrap{width:min(66%,276px)}
+
+/* v4's morphing blob, but every layer is an outline — the centre stays empty glass */
+.bl{position:absolute;background:transparent;border:1.5px solid rgba(167,139,250,.6);
+  animation:morph 9s ease-in-out infinite,spin 24s linear infinite;
+  box-shadow:0 0 22px rgba(167,139,250,.35),inset 0 0 22px rgba(167,139,250,.12)}
+.bl.b1{inset:4%}
+.bl.b2{inset:11%;border-color:rgba(244,114,182,.55);animation-duration:7s,18s;animation-direction:reverse;
+  box-shadow:0 0 20px rgba(244,114,182,.3),inset 0 0 18px rgba(244,114,182,.1)}
+.bl.b3{inset:18%;border-color:rgba(56,189,248,.5);animation-duration:11s,30s;
+  box-shadow:0 0 18px rgba(56,189,248,.3),inset 0 0 16px rgba(56,189,248,.1)}
+.bl.b4{inset:26%;border-color:rgba(255,255,255,.28);animation-duration:13s,38s;animation-direction:reverse;
+  box-shadow:0 0 14px rgba(255,255,255,.18)}
+.bl.b5{inset:-2%;border-width:1px;border-color:rgba(255,255,255,.12);animation-duration:16s,46s;box-shadow:none}
+@keyframes morph{0%,100%{border-radius:58% 42% 45% 55%/48% 52% 48% 52%}
+  33%{border-radius:42% 58% 62% 38%/55% 40% 60% 45%}
+  66%{border-radius:50% 50% 38% 62%/42% 60% 40% 58%}}
+
+/* iridescent rim light: conic colour with the middle masked out */
+.aura{position:absolute;inset:0;filter:blur(16px);opacity:.9;
+  background:conic-gradient(from 0deg,var(--p1),var(--p2),var(--p3),var(--p1));
+  animation:morph 9s ease-in-out infinite,spin 20s linear infinite;
+  -webkit-mask:radial-gradient(circle,transparent 40%,#000 62%,transparent 86%);
+          mask:radial-gradient(circle,transparent 40%,#000 62%,transparent 86%)}
+
+/* fine dotted bezel, dead still shape, keeps it feeling instrument-grade */
+.bezel{position:absolute;inset:-9%;border-radius:50%;opacity:.5;animation:spin 46s linear infinite;
+  background:repeating-conic-gradient(from 0deg,rgba(255,255,255,.6) 0 .4deg,transparent .4deg 7deg);
+  -webkit-mask:radial-gradient(circle,transparent 82%,#000 84%,#000 88%,transparent 90%);
+          mask:radial-gradient(circle,transparent 82%,#000 84%,#000 88%,transparent 90%)}
+
+body[data-state="idle"] .bl,body[data-state="idle"] .aura{animation-duration:16s,44s}
+body[data-state="thinking"] .bl.b1{animation-duration:3.4s,7s}
+body[data-state="thinking"] .bl.b2{animation-duration:3s,6s}
+body[data-state="thinking"] .bl.b3{animation-duration:4s,9s}
+body[data-state="thinking"] .aura{animation-duration:3.4s,6s;opacity:1}
+body[data-state="speaking"] .bl.b1{animation-duration:5s,14s}
+body[data-state="speaking"] .bl.b2{animation-duration:4.4s,12s}
+.wave{transform:scale(.8)}
+</style>
+</head>
+<body data-state="idle" style="">
+  <section class="face">
+    <div class="orbwrap">
+      <div class="bezel"></div>
+      <div class="aura"></div>
+      <div class="bl b5"></div><div class="bl b1"></div><div class="bl b2"></div>
+      <div class="bl b3"></div><div class="bl b4"></div>
+      <div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+    <div class="status"><b id="stateLabel">Ready</b><span id="stateSub">Ask me anything</span></div>
+    <div class="chips" id="chips"><button>How many cleaners?</button><button>Who's free now?</button><button>Today's jobs</button><button>Revenue this month</button><button>Compare two cleaners</button><button>Anyone in Sharjah tomorrow?</button><button>Something I can't answer</button></div>
+  </section>
+
+  <section class="panel">
+    <div class="card">
+      <div class="top"><div>JARVIS</div><div id="clock">04:02 PM</div></div>
+      <div class="qt" id="qt">How many cleaners do I have?</div>
+      <div class="say show" id="say">You have 24 cleaners on the roster today — 15 are on jobs and 9 are free.</div>
+      <div class="blocks" id="blocks"><div class="blk show"><div class="b-hero"><div class="hv"><span class="num" data-to="24">24</span></div><div class="hl">cleaners on the roster</div><div class="hs">3 more than this time last week</div></div></div><div class="blk show"><div class="b-stats"><div class="tile warn"><h3>Busy</h3><span class="num" data-to="15">15</span><div class="s">on active jobs</div></div><div class="tile ok"><h3>Free</h3><span class="num" data-to="9">9</span><div class="s">ready to assign</div></div><div class="tile "><h3>Off today</h3><span class="num" data-to="2">2</span><div class="s">annual leave</div></div></div></div><div class="blk show"><div class="b-title">Team snapshot</div><div class="row"><div class="av">M</div><div class="nm">Maria S.</div><div class="mt">Al Barsha · villa deep clean</div><div class="pill busy">Busy</div></div><div class="row"><div class="av">J</div><div class="nm">Joseph K.</div><div class="mt">Marina · since 09:40</div><div class="pill busy">Busy</div></div><div class="row"><div class="av">A</div><div class="nm">Anita R.</div><div class="mt">JLT · available now</div><div class="pill free">Free</div></div><div class="row"><div class="av">D</div><div class="nm">Daniel M.</div><div class="mt">Deira · available now</div><div class="pill free">Free</div></div><div class="row"><div class="av">G</div><div class="nm">Grace O.</div><div class="mt">Business Bay · running late</div><div class="pill late">Late</div></div></div></div>
+    </div>
+  </section>
+
+<script src="assets/core.js"></script></body></html>
