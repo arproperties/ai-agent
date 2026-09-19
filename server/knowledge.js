@@ -57,9 +57,13 @@ function chunk(text, size = 1500, overlap = 200) {
   return out.filter(Boolean);
 }
 
-const toBlob = (v) => (v ? Buffer.from(v.buffer, v.byteOffset, v.byteLength) : null); // Float32Array -> bytea
-const toVec = (b) => (b ? new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4) : null);
-const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+// Float32Array -> pgvector literal, e.g. '[0.1,-0.2,…]'. Always passed as a bound parameter.
+const toVecLiteral = (v) => (v ? `[${Array.from(v).join(',')}]` : null);
+
+// embed() normalises, so cosine distance = 1 - similarity. These are the old JS thresholds:
+// a match was similarity > 0.25, and a memory was already known at similarity > 0.9.
+const MAX_DIST = 0.75;
+const DUPE_DIST = 0.1;
 
 // Split a stored document into searchable chunks, labelled with its smart title and folder
 export async function indexChunks(doc, text) {
@@ -69,18 +73,21 @@ export async function indexChunks(doc, text) {
   for (let i = 0; i < pieces.length; i += 32) vectors.push(...(await embed(pieces.slice(i, i + 32))));
   await tx(async () => {
     await db.prepare('DELETE FROM chunks WHERE document_id = ?').run(doc.id);
-    const ins = db.prepare('INSERT INTO chunks (user_id, agent_id, document_id, text, embedding) VALUES (?, ?, ?, ?, ?)');
-    for (const [i, p] of pieces.entries()) await ins.run(doc.user_id, doc.agent_id, doc.id, p, toBlob(vectors[i]));
+    const ins = db.prepare('INSERT INTO chunks (user_id, agent_id, document_id, text, embedding) VALUES (?, ?, ?, ?, ?::vector)');
+    for (const [i, p] of pieces.entries()) await ins.run(doc.user_id, doc.agent_id, doc.id, p, toVecLiteral(vectors[i]));
   });
 }
 
 export async function addMemory(userId, text) {
   const [vec] = await embed([text]);
-  if (vec) {
-    const rows = await db.prepare('SELECT embedding FROM memories WHERE user_id = ?').all(userId);
-    if (rows.some((r) => r.embedding && dot(vec, toVec(r.embedding)) > 0.9)) return null; // already known
+  const lit = toVecLiteral(vec);
+  if (lit) {
+    // Already known? Answered by the index, rather than by reading every memory the user has.
+    const known = await db.prepare(`SELECT 1 FROM memories
+      WHERE user_id = ? AND embedding IS NOT NULL AND embedding <=> ?::vector < ${DUPE_DIST} LIMIT 1`).get(userId, lit);
+    if (known) return null;
   }
-  const { id } = await db.prepare('INSERT INTO memories (user_id, text, embedding) VALUES (?, ?, ?) RETURNING id').run(userId, text, toBlob(vec));
+  const { id } = await db.prepare('INSERT INTO memories (user_id, text, embedding) VALUES (?, ?, ?::vector) RETURNING id').run(userId, text, lit);
   return id;
 }
 
@@ -100,9 +107,13 @@ async function search(table, scope, query, qvec, k) {
   const add = (list) => list.forEach((id, rank) => scores.set(id, (scores.get(id) || 0) + 1 / (60 + rank)));
 
   if (qvec) {
-    const rows = await db.prepare(`SELECT t.id, t.embedding FROM ${table} t WHERE ${scope.sql} AND t.embedding IS NOT NULL`).all(...scope.params);
-    add(rows.map((r) => ({ id: r.id, s: dot(qvec, toVec(r.embedding)) }))
-      .filter((r) => r.s > 0.25).sort((a, b) => b.s - a.s).slice(0, 20).map((r) => r.id));
+    // The vector appears first, in the SELECT, so it takes $1 and the scope's own parameters
+    // follow: `?` positions are numbered left to right. Sorting by the output alias keeps the
+    // vector to a single placeholder, and the HNSW index still serves the ordering.
+    const rows = await db.prepare(`SELECT t.id, t.embedding <=> ?::vector AS dist FROM ${table} t
+      WHERE ${scope.sql} AND t.embedding IS NOT NULL
+      ORDER BY dist LIMIT 20`).all(toVecLiteral(qvec), ...scope.params);
+    add(rows.filter((r) => r.dist < MAX_DIST).map((r) => r.id));
   }
   const kw = keywordQuery(query);
   if (kw) {

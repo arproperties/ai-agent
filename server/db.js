@@ -70,6 +70,26 @@ export const closeDb = () => pool.end();
 
 const NOW = "extract(epoch from now())::bigint"; // unix seconds, matching the original schema
 
+// Dimensions of Xenova/all-MiniLM-L6-v2, the local embedding model in ai.js.
+// Changing the model means changing this and re-embedding everything.
+export const EMBED_DIMS = 384;
+
+// pgvector does the similarity search inside Postgres, against an index. Creating an
+// extension needs superuser, which the app's role deliberately is not, so on a fresh
+// database run once:  sudo -u postgres psql -d <db> -c 'CREATE EXTENSION vector;'
+// Re-running it as a normal role once it exists is only a NOTICE, so boot stays safe.
+if (!(await db.prepare("SELECT 1 FROM pg_extension WHERE extname = 'vector'").get())) {
+  try {
+    await db.exec('CREATE EXTENSION IF NOT EXISTS vector;');
+  } catch (e) {
+    throw new Error(
+      'The "vector" extension is required but not installed in this database. ' +
+      `Install the package (apt-get install postgresql-16-pgvector) and run, as a superuser:\n` +
+      "  CREATE EXTENSION vector;\n" + `(${e.message})`
+    );
+  }
+}
+
 await db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -142,14 +162,15 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
 
-  -- chunk/memory text is searched two ways: by meaning (embedding) and by keyword (tsvector)
+  -- chunk/memory text is searched two ways: by meaning (embedding) and by keyword (tsvector).
+  -- 384 dims = Xenova/all-MiniLM-L6-v2, and embed() normalises, so cosine is the right metric.
   CREATE TABLE IF NOT EXISTS chunks (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,
     document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
     text TEXT NOT NULL,
-    embedding BYTEA,
+    embedding vector(${EMBED_DIMS}),
     tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED
   );
   -- memories are about the user, so every agent shares them
@@ -157,7 +178,7 @@ await db.exec(`
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     text TEXT NOT NULL,
-    embedding BYTEA,
+    embedding vector(${EMBED_DIMS}),
     tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED,
     created_at BIGINT DEFAULT ${NOW}
   );
@@ -194,4 +215,30 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_mem_user ON memories(user_id);
   CREATE INDEX IF NOT EXISTS idx_chunks_tsv ON chunks USING GIN(tsv);
   CREATE INDEX IF NOT EXISTS idx_mem_tsv ON memories USING GIN(tsv);
+`);
+
+// Databases created before pgvector stored embeddings as raw float32 BYTEA and scored them
+// in JavaScript, which meant reading every row on every query. The vectors cannot be cast
+// across in SQL, but the text they came from is still here, so the column is simply replaced
+// and scripts/backfill-embeddings.js re-embeds it. Until that runs the embedding is NULL and
+// search falls back to keywords, which is degraded but correct.
+await db.exec(`
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'chunks' AND column_name = 'embedding' AND data_type = 'bytea') THEN
+      ALTER TABLE chunks DROP COLUMN embedding;
+      ALTER TABLE chunks ADD COLUMN embedding vector(${EMBED_DIMS});
+      RAISE NOTICE 'chunks.embedding converted to vector(${EMBED_DIMS}) - run scripts/backfill-embeddings.js';
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'memories' AND column_name = 'embedding' AND data_type = 'bytea') THEN
+      ALTER TABLE memories DROP COLUMN embedding;
+      ALTER TABLE memories ADD COLUMN embedding vector(${EMBED_DIMS});
+      RAISE NOTICE 'memories.embedding converted to vector(${EMBED_DIMS}) - run scripts/backfill-embeddings.js';
+    END IF;
+  END $$;
+
+  CREATE INDEX IF NOT EXISTS idx_chunks_vec ON chunks USING hnsw (embedding vector_cosine_ops);
+  CREATE INDEX IF NOT EXISTS idx_mem_vec ON memories USING hnsw (embedding vector_cosine_ops);
 `);
