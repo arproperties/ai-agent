@@ -31,7 +31,17 @@ function Attachments({ files, onOpenFile }) {
   );
 }
 
-export default function Message({ msg, agent, speaking, onSpeak, voiceEnabled, onOpenFile }) {
+// What the read-aloud button shows in each state. Tapping always does the
+// obvious thing: start, pause, resume — or, while it is still being generated,
+// give up waiting.
+const VOICE = {
+  idle: { icon: 'speaker', label: 'Read aloud' },
+  loading: { icon: 'spinner', label: 'Preparing…', hint: 'Preparing audio — tap to cancel', spin: true },
+  speaking: { icon: 'pause', label: 'Playing', hint: 'Pause' },
+  paused: { icon: 'play', label: 'Paused', hint: 'Resume' },
+};
+
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile }) {
   const [copied, setCopied] = useState(false);
 
   if (msg.role === 'user') {
@@ -87,12 +97,25 @@ export default function Message({ msg, agent, speaking, onSpeak, voiceEnabled, o
       )}
       {msg.content && !msg.streaming && (
         <div className="mt-2 flex gap-1 text-mute">
-          {voiceEnabled && (
-            <button onClick={onSpeak} aria-label={speaking ? 'Stop' : 'Read aloud'}
-              className={`grid size-8 place-items-center rounded-full hover:bg-white/10 ${speaking ? 'text-p2' : ''}`}>
-              <Icon name={speaking ? 'stop' : 'speaker'} size={16} />
-            </button>
-          )}
+          {voiceEnabled && (() => {
+            const v = VOICE[voice] || VOICE.idle;
+            const active = voice !== 'idle';
+            return (
+              <>
+                <button onClick={onSpeak} aria-label={v.hint || v.label} title={v.hint || v.label}
+                  className={`flex h-8 items-center gap-1.5 rounded-full px-2 transition hover:bg-white/10 ${active ? 'bg-white/5 text-p2' : ''}`}>
+                  <Icon name={v.icon} size={16} className={v.spin ? 'animate-spin' : ''} />
+                  {active && <span className="text-xs">{v.label}</span>}
+                </button>
+                {active && (
+                  <button onClick={onStopSpeak} aria-label="Stop reading" title="Stop"
+                    className="grid size-8 place-items-center rounded-full text-p2 hover:bg-white/10">
+                    <Icon name="stop" size={13} />
+                  </button>
+                )}
+              </>
+            );
+          })()}
           <button onClick={copy} aria-label="Copy" className="grid size-8 place-items-center rounded-full hover:bg-white/10">
             <Icon name={copied ? 'check' : 'copy'} size={16} />
           </button>

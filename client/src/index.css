@@ -79,11 +79,17 @@
   -webkit-mask: radial-gradient(circle, transparent 82%, #000 84%, #000 88%, transparent 90%);
           mask: radial-gradient(circle, transparent 82%, #000 84%, #000 88%, transparent 90%);
 }
+/* Five bars in the same proportions as the app icon (40/84/120/72/32), so the
+   orb at rest reads as the icon rather than as a row of dots. Movement is a
+   scaleY, which keeps each bar's own height instead of flattening them all. */
 .orb .wave { position: relative; z-index: 4; display: flex; gap: 5px; align-items: center; height: 44px; transform: scale(0.8); }
-.orb .wave i { width: 5px; height: 6px; border-radius: 5px; background: rgb(255 255 255 / 0.92);
-  box-shadow: 0 0 12px rgb(255 255 255 / 0.6); transition: height 0.25s ease; }
-.orb .wave i:nth-child(2n) { animation-delay: 0.08s; } .orb .wave i:nth-child(3n) { animation-delay: 0.16s; }
-.orb .wave i:nth-child(4n) { animation-delay: 0.24s; } .orb .wave i:nth-child(5n) { animation-delay: 0.12s; }
+.orb .wave i { width: 5px; border-radius: 5px; background: rgb(255 255 255 / 0.92);
+  box-shadow: 0 0 12px rgb(255 255 255 / 0.6); transform-origin: center; transition: transform 0.25s ease; }
+.orb .wave i:nth-child(1) { height: 15px; animation-delay: 0.18s; }
+.orb .wave i:nth-child(2) { height: 31px; animation-delay: 0.06s; }
+.orb .wave i:nth-child(3) { height: 44px; animation-delay: 0s; }
+.orb .wave i:nth-child(4) { height: 26px; animation-delay: 0.1s; }
+.orb .wave i:nth-child(5) { height: 12px; animation-delay: 0.22s; }
 .orb[data-state="thinking"] .b1 { animation-duration: 3.4s, 7s; }
 .orb[data-state="thinking"] .b2 { animation-duration: 3s, 6s; }
 .orb[data-state="thinking"] .b3 { animation-duration: 4s, 9s; }
@@ -99,7 +105,8 @@
   66% { border-radius: 50% 50% 38% 62% / 42% 60% 40% 58%; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes talk { 0%, 100% { height: 6px; } 50% { height: 44px; } }
+/* stays bar-shaped throughout — never collapses back into a dot */
+@keyframes talk { 0%, 100% { transform: scaleY(0.5); } 50% { transform: scaleY(1.15); } }
 @keyframes rise { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
 .rise { animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 

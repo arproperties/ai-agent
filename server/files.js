@@ -16,20 +16,21 @@ export const isImage = (f) => IMAGE_TYPES.includes(f.mimetype);
  * Store an upload. Returns { doc, duplicate }. A file the user already has (same bytes) is not stored twice.
  * agentId null = shared library.
  */
-export function saveUpload(userId, agentId, f, conversationId = null) {
+export async function saveUpload(userId, agentId, f, conversationId = null) {
   const hash = createHash('sha256').update(f.buffer).digest('hex');
-  const existing = db.prepare('SELECT * FROM documents WHERE user_id = ? AND hash = ? AND agent_id IS ?').get(userId, hash, agentId);
+  // IS NOT DISTINCT FROM so a NULL agent_id (the shared library) matches a NULL parameter
+  const existing = await db.prepare('SELECT * FROM documents WHERE user_id = ? AND hash = ? AND agent_id IS NOT DISTINCT FROM ?').get(userId, hash, agentId);
   if (existing) return { doc: existing, duplicate: true };
 
   const name = fileName(f);
-  const { lastInsertRowid } = db.prepare(`INSERT INTO documents (user_id, agent_id, conversation_id, name, title, kind, size, mime, hash, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing')`).run(userId, agentId, conversationId, name, name, isImage(f) ? 'image' : 'doc', f.size, f.mimetype, hash);
-  const id = Number(lastInsertRowid);
+  const { id } = await db.prepare(`INSERT INTO documents (user_id, agent_id, conversation_id, name, title, kind, size, mime, hash, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing') RETURNING id`)
+    .run(userId, agentId, conversationId, name, name, isImage(f) ? 'image' : 'doc', f.size, f.mimetype, hash);
   mkdirSync(`${UPLOAD_DIR}/${userId}`, { recursive: true });
   const path = `${UPLOAD_DIR}/${userId}/${id}${extname(name).toLowerCase().replace(/[^.\w]/g, '')}`;
   writeFileSync(path, f.buffer);
-  db.prepare('UPDATE documents SET path = ? WHERE id = ?').run(path, id);
-  return { doc: db.prepare('SELECT * FROM documents WHERE id = ?').get(id), duplicate: false };
+  await db.prepare('UPDATE documents SET path = ? WHERE id = ?').run(path, id);
+  return { doc: await db.prepare('SELECT * FROM documents WHERE id = ?').get(id), duplicate: false };
 }
 
 async function classify(name, text) {
@@ -59,13 +60,13 @@ export async function processDocument(doc, f, text) {
     const content = text ?? (isImage(f) ? await describeImage(f) : await extractText({ ...f, originalname: doc.name }));
     if (!content?.trim()) throw new Error('No readable text found');
     const c = await classify(doc.name, content);
-    db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ? WHERE id = ?')
+    await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ? WHERE id = ?')
       .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, doc.id);
     await indexChunks({ ...doc, title: c.title, folder: c.folder }, content);
-    db.prepare("UPDATE documents SET status = 'ready', error = NULL WHERE id = ?").run(doc.id);
+    await db.prepare("UPDATE documents SET status = 'ready', error = NULL WHERE id = ?").run(doc.id);
   } catch (e) {
     console.error('[files]', doc.name, e.message);
-    db.prepare("UPDATE documents SET status = 'error', error = ? WHERE id = ?").run(e.message, doc.id);
+    await db.prepare("UPDATE documents SET status = 'error', error = ? WHERE id = ?").run(e.message, doc.id);
   }
 }
 
@@ -86,17 +87,17 @@ export async function docxPreview(doc) {
 table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6px 8px}img{max-width:100%}h1,h2,h3{line-height:1.3}</style>${value}`;
 }
 
-export function deleteDocument(userId, id) {
-  const doc = db.prepare('SELECT path FROM documents WHERE id = ? AND user_id = ?').get(id, userId);
+export async function deleteDocument(userId, id) {
+  const doc = await db.prepare('SELECT path FROM documents WHERE id = ? AND user_id = ?').get(id, userId);
   if (!doc) return false;
-  db.prepare('DELETE FROM documents WHERE id = ?').run(id);
+  await db.prepare('DELETE FROM documents WHERE id = ?').run(id);
   if (doc.path && existsSync(doc.path)) unlinkSync(doc.path);
   return true;
 }
 
 // Compact catalogue of the user's files, so agents can answer "what files do I have?" or "find my lease"
-export function libraryCatalog(userId, agentId) {
-  return db.prepare(`SELECT title, folder, name, doc_date FROM documents
-    WHERE user_id = ? AND (agent_id IS NULL OR agent_id = ?) AND status = 'ready' ORDER BY id DESC LIMIT 40`).all(userId, agentId)
-    .map((d) => `- ${d.title} (${d.folder}${d.doc_date ? `, ${d.doc_date}` : ''}; file: ${d.name})`);
+export async function libraryCatalog(userId, agentId) {
+  const rows = await db.prepare(`SELECT title, folder, name, doc_date FROM documents
+    WHERE user_id = ? AND (agent_id IS NULL OR agent_id = ?) AND status = 'ready' ORDER BY id DESC LIMIT 40`).all(userId, agentId);
+  return rows.map((d) => `- ${d.title} (${d.folder}${d.doc_date ? `, ${d.doc_date}` : ''}; file: ${d.name})`);
 }

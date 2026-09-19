@@ -35,9 +35,9 @@ function systemPrompt(user, agent, team, memories, knowledge, library) {
   return parts.join('\n\n');
 }
 
-function recentMessages(conversationId) {
-  const rows = db.prepare(`SELECT m.role, m.content, m.files, m.agent_id, a.name agent_name FROM messages m
-    LEFT JOIN agents a ON a.id = m.agent_id WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 20`).all(conversationId).reverse();
+async function recentMessages(conversationId) {
+  const rows = (await db.prepare(`SELECT m.role, m.content, m.files, m.agent_id, a.name agent_name FROM messages m
+    LEFT JOIN agents a ON a.id = m.agent_id WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 20`).all(conversationId)).reverse();
   while (rows[0]?.role === 'assistant') rows.shift(); // must start with a user turn
   return rows;
 }
@@ -55,7 +55,7 @@ async function readAttachments(user, convId, files, send) {
     const name = fileName(f);
     try {
       if (isImage(f)) {
-        const { doc, duplicate } = saveUpload(user.id, null, f, convId);
+        const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
         blocks.push({ type: 'image', source: { type: 'base64', media_type: f.mimetype, data: f.buffer.toString('base64') } });
         if (!duplicate) processDocument(doc, f);
         meta.push({ name, kind: 'image', docId: doc.id });
@@ -63,7 +63,7 @@ async function readAttachments(user, convId, files, send) {
         send('status', { label: `Reading ${name}…` });
         const content = await extractText({ ...f, originalname: name }); // read first, so unreadable files are never stored
         if (!content.trim()) throw new Error(`No readable text found in ${name}`);
-        const { doc, duplicate } = saveUpload(user.id, null, f, convId);
+        const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
         if (!duplicate) processDocument(doc, f, content);
         meta.push({ name, kind: 'doc', docId: doc.id, snippet: content.slice(0, 600) });
         const inline = content.length > MAX_INLINE ? `${content.slice(0, MAX_INLINE)}\n…(truncated — the rest is in your knowledge base)` : content;
@@ -78,17 +78,17 @@ async function readAttachments(user, convId, files, send) {
 
 export async function chat(req, res) {
   const user = req.user;
-  const team = db.prepare('SELECT * FROM agents WHERE user_id = ? ORDER BY id').all(user.id);
+  const team = await db.prepare('SELECT * FROM agents WHERE user_id = ? ORDER BY id').all(user.id);
   if (!team.length) return res.status(400).json({ error: 'Create an agent first' });
   const text = (req.body.text || '').trim();
   const files = req.files || [];
   if (!text && !files.length) return res.status(400).json({ error: 'Empty message' });
 
   let convId = Number(req.body.conversationId) || null;
-  if (convId && !db.prepare('SELECT 1 FROM conversations WHERE id = ? AND user_id = ?').get(convId, user.id)) convId = null;
+  if (convId && !await db.prepare('SELECT 1 FROM conversations WHERE id = ? AND user_id = ?').get(convId, user.id)) convId = null;
   if (!convId) {
     const title = (text || files[0].originalname).slice(0, 60);
-    convId = Number(db.prepare('INSERT INTO conversations (user_id, title) VALUES (?, ?)').run(user.id, title).lastInsertRowid);
+    ({ id: convId } = await db.prepare('INSERT INTO conversations (user_id, title) VALUES (?, ?) RETURNING id').run(user.id, title));
   }
 
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
@@ -96,7 +96,7 @@ export async function chat(req, res) {
   send('meta', { conversationId: convId });
 
   // 1. Read attachments, then pick the agent (the router sees what the files are about)
-  const prior = recentMessages(convId);
+  const prior = await recentMessages(convId);
   const currentAgentId = [...prior].reverse().find((m) => m.agent_id)?.agent_id;
   const { blocks, meta } = await readAttachments(user, convId, files, send);
   const savedFiles = meta.map(({ snippet, ...m }) => m);
@@ -108,7 +108,8 @@ export async function chat(req, res) {
   // 2. Context: recalled memories + relevant file excerpts
   send('status', { label: `${agent.name} is thinking…` });
   const { memories, knowledge } = await recall(user.id, agent.id, text || meta.map((f) => f.name).join(' '));
-  db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?)').run(convId, 'user', text, JSON.stringify(savedFiles));
+  const library = await libraryCatalog(user.id, agent.id); // same every turn, so read it once
+  await db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?)').run(convId, 'user', text, JSON.stringify(savedFiles));
 
   // 3. Stream the reply (with web search). A long search can pause the turn; resume it a few times.
   let reply = '';
@@ -125,7 +126,7 @@ export async function chat(req, res) {
       stream = claude.messages.stream({
         model: agent.model,
         max_tokens: 16000,
-        system: systemPrompt(user, agent, team, memories, knowledge, libraryCatalog(user.id, agent.id)),
+        system: systemPrompt(user, agent, team, memories, knowledge, library),
         tools: [webSearch(agent.model)],
         messages: convo,
       });
@@ -164,10 +165,10 @@ export async function chat(req, res) {
   const sources = (cited.size ? [...cited.values()] : [...searched.values()].sort((a, b) => official(a) - official(b))).slice(0, 6);
   if (sources.length) send('sources', sources);
   if (reply) {
-    messageId = Number(db.prepare('INSERT INTO messages (conversation_id, agent_id, role, content, sources) VALUES (?, ?, ?, ?, ?)')
-      .run(convId, agent.id, 'assistant', reply.trim(), JSON.stringify(sources)).lastInsertRowid);
+    ({ id: messageId } = await db.prepare('INSERT INTO messages (conversation_id, agent_id, role, content, sources) VALUES (?, ?, ?, ?, ?) RETURNING id')
+      .run(convId, agent.id, 'assistant', reply.trim(), JSON.stringify(sources)));
   }
-  db.prepare('UPDATE conversations SET updated_at = unixepoch() WHERE id = ?').run(convId);
+  await db.prepare('UPDATE conversations SET updated_at = extract(epoch from now()) WHERE id = ?').run(convId);
   if (!res.writableEnded) { send('done', { messageId }); res.end(); }
 
   // 4. Learn from this turn (background, never blocks the reply)

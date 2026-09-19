@@ -57,7 +57,7 @@ function chunk(text, size = 1500, overlap = 200) {
   return out.filter(Boolean);
 }
 
-const toBlob = (v) => (v ? new Uint8Array(v.buffer) : null);
+const toBlob = (v) => (v ? Buffer.from(v.buffer, v.byteOffset, v.byteLength) : null); // Float32Array -> bytea
 const toVec = (b) => (b ? new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4) : null);
 const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
 
@@ -67,64 +67,72 @@ export async function indexChunks(doc, text) {
   const pieces = chunk(text).map((c) => `[${label}] ${c}`);
   const vectors = [];
   for (let i = 0; i < pieces.length; i += 32) vectors.push(...(await embed(pieces.slice(i, i + 32))));
-  tx(() => {
-    db.prepare('DELETE FROM chunks WHERE document_id = ?').run(doc.id);
+  await tx(async () => {
+    await db.prepare('DELETE FROM chunks WHERE document_id = ?').run(doc.id);
     const ins = db.prepare('INSERT INTO chunks (user_id, agent_id, document_id, text, embedding) VALUES (?, ?, ?, ?, ?)');
-    pieces.forEach((p, i) => ins.run(doc.user_id, doc.agent_id, doc.id, p, toBlob(vectors[i])));
+    for (const [i, p] of pieces.entries()) await ins.run(doc.user_id, doc.agent_id, doc.id, p, toBlob(vectors[i]));
   });
 }
 
 export async function addMemory(userId, text) {
   const [vec] = await embed([text]);
   if (vec) {
-    const rows = db.prepare('SELECT embedding FROM memories WHERE user_id = ?').all(userId);
+    const rows = await db.prepare('SELECT embedding FROM memories WHERE user_id = ?').all(userId);
     if (rows.some((r) => r.embedding && dot(vec, toVec(r.embedding)) > 0.9)) return null; // already known
   }
-  return Number(db.prepare('INSERT INTO memories (user_id, text, embedding) VALUES (?, ?, ?)').run(userId, text, toBlob(vec)).lastInsertRowid);
+  const { id } = await db.prepare('INSERT INTO memories (user_id, text, embedding) VALUES (?, ?, ?) RETURNING id').run(userId, text, toBlob(vec));
+  return id;
 }
 
-// ---------- hybrid search: meaning (embeddings) + keywords (FTS5), merged by reciprocal rank ----------
+// ---------- hybrid search: meaning (embeddings) + keywords (tsvector), merged by reciprocal rank ----------
 const STOP = new Set('the and for are but not you your with this that have from was what when where which who why how can will just about into than then them they there their our out has had his her its also any all some more most very what\'s'.split(' '));
 
+// to_tsquery wants terms joined by `|` for OR. The words are already stripped to
+// letters and digits by the regex, so there is nothing for it to misread.
 function keywordQuery(q) {
   const words = [...new Set((q.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []).filter((w) => !STOP.has(w)))];
-  return words.slice(0, 12).map((w) => `"${w}"`).join(' OR ');
+  return words.slice(0, 12).join(' | ');
 }
 
 // scope: SQL condition on table alias t, plus its params
-function search(table, scope, query, qvec, k) {
+async function search(table, scope, query, qvec, k) {
   const scores = new Map();
   const add = (list) => list.forEach((id, rank) => scores.set(id, (scores.get(id) || 0) + 1 / (60 + rank)));
 
   if (qvec) {
-    const rows = db.prepare(`SELECT t.id, t.embedding FROM ${table} t WHERE ${scope.sql} AND t.embedding IS NOT NULL`).all(...scope.params);
+    const rows = await db.prepare(`SELECT t.id, t.embedding FROM ${table} t WHERE ${scope.sql} AND t.embedding IS NOT NULL`).all(...scope.params);
     add(rows.map((r) => ({ id: r.id, s: dot(qvec, toVec(r.embedding)) }))
       .filter((r) => r.s > 0.25).sort((a, b) => b.s - a.s).slice(0, 20).map((r) => r.id));
   }
   const kw = keywordQuery(query);
   if (kw) {
-    add(db.prepare(`SELECT t.id FROM ${table}_fts f JOIN ${table} t ON t.id = f.rowid
-      WHERE ${table}_fts MATCH ? AND ${scope.sql} ORDER BY bm25(${table}_fts) LIMIT 20`).all(kw, ...scope.params).map((r) => r.id));
+    // The query is joined in rather than repeated, so it is parsed once and,
+    // more importantly, uses a single placeholder: `?` positions are numbered
+    // left to right, so a second one here would shift the scope's parameters.
+    const rows = await db.prepare(`SELECT t.id FROM ${table} t, to_tsquery('english', ?) q
+      WHERE t.tsv @@ q AND ${scope.sql}
+      ORDER BY ts_rank_cd(t.tsv, q) DESC LIMIT 20`).all(kw, ...scope.params);
+    add(rows.map((r) => r.id));
   }
   const ids = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, k).map(([id]) => id);
   if (!ids.length) return [];
-  const rows = db.prepare(`SELECT id, text FROM ${table} WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+  const rows = await db.prepare(`SELECT id, text FROM ${table} WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
   return ids.map((id) => rows.find((r) => r.id === id).text);
 }
 
 export async function recall(userId, agentId, query) {
   const [qvec] = await embed([query]);
-  const memCount = db.prepare('SELECT COUNT(*) n FROM memories WHERE user_id = ?').get(userId).n;
+  const { n: memCount } = await db.prepare('SELECT COUNT(*)::int n FROM memories WHERE user_id = ?').get(userId);
   const memories = memCount <= 25 // small memory: include it all
-    ? db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id').all(userId).map((r) => r.text)
-    : search('memories', { sql: 't.user_id = ?', params: [userId] }, query, qvec, 12);
-  const knowledge = search('chunks', { sql: 't.user_id = ? AND (t.agent_id IS NULL OR t.agent_id = ?)', params: [userId, agentId] }, query, qvec, 6);
+    ? (await db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id').all(userId)).map((r) => r.text)
+    : await search('memories', { sql: 't.user_id = ?', params: [userId] }, query, qvec, 12);
+  const knowledge = await search('chunks', { sql: 't.user_id = ? AND (t.agent_id IS NULL OR t.agent_id = ?)', params: [userId, agentId] }, query, qvec, 6);
   return { memories, knowledge };
 }
 
 // ---------- learning: pull lasting facts out of each exchange ----------
 export async function learn(userId, userText, reply) {
-  const known = db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id DESC LIMIT 60').all(userId).map((r) => r.text);
+  const known = (await db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id DESC LIMIT 60').all(userId)).map((r) => r.text);
   const out = await ask(
     `Conversation turn:\nUSER: ${userText.slice(0, 4000)}\nASSISTANT: ${reply.slice(0, 2000)}\n\nAlready known:\n${known.map((k) => `- ${k}`).join('\n') || '(nothing)'}`,
     {
