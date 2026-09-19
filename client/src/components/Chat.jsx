@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, streamChat } from '../lib/api';
-import { speakText, stopSpeaking } from '../lib/voice';
+import { speakText, stopSpeaking, togglePause } from '../lib/voice';
 import Icon from './Icon';
 import Orb from './Orb';
 import Avatar from './Avatar';
 import Message from './Message';
 import Composer from './Composer';
+import LiveVoice from './LiveVoice';
 import Sheet from './Sheet';
 import { FileCard, FileViewer, FileDetail } from './Knowledge';
 
@@ -23,7 +24,8 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
   const [orb, setOrb] = useState('idle');
   const [status, setStatus] = useState('');
   const [toast, setToast] = useState('');
-  const [speakingId, setSpeakingId] = useState(null);
+  const [voice, setVoice] = useState({ id: null, state: 'idle' }); // reply being read aloud
+  const [live, setLive] = useState(false); // hands-free voice mode is open
   const [viewer, setViewer] = useState(null); // file open in the full-screen viewer
   const [details, setDetails] = useState(null); // file open in the details sheet
   const [chatFiles, setChatFiles] = useState(null); // list of this chat's attachments
@@ -49,15 +51,22 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
   const openFile = (id) => api.get(`/documents/${id}`).then(setViewer).catch((e) => flash(e.message));
   const showChatFiles = () => api.get(`/documents?ids=${docIds.join(',')}`).then(setChatFiles).catch((e) => flash(e.message));
 
+  // Tapping the reply that is already talking pauses or resumes it; tapping one
+  // that is still being generated gives up on it. Anything else starts fresh.
   const say = (text, id, agentId) => {
-    if (speakingId === id) return stopSpeaking();
+    if (voice.id === id) {
+      if (voice.state === 'loading') return stopSpeaking();
+      return togglePause();
+    }
     speakText(text, agentId, (s) => {
-      if (s === 'speaking') { setSpeakingId(id); setOrb('speaking'); }
-      if (s === 'idle') { setSpeakingId(null); setOrb('idle'); }
+      if (s === 'error') { flash("Couldn't play that out loud. Please try again."); s = 'idle'; }
+      setVoice(s === 'idle' ? { id: null, state: 'idle' } : { id, state: s });
+      setOrb(s === 'speaking' ? 'speaking' : s === 'loading' ? 'thinking' : 'idle');
     }).catch((e) => flash(e.message));
   };
 
-  const send = async (text, files, { voice } = {}) => {
+  // onDelta: live voice mode starts reading the reply out while it is still arriving
+  const send = async (text, files, { voice, onDelta } = {}) => {
     stopSpeaking();
     const form = new FormData();
     if (convId) form.append('conversationId', convId);
@@ -94,6 +103,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
             setStatus('');
             reply += d.text;
             update({ content: reply });
+            onDelta?.(reply, agentId);
           }
         },
       });
@@ -104,6 +114,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
     setBusy(false); setOrb('idle'); setStatus('');
     onConversation(null);
     if (voice && reply) say(reply, aid, agentId);
+    return { reply, agentId }; // live voice mode reads the reply out itself
   };
 
   const lastAgent = byId[[...messages].reverse().find((m) => m.agent_id)?.agent_id];
@@ -133,6 +144,9 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
             </span>
           </span>
         </div>
+        {voiceEnabled && (
+          <IconBtn icon="live" label="Live voice — hands free" onClick={() => { stopSpeaking(); setLive(true); }} />
+        )}
         {docIds.length > 0 && (
           <button onClick={showChatFiles} aria-label="Files in this chat" title="Files in this chat"
             className="relative grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
@@ -170,7 +184,8 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
           <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 md:px-6">
             {messages.map((m) => (
               <Message key={m.id} msg={m} agent={byId[m.agent_id]} voiceEnabled={voiceEnabled} onOpenFile={openFile}
-                speaking={speakingId === m.id} onSpeak={() => say(m.content, m.id, m.agent_id)} />
+                voice={voice.id === m.id ? voice.state : 'idle'} onStopSpeak={stopSpeaking}
+                onSpeak={() => say(m.content, m.id, m.agent_id)} />
             ))}
           </div>
         )}
@@ -180,6 +195,10 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
         <Composer busy={busy} voiceEnabled={voiceEnabled} onSend={send} onStop={() => abortRef.current?.abort()}
           onVoiceState={(s) => { stopSpeaking(); setOrb(s); }} onError={flash} />
       </div>
+
+      {live && (
+        <LiveVoice onAsk={(text, onDelta) => send(text, [], { onDelta })} onClose={() => setLive(false)} onError={flash} />
+      )}
 
       {chatFiles && (
         <Sheet title="Files in this chat" onClose={() => setChatFiles(null)}

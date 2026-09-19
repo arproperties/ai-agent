@@ -19,16 +19,18 @@ export async function transcribe(buffer, mimetype) {
   return res.text;
 }
 
-export async function speak(text, voice, tone) {
+// Text to speech. Returns the raw response so the caller can pipe the audio out
+// as it is generated — playback starts on the first chunk instead of the last.
+export async function speakStream(text, voice, tone, signal) {
   if (!openai) throw new Error('Voice is not configured (OPENAI_API_KEY missing)');
-  const res = await openai.audio.speech.create({
+  return openai.audio.speech.create({
     model: 'gpt-4o-mini-tts',
     voice,
     input: text.slice(0, 4000),
     instructions: tone ? `Speak naturally, in a tone that fits this character: ${tone.slice(0, 300)}` : undefined,
     response_format: 'mp3',
-  });
-  return Buffer.from(await res.arrayBuffer());
+    stream_format: 'audio',
+  }, { signal }); // stops generating (and billing) the moment the listener gives up
 }
 
 // Quick one-shot Claude call returning plain text

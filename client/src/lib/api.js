@@ -16,7 +16,6 @@ export const api = {
   patch: (p, json) => request(p, { method: 'PATCH', json }).then((r) => r.json()),
   del: (p) => request(p, { method: 'DELETE' }).then((r) => r.json()),
   upload: (p, form) => request(p, { method: 'POST', body: form }).then((r) => r.json()),
-  blob: (p, json) => request(p, { method: 'POST', json }).then((r) => r.blob()),
 };
 
 // POST /api/chat and read the server-sent events as they arrive

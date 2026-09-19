@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
-import { startRecording, stopRecording, cancelRecording, unlockAudio } from '../lib/voice';
+import { listenUntilSilence, finishListening, stopListening, unlockAudio } from '../lib/voice';
 
 const ACCEPT = 'image/*,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
@@ -8,6 +8,7 @@ export default function Composer({ busy, voiceEnabled, onSend, onStop, onVoiceSt
   const [text, setText] = useState('');
   const [files, setFiles] = useState([]);
   const [rec, setRec] = useState(null); // null | 'recording' | 'transcribing'
+  const [queued, setQueued] = useState(null); // spoken while a reply was still arriving
   const fileRef = useRef();
   const areaRef = useRef();
 
@@ -23,31 +24,37 @@ export default function Composer({ busy, voiceEnabled, onSend, onStop, onVoiceSt
     if (areaRef.current) areaRef.current.style.height = 'auto';
   };
 
+  // Spoken while a reply is still streaming: held back rather than sent on top
+  // of it, and sent by itself the moment that reply finishes.
+  useEffect(() => {
+    if (!queued || busy) return;
+    onSend(queued, []);
+    setQueued(null);
+  }, [queued, busy]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => stopListening(), []);
+
   const toggleMic = async () => {
     unlockAudio();
-    if (rec === 'recording') {
-      setRec('transcribing');
-      onVoiceState('thinking');
-      try {
-        const said = await stopRecording();
-        if (said) onSend([text, said].filter(Boolean).join(' '), files, { voice: true });
+    if (rec === 'recording') return finishListening(); // tapped to stop: send what was said
+    setRec('recording');
+    onVoiceState('listening');
+    try {
+      const said = await listenUntilSilence({
+        onCaptured: () => { setRec('transcribing'); onVoiceState('thinking'); },
+      });
+      if (said) {
+        const whole = [text, said].filter(Boolean).join(' ');
+        if (busy) setQueued(whole); // a reply is still coming; wait for it
+        else onSend(whole, files, { voice: true });
         setText('');
         setFiles([]);
-      } catch (e) {
-        onError(e.message);
       }
-      setRec(null);
-      onVoiceState('idle');
-      return;
+    } catch (e) {
+      onError(e.message);
     }
-    try {
-      await startRecording();
-      setRec('recording');
-      onVoiceState('listening');
-    } catch {
-      cancelRecording();
-      onError('Microphone not available. Allow mic access in your browser settings.');
-    }
+    setRec(null);
+    onVoiceState('idle');
   };
 
   const onKey = (e) => {
@@ -77,12 +84,19 @@ export default function Composer({ busy, voiceEnabled, onSend, onStop, onVoiceSt
         </button>
         <textarea ref={areaRef} rows={1} value={text} onKeyDown={onKey}
           onChange={(e) => { setText(e.target.value); grow(e.target); }}
-          placeholder={rec === 'recording' ? 'Listening… tap the mic to finish' : rec ? 'Transcribing…' : 'Message'}
+          placeholder={rec === 'recording' ? 'Listening… pause when you are done'
+            : rec ? 'Transcribing…'
+            : queued ? 'Waiting for the reply, then sending…'
+            : 'Message'}
           className="max-h-40 min-h-10 flex-1 resize-none bg-transparent px-1 py-2 leading-6 outline-none placeholder:text-mute/70" />
-        {voiceEnabled && !busy && (
-          <button type="button" onClick={toggleMic} disabled={rec === 'transcribing'} aria-label={rec ? 'Stop recording' : 'Speak'}
-            className={`grid size-10 shrink-0 place-items-center rounded-full transition ${rec === 'recording' ? 'animate-pulse bg-bad text-white' : 'text-mute hover:bg-white/10 hover:text-txt'}`}>
-            <Icon name={rec === 'recording' ? 'stop' : 'mic'} />
+        {voiceEnabled && (
+          <button type="button" onClick={toggleMic} disabled={rec === 'transcribing'}
+            aria-label={rec === 'recording' ? 'Stop and send' : 'Speak'} title={rec === 'recording' ? 'Stop and send' : 'Speak'}
+            className={`grid size-12 shrink-0 place-items-center rounded-full transition active:scale-95 disabled:opacity-40 ${
+              rec === 'recording'
+                ? 'animate-pulse bg-bad text-white shadow-lg shadow-bad/30'
+                : 'bg-white/10 text-txt ring-1 ring-white/15 hover:bg-white/20'}`}>
+            <Icon name={rec === 'recording' ? 'stop' : 'mic'} size={22} />
           </button>
         )}
         {busy ? (

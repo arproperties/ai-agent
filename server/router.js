@@ -24,7 +24,7 @@ export async function pickAgent({ agents, text, attachments = [], recent, curren
   if (mentioned) return { agent: mentioned, why: 'You asked for this agent' };
   if (agents.length === 1) return { agent: agents[0], why: null };
 
-  const docs = db.prepare('SELECT agent_id, name FROM documents WHERE agent_id IN (' + agents.map(() => '?').join(',') + ')')
+  const docs = await db.prepare('SELECT agent_id, name FROM documents WHERE agent_id IN (' + agents.map(() => '?').join(',') + ')')
     .all(...agents.map((a) => a.id));
   const team = agents.map((a) => {
     const files = docs.filter((d) => d.agent_id === a.id).slice(0, 8).map((d) => d.name);

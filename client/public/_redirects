@@ -1,0 +1,9 @@
+# Netlify only. Copied into client/dist by the build, ignored by nginx.
+# Order matters: the API rule has to come before the SPA fallback.
+
+# Send API calls to the droplet, keeping the browser on one origin so the
+# session cookie, <audio> and file previews keep working unchanged.
+/api/*  https://jarvis.eloquentservice.com/api/:splat  200!
+
+# Everything else is the single-page app.
+/*      /index.html                                    200

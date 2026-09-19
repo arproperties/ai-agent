@@ -10,10 +10,11 @@ npm run dev        # dev: http://localhost:5173 (API on :3001)
 npm run build && npm start   # production: http://localhost:3001
 ```
 
-Needs Node 22.13+ (uses built-in SQLite). Keys live in `.env` at the project root:
+Needs Node 22+ and PostgreSQL 14+. Keys live in `.env` at the project root:
 
 | Key | Used for |
 |---|---|
+| `DATABASE_URL` | Postgres, e.g. `postgres://user:pass@127.0.0.1:5432/aiagent`. The schema is created on first boot. |
 | `CLAUDE_API_KEY` | Chat, reading attachments, learning memories |
 | `OPENAI_API_KEY` | Voice only: mic (speech→text) and read-aloud (text→speech) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`, `APP_URL` | Email for "Forgot password?" links (any SMTP provider). If unset, the reset link is printed in the server console. |
@@ -36,7 +37,11 @@ Needs Node 22.13+ (uses built-in SQLite). Keys live in `.env` at the project roo
 - **Memory** — after each reply Claude Haiku extracts lasting facts ("User prefers short answers"). They are shared by all your agents and recalled in every future chat. See/edit them under Memory & files.
 - **Email** — menu → **Email**. Enter your address and password under **Email account** and every agent can search and read that mailbox when you ask about your email. Works with any IMAP mailbox (Titan, Gmail with an app password, Zoho, Yahoo, cPanel hosting…); the mail server is found automatically from the address (change it under **Advanced**). Read-only: mail is opened without marking it as read, and nothing is sent, moved or deleted. Emails are fetched when needed, not copied into Jarvis; the password is stored encrypted with `EMAIL_KEY`. If the login fails with the right password, turn on IMAP access in your email settings.
 - **Outlook email** (optional, hidden until `MS_CLIENT_ID` is set) — for mailboxes hosted by Microsoft. Menu → **Email** → **Connect**. After signing in with Microsoft, every agent can search and read that mailbox when you ask about your email (read-only: no sending, replying, moving or deleting). Emails are fetched when needed, not copied into Jarvis. Disconnect from the same screen; to fully revoke access also remove "Jarvis" at account.microsoft.com → Privacy → Apps and services.
-- **Data** — everything is in `data/jarvis.db` (SQLite). Back up that folder.
+- **Data** — chats, agents, files metadata, memories and the search index are in Postgres; the uploaded originals and the embedding model are on disk in `data/`. Back up both.
+
+## Deploy
+
+`./deploy.ps1` builds the client and ships it to jarvis.eloquentservice.com (nginx serves `client/dist`, pm2 runs the API on 127.0.0.1:3001). The server's own `.env` is never overwritten.
 
 ## Outlook setup (once)
 

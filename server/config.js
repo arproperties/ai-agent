@@ -6,6 +6,8 @@ if (existsSync(`${ROOT}.env`)) process.loadEnvFile(`${ROOT}.env`);
 
 export const DATA_DIR = `${ROOT}data`;
 export const PORT = Number(process.env.PORT) || 3001;
+// Postgres. Uploads and the embedding model still live on disk in DATA_DIR.
+export const DATABASE_URL = process.env.DATABASE_URL || '';
 // Optional: when set, people need this invite code to create an account
 export const REGISTRATION_CODE = process.env.REGISTRATION_CODE || '';
 
