@@ -5,6 +5,12 @@ import Sidebar from './components/Sidebar';
 import Chat from './components/Chat';
 import AgentSheet from './components/AgentSheet';
 import { FilesPage, MemorySheet } from './components/Knowledge';
+import EmailSheet from './components/EmailSheet';
+
+// back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
+const params = new URLSearchParams(window.location.search);
+const outlookReturn = params.get('outlook') && { status: params.get('outlook'), message: params.get('message') };
+if (outlookReturn) window.history.replaceState(null, '', '/');
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -15,7 +21,7 @@ export default function App() {
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(null); // 'files' | 'memory'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : null); // 'files' | 'memory' | 'email'
 
   useEffect(() => {
     api.get('/auth/me').then((r) => { setMe(r.user); setInviteRequired(r.inviteRequired); }).catch(() => setMe(null));
@@ -58,6 +64,7 @@ export default function App() {
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel === 'files' ? null : chat.id} filesOpen={panel === 'files'}
           onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
+          onEmail={() => { setPanel('email'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
       </aside>
 
@@ -74,6 +81,7 @@ export default function App() {
           onSaved={() => { setEditing(null); loadAgents(); }} />
       )}
       {panel === 'memory' && <MemorySheet onClose={() => setPanel(null)} />}
+      {panel === 'email' && <EmailSheet returned={outlookReturn} onClose={() => setPanel(null)} />}
     </div>
   );
 }

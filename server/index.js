@@ -8,6 +8,7 @@ import { authRoutes, requireUser } from './auth.js';
 import { chat } from './chat.js';
 import { addMemory } from './knowledge.js';
 import { saveUpload, processDocument, deleteDocument, inlineType, docxPreview } from './files.js';
+import { outlookRoutes, outlookCallback } from './outlook.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -15,7 +16,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 app.use(express.json({ limit: '1mb' }));
 
 app.use('/api/auth', authRoutes);
+app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; checked by its one-time state
 app.use('/api', requireUser); // everything below needs a signed-in user
+app.use('/api/outlook', outlookRoutes);
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const own = (table, id, userId) => db.prepare(`SELECT * FROM ${table} WHERE id = ? AND user_id = ?`).get(Number(id), userId);

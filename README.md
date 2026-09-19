@@ -17,6 +17,7 @@ Needs Node 22.13+ (uses built-in SQLite). Keys live in `.env` at the project roo
 | `CLAUDE_API_KEY` | Chat, reading attachments, learning memories |
 | `OPENAI_API_KEY` | Voice only: mic (speech→text) and read-aloud (text→speech) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`, `APP_URL` | Email for "Forgot password?" links (any SMTP provider). If unset, the reset link is printed in the server console. |
+| `MS_CLIENT_ID`, `MS_CLIENT_SECRET` | Optional: lets users connect Outlook so agents can read their email (see below) |
 | `REGISTRATION_CODE` | Optional invite code people must enter to create an account. **Set it before putting the app online**, or anyone can sign up and use your API credits. |
 
 ## How it works
@@ -32,7 +33,19 @@ Needs Node 22.13+ (uses built-in SQLite). Keys live in `.env` at the project roo
 - **Files (RAG)** — attach PDFs, Word, text/CSV or images in chat (they go to your shared library, used by every agent) or add them to one agent in its settings. Text is split into chunks and indexed with local embeddings (free, runs on this machine) plus keyword search. Relevant chunks are added to every question.
 - **Auto-organised files** — every file you share (in chat or on the Files screen) is stored, read by Claude Haiku and filed automatically: a clear title, a folder (Contracts, Tenancy & Property, Invoices, HR, IDs, Company & Licenses…), a short summary with parties/amounts/dates, tags and the document date. Duplicates are detected. Originals are kept in `data/uploads/` and can be opened, downloaded, moved or deleted from the Files screen. Agents see the library, so "find my tenancy contract" works.
 - **Memory** — after each reply Claude Haiku extracts lasting facts ("User prefers short answers"). They are shared by all your agents and recalled in every future chat. See/edit them under Memory & files.
+- **Outlook email** — menu → **Email** → **Connect**. After signing in with Microsoft, every agent can search and read that mailbox when you ask about your email (read-only: no sending, replying, moving or deleting). Emails are fetched when needed, not copied into Jarvis. Disconnect from the same screen; to fully revoke access also remove "Jarvis" at account.microsoft.com → Privacy → Apps and services.
 - **Data** — everything is in `data/jarvis.db` (SQLite). Back up that folder.
+
+## Outlook setup (once)
+
+Microsoft only lets registered apps read mail, so register Jarvis once (free):
+
+1. Open [entra.microsoft.com](https://entra.microsoft.com) → **App registrations** → **New registration**. You need a work (Microsoft 365) or free Azure account; a plain Outlook.com login can't create registrations.
+2. Name it `Jarvis`. Supported account types: **Accounts in any organizational directory and personal Microsoft accounts** (so Hotmail/Outlook.com and work mailboxes both work).
+3. Redirect URI: platform **Web**, `http://localhost:5173/api/outlook/callback`. Later add your live address too, e.g. `https://your-domain.com/api/outlook/callback` (under **Authentication**).
+4. Copy the **Application (client) ID** → `MS_CLIENT_ID` in `.env`.
+5. **Certificates & secrets** → **New client secret** → copy its **Value** → `MS_CLIENT_SECRET`. It expires (up to 24 months); create a new one before then.
+6. Restart the server. Permissions (`Mail.Read`, `User.Read`, `offline_access`) are requested when you connect; nothing to add by hand.
 
 ## iPhone
 

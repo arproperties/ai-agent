@@ -85,6 +85,16 @@ db.exec(`
     created_at INTEGER DEFAULT (unixepoch())
   );
 
+  -- one connected Outlook mailbox per user (read-only access through Microsoft Graph)
+  CREATE TABLE IF NOT EXISTS outlook_accounts (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    email TEXT,
+    access_token TEXT,
+    refresh_token TEXT NOT NULL,
+    expires_at INTEGER,
+    created_at INTEGER DEFAULT (unixepoch())
+  );
+
   CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, content='chunks', content_rowid='id');
   CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(text, content='memories', content_rowid='id');
 
