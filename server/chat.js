@@ -114,7 +114,7 @@ export async function chat(req, res) {
 
   // 2. Context: recalled memories + relevant file excerpts
   send('status', { label: `${agent.name} is thinking…` });
-  const email = connectedMailbox(user.id);
+  const email = await connectedMailbox(user.id);
   const mailbox = email?.address ?? null;
   const { memories, knowledge } = await recall(user.id, agent.id, text || meta.map((f) => f.name).join(' '));
   const library = await libraryCatalog(user.id, agent.id); // same every turn, so read it once

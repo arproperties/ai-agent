@@ -26,8 +26,8 @@ export const EMAIL_TOOLS = [
 ];
 
 // the user's connected mailbox (IMAP first, then Outlook), or null when none is connected
-export function connectedMailbox(userId) {
-  const acc = imapAccount(userId) || outlookAccount(userId);
+export async function connectedMailbox(userId) {
+  const acc = (await imapAccount(userId)) || (await outlookAccount(userId));
   if (!acc) return null;
   const tools = acc.password_enc ? imapTools : outlookTools;
   return {

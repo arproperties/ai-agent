@@ -10,6 +10,7 @@ const SCOPES = 'offline_access User.Read Mail.Read';
 export const outlookEnabled = !!(MS_CLIENT_ID && MS_CLIENT_SECRET);
 
 export const outlookAccount = (userId) => db.prepare('SELECT * FROM outlook_accounts WHERE user_id = ?').get(userId);
+// note: async (db.get returns a promise) — every caller must await it
 
 async function tokenRequest(params) {
   const res = await fetch(`${AUTH}/token`, {
@@ -25,7 +26,7 @@ const expiry = (t) => Math.floor(Date.now() / 1000) + (Number(t.expires_in) || 3
 
 // a valid access token, refreshed when it is about to expire
 async function accessToken(userId) {
-  const acc = outlookAccount(userId);
+  const acc = await outlookAccount(userId);
   if (!acc) throw new Error('Outlook is not connected');
   if (acc.access_token && acc.expires_at > Date.now() / 1000 + 60) return acc.access_token;
   let t;
@@ -33,12 +34,12 @@ async function accessToken(userId) {
     t = await tokenRequest({ grant_type: 'refresh_token', refresh_token: acc.refresh_token });
   } catch (e) {
     if (e.code === 'invalid_grant') { // revoked, password changed or expired: the user has to connect again
-      db.prepare('DELETE FROM outlook_accounts WHERE user_id = ?').run(userId);
+      await db.prepare('DELETE FROM outlook_accounts WHERE user_id = ?').run(userId);
       throw new Error('The Outlook connection has expired. Reconnect it from the Email button in the menu.');
     }
     throw e;
   }
-  db.prepare('UPDATE outlook_accounts SET access_token = ?, refresh_token = ?, expires_at = ? WHERE user_id = ?')
+  await db.prepare('UPDATE outlook_accounts SET access_token = ?, refresh_token = ?, expires_at = ? WHERE user_id = ?')
     .run(t.access_token, t.refresh_token || acc.refresh_token, expiry(t), userId);
   return t.access_token;
 }
@@ -65,8 +66,8 @@ const backToApp = (res, status, message) =>
 // needs a signed-in user
 export const outlookRoutes = Router();
 
-outlookRoutes.get('/', (req, res) => {
-  const acc = outlookAccount(req.user.id);
+outlookRoutes.get('/', async (req, res) => {
+  const acc = await outlookAccount(req.user.id);
   res.json({ enabled: outlookEnabled, account: acc && { email: acc.email, connectedAt: acc.created_at } });
 });
 
@@ -83,8 +84,8 @@ outlookRoutes.get('/connect', (req, res) => {
   })}`);
 });
 
-outlookRoutes.delete('/', (req, res) => {
-  db.prepare('DELETE FROM outlook_accounts WHERE user_id = ?').run(req.user.id);
+outlookRoutes.delete('/', async (req, res) => {
+  await db.prepare('DELETE FROM outlook_accounts WHERE user_id = ?').run(req.user.id);
   res.json({ ok: true });
 });
 
@@ -100,9 +101,9 @@ outlookCallback.get('/callback', async (req, res) => {
   try {
     const t = await tokenRequest({ grant_type: 'authorization_code', code: String(req.query.code || ''), redirect_uri: p.redirectUri, code_verifier: p.verifier });
     const me = await fetch(`${GRAPH}/me?$select=mail,userPrincipalName`, { headers: { Authorization: `Bearer ${t.access_token}` } }).then((r) => r.json());
-    db.prepare(`INSERT INTO outlook_accounts (user_id, email, access_token, refresh_token, expires_at) VALUES (?, ?, ?, ?, ?)
+    await db.prepare(`INSERT INTO outlook_accounts (user_id, email, access_token, refresh_token, expires_at) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, access_token = excluded.access_token,
-        refresh_token = excluded.refresh_token, expires_at = excluded.expires_at, created_at = unixepoch()`)
+        refresh_token = excluded.refresh_token, expires_at = excluded.expires_at, created_at = extract(epoch from now())::bigint`)
       .run(p.userId, me.mail || me.userPrincipalName || null, t.access_token, t.refresh_token, expiry(t));
     backToApp(res, 'connected');
   } catch (e) {

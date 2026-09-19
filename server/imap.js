@@ -28,6 +28,7 @@ function decrypt(stored) {
 }
 
 export const imapAccount = (userId) => db.prepare('SELECT * FROM imap_accounts WHERE user_id = ?').get(userId);
+// note: async (db.get returns a promise) — every caller must await it
 
 // ---------- finding the server ----------
 const KNOWN = [ // mail server (MX) of the domain -> its IMAP server
@@ -79,7 +80,7 @@ async function withMailbox(acc, fn) {
 export const imapRoutes = Router();
 const accountOut = (a) => a && { email: a.email, host: a.host, port: a.port, connectedAt: a.created_at };
 
-imapRoutes.get('/', (req, res) => res.json({ account: accountOut(imapAccount(req.user.id)) }));
+imapRoutes.get('/', async (req, res) => res.json({ account: accountOut(await imapAccount(req.user.id)) }));
 
 imapRoutes.post('/', async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase().slice(0, 200);
@@ -100,15 +101,15 @@ imapRoutes.post('/', async (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: friendly(e, host), host, port });
   }
-  db.prepare(`INSERT INTO imap_accounts (user_id, email, host, port, username, password_enc) VALUES (?, ?, ?, ?, ?, ?)
+  await db.prepare(`INSERT INTO imap_accounts (user_id, email, host, port, username, password_enc) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, host = excluded.host, port = excluded.port,
-      username = excluded.username, password_enc = excluded.password_enc, created_at = unixepoch()`)
+      username = excluded.username, password_enc = excluded.password_enc, created_at = extract(epoch from now())::bigint`)
     .run(req.user.id, email, host, port, username, enc);
-  res.json({ account: accountOut(imapAccount(req.user.id)) });
+  res.json({ account: accountOut(await imapAccount(req.user.id)) });
 });
 
-imapRoutes.delete('/', (req, res) => {
-  db.prepare('DELETE FROM imap_accounts WHERE user_id = ?').run(req.user.id);
+imapRoutes.delete('/', async (req, res) => {
+  await db.prepare('DELETE FROM imap_accounts WHERE user_id = ?').run(req.user.id);
   res.json({ ok: true });
 });
 
@@ -132,7 +133,7 @@ async function searchEmail(userId, { query = '', folder, unread_only, since, lim
     ...(unread_only ? { seen: false } : {}),
     ...(/^\d{4}-\d{2}-\d{2}$/.test(since || '') ? { since: new Date(`${since}T00:00:00Z`) } : {}),
   };
-  const found = await withMailbox(imapAccount(userId), async (c) => {
+  const found = await withMailbox(await imapAccount(userId), async (c) => {
     const out = [];
     for (const path of await folders(c, folder || (q ? 'all' : 'inbox'))) {
       const lock = await c.getMailboxLock(path, { readOnly: true });
@@ -162,7 +163,7 @@ async function readEmail(userId, { id }) {
   const path = String(id).slice(0, i);
   const uid = Number(String(id).slice(i + 1));
   if (i < 1 || !uid) throw new Error('Unknown email id: use an id from search_email');
-  const p = await withMailbox(imapAccount(userId), async (c) => {
+  const p = await withMailbox(await imapAccount(userId), async (c) => {
     const lock = await c.getMailboxLock(path, { readOnly: true });
     try {
       const m = await c.fetchOne(String(uid), { source: true }, { uid: true });
