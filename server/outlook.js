@@ -111,30 +111,7 @@ outlookCallback.get('/callback', async (req, res) => {
   }
 });
 
-// ---------- tools for the agents ----------
-export const EMAIL_TOOLS = [
-  {
-    name: 'search_email',
-    description: "Search or list emails in the user's Outlook mailbox. Returns up to `limit` messages with id, date, sender, subject and a short preview. " +
-      'Leave query empty to list the latest emails. Use read_email with an id to read the full message.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Keywords, a person, company or email address. Empty = latest emails.' },
-        folder: { type: 'string', enum: ['inbox', 'sent', 'all'], description: 'Default: all folders when searching, inbox when listing.' },
-        unread_only: { type: 'boolean' },
-        since: { type: 'string', description: 'Only emails received on or after this date (YYYY-MM-DD).' },
-        limit: { type: 'integer', minimum: 1, maximum: 25, description: 'Default 10.' },
-      },
-    },
-  },
-  {
-    name: 'read_email',
-    description: 'Read one email in full (recipients, body text, attachment names and a link to open it in Outlook) by the id from search_email.',
-    input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
-  },
-];
-
+// ---------- tools for the agents (definitions in email.js) ----------
 const person = (r) => (r?.emailAddress ? `${r.emailAddress.name || ''} <${r.emailAddress.address || ''}>`.trim() : 'unknown');
 const stamp = (iso) => new Date(iso).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 const SUMMARY = 'id,subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments';
@@ -185,13 +162,4 @@ async function readEmail(userId, { id }) {
   ].join('\n');
 }
 
-// runs one tool_use block and returns its tool_result
-export async function runEmailTool(userId, block) {
-  try {
-    const run = { search_email: searchEmail, read_email: readEmail }[block.name];
-    if (!run) throw new Error(`Unknown tool ${block.name}`);
-    return { type: 'tool_result', tool_use_id: block.id, content: await run(userId, block.input || {}) };
-  } catch (e) {
-    return { type: 'tool_result', tool_use_id: block.id, content: e.message, is_error: true };
-  }
-}
+export const outlookTools = { search_email: searchEmail, read_email: readEmail };

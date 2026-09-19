@@ -95,6 +95,17 @@ db.exec(`
     created_at INTEGER DEFAULT (unixepoch())
   );
 
+  -- one connected IMAP mailbox per user (Titan, Gmail…); the password is encrypted with EMAIL_KEY
+  CREATE TABLE IF NOT EXISTS imap_accounts (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 993,
+    username TEXT NOT NULL,
+    password_enc TEXT NOT NULL,
+    created_at INTEGER DEFAULT (unixepoch())
+  );
+
   CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, content='chunks', content_rowid='id');
   CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(text, content='memories', content_rowid='id');
 
