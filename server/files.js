@@ -17,7 +17,7 @@ export const isImage = (f) => IMAGE_TYPES.includes(f.mimetype);
  * Store an upload. Returns { doc, duplicate }. A file the user already has (same bytes) is not stored twice.
  * agentId null = shared library.
  */
-export async function saveUpload(userId, agentId, f, conversationId = null) {
+export async function saveUpload(userId, agentId, f, conversationId = null, kind = null) {
   const hash = createHash('sha256').update(f.buffer).digest('hex');
   // Keyed on the bytes alone, not the shelf: the shelf is usually chosen by the
   // classifier after this point, so including it would let the same file land twice
@@ -28,12 +28,35 @@ export async function saveUpload(userId, agentId, f, conversationId = null) {
   const name = fileName(f);
   const { id } = await db.prepare(`INSERT INTO documents (user_id, agent_id, conversation_id, name, title, kind, size, mime, hash, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing') RETURNING id`)
-    .run(userId, agentId, conversationId, name, name, isImage(f) ? 'image' : 'doc', f.size, f.mimetype, hash);
+    .run(userId, agentId, conversationId, name, name, kind ?? (isImage(f) ? 'image' : 'doc'), f.size, f.mimetype, hash);
   mkdirSync(`${UPLOAD_DIR}/${userId}`, { recursive: true });
   const path = `${UPLOAD_DIR}/${userId}/${id}${extname(name).toLowerCase().replace(/[^.\w]/g, '')}`;
   writeFileSync(path, f.buffer);
   await db.prepare('UPDATE documents SET path = ? WHERE id = ?').run(path, id);
   return { doc: await db.prepare('SELECT * FROM documents WHERE id = ?').get(id), duplicate: false };
+}
+
+/**
+ * A working filename for a note, from its opening words. Only ever a placeholder: the
+ * classifier titles it properly a moment later, the same as it does for an upload.
+ */
+export function noteName(text) {
+  const first = String(text || '').split('\n').find((l) => l.trim()) || '';
+  const words = first.replace(/[^\p{L}\p{N} ,.'-]/gu, ' ').replace(/\s+/g, ' ').trim().split(' ').slice(0, 6).join(' ');
+  return `${words.slice(0, 60).replace(/[.\s]+$/, '') || `Note ${new Date().toISOString().slice(0, 10)}`}.txt`;
+}
+
+/**
+ * A note is an upload we synthesise: the same bytes-on-disk, dedup, classification and
+ * indexing path as a file, so it can be opened, downloaded and searched like one. The
+ * only thing that differs is where it came from, which `kind` records.
+ */
+export async function saveNote(userId, agentId, text) {
+  const body = String(text || '').trim();
+  if (!body) throw Object.assign(new Error('The note is empty'), { status: 400 });
+  const buffer = Buffer.from(body, 'utf8');
+  const f = { buffer, originalname: noteName(body), mimetype: 'text/plain', size: buffer.length };
+  return saveUpload(userId, agentId, f, null, 'note');
 }
 
 /**
