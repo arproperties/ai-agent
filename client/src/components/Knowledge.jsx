@@ -94,6 +94,12 @@ export function FileCard({ d, onOpen }) {
           </div>
         )}
         {d.status === 'error' && <AlertCircle size={18} className="absolute right-2.5 top-2.5 text-bad" />}
+        {/* only master's files are ever shared, so this doubles as "staff can read this" */}
+        {d.shared && (
+          <span title="Shared" className="absolute right-2.5 top-2.5 flex items-center gap-1 rounded-full bg-p1/85 px-2 py-0.5 text-[10px] font-medium text-white">
+            <Users size={11} /> Shared
+          </span>
+        )}
       </div>
       <div className="flex flex-1 flex-col p-3">
         <p className="line-clamp-2 text-[13px] font-medium leading-snug">{busy ? d.name : d.title}</p>
@@ -171,10 +177,51 @@ export function FileViewer({ d, onClose, onInfo }) {
   );
 }
 
-export function FileDetail({ d, folders, onClose, onChanged, onOpenChat }) {
+// Folders whose contents are usually company-wide rather than personal. Only ever a
+// nudge next to the control: forgetting the toggle must never publish anything.
+const USUALLY_SHARED = ['HR & Employees', 'Company & Licenses'];
+
+/**
+ * Master's Private/Shared control. How far "shared" reaches depends on where the file
+ * is filed, so the copy says which rather than leaving it to be guessed: on a shelf it
+ * reaches the people assigned that shelf, in the library it reaches every user.
+ */
+function Visibility({ shared, folder, shelfName, onChange }) {
+  return (
+    <div>
+      <span className="mb-1.5 block text-xs font-medium tracking-wide text-mute">VISIBILITY</span>
+      <div className="grid grid-cols-2 rounded-full bg-white/5 p-1 text-sm">
+        {[[false, 'Private'], [true, 'Shared']].map(([v, label]) => (
+          <button type="button" key={label} onClick={() => onChange(v)}
+            className={`rounded-full py-2 transition ${shared === v ? 'bg-white/15 text-txt' : 'text-mute'}`}>{label}</button>
+        ))}
+      </div>
+      <p className="mt-1.5 text-xs text-mute">
+        {shared
+          ? shelfName ? `Anyone given ${shelfName} can read this.` : 'Every user can read this.'
+          : 'Only you can see this file.'}
+      </p>
+      {!shared && USUALLY_SHARED.includes(folder) && (
+        <p className="mt-1 text-xs text-p1">{folder} files are usually shared.</p>
+      )}
+    </div>
+  );
+}
+
+export function FileDetail({ d, folders, me, shelfName, onClose, onChanged, onOpenChat }) {
   const [FolderIcon, tone] = folderStyle(d.folder);
   const [viewing, setViewing] = useState(false);
+  // Held locally as well as on the row: one caller passes a no-op onChanged, and the
+  // control still has to respond to being pressed.
+  const [shared, setShared] = useState(!!d.shared);
   const move = async (folder) => { await api.patch(`/documents/${d.id}`, { folder }); onChanged(); onClose(); };
+  const share = async (next) => {
+    setShared(next);
+    try {
+      await api.patch(`/documents/${d.id}`, { shared: next });
+      onChanged();
+    } catch { setShared(!next); }
+  };
   const remove = async () => {
     if (!confirm(`Delete “${d.title}”?`)) return;
     await api.del(`/documents/${d.id}`);
@@ -220,6 +267,8 @@ export function FileDetail({ d, folders, onClose, onChanged, onOpenChat }) {
           </span>
         </label>
 
+        {me?.role === 'master' && <Visibility shared={shared} folder={d.folder} shelfName={shelfName} onChange={share} />}
+
         <div className="flex gap-2 pt-1">
           <button onClick={() => setViewing(true)}
             className="flex flex-1 items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white">
@@ -249,7 +298,7 @@ function SearchBox({ value, onChange }) {
 const matches = (d, q) => !q || [d.title, d.name, d.summary, d.folder, ...(d.tags || [])].join(' ').toLowerCase().includes(q.toLowerCase());
 
 // ---------- full-screen Files page ----------
-export function FilesPage({ folders, onBack, onOpenChat }) {
+export function FilesPage({ folders, me, onBack, onOpenChat }) {
   const { docs, load, upload, uploading, notes } = useFiles(null);
   const [folder, setFolder] = useState('All');
   const [q, setQ] = useState('');
@@ -336,13 +385,13 @@ export function FilesPage({ folders, onBack, onOpenChat }) {
         </div>
       )}
       {viewing && <FileViewer d={viewing} onClose={() => setViewing(null)} onInfo={(d) => { setViewing(null); setOpen(d.id); }} />}
-      {openDoc && <FileDetail d={openDoc} folders={folders} onClose={() => setOpen(null)} onChanged={load} onOpenChat={onOpenChat} />}
+      {openDoc && <FileDetail d={openDoc} folders={folders} me={me} onClose={() => setOpen(null)} onChanged={load} onOpenChat={onOpenChat} />}
     </div>
   );
 }
 
 // ---------- compact version for an agent's own files (inside the agent sheet) ----------
-export function FilesPanel({ agentId, hint, folders }) {
+export function FilesPanel({ agentId, hint, folders, me, shelfName }) {
   const { docs, load, upload, uploading, notes } = useFiles(agentId);
   const [open, setOpen] = useState(null);
   const ref = useRef();
@@ -361,7 +410,7 @@ export function FilesPanel({ agentId, hint, folders }) {
       <div className="grid grid-cols-2 gap-2.5">
         {docs?.map((d) => <FileCard key={d.id} d={d} onOpen={(x) => setOpen(x.id)} />)}
       </div>
-      {openDoc && <FileDetail d={openDoc} folders={folders} onClose={() => setOpen(null)} onChanged={load} />}
+      {openDoc && <FileDetail d={openDoc} folders={folders} me={me} shelfName={shelfName} onClose={() => setOpen(null)} onChanged={load} />}
     </div>
   );
 }

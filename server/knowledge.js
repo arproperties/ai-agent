@@ -74,8 +74,10 @@ export async function indexChunks(doc, text) {
   for (let i = 0; i < pieces.length; i += 32) vectors.push(...(await embed(pieces.slice(i, i + 32))));
   await tx(async () => {
     await db.prepare('DELETE FROM chunks WHERE document_id = ?').run(doc.id);
-    const ins = db.prepare('INSERT INTO chunks (user_id, agent_id, document_id, text, embedding) VALUES (?, ?, ?, ?, ?::vector)');
-    for (const [i, p] of pieces.entries()) await ins.run(doc.user_id, doc.agent_id, doc.id, p, toVecLiteral(vectors[i]));
+    // shared is denormalised off the document; carry it over or re-processing a shared
+    // file would silently unshare its chunks while the document still reads as shared.
+    const ins = db.prepare('INSERT INTO chunks (user_id, agent_id, document_id, text, shared, embedding) VALUES (?, ?, ?, ?, ?, ?::vector)');
+    for (const [i, p] of pieces.entries()) await ins.run(doc.user_id, doc.agent_id, doc.id, p, !!doc.shared, toVecLiteral(vectors[i]));
   });
 }
 

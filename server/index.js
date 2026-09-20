@@ -7,10 +7,10 @@ import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks } from './agents.js';
-import { chatAgents, canUseAgent } from './access.js';
+import { chatAgents, canUseAgent, isMaster } from './access.js';
 import { chat } from './chat.js';
 import { addMemory } from './knowledge.js';
-import { saveUpload, processDocument, deleteDocument, inlineType, docxPreview } from './files.js';
+import { saveUpload, processDocument, deleteDocument, inlineType, docxPreview, setShared } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes } from './admin.js';
@@ -185,13 +185,16 @@ app.get('/api/documents/:id/preview', wrap(async (req, res) => {
   res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src data:");
   res.type('html').send(await docxPreview(doc));
 }));
-// move to another folder or rename
+// move to another folder, rename, or (master only) publish to the shelf
 app.patch('/api/documents/:id', wrap(async (req, res) => {
   const doc = await own('documents', req.params.id, req.user.id);
   if (!doc) return notFound(res);
   const folder = FOLDERS.includes(req.body.folder) ? req.body.folder : doc.folder;
   const title = String(req.body.title || doc.title).slice(0, 120);
   await db.prepare('UPDATE documents SET folder = ?, title = ? WHERE id = ?').run(folder, title, doc.id);
+  // A field-level permission, not a route-level one: everyone renames and refiles here,
+  // but only the master may publish. A user sending `shared` simply does not get it.
+  if ('shared' in req.body && isMaster(req.user)) await setShared(req.user, doc.id, req.body.shared);
   res.json(docOut(await db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(doc.id)));
 }));
 app.delete('/api/documents/:id', wrap(async (req, res) => {
