@@ -296,6 +296,64 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_access_subject ON access_log(subject_user_id, id DESC);
 `);
 
+// Sending. The mailbox row gains its SMTP side and one switch: can_write. It defaults to
+// false so every connection made before this feature existed stays read-only — write
+// access is something its owner turns on, never something they inherit.
+await db.exec(`
+  ALTER TABLE imap_accounts ADD COLUMN IF NOT EXISTS smtp_host   TEXT;
+  ALTER TABLE imap_accounts ADD COLUMN IF NOT EXISTS smtp_port   INTEGER NOT NULL DEFAULT 465;
+  ALTER TABLE imap_accounts ADD COLUMN IF NOT EXISTS smtp_secure BOOLEAN NOT NULL DEFAULT true;
+  ALTER TABLE imap_accounts ADD COLUMN IF NOT EXISTS can_write   BOOLEAN NOT NULL DEFAULT false;
+
+  -- An email an agent wrote but has not been allowed to send. The status IS the approval:
+  -- nothing reaches SMTP except by a row moving to 'approved', and only the user moves it.
+  -- That also makes the send queue durable — a restart loses nothing that was approved.
+  --   refs: the References header. 'references' is a reserved word in Postgres.
+  --   reply_to_id: the folder:uid of the email being answered, the same id search_email gives.
+  CREATE TABLE IF NOT EXISTS email_drafts (
+    id SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    agent_id        INTEGER REFERENCES agents(id) ON DELETE SET NULL,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    to_addrs   TEXT NOT NULL DEFAULT '[]',
+    cc_addrs   TEXT NOT NULL DEFAULT '[]',
+    subject    TEXT NOT NULL DEFAULT '',
+    body       TEXT NOT NULL DEFAULT '',
+    in_reply_to TEXT,
+    refs        TEXT,
+    reply_to_id TEXT,
+    status     TEXT NOT NULL DEFAULT 'pending'
+               CHECK (status IN ('pending', 'approved', 'sent', 'rejected', 'failed')),
+    message_id TEXT,
+    error      TEXT,
+    created_at BIGINT DEFAULT ${NOW},
+    decided_at BIGINT,
+    sent_at    BIGINT
+  );
+
+  -- Every send and every mailbox action, for the person whose mailbox it is. draft_id and
+  -- agent_id are deliberately NOT foreign keys: deleting the draft, or the agent that wrote
+  -- it, must not delete the record of what was done. Recipients and ids only — never a body,
+  -- never a credential.
+  CREATE TABLE IF NOT EXISTS email_action_log (
+    id SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    agent_id   INTEGER,
+    action     TEXT NOT NULL,
+    draft_id   INTEGER,
+    recipients TEXT,
+    target     TEXT,
+    message_id TEXT,
+    ok         BOOLEAN NOT NULL DEFAULT true,
+    error      TEXT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_drafts_queue ON email_drafts(id) WHERE status = 'approved';
+  CREATE INDEX IF NOT EXISTS idx_drafts_user  ON email_drafts(user_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_email_log_rate ON email_action_log(user_id, created_at) WHERE action = 'send' AND ok;
+`);
+
 // Databases created before this treated agents.id as the OWNER of a document, so
 // deleting a shared agent destroyed every assigned user's files. agent_id is a shelf
 // label; the owner is user_id. Swap the two foreign keys over to SET NULL so a deleted
