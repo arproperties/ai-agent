@@ -12,14 +12,24 @@ import Sheet from './Sheet';
 function AgentCard({ agent, on, label, onClick }) {
   return (
     <button onClick={onClick} aria-pressed={on} aria-label={label}
-      className={`relative flex flex-col items-center gap-2 rounded-2xl border p-3 text-center transition ${
-        on ? 'border-p1/50 bg-p1/[0.09]' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.06]'}`}>
-      <span className={`absolute right-2 top-2 grid size-4 place-items-center rounded-full border transition ${
-        on ? 'border-p1 bg-p1 text-white' : 'border-mute/40'}`}>
+      className={`group relative flex aspect-[5/6] flex-col items-center justify-center gap-3 overflow-hidden rounded-[1.25rem] border p-3 text-center transition-all duration-200 hover:-translate-y-0.5 ${
+        on
+          ? 'border-p1/50 bg-gradient-to-b from-p1/20 via-p1/[0.06] to-transparent shadow-lg shadow-p1/20'
+          : 'border-stroke bg-white/[0.035] hover:border-white/20 hover:bg-white/[0.07]'}`}>
+      {/* The chosen card gets the same aurora bloom the background has, so selection
+          reads as light rather than as one more outline. */}
+      {on && <span aria-hidden className="pointer-events-none absolute -top-10 left-1/2 size-28 -translate-x-1/2 rounded-full bg-p1/30 blur-2xl" />}
+
+      <span className={`absolute right-2.5 top-2.5 grid size-[18px] place-items-center rounded-full transition ${
+        on ? 'bg-gradient-to-br from-p1 to-p2 text-white shadow-md shadow-p1/40' : 'border border-white/15 bg-white/[0.04] group-hover:border-white/30'}`}>
         {on && <Check size={11} strokeWidth={3.5} />}
       </span>
-      <Avatar icon={agent.icon} color={agent.color} size={40} className={on ? '' : 'opacity-40 grayscale'} />
-      <span className="line-clamp-2 w-full text-xs leading-tight">{agent.name}</span>
+
+      <Avatar icon={agent.icon} color={agent.color} size={52}
+        className={`relative transition duration-200 ${on ? 'ring-2 ring-white/25' : 'opacity-65 saturate-50 group-hover:opacity-90 group-hover:saturate-100'}`} />
+      <span className={`relative line-clamp-2 w-full text-[13px] font-medium leading-tight transition ${on ? 'text-txt' : 'text-mute group-hover:text-txt/80'}`}>
+        {agent.name}
+      </span>
     </button>
   );
 }
@@ -180,7 +190,9 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
                   <span className="text-[11px] font-medium tracking-[0.14em] text-mute">THEIR AGENT</span>
                   <span className="text-[11px] text-mute">pick one</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+                {/* auto-fill rather than fixed columns: the cards keep their shape on a
+                    wide panel instead of stretching into letterboxes. */}
+                <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(112px,1fr))]">
                   {agents.map((a) => (
                     <AgentCard key={a.id} agent={a} on={chatId === a.id} onClick={() => chooseChat(a.id)}
                       label={`Make ${a.name} the agent ${person.name} chats with`} />
