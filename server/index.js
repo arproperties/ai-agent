@@ -14,6 +14,8 @@ import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docx
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
+import { emailRoutes } from './emailRoutes.js';
+import { startOutbox } from './outbox.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -25,6 +27,7 @@ app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; che
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api/outlook', outlookRoutes);
 app.use('/api/imap', imapRoutes);
+app.use('/api/email', emailRoutes);
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -288,4 +291,7 @@ if (existsSync(dist)) {
   app.use((req, res, next) => (req.method === 'GET' ? res.sendFile(`${dist}/index.html`) : next()));
 }
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Jarvis server → http://localhost:${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+  startOutbox(); // drafts approved while the rate limit was full go out when it clears
+  console.log(`Jarvis server → http://localhost:${PORT}`);
+});
