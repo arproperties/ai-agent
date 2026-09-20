@@ -2,30 +2,11 @@ import { Router } from 'express';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { resolveMx } from 'node:dns/promises';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { db } from './db.js';
+import { encrypt, decrypt } from './secrets.js';
 
 // Any IMAP mailbox (Titan, Gmail, Zoho, Yahoo, cPanel hosting…). Read-only: folders are opened with EXAMINE,
 // so reading never marks mail as read, and nothing is sent, moved or deleted.
-
-// ---------- password encryption (AES-256-GCM, key in .env) ----------
-function key() {
-  const k = Buffer.from(process.env.EMAIL_KEY || '', 'base64');
-  if (k.length !== 32) throw new Error('EMAIL_KEY is missing or invalid in .env (needs 32 random bytes, base64). See README.');
-  return k;
-}
-function encrypt(text) {
-  const iv = randomBytes(12);
-  const c = createCipheriv('aes-256-gcm', key(), iv);
-  const data = Buffer.concat([c.update(text, 'utf8'), c.final()]);
-  return [iv, c.getAuthTag(), data].map((b) => b.toString('base64')).join('.');
-}
-function decrypt(stored) {
-  const [iv, tag, data] = stored.split('.').map((s) => Buffer.from(s, 'base64'));
-  const d = createDecipheriv('aes-256-gcm', key(), iv);
-  d.setAuthTag(tag);
-  return Buffer.concat([d.update(data), d.final()]).toString('utf8');
-}
 
 export const imapAccount = (userId) => db.prepare('SELECT * FROM imap_accounts WHERE user_id = ?').get(userId);
 // note: async (db.get returns a promise) — every caller must await it
