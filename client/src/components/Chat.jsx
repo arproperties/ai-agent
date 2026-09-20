@@ -5,6 +5,7 @@ import Icon from './Icon';
 import Orb from './Orb';
 import Avatar from './Avatar';
 import Message from './Message';
+import DraftCard from './DraftCard';
 import Composer from './Composer';
 import LiveVoice from './LiveVoice';
 import Sheet from './Sheet';
@@ -29,6 +30,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
   const [viewer, setViewer] = useState(null); // file open in the full-screen viewer
   const [details, setDetails] = useState(null); // file open in the details sheet
   const [chatFiles, setChatFiles] = useState(null); // list of this chat's attachments
+  const [drafts, setDrafts] = useState([]); // emails written this session, waiting on a tap
   const abortRef = useRef();
   const scrollRef = useRef();
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
@@ -36,7 +38,10 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
   const toBottom = () => requestAnimationFrame(() => scrollRef.current && (scrollRef.current.scrollTop = scrollRef.current.scrollHeight));
 
   useEffect(() => {
-    if (conversationId) api.get(`/conversations/${conversationId}/messages`).then((m) => { setMessages(m); toBottom(); });
+    if (conversationId) {
+      api.get(`/conversations/${conversationId}/messages`).then((m) => { setMessages(m); toBottom(); });
+      api.get(`/email/drafts?conversation=${conversationId}&status=pending`).then((r) => setDrafts(r.drafts)).catch(() => {});
+    }
     return () => { abortRef.current?.abort(); stopSpeaking(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -98,6 +103,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
           else if (event === 'notice') flash(d.message);
           else if (event === 'error') update({ error: d.message });
           else if (event === 'sources') update({ sources: d });
+          else if (event === 'draft') { setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'delta') {
             if (!reply) setOrb('speaking');
             setStatus('');
@@ -186,6 +192,10 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
               <Message key={m.id} msg={m} agent={byId[m.agent_id]} voiceEnabled={voiceEnabled} onOpenFile={openFile}
                 voice={voice.id === m.id ? voice.state : 'idle'} onStopSpeak={stopSpeaking}
                 onSpeak={() => say(m.content, m.id, m.agent_id)} />
+            ))}
+            {drafts.map((d) => (
+              <DraftCard key={d.id} draft={d}
+                onChanged={(u) => setDrafts((ds) => ds.map((x) => (x.id === u.id ? u : x)))} />
             ))}
           </div>
         )}
