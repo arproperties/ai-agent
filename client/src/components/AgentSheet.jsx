@@ -141,7 +141,7 @@ export default function AgentSheet({ agent, config, me, onClose, onSaved }) {
   const [tab, setTab] = useState('persona');
   return (
     <Sheet title={agent.id ? agent.name : 'New agent'} onClose={onClose} tab={tab} onTab={setTab}
-      tabs={agent.id ? [['persona', 'Persona'], ['files', 'Agent files']] : []}
+      tabs={agent.id ? [['persona', 'Persona'], ['files', 'Shelf']] : []}
       icon={agent.id && <Avatar icon={agent.icon} color={agent.color} size={32} className="shadow-none" />}>
       {tab === 'persona' ? <PersonaTab agent={agent} config={config} onSaved={onSaved} /> : (
         <FilesPanel agentId={agent.id} folders={config.folders || []} me={me} shelfName={agent.name} hint={`Only ${agent.name} uses these files. They also help Jarvis know when to pick ${agent.name}.`} />

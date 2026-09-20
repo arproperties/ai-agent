@@ -115,7 +115,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
       <div className="space-y-1 border-t border-stroke/60 p-3 pb-safe">
         <div className={`grid gap-1 ${user.role === 'master' ? 'grid-cols-4' : 'grid-cols-3'}`}>
           <button onClick={onFiles} className={`flex flex-col items-center gap-1 rounded-xl py-2 text-xs ${filesOpen ? 'bg-white/10' : 'hover:bg-white/5'}`}>
-            <span className="grid size-8 place-items-center rounded-full bg-sky-400/20 text-sky-300"><Icon name="folder" size={17} /></span> Files
+            <span className="grid size-8 place-items-center rounded-full bg-sky-400/20 text-sky-300"><Icon name="folder" size={17} /></span> Shelf
           </button>
           <button onClick={onMemory} className="flex flex-col items-center gap-1 rounded-xl py-2 text-xs hover:bg-white/5">
             <span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><Icon name="brain" size={17} /></span> Memory

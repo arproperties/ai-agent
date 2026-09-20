@@ -38,7 +38,7 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox) 
       'The app automatically routes each message to the best agent, so earlier assistant turns in this conversation may have been written by a teammate. Continue seamlessly.');
   }
   if (memories.length) parts.push(`<memory>\nThings you remember about the user from earlier conversations:\n${memories.map((m) => `- ${m}`).join('\n')}\n</memory>`);
-  if (library.length) parts.push(`<file_library>\nThe user's saved files (newest first). Their content is searchable; relevant excerpts appear in <knowledge>. Files can be opened from the Files screen in the app.\n${library.join('\n')}\n</file_library>`);
+  if (library.length) parts.push(`<file_library>\nThe user's saved files (newest first). Their content is searchable; relevant excerpts appear in <knowledge>. Files can be opened from the Shelf screen in the app.\n${library.join('\n')}\n</file_library>`);
   if (knowledge.length) parts.push(`<knowledge>\nExcerpts from the user's files that may be relevant:\n${knowledge.join('\n---\n')}\n</knowledge>`);
   return parts.join('\n\n');
 }

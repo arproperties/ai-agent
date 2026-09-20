@@ -363,7 +363,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
             <ChevronLeft size={22} />
           </button>
           <div className="min-w-0 flex-1">
-            <h1 className="text-[22px] font-light leading-tight">Files</h1>
+            <h1 className="text-[22px] font-light leading-tight">Shelf</h1>
             <p className="text-xs text-mute">{docs ? `${docs.length} files · sorted automatically` : 'Loading…'}</p>
           </div>
           <button onClick={() => setWriting(true)} disabled={uploading}
