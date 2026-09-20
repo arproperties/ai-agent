@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileSignature, Building2, Receipt, Landmark, Scale, Users, IdCard, BadgeCheck, Mail, Megaphone, Image as ImageIcon,
-  Folder, FolderOpen, Search, Download, ExternalLink, Loader2, AlertCircle, Upload, ChevronLeft, ChevronDown, Trash2, MessageSquare, X, Info, PenLine,
+  Folder, FolderOpen, Search, Download, ExternalLink, Loader2, AlertCircle, Upload, ChevronLeft, ChevronDown, Trash2, MessageSquare, X, Info, PenLine, Sparkles,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
@@ -132,6 +132,11 @@ export function FileCard({ d, onOpen }) {
           </div>
         )}
         {d.status === 'error' && <AlertCircle size={18} className="absolute right-2.5 top-2.5 text-bad" />}
+        {d.kind === 'fact' && !d.shared && (
+          <span title="Noticed in a chat — not shared yet" className="absolute left-2.5 top-2.5 flex items-center gap-1 rounded-full bg-amber-400/90 px-2 py-0.5 text-[10px] font-medium text-[#141128]">
+            <Sparkles size={11} /> Learned
+          </span>
+        )}
         {/* only master's files are ever shared, so this doubles as "staff can read this" */}
         {d.shared && (
           <span title="Shared" className="absolute right-2.5 top-2.5 flex items-center gap-1 rounded-full bg-p1/85 px-2 py-0.5 text-[10px] font-medium text-white">
@@ -305,6 +310,20 @@ export function FileDetail({ d, folders, me, shelfName, onClose, onChanged, onOp
           </span>
         </label>
 
+        {d.kind === 'fact' && (
+          <div className="space-y-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2.5">
+            <p className="text-xs leading-relaxed text-amber-200">
+              Your assistant noticed this in a conversation and wrote it down. Nobody else can read it until you
+              switch it to Shared below.
+            </p>
+            {d.origin_conversation_id && onOpenChat && (
+              <button onClick={() => { onClose(); onOpenChat(d.origin_conversation_id); }}
+                className="inline-flex items-center gap-1.5 text-xs text-amber-200 underline-offset-2 hover:underline">
+                <MessageSquare size={13} /> See the chat it came from
+              </button>
+            )}
+          </div>
+        )}
         {me?.role === 'master' && <Visibility shared={shared} folder={d.folder} shelfName={shelfName} onChange={share} />}
 
         <div className="flex gap-2 pt-1">

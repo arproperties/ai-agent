@@ -1,7 +1,7 @@
 import mammoth from 'mammoth';
 import { db, tx } from './db.js';
 import { ask, embed } from './ai.js';
-import { shelfIds } from './access.js';
+import { shelfIds, isMaster } from './access.js';
 
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const TEXT_EXT = ['txt', 'md', 'csv', 'json', 'html', 'xml', 'yaml', 'yml', 'log', 'js', 'ts', 'py', 'sql', 'tsv'];
@@ -163,16 +163,88 @@ export async function recall(user, query) {
 }
 
 // ---------- learning: pull lasting facts out of each exchange ----------
-export async function learn(userId, userText, reply) {
-  const known = (await db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id DESC LIMIT 60').all(userId)).map((r) => r.text);
+
+/**
+ * Refuses anything that reads as being about a particular person, sum or document.
+ *
+ * The prompt already asks for general rules only, but the model is the last thing
+ * deciding and a captured fact is one click from reaching everyone. "Notice period is
+ * 30 days" is a rule; "Rahul is serving his notice" is somebody's business. This is a
+ * blunt instrument on purpose - a rule wrongly withheld costs nothing, and the fact is
+ * still in the conversation it came from.
+ */
+export function tooSpecificToShare(text) {
+  const t = String(text || '');
+  if (/(\b(AED|USD|EUR|GBP|SAR)|[$€£])\s?[\d,.]+|\b[\d,.]{3,}\s?(AED|USD|EUR|GBP|SAR|dirhams?)\b/i.test(t)) return true;
+  if (/\b[A-Z]{0,2}\d[\d-]{4,}\b/.test(t)) return true; // licence, Ejari, passport, phone…
+  // Two capitalised words in a row reads as a full name. Single capitals are left
+  // alone, or UAE, Ejari and December would all trip it.
+  if (/\b[A-Z][a-z]+ [A-Z][a-z]+\b/.test(t)) return true;
+  return false;
+}
+
+/**
+ * A fact the app noticed, filed to the shelf of the agent that answered - and switched
+ * OFF. It is indexed immediately so that publishing it is instant, but `shared = false`
+ * keeps it out of everyone else's retrieval until the master ticks it in the Shelf, the
+ * same Private/Shared control that governs an uploaded file.
+ *
+ * Spec §7.4 wrote these shared straight away, with no review. That was reconsidered:
+ * the deterministic guard below catches a salary but not "the new hire is on probation
+ * until March", and a fact wrongly shared has already been read by the time it is seen.
+ */
+export async function saveFact(master, agentId, conversationId, text) {
+  const body = String(text || '').trim();
+  if (!body) return null;
+  const { saveNote } = await import('./files.js');
+  const { doc, duplicate } = await saveNote(master.id, agentId, body);
+  if (duplicate) return doc;
+
+  await db.prepare(`UPDATE documents SET kind = 'fact', title = ?, folder = 'Other',
+    summary = ?, status = 'ready', origin_conversation_id = ? WHERE id = ?`)
+    .run(body.slice(0, 120), body.slice(0, 600), conversationId ?? null, doc.id);
+  const filed = await db.prepare('SELECT * FROM documents WHERE id = ?').get(doc.id);
+  await indexChunks(filed, body); // indexed now so publishing is a single toggle
+  return filed;
+}
+
+/**
+ * Pull lasting facts out of a turn. Personal ones go to the user's private memory, as
+ * they always have. Company ones - only from the master's own chats - are captured onto
+ * the answering agent's shelf switched off, for them to publish or delete.
+ */
+export async function learn(user, userText, reply, { agentId = null, conversationId = null } = {}) {
+  const known = (await db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id DESC LIMIT 60').all(user.id)).map((r) => r.text);
+  // Only the master's own conversations produce company knowledge. Staff chats are
+  // theirs: nothing anyone else says can turn into an item on the master's shelf.
+  const collecting = isMaster(user) && agentId;
+
   const out = await ask(
     `Conversation turn:\nUSER: ${userText.slice(0, 4000)}\nASSISTANT: ${reply.slice(0, 2000)}\n\nAlready known:\n${known.map((k) => `- ${k}`).join('\n') || '(nothing)'}`,
     {
       maxTokens: 400,
-      system: 'You maintain the long-term memory of an assistant. From the turn, extract NEW durable facts that will still be true and useful weeks from now: who the user is, their work, preferences, long-term goals, ongoing projects, important people and assets, and standing instructions. Do NOT store the current request or task itself, one-off questions, advice you gave, small talk, or facts already known. Most turns contain nothing worth storing. Reply with ONLY a JSON array of short standalone sentences (e.g. ["User\'s name is Sara", "User prefers short answers"]), or [] if nothing new.',
+      system: 'You maintain the long-term memory of an assistant. From the turn, extract NEW durable facts that will still be true and useful weeks from now: who the user is, their work, preferences, long-term goals, ongoing projects, important people and assets, and standing instructions. Do NOT store the current request or task itself, one-off questions, advice you gave, small talk, or facts already known. Most turns contain nothing worth storing.'
+        + (collecting
+          ? ' Sort what you find into two kinds. "personal" - anything about this user themselves, their preferences, their own affairs, a named person, a specific case, a sum of money, or one particular document. "company" - standing rules, policies and processes that would be true for a colleague too, and that you would be comfortable printing in a staff handbook. When in doubt it is personal; most turns produce no company facts at all.'
+            + ' Reply with ONLY JSON: {"personal": ["…"], "company": ["…"]}, using [] for either when there is nothing.'
+          : ' Reply with ONLY a JSON array of short standalone sentences (e.g. ["User\'s name is Sara", "User prefers short answers"]), or [] if nothing new.'),
     }
   );
-  const facts = JSON.parse(out.match(/\[[\s\S]*\]/)?.[0] || '[]').filter((f) => typeof f === 'string' && f.length < 300);
-  for (const f of facts.slice(0, 5)) await addMemory(userId, f);
-  return facts;
+
+  const clean = (list) => (Array.isArray(list) ? list : []).filter((f) => typeof f === 'string' && f.length < 300);
+  let personal = [];
+  let company = [];
+  if (collecting) {
+    const d = JSON.parse(out.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    personal = clean(d.personal);
+    // The model has the last word on the split, so re-check it: a rule wrongly held
+    // back costs nothing, and it is still in the conversation it came from.
+    company = clean(d.company).filter((f) => !tooSpecificToShare(f));
+  } else {
+    personal = clean(JSON.parse(out.match(/\[[\s\S]*\]/)?.[0] || '[]'));
+  }
+
+  for (const f of personal.slice(0, 5)) await addMemory(user.id, f);
+  for (const f of company.slice(0, 3)) await saveFact(user, agentId, conversationId, f);
+  return { personal, company };
 }
