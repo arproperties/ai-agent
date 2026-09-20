@@ -13,7 +13,7 @@ import { addMemory } from './knowledge.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
-import { adminRoutes } from './admin.js';
+import { adminRoutes, accessOfMe } from './admin.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -222,6 +222,12 @@ app.patch('/api/documents/:id', wrap(async (req, res) => {
 app.delete('/api/documents/:id', wrap(async (req, res) => {
   await deleteDocument(req.user.id, Number(req.params.id));
   res.json({ ok: true });
+}));
+
+// Who has looked at this account. Anyone can read their own; it is the whole point of
+// recording it that the person being looked at can see it, not only the one looking.
+app.get('/api/access', wrap(async (req, res) => {
+  res.json(await accessOfMe(req.user.id));
 }));
 
 // ---------- memory (shared by all of the user's agents) ----------

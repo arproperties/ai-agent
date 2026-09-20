@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, X, Users } from 'lucide-react';
+import { Search, X, Users, Eye } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
 import Avatar from './Avatar';
@@ -31,10 +31,14 @@ const Label = ({ children, action }) => (
   </div>
 );
 
-export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onLogout, onClose }) {
+export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
+  // Only shown once somebody has actually looked at this account, so it is silent for
+  // anyone nobody inspects - and impossible to miss for anyone who is.
+  const [watched, setWatched] = useState(0);
+  useEffect(() => { api.get('/access').then((r) => setWatched(r.length)).catch(() => {}); }, []);
 
   useEffect(() => {
     const term = q.trim();
@@ -68,12 +72,16 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
             <span className="w-full truncate px-0.5 text-center text-[11px] text-mute group-hover:text-txt">{a.name.split(' ')[0]}</span>
           </button>
         ))}
-        <button onClick={() => onEditAgent({})} className="group flex flex-col items-center gap-1" aria-label="New agent">
-          <span className="grid size-10 place-items-center rounded-full border border-dashed border-white/25 text-mute transition group-hover:border-p1 group-hover:text-p1">
-            <Icon name="plus" size={18} />
-          </span>
-          <span className="text-[11px] text-mute">Add</span>
-        </button>
+        {/* Only the master creates agents; the server refuses anyone else, so do not
+            offer a form that can only end in "Not allowed". */}
+        {user.role === 'master' && (
+          <button onClick={() => onEditAgent({})} className="group flex flex-col items-center gap-1" aria-label="New agent">
+            <span className="grid size-10 place-items-center rounded-full border border-dashed border-white/25 text-mute transition group-hover:border-p1 group-hover:text-p1">
+              <Icon name="plus" size={18} />
+            </span>
+            <span className="text-[11px] text-mute">Add</span>
+          </button>
+        )}
       </div>
 
       <Label>CHATS</Label>
@@ -135,6 +143,12 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
             <span className="block truncate text-sm">{user.name}</span>
             <span className="block truncate text-xs text-mute">{user.email}</span>
           </span>
+          {watched > 0 && (
+            <button onClick={onActivity} aria-label="Who has looked at your workspace" title="Who has looked at your workspace"
+              className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
+              <Eye size={16} />
+            </button>
+          )}
           <button onClick={onLogout} aria-label="Sign out" title="Sign out" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
             <Icon name="logout" size={17} />
           </button>

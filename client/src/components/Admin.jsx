@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Star, UserPlus, Ban, ChevronLeft, ExternalLink } from 'lucide-react';
+import { Loader2, Star, UserPlus, Ban, ChevronLeft, ExternalLink, Eye } from 'lucide-react';
 import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
@@ -103,12 +103,13 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
 
   return (
     <Sheet title={person.name} onClose={onClose} tab={tab} onTab={setTab}
-      tabs={[['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'], ['memory', 'Memory']]}
+      tabs={[['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'], ['memory', 'Memory'], ['activity', 'Activity']]}
       icon={<span className="grid size-8 place-items-center rounded-full bg-white/10 text-sm font-medium">{person.name[0]?.toUpperCase()}</span>}>
       <div className="space-y-4">
         <p className="-mt-1 text-xs text-mute">{person.email}{person.disabled && ' · disabled'}</p>
 
         {tab === 'memory' && <Memories person={person} />}
+        {tab === 'activity' && <Activity person={person} />}
         {(tab === 'documents' || tab === 'conversations') && <Browse person={person} kind={tab} />}
 
         {tab === 'agents' && (rows === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
@@ -182,6 +183,36 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
 }
 
 const when = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+const exactly = (ts) => (ts ? new Date(ts * 1000).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+
+export const ACCESS_WORDS = {
+  document: 'opened a file',
+  file: 'opened a file',
+  conversation: 'read a chat',
+  memory: 'looked at the memory',
+};
+
+/** What the master has read about this person. The same rows they can see themselves. */
+function Activity({ person }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api.get(`/admin/users/${person.id}/access`).then(setRows).catch(() => setRows([])); }, [person.id]);
+  if (rows === null) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
+  if (!rows.length) return <p className="py-6 text-center text-sm text-mute">You have not opened anything of theirs.</p>;
+  return (
+    <>
+      <p className="text-xs text-mute">{person.name} can see this list too, on their own account.</p>
+      <ul className="space-y-1.5">
+        {rows.map((r) => (
+          <li key={r.id} className="flex items-center gap-2.5 rounded-xl bg-white/5 px-3 py-2 text-sm">
+            <Eye size={14} className="shrink-0 text-mute" />
+            <span className="flex-1">You {ACCESS_WORDS[r.action] || r.action}</span>
+            <span className="shrink-0 text-xs text-mute">{exactly(r.created_at)}</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
 
 /**
  * Someone else's workspace, read-only. Master can see all of it (spec §2), but nothing
@@ -274,6 +305,36 @@ function Memories({ person }) {
     <ul className="space-y-1.5">
       {rows.map((m) => <li key={m.id} className="rounded-xl bg-white/5 px-3 py-2 text-sm leading-relaxed">{m.text}</li>)}
     </ul>
+  );
+}
+
+/**
+ * The other side of the ledger: shown to the person who was looked at, not the one
+ * looking. This is what makes the record an audit trail rather than a diary.
+ */
+export function MyActivitySheet({ onClose }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api.get('/access').then(setRows).catch(() => setRows([])); }, []);
+  return (
+    <Sheet title="Who has looked at your workspace" onClose={onClose}
+      icon={<span className="grid size-8 place-items-center rounded-full bg-white/10 text-mute"><Eye size={17} /></span>}>
+      {rows === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
+        <div className="space-y-3">
+          <p className="text-sm text-mute">
+            Whoever runs this workspace can open your files, chats and memory. Every time they do, it is listed here.
+          </p>
+          <ul className="space-y-1.5">
+            {rows.map((r) => (
+              <li key={r.id} className="flex items-center gap-2.5 rounded-xl bg-white/5 px-3 py-2 text-sm">
+                <Eye size={14} className="shrink-0 text-mute" />
+                <span className="flex-1"><b className="font-medium">{r.actor_name || r.actor_email}</b> {ACCESS_WORDS[r.action] || r.action}</span>
+                <span className="shrink-0 text-xs text-mute">{exactly(r.created_at)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Sheet>
   );
 }
 
