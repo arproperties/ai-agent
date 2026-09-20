@@ -2,8 +2,6 @@ import { Router } from 'express';
 import { scrypt, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { db, tx } from './db.js';
-import { REGISTRATION_CODE } from './config.js';
-import { DEFAULT_AGENTS } from './defaultAgents.js';
 import { sendPasswordReset } from './mailer.js';
 
 const scryptAsync = promisify(scrypt);
@@ -76,30 +74,12 @@ export const authRoutes = Router();
 authRoutes.get('/me', async (req, res, next) => {
   try {
     const user = await currentUser(req);
-    res.json({ user: user && publicUser(user), inviteRequired: !!REGISTRATION_CODE });
+    res.json({ user: user && publicUser(user) });
   } catch (e) { next(e); }
 });
 
-authRoutes.post('/register', async (req, res) => {
-  const name = String(req.body.name || '').trim().slice(0, 60);
-  const email = String(req.body.email || '').trim().toLowerCase().slice(0, 200);
-  const password = String(req.body.password || '');
-  if (REGISTRATION_CODE && req.body.code !== REGISTRATION_CODE) return res.status(403).json({ error: 'Invalid invite code' });
-  if (!name) return res.status(400).json({ error: 'Please enter your name' });
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-  if (await db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) return res.status(409).json({ error: 'An account with this email already exists' });
-
-  const hash = await hashPassword(password);
-  const userId = await tx(async () => {
-    const { id } = await db.prepare('INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?) RETURNING id').run(email, name, hash);
-    const ins = db.prepare('INSERT INTO agents (user_id, name, icon, color, persona, starters) VALUES (?, ?, ?, ?, ?, ?)');
-    for (const a of DEFAULT_AGENTS) await ins.run(id, a.name, a.icon, a.color, a.persona, JSON.stringify(a.starters));
-    return id;
-  });
-  await startSession(req, res, userId);
-  res.json({ user: publicUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(userId)) });
-});
+// There is no public registration. Accounts are created by the master through
+// /api/admin/users, or from the terminal; see scripts/make-master.js.
 
 authRoutes.post('/login', async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();

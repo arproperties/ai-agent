@@ -9,6 +9,7 @@
     "test": "node --test --test-force-exit --test-concurrency=1",
     "setup": "npm install && npm --prefix client install",
     "reset-password": "node scripts/reset-password.js",
+    "make-master": "node scripts/make-master.js",
     "backfill-embeddings": "node scripts/backfill-embeddings.js"
   },
   "engines": {

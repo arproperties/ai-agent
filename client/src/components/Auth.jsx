@@ -4,17 +4,17 @@ import Orb from './Orb';
 
 const field = 'glass w-full rounded-2xl px-4 py-3 outline-none placeholder:text-mute/70 focus:border-p1/70';
 
+// There is no sign-up: accounts are created by the master. Sign in, forgot and reset only.
 const COPY = {
   login: ['Welcome back', 'Sign in to talk to your agents', 'Sign in'],
-  register: ['Create your account', 'Build your own team of AI agents', 'Create account'],
   forgot: ['Forgot your password?', "Enter your email and we'll send you a reset link", 'Send reset link'],
   reset: ['Set a new password', 'Choose a password with at least 8 characters', 'Save and sign in'],
 };
 
-export default function Auth({ inviteRequired, onAuthed }) {
+export default function Auth({ onAuthed }) {
   const resetToken = new URLSearchParams(window.location.search).get('reset');
   const [mode, setMode] = useState(resetToken ? 'reset' : 'login');
-  const [f, setF] = useState({ name: '', email: '', password: '', confirm: '', code: '' });
+  const [f, setF] = useState({ email: '', password: '', confirm: '' });
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -35,7 +35,7 @@ export default function Auth({ inviteRequired, onAuthed }) {
         window.history.replaceState(null, '', '/');
         onAuthed(user);
       } else {
-        const { user } = await api.post(`/auth/${mode}`, f);
+        const { user } = await api.post('/auth/login', f);
         onAuthed(user);
       }
     } catch (err) {
@@ -55,18 +55,8 @@ export default function Auth({ inviteRequired, onAuthed }) {
           </p>
         </div>
 
-        {(mode === 'login' || mode === 'register') && (
-          <div className="grid w-full grid-cols-2 rounded-full bg-white/5 p-1 text-sm">
-            {[['login', 'Sign in'], ['register', 'Create account']].map(([k, l]) => (
-              <button type="button" key={k} onClick={() => go(k)}
-                className={`rounded-full py-2 transition ${mode === k ? 'bg-white/15 text-txt' : 'text-mute'}`}>{l}</button>
-            ))}
-          </div>
-        )}
-
         {!sent && (
           <div className="w-full space-y-3">
-            {mode === 'register' && <input value={f.name} onChange={set('name')} placeholder="Your name" autoComplete="name" required className={field} />}
             {mode !== 'reset' && <input type="email" value={f.email} onChange={set('email')} placeholder="Email" autoComplete="email" required className={field} />}
             {mode !== 'forgot' && (
               <input type="password" value={f.password} onChange={set('password')}
@@ -74,7 +64,6 @@ export default function Auth({ inviteRequired, onAuthed }) {
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={mode === 'login' ? undefined : 8} required className={field} />
             )}
             {mode === 'reset' && <input type="password" value={f.confirm} onChange={set('confirm')} placeholder="Repeat new password" autoComplete="new-password" required className={field} />}
-            {mode === 'register' && inviteRequired && <input value={f.code} onChange={set('code')} placeholder="Invite code" required className={field} />}
             {mode === 'login' && (
               <button type="button" onClick={() => go('forgot')} className="block w-full pt-1 text-right text-sm text-mute hover:text-txt">Forgot password?</button>
             )}
