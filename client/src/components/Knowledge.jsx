@@ -55,7 +55,7 @@ function useFiles(agentId) {
     [...files].forEach((f) => form.append('files', f));
     try {
       const res = await api.upload('/documents', form);
-      setNotes(res.filter((r) => r.duplicate).map((r) => `${r.name} is already in your files`));
+      setNotes(res.filter((r) => r.duplicate).map((r) => `${r.name} is already in your files${r.shelf ? `, filed under ${r.shelf}` : ''}`));
     } catch (e) { setNotes([e.message]); }
     setUploading(false);
     load();
