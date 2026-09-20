@@ -39,6 +39,22 @@ Needs Node 22+ and PostgreSQL 14+. Keys live in `.env` at the project root:
 - **Outlook email** (optional, hidden until `MS_CLIENT_ID` is set) — for mailboxes hosted by Microsoft. Menu → **Email** → **Connect**. After signing in with Microsoft, every agent can search and read that mailbox when you ask about your email (read-only: no sending, replying, moving or deleting). Emails are fetched when needed, not copied into Jarvis. Disconnect from the same screen; to fully revoke access also remove "Jarvis" at account.microsoft.com → Privacy → Apps and services.
 - **Data** — chats, agents, files metadata, memories and the search index are in Postgres; the uploaded originals and the embedding model are on disk in `data/`. Back up both.
 
+## Tests
+
+Tests run against a real throwaway Postgres database — what they check is SQL scoping,
+which a mock cannot verify.
+
+```bash
+createdb jarvis_test
+psql -d jarvis_test -c 'CREATE EXTENSION vector;'   # may need: sudo -u postgres psql -d jarvis_test -c 'CREATE EXTENSION vector;'
+
+TEST_DATABASE_URL=postgres://user:pass@localhost:5432/jarvis_test npm test
+```
+
+The schema is created automatically on the first run. **Every test truncates every
+table**, so the harness refuses to start unless the database name ends in `_test`.
+Never point `TEST_DATABASE_URL` at the live database.
+
 ## Deploy
 
 `./deploy.ps1` builds the client and ships it to jarvis.eloquentservice.com (nginx serves `client/dist`, pm2 runs the API on 127.0.0.1:3001). The server's own `.env` is never overwritten.
