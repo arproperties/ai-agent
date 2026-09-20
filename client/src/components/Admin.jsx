@@ -71,13 +71,18 @@ function AddPerson({ onAdded, onCancel }) {
  * it and sends the end state - which is also why it has to read the current set first.
  */
 function PersonDetail({ person, agents, me, onBack, onChanged }) {
-  // Two questions, so two pieces of state: the one agent they talk to, and the shelves
-  // that agent may read. They map onto the two assignment modes - 'chat' and
-  // 'knowledge' - but the modes are an implementation detail the screen never says.
+  // One question, so one piece of state: which agent this person talks to. Every other
+  // agent lends its shelf automatically - that is the rule, not a per-person choice, so
+  // there is nothing else to ask. The 'knowledge' assignments that carry it are still
+  // written on save; they are just derived rather than picked.
   const [chatId, setChatId] = useState(null);
-  const [shelves, setShelves] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [demoted, setDemoted] = useState(0);
+  // Assignments to agents the master does not own - every account still holds its own
+  // copy of the starter agents from before agents became master-owned. The grid cannot
+  // show them, and saving replaces the whole set, so say so rather than letting one
+  // press quietly empty someone's sidebar.
+  const [foreign, setForeign] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('agents');
@@ -87,38 +92,33 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
     api.get(`/admin/users/${person.id}/agents`)
       .then((as) => {
         // One chat agent is the rule now, but accounts predating it hold several. Keep
-        // the starred one (or the first) and offer the rest as shelves, so nobody
-        // silently loses what an agent knew - then say so, above, before they save.
+        // the starred one (or the first) and say so before they save - the rest stay
+        // reachable as shelves, so nothing anyone filed stops being findable.
         const chat = as.filter((a) => a.mode === 'chat');
         const pick = chat.find((a) => a.is_primary) ?? chat[0] ?? null;
         setChatId(pick?.agent_id ?? null);
-        setShelves([
-          ...as.filter((a) => a.mode === 'knowledge').map((a) => a.agent_id),
-          ...chat.filter((a) => a.agent_id !== pick?.agent_id).map((a) => a.agent_id),
-        ]);
         setDemoted(Math.max(0, chat.length - 1));
+        setForeign(as.filter((a) => !agents.some((o) => o.id === a.agent_id)).length);
         setLoaded(true);
       })
       .catch((e) => { setError(e.message); setLoaded(true); });
   }, [person.id]);
 
-  // Their agent is theirs to talk to, so it never doubles as a shelf entry.
   const chooseChat = (id) => {
     setChatId((cur) => (cur === id ? null : id));
-    setShelves((s) => s.filter((x) => x !== id));
     setDemoted(0);
   };
-  const toggleShelf = (id) => setShelves((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
 
   const save = async () => {
     setBusy(true);
     setError('');
     try {
       await api.put(`/admin/users/${person.id}/agents`, {
-        agents: [
-          ...(chatId ? [{ agentId: chatId, mode: 'chat', primary: true }] : []),
-          ...shelves.filter((id) => id !== chatId).map((id) => ({ agentId: id, mode: 'knowledge', primary: false })),
-        ],
+        agents: chatId
+          // Their agent, then every other agent as a shelf it may read.
+          ? [{ agentId: chatId, mode: 'chat', primary: true },
+             ...agents.filter((a) => a.id !== chatId).map((a) => ({ agentId: a.id, mode: 'knowledge', primary: false }))]
+          : [],
       });
       setDemoted(0);
       onChanged();
@@ -138,12 +138,6 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
     } catch (e) { setError(e.message); }
   };
 
-  const mine = (id) => agents.some((a) => a.id === id);
-  // Assignments to agents the master does not own - every account still holds its own
-  // copy of the starter agents from before agents became master-owned. The lists below
-  // cannot show them, and saving replaces the whole set, so say so rather than letting
-  // one press quietly empty someone's sidebar.
-  const foreign = [chatId, ...shelves].filter((id) => id && !mine(id)).length;
   const chatAgent = agents.find((a) => a.id === chatId);
 
   const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'], ['memory', 'Memory'], ['activity', 'Activity']];
@@ -192,39 +186,23 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
                       label={`Make ${a.name} the agent ${person.name} chats with`} />
                   ))}
                 </div>
-                <p className="pt-0.5 text-xs text-mute">
-                  {chatAgent
-                    ? `${person.name} chats with ${chatAgent.name}. Tap it again to leave them with no agent.`
-                    : `${person.name} has no agent yet, so they cannot start a conversation.`}
-                </p>
-              </div>
-            )}
-
-            {chatAgent && agents.length > 1 && (
-              <div className="space-y-1.5">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-[11px] font-medium tracking-[0.14em] text-mute">CAN ALSO DRAW ON</span>
-                  <span className="text-[11px] text-mute">optional</span>
-                </div>
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
-                  {agents.filter((a) => a.id !== chatId).map((a) => (
-                    <AgentCard key={a.id} agent={a} on={shelves.includes(a.id)} onClick={() => toggleShelf(a.id)}
-                      label={`Let ${chatAgent.name} read the ${a.name} shelf`} />
-                  ))}
-                </div>
-                <p className="pt-0.5 text-xs text-mute">
-                  When {person.name} asks something {chatAgent.name} does not know, it reads these shelves.
-                  The agents themselves stay hidden — {person.name} never sees them.
+                <p className="pt-0.5 text-xs leading-relaxed text-mute">
+                  {chatAgent ? (
+                    <>
+                      {person.name} chats with {chatAgent.name} — and only {chatAgent.name}.
+                      {agents.length > 1 && ` When they ask something it does not know, it reads every other agent's shelf, so nothing you have filed is out of reach. The other agents stay hidden; ${person.name} never sees them.`}
+                      {' '}Tap {chatAgent.name} again to leave them with no agent.
+                    </>
+                  ) : `${person.name} has no agent yet, so they cannot start a conversation.`}
                 </p>
               </div>
             )}
 
             {demoted > 0 && (
               <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2.5 text-xs leading-relaxed text-warn">
-                {person.name} used to chat with {demoted + 1} agents. A person has one agent now, so
-                {chatAgent ? ` ${chatAgent.name} is selected` : ' none is selected'} and the other {demoted === 1 ? 'one is' : `${demoted} are`} ticked
-                as {demoted === 1 ? 'a shelf' : 'shelves'} above — their knowledge is kept, but {demoted === 1 ? 'it disappears' : 'they disappear'} from
-                the sidebar when you save. Untick anything you do not want.
+                {person.name} used to chat with {demoted + 1} agents. A person has one now, so
+                {chatAgent ? ` ${chatAgent.name} is selected` : ' none is selected'} and the other {demoted === 1 ? 'one leaves' : `${demoted} leave`} their
+                sidebar when you save. Nothing is lost — {demoted === 1 ? 'its shelf is' : 'their shelves are'} still read in the background.
               </p>
             )}
 
