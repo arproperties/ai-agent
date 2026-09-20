@@ -69,9 +69,18 @@ export default function App() {
       </aside>
 
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {agents.length > 0 && (
+        {agents.length > 0 ? (
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} conversationId={chat.id} voiceEnabled={config.voice}
             onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} />
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
+            <p className="text-lg font-medium">No agents yet</p>
+            <p className="max-w-sm text-sm text-mute">You need at least one agent before you can start a conversation.</p>
+            <button onClick={() => setEditing({})}
+              className="mt-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2.5 font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98]">
+              Create an agent
+            </button>
+          </div>
         )}
         {panel === 'files' && <FilesPage folders={config.folders} onBack={() => setPanel(null)} onOpenChat={openChat} />}
       </main>
