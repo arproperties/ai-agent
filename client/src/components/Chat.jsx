@@ -31,6 +31,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
   const [details, setDetails] = useState(null); // file open in the details sheet
   const [chatFiles, setChatFiles] = useState(null); // list of this chat's attachments
   const [drafts, setDrafts] = useState([]); // emails written this session, waiting on a tap
+  const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
   const abortRef = useRef();
   const scrollRef = useRef();
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
@@ -42,6 +43,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
       api.get(`/conversations/${conversationId}/messages`).then((m) => { setMessages(m); toBottom(); });
       api.get(`/email/drafts?conversation=${conversationId}&status=pending`).then((r) => setDrafts(r.drafts)).catch(() => {});
     }
+    api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
     return () => { abortRef.current?.abort(); stopSpeaking(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -194,7 +196,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
                 onSpeak={() => say(m.content, m.id, m.agent_id)} />
             ))}
             {drafts.map((d) => (
-              <DraftCard key={d.id} draft={d}
+              <DraftCard key={d.id} draft={d} from={mailbox}
                 onChanged={(u) => setDrafts((ds) => ds.map((x) => (x.id === u.id ? u : x)))} />
             ))}
           </div>

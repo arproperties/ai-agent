@@ -14,7 +14,7 @@ const STATE = {
   failed: { label: 'Could not be sent', tone: 'border-bad/40 bg-bad/[0.06]', dot: 'text-bad' },
 };
 
-export default function DraftCard({ draft, onChanged }) {
+export default function DraftCard({ draft, from, onChanged }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const s = STATE[draft.status] || STATE.pending;
@@ -39,6 +39,9 @@ export default function DraftCard({ draft, onChanged }) {
       </p>
 
       <dl className="space-y-1 text-[13px]">
+        {from && (
+          <div className="flex gap-2"><dt className="w-10 shrink-0 text-mute">From</dt><dd className="min-w-0 break-words">{from}</dd></div>
+        )}
         <div className="flex gap-2"><dt className="w-10 shrink-0 text-mute">To</dt><dd className="min-w-0 break-words">{draft.to.join(', ')}</dd></div>
         {draft.cc.length > 0 && (
           <div className="flex gap-2"><dt className="w-10 shrink-0 text-mute">Cc</dt><dd className="min-w-0 break-words">{draft.cc.join(', ')}</dd></div>

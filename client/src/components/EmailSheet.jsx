@@ -170,7 +170,7 @@ export default function EmailSheet({ returned, onClose }) {
                 {drafts.length === 1 ? 'One email is waiting for you' : `${drafts.length} emails are waiting for you`}
               </p>
               {drafts.map((d) => (
-                <DraftCard key={d.id} draft={d}
+                <DraftCard key={d.id} draft={d} from={imap?.account?.email}
                   onChanged={(u) => setDrafts((ds) => (u.status === 'pending' ? ds.map((x) => (x.id === u.id ? u : x)) : ds.filter((x) => x.id !== u.id)))} />
               ))}
             </div>
