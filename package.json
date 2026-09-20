@@ -10,6 +10,7 @@
     "setup": "npm install && npm --prefix client install",
     "reset-password": "node scripts/reset-password.js",
     "make-master": "node scripts/make-master.js",
+    "migrate-to-assignments": "node scripts/migrate-to-assignments.js",
     "backfill-embeddings": "node scripts/backfill-embeddings.js"
   },
   "engines": {
