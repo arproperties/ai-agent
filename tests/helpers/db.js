@@ -31,7 +31,7 @@ const { db, tx, closeDb } = await import('../../server/db.js');
 export { db, tx, closeDb };
 
 const TABLES = [
-  'users', 'sessions', 'password_resets', 'agents', 'conversations', 'messages',
+  'users', 'sessions', 'password_resets', 'agents', 'agent_assignments', 'conversations', 'messages',
   'documents', 'chunks', 'memories', 'outlook_accounts', 'imap_accounts',
 ];
 

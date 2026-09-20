@@ -122,6 +122,19 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
 
+  -- Access to an agent comes from an assignment, not from ownership. agents.user_id is
+  -- the owner (the master); these rows are who may use it.
+  --   mode 'chat'      - appears in the user's sidebar, the router may select it
+  --   mode 'knowledge' - hidden agent, its shelf is readable in the background
+  CREATE TABLE IF NOT EXISTS agent_assignments (
+    agent_id   INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+    mode       TEXT    NOT NULL DEFAULT 'chat' CHECK (mode IN ('chat', 'knowledge')),
+    is_primary BOOLEAN NOT NULL DEFAULT false,
+    created_at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (agent_id, user_id)
+  );
+
   -- a conversation belongs to the user; each reply records which agent wrote it
   CREATE TABLE IF NOT EXISTS conversations (
     id SERIAL PRIMARY KEY,
@@ -207,6 +220,7 @@ await db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_agents_user ON agents(user_id);
+  CREATE INDEX IF NOT EXISTS idx_assign_user ON agent_assignments(user_id);
   CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id, updated_at);
   CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
   CREATE INDEX IF NOT EXISTS idx_docs_user ON documents(user_id);
@@ -241,4 +255,21 @@ await db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_chunks_vec ON chunks USING hnsw (embedding vector_cosine_ops);
   CREATE INDEX IF NOT EXISTS idx_mem_vec ON memories USING hnsw (embedding vector_cosine_ops);
+`);
+
+// Columns added for the master/assignment model. ADD COLUMN IF NOT EXISTS is safe to
+// re-run, so this block is idempotent and runs on every boot like the rest of the schema.
+// users.role deliberately has no CHECK constraint: more roles may follow, and a
+// constraint here would need a migration to change. The values are 'master' and 'user'.
+await db.exec(`
+  ALTER TABLE users     ADD COLUMN IF NOT EXISTS role       TEXT    NOT NULL DEFAULT 'user';
+  ALTER TABLE users     ADD COLUMN IF NOT EXISTS disabled   BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE users     ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
+  -- Sharing is per-item and opt-in. Denormalised onto chunks for the same reason
+  -- agent_id already is: recall() must filter without joining documents.
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS shared BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE chunks    ADD COLUMN IF NOT EXISTS shared BOOLEAN NOT NULL DEFAULT false;
+
+  CREATE INDEX IF NOT EXISTS idx_chunks_shared ON chunks(shared) WHERE shared;
 `);
