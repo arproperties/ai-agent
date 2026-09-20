@@ -4,6 +4,7 @@ import { simpleParser } from 'mailparser';
 import { resolveMx } from 'node:dns/promises';
 import { db } from './db.js';
 import { encrypt, decrypt } from './secrets.js';
+import { smtpDefaults } from './smtp.js';
 
 // Any IMAP mailbox (Titan, Gmail, Zoho, Yahoo, cPanel hosting…). Read-only: folders are opened with EXAMINE,
 // so reading never marks mail as read, and nothing is sent, moved or deleted.
@@ -57,11 +58,42 @@ async function withMailbox(acc, fn) {
   try { return await fn(c); } finally { await c.logout().catch(() => c.close()); }
 }
 
+/**
+ * The SMTP columns to store, from whatever the user typed plus the provider default.
+ * Port 465 means implicit TLS and 587 means STARTTLS, so a port on its own is enough to
+ * decide — but an explicit choice wins, because some hosts do run TLS on odd ports.
+ */
+export function applySmtp(body, imapHost) {
+  const d = smtpDefaults(imapHost);
+  const host = String(body.smtpHost || '').trim().toLowerCase().slice(0, 200) || d.host;
+  if (host && !/^[a-z0-9.-]+$/.test(host)) throw Object.assign(new Error('The SMTP server name looks wrong'), { status: 400 });
+  const port = Number(body.smtpPort) || d.port;
+  const secure = 'smtpSecure' in body && body.smtpSecure !== null && body.smtpSecure !== ''
+    ? !!body.smtpSecure
+    : port === 465;
+  return { smtp_host: host, smtp_port: port, smtp_secure: secure };
+}
+
 // ---------- routes (signed-in user) ----------
 export const imapRoutes = Router();
-const accountOut = (a) => a && { email: a.email, host: a.host, port: a.port, connectedAt: a.created_at };
+const accountOut = (a) => a && {
+  email: a.email, host: a.host, port: a.port,
+  smtpHost: a.smtp_host, smtpPort: a.smtp_port, smtpSecure: a.smtp_secure,
+  canWrite: a.can_write,
+  connectedAt: a.created_at,
+};
 
 imapRoutes.get('/', async (req, res) => res.json({ account: accountOut(await imapAccount(req.user.id)) }));
+
+// What we would use for this address, so the Advanced fields can show it before connecting.
+// Reads nothing and stores nothing — it is one MX lookup.
+imapRoutes.get('/suggest', async (req, res) => {
+  const email = String(req.query.email || '').trim().toLowerCase().slice(0, 200);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email address' });
+  const host = await detectHost(email).catch(() => '');
+  const smtp = smtpDefaults(host);
+  res.json({ host, port: 993, smtpHost: smtp.host, smtpPort: smtp.port, smtpSecure: smtp.secure });
+});
 
 imapRoutes.post('/', async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase().slice(0, 200);
@@ -73,6 +105,7 @@ imapRoutes.post('/', async (req, res) => {
   const port = Number(req.body.port) || 993;
   const username = String(req.body.username || '').trim().slice(0, 200) || email;
   const enc = encrypt(password); // before connecting: a missing EMAIL_KEY should fail fast
+  const smtp = applySmtp(req.body, host);
 
   const c = client({ host, port, username, password });
   c.on('error', () => {});
@@ -82,11 +115,36 @@ imapRoutes.post('/', async (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: friendly(e, host), host, port });
   }
-  await db.prepare(`INSERT INTO imap_accounts (user_id, email, host, port, username, password_enc) VALUES (?, ?, ?, ?, ?, ?)
+  // can_write is deliberately absent from the UPDATE list: reconnecting a mailbox (new
+  // password, moved server) must not silently re-grant sending, and must not silently
+  // revoke it either. It is changed only by PATCH, which is the switch the user sees.
+  await db.prepare(`INSERT INTO imap_accounts (user_id, email, host, port, username, password_enc, smtp_host, smtp_port, smtp_secure)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, host = excluded.host, port = excluded.port,
-      username = excluded.username, password_enc = excluded.password_enc, created_at = extract(epoch from now())::bigint`)
-    .run(req.user.id, email, host, port, username, enc);
+      username = excluded.username, password_enc = excluded.password_enc,
+      smtp_host = excluded.smtp_host, smtp_port = excluded.smtp_port, smtp_secure = excluded.smtp_secure,
+      created_at = extract(epoch from now())::bigint`)
+    .run(req.user.id, email, host, port, username, enc, smtp.smtp_host, smtp.smtp_port, smtp.smtp_secure);
   res.json({ account: accountOut(await imapAccount(req.user.id)) });
+});
+
+// Turning sending on, or correcting the SMTP server after the fact. Its own route because
+// it is its own decision: it never takes a password and never touches the IMAP side.
+imapRoutes.patch('/', async (req, res, next) => {
+  try {
+    const acc = await imapAccount(req.user.id);
+    if (!acc) return res.status(404).json({ error: 'No email account is connected' });
+    const smtp = applySmtp({
+      smtpHost: req.body.smtpHost ?? acc.smtp_host,
+      smtpPort: req.body.smtpPort ?? acc.smtp_port,
+      smtpSecure: req.body.smtpSecure ?? acc.smtp_secure,
+    }, acc.host);
+    const canWrite = 'canWrite' in req.body ? !!req.body.canWrite : acc.can_write;
+    if (canWrite && !smtp.smtp_host) return res.status(400).json({ error: 'Set an SMTP server under Advanced before turning sending on' });
+    await db.prepare('UPDATE imap_accounts SET smtp_host = ?, smtp_port = ?, smtp_secure = ?, can_write = ? WHERE user_id = ?')
+      .run(smtp.smtp_host, smtp.smtp_port, smtp.smtp_secure, canWrite, req.user.id);
+    res.json({ account: accountOut(await imapAccount(req.user.id)) });
+  } catch (e) { next(e); }
 });
 
 imapRoutes.delete('/', async (req, res) => {
