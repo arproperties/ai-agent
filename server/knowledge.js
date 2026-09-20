@@ -1,6 +1,7 @@
 import mammoth from 'mammoth';
 import { db, tx } from './db.js';
 import { ask, embed } from './ai.js';
+import { shelfIds } from './access.js';
 
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const TEXT_EXT = ['txt', 'md', 'csv', 'json', 'html', 'xml', 'yaml', 'yml', 'log', 'js', 'ts', 'py', 'sql', 'tsv'];
@@ -131,13 +132,31 @@ async function search(table, scope, query, qvec, k) {
   return ids.map((id) => rows.find((r) => r.id === id).text);
 }
 
-export async function recall(userId, agentId, query) {
+/**
+ * The scope every retrieval uses, as a condition on table alias `t`.
+ *
+ * Own material has no agent filter: it all belongs to this user, and siloing it per
+ * agent would stop their Lawyer agent reading an invoice they uploaded. Shared material
+ * keeps the agent filter - that one is a real boundary between roles.
+ *
+ * An empty shelf list is fine: `= ANY('{}'::int[])` is simply false.
+ */
+export function retrievalScope(userId, shelves) {
+  return {
+    sql: '(t.user_id = ? OR (t.shared AND (t.agent_id IS NULL OR t.agent_id = ANY(?::int[]))))',
+    params: [userId, shelves],
+  };
+}
+
+export async function recall(user, agentId, query) {
   const [qvec] = await embed([query]);
-  const { n: memCount } = await db.prepare('SELECT COUNT(*)::int n FROM memories WHERE user_id = ?').get(userId);
+  const { n: memCount } = await db.prepare('SELECT COUNT(*)::int n FROM memories WHERE user_id = ?').get(user.id);
+  // Memories are facts about a person, never about the company, so they are never
+  // shared and never scoped by shelf.
   const memories = memCount <= 25 // small memory: include it all
-    ? (await db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id').all(userId)).map((r) => r.text)
-    : await search('memories', { sql: 't.user_id = ?', params: [userId] }, query, qvec, 12);
-  const knowledge = await search('chunks', { sql: 't.user_id = ? AND (t.agent_id IS NULL OR t.agent_id = ?)', params: [userId, agentId] }, query, qvec, 6);
+    ? (await db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id').all(user.id)).map((r) => r.text)
+    : await search('memories', { sql: 't.user_id = ?', params: [user.id] }, query, qvec, 12);
+  const knowledge = await search('chunks', retrievalScope(user.id, await shelfIds(user)), query, qvec, 6);
   return { memories, knowledge };
 }
 

@@ -116,8 +116,8 @@ export async function chat(req, res) {
   send('status', { label: `${agent.name} is thinking…` });
   const email = await connectedMailbox(user.id);
   const mailbox = email?.address ?? null;
-  const { memories, knowledge } = await recall(user.id, agent.id, text || meta.map((f) => f.name).join(' '));
-  const library = await libraryCatalog(user.id, agent.id); // same every turn, so read it once
+  const { memories, knowledge } = await recall(user, agent.id, text || meta.map((f) => f.name).join(' '));
+  const library = await libraryCatalog(user, agent.id); // same every turn, so read it once
   await db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?)').run(convId, 'user', text, JSON.stringify(savedFiles));
 
   // 3. Stream the reply (with web search, and email tools when a mailbox is connected).
