@@ -264,7 +264,7 @@ const sentPath = async (c) => {
 async function markSeen(userId, id, seen) {
   const { path, uid } = parseId(id);
   await withMailbox(await imapAccount(userId), async (c) => {
-    const lock = await c.getMailboxLock(path); // writable: this is the one read path that marks
+    const lock = await c.getMailboxLock(path); // writable, unlike the read tools above: marking seen is a write
     try {
       const fn = seen ? c.messageFlagsAdd.bind(c) : c.messageFlagsRemove.bind(c);
       if (!(await fn(String(uid), ['\\Seen'], { uid: true }))) throw new Error('That email no longer exists');
@@ -282,7 +282,7 @@ async function moveMessage(userId, id, folder) {
     if (target.path === path) return `That email is already in ${target.name}.`;
     const lock = await c.getMailboxLock(path);
     try {
-      await c.messageMove(String(uid), target.path, { uid: true });
+      if (!(await c.messageMove(String(uid), target.path, { uid: true }))) throw new Error('That email no longer exists');
     } finally { lock.release(); }
     return `Moved to ${target.name}.`;
   });
