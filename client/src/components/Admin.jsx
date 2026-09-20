@@ -1,8 +1,28 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Star, UserPlus, Ban, ChevronLeft, ExternalLink, Eye } from 'lucide-react';
+import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, Check } from 'lucide-react';
 import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
+
+/**
+ * One agent, as a card in a grid. The same shape whether it is being picked as the
+ * person's own agent or ticked as a shelf - only the corner mark differs, so the two
+ * grids read as one screen rather than two unrelated controls.
+ */
+function AgentCard({ agent, on, label, onClick }) {
+  return (
+    <button onClick={onClick} aria-pressed={on} aria-label={label}
+      className={`relative flex flex-col items-center gap-2 rounded-2xl border p-3 text-center transition ${
+        on ? 'border-p1/50 bg-p1/[0.09]' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.06]'}`}>
+      <span className={`absolute right-2 top-2 grid size-4 place-items-center rounded-full border transition ${
+        on ? 'border-p1 bg-p1 text-white' : 'border-mute/40'}`}>
+        {on && <Check size={11} strokeWidth={3.5} />}
+      </span>
+      <Avatar icon={agent.icon} color={agent.color} size={40} className={on ? '' : 'opacity-40 grayscale'} />
+      <span className="line-clamp-2 w-full text-xs leading-tight">{agent.name}</span>
+    </button>
+  );
+}
 
 // Master's people screen. Everything here is also enforced server-side in
 // server/admin.js, behind requireMaster - this is the convenient way in, not the guard.
@@ -51,33 +71,56 @@ function AddPerson({ onAdded, onCancel }) {
  * it and sends the end state - which is also why it has to read the current set first.
  */
 function PersonDetail({ person, agents, me, onBack, onChanged }) {
-  const [rows, setRows] = useState(null); // { [agentId]: { mode, primary } }
+  // Two questions, so two pieces of state: the one agent they talk to, and the shelves
+  // that agent may read. They map onto the two assignment modes - 'chat' and
+  // 'knowledge' - but the modes are an implementation detail the screen never says.
+  const [chatId, setChatId] = useState(null);
+  const [shelves, setShelves] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [demoted, setDemoted] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('agents');
 
   useEffect(() => {
+    setLoaded(false);
     api.get(`/admin/users/${person.id}/agents`)
-      .then((as) => setRows(Object.fromEntries(as.map((a) => [a.agent_id, { mode: a.mode, primary: a.is_primary }]))))
-      .catch((e) => { setError(e.message); setRows({}); });
+      .then((as) => {
+        // One chat agent is the rule now, but accounts predating it hold several. Keep
+        // the starred one (or the first) and offer the rest as shelves, so nobody
+        // silently loses what an agent knew - then say so, above, before they save.
+        const chat = as.filter((a) => a.mode === 'chat');
+        const pick = chat.find((a) => a.is_primary) ?? chat[0] ?? null;
+        setChatId(pick?.agent_id ?? null);
+        setShelves([
+          ...as.filter((a) => a.mode === 'knowledge').map((a) => a.agent_id),
+          ...chat.filter((a) => a.agent_id !== pick?.agent_id).map((a) => a.agent_id),
+        ]);
+        setDemoted(Math.max(0, chat.length - 1));
+        setLoaded(true);
+      })
+      .catch((e) => { setError(e.message); setLoaded(true); });
   }, [person.id]);
 
-  const toggle = (id) => setRows((r) => {
-    const next = { ...r };
-    if (next[id]) delete next[id]; else next[id] = { mode: 'chat', primary: false };
-    return next;
-  });
-  // At most one primary.
-  const setPrimary = (id) => setRows((r) => Object.fromEntries(
-    Object.entries(r).map(([k, v]) => [k, { ...v, primary: Number(k) === id && !v.primary }]),
-  ));
+  // Their agent is theirs to talk to, so it never doubles as a shelf entry.
+  const chooseChat = (id) => {
+    setChatId((cur) => (cur === id ? null : id));
+    setShelves((s) => s.filter((x) => x !== id));
+    setDemoted(0);
+  };
+  const toggleShelf = (id) => setShelves((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
 
   const save = async () => {
     setBusy(true);
+    setError('');
     try {
       await api.put(`/admin/users/${person.id}/agents`, {
-        agents: Object.entries(rows).map(([agentId, v]) => ({ agentId: Number(agentId), mode: v.mode, primary: v.primary })),
+        agents: [
+          ...(chatId ? [{ agentId: chatId, mode: 'chat', primary: true }] : []),
+          ...shelves.filter((id) => id !== chatId).map((id) => ({ agentId: id, mode: 'knowledge', primary: false })),
+        ],
       });
+      setDemoted(0);
       onChanged();
       setBusy(false);
     } catch (e) { setError(e.message); setBusy(false); }
@@ -95,12 +138,13 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
     } catch (e) { setError(e.message); }
   };
 
-  const chatCount = Object.values(rows || {}).filter((v) => v.mode === 'chat').length;
+  const mine = (id) => agents.some((a) => a.id === id);
   // Assignments to agents the master does not own - every account still holds its own
-  // copy of the starter agents from before agents became master-owned. The checkbox
-  // list cannot show them, and saving replaces the whole set, so say so rather than
-  // letting one press quietly empty someone's sidebar.
-  const foreign = Object.keys(rows || {}).filter((id) => !agents.some((a) => a.id === Number(id))).length;
+  // copy of the starter agents from before agents became master-owned. The lists below
+  // cannot show them, and saving replaces the whole set, so say so rather than letting
+  // one press quietly empty someone's sidebar.
+  const foreign = [chatId, ...shelves].filter((id) => id && !mine(id)).length;
+  const chatAgent = agents.find((a) => a.id === chatId);
 
   const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'], ['memory', 'Memory'], ['activity', 'Activity']];
 
@@ -132,39 +176,57 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
         {tab === 'activity' && <Activity person={person} />}
         {(tab === 'documents' || tab === 'conversations') && <Browse person={person} kind={tab} />}
 
-        {tab === 'agents' && (rows === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
+        {tab === 'agents' && (!loaded ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
           <>
-            <div className="space-y-1.5">
-              <span className="block text-[11px] font-medium tracking-[0.14em] text-mute">AGENTS</span>
-              {agents.length === 0 && <p className="py-3 text-sm text-mute">You have no agents to give out yet.</p>}
-              {agents.map((a) => {
-                const on = !!rows[a.id];
-                return (
-                  <div key={a.id} className={`rounded-2xl border px-3 py-2.5 transition ${on ? 'border-p1/40 bg-p1/[0.07]' : 'border-stroke bg-white/[0.03]'}`}>
-                    <div className="flex items-center gap-2.5">
-                      <button onClick={() => toggle(a.id)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
-                        <Avatar icon={a.icon} color={a.color} size={30} className={on ? '' : 'opacity-40 grayscale'} />
-                        <span className="min-w-0 flex-1 truncate text-sm">{a.name}</span>
-                      </button>
-                      {on && (
-                        <button onClick={() => setPrimary(a.id)} aria-label="Make primary"
-                          title={rows[a.id].primary ? 'Primary agent' : 'Make this their primary agent'}
-                          className={rows[a.id].primary ? 'text-amber-300' : 'text-mute hover:text-txt'}>
-                          <Star size={16} fill={rows[a.id].primary ? 'currentColor' : 'none'} />
-                        </button>
-                      )}
-                      <input type="checkbox" checked={on} onChange={() => toggle(a.id)} aria-label={`Give ${a.name} to ${person.name}`}
-                        className="size-4 shrink-0 accent-p1" />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            {agents.length === 0 && <p className="py-3 text-sm text-mute">You have no agents to give out yet.</p>}
 
-            <p className="text-xs text-mute">
-              Ticked agents appear in their sidebar, and can use what you have shared on those shelves.
-              {chatCount > 1 && ' The starred agent is the one their new chats open with.'}
-            </p>
+            {agents.length > 0 && (
+              <div className="space-y-1.5">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[11px] font-medium tracking-[0.14em] text-mute">THEIR AGENT</span>
+                  <span className="text-[11px] text-mute">pick one</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+                  {agents.map((a) => (
+                    <AgentCard key={a.id} agent={a} on={chatId === a.id} onClick={() => chooseChat(a.id)}
+                      label={`Make ${a.name} the agent ${person.name} chats with`} />
+                  ))}
+                </div>
+                <p className="pt-0.5 text-xs text-mute">
+                  {chatAgent
+                    ? `${person.name} chats with ${chatAgent.name}. Tap it again to leave them with no agent.`
+                    : `${person.name} has no agent yet, so they cannot start a conversation.`}
+                </p>
+              </div>
+            )}
+
+            {chatAgent && agents.length > 1 && (
+              <div className="space-y-1.5">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[11px] font-medium tracking-[0.14em] text-mute">CAN ALSO DRAW ON</span>
+                  <span className="text-[11px] text-mute">optional</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+                  {agents.filter((a) => a.id !== chatId).map((a) => (
+                    <AgentCard key={a.id} agent={a} on={shelves.includes(a.id)} onClick={() => toggleShelf(a.id)}
+                      label={`Let ${chatAgent.name} read the ${a.name} shelf`} />
+                  ))}
+                </div>
+                <p className="pt-0.5 text-xs text-mute">
+                  When {person.name} asks something {chatAgent.name} does not know, it reads these shelves.
+                  The agents themselves stay hidden — {person.name} never sees them.
+                </p>
+              </div>
+            )}
+
+            {demoted > 0 && (
+              <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2.5 text-xs leading-relaxed text-warn">
+                {person.name} used to chat with {demoted + 1} agents. A person has one agent now, so
+                {chatAgent ? ` ${chatAgent.name} is selected` : ' none is selected'} and the other {demoted === 1 ? 'one is' : `${demoted} are`} ticked
+                as {demoted === 1 ? 'a shelf' : 'shelves'} above — their knowledge is kept, but {demoted === 1 ? 'it disappears' : 'they disappear'} from
+                the sidebar when you save. Untick anything you do not want.
+              </p>
+            )}
 
             {foreign > 0 && (
               <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2.5 text-xs leading-relaxed text-warn">
