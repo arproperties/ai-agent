@@ -226,3 +226,98 @@ async function readEmail(userId, { id }) {
 }
 
 export const imapTools = { search_email: searchEmail, read_email: readEmail };
+
+// ---------- acting on the mailbox ----------
+// Everything below opens a writable lock, unlike the read tools above. All of it is
+// reversible and all of it stays inside the mailbox: nothing here sends, and nothing here
+// deletes. Sending lives in server/outbox.js, behind the user's approval.
+
+export function parseId(id) {
+  const s = String(id || '');
+  const i = s.lastIndexOf(':');
+  const path = s.slice(0, i);
+  const uid = Number(s.slice(i + 1));
+  if (i < 1 || !Number.isInteger(uid) || uid < 1) throw new Error('Unknown email id: use an id from search_email');
+  return { path, uid };
+}
+
+/** Folders are addressed by what the user calls them, not by their IMAP path. */
+export const resolveFolder = (boxes, wanted) => {
+  const want = String(wanted || '').trim().toLowerCase();
+  return boxes.find((f) => f.path.toLowerCase() === want || f.name.toLowerCase() === want);
+};
+
+export const replySubject = (s) => (/^re\s*:/i.test(String(s || '').trim()) ? String(s).trim() : `Re: ${String(s || '').trim() || '(no subject)'}`);
+
+/** The thread so far, plus the message being answered. Folded header lines unfold to one. */
+export function buildRefs(existing, messageId) {
+  const ids = String(existing || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  if (messageId && !ids.includes(messageId)) ids.push(messageId);
+  return ids.length ? ids.join(' ') : null;
+}
+
+const sentPath = async (c) => {
+  const boxes = await c.list();
+  return boxes.find((f) => f.specialUse === '\\Sent')?.path || boxes.find((f) => /^sent/i.test(f.name))?.path || null;
+};
+
+async function markSeen(userId, id, seen) {
+  const { path, uid } = parseId(id);
+  await withMailbox(await imapAccount(userId), async (c) => {
+    const lock = await c.getMailboxLock(path); // writable: this is the one read path that marks
+    try {
+      const fn = seen ? c.messageFlagsAdd.bind(c) : c.messageFlagsRemove.bind(c);
+      if (!(await fn(String(uid), ['\\Seen'], { uid: true }))) throw new Error('That email no longer exists');
+    } finally { lock.release(); }
+  });
+  return seen ? 'Marked as read.' : 'Marked as unread.';
+}
+
+async function moveMessage(userId, id, folder) {
+  const { path, uid } = parseId(id);
+  return withMailbox(await imapAccount(userId), async (c) => {
+    const boxes = await c.list();
+    const target = resolveFolder(boxes, folder);
+    if (!target) throw new Error(`There is no folder called "${folder}". The mailbox has: ${boxes.map((f) => f.name).join(', ')}`);
+    if (target.path === path) return `That email is already in ${target.name}.`;
+    const lock = await c.getMailboxLock(path);
+    try {
+      await c.messageMove(String(uid), target.path, { uid: true });
+    } finally { lock.release(); }
+    return `Moved to ${target.name}.`;
+  });
+}
+
+/** What a reply needs from the email it answers: who to write to, and how to thread onto it. */
+async function original(userId, id) {
+  const { path, uid } = parseId(id);
+  return withMailbox(await imapAccount(userId), async (c) => {
+    const lock = await c.getMailboxLock(path, { readOnly: true });
+    try {
+      const m = await c.fetchOne(String(uid), { uid: true, envelope: true, headers: ['references'] }, { uid: true });
+      if (!m?.envelope) throw new Error('That email no longer exists');
+      const e = m.envelope;
+      const existing = String(m.headers || '').replace(/^references:/i, '').trim();
+      const addrs = (list) => (list || []).map((a) => a.address).filter(Boolean);
+      return {
+        messageId: e.messageId || null,
+        refs: buildRefs(existing, e.messageId),
+        subject: e.subject || '',
+        from: addrs(e.replyTo?.length ? e.replyTo : e.from),
+        to: addrs(e.to),
+        cc: addrs(e.cc),
+      };
+    } finally { lock.release(); }
+  });
+}
+
+/** The copy in Sent. Byte-identical to what went out, so the reply threads onto it. */
+async function appendToSent(userId, raw) {
+  await withMailbox(await imapAccount(userId), async (c) => {
+    const path = await sentPath(c);
+    if (!path) throw new Error('This mailbox has no Sent folder');
+    await c.append(path, raw, ['\\Seen']);
+  });
+}
+
+export const imapActions = { markSeen, moveMessage, original, appendToSent };
