@@ -5,7 +5,7 @@ import { ROOT, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS } from './conf
 import { db } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo } from './tts.js';
-import { authRoutes, requireUser } from './auth.js';
+import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn } from './agents.js';
 import { chatAgents, canUseAgent } from './access.js';
 import { chat } from './chat.js';
@@ -37,7 +37,7 @@ app.get('/api/agents', wrap(async (req, res) => {
   res.json((await chatAgents(req.user)).map((a) => agentOut(a, req.user)));
 }));
 // ✨ turn a name + one line into a full agent (persona, icon, colour, quick prompts)
-app.post('/api/agents/draft', wrap(async (req, res) => {
+app.post('/api/agents/draft', requireMaster, wrap(async (req, res) => {
   const name = String(req.body.name || '').slice(0, 60);
   const idea = String(req.body.persona || '').slice(0, 2000);
   if (!name && !idea) return res.status(400).json({ error: 'Type a name or what the agent should do first' });
@@ -59,22 +59,23 @@ Keep the user's own wording and intent; expand it, do not change it.`,
   });
 }));
 
-app.post('/api/agents', wrap(async (req, res) => {
+app.post('/api/agents', requireMaster, wrap(async (req, res) => {
   const a = agentIn(req.body);
   const { id } = await db.prepare('INSERT INTO agents (user_id, name, icon, color, persona, model, voice, starters) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id')
     .run(req.user.id, a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters);
   res.json(agentOut(await own('agents', id, req.user.id), req.user));
 }));
-app.put('/api/agents/:id', wrap(async (req, res) => {
+app.put('/api/agents/:id', requireMaster, wrap(async (req, res) => {
   if (!await own('agents', req.params.id, req.user.id)) return notFound(res);
   const a = agentIn(req.body);
   await db.prepare('UPDATE agents SET name = ?, icon = ?, color = ?, persona = ?, model = ?, voice = ?, starters = ? WHERE id = ?')
     .run(a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, Number(req.params.id));
   res.json(agentOut(await own('agents', req.params.id, req.user.id), req.user));
 }));
-app.delete('/api/agents/:id', wrap(async (req, res) => {
-  const { n } = await db.prepare('SELECT COUNT(*)::int n FROM agents WHERE user_id = ?').get(req.user.id);
-  if (n <= 1) return res.status(400).json({ error: 'You need at least one agent' });
+app.delete('/api/agents/:id', requireMaster, wrap(async (req, res) => {
+  // NOTE (spec §10 item 3, deferred to Plan 3): documents and chunks cascade on
+  // agents.id, so deleting a shared agent also wipes every assigned user's uploads
+  // for it. Only the master's own documents are cleaned up here.
   for (const d of await db.prepare('SELECT id FROM documents WHERE agent_id = ? AND user_id = ?').all(Number(req.params.id), req.user.id)) {
     await deleteDocument(req.user.id, d.id);
   }

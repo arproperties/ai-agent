@@ -47,7 +47,7 @@ const fail = (key) => {
   attempts.set(key, a && a.until > Date.now() ? { ...a, count: a.count + 1 } : { count: 1, until: Date.now() + 15 * 60000 });
 };
 
-const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email });
+const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role });
 
 export async function currentUser(req) {
   const token = readCookie(req, COOKIE);
@@ -59,9 +59,16 @@ export async function currentUser(req) {
 export function requireUser(req, res, next) {
   currentUser(req).then((user) => {
     if (!user) return res.status(401).json({ error: 'Please sign in' });
+    if (user.disabled) return res.status(403).json({ error: 'This account has been disabled' });
     req.user = user;
     next();
   }, next);
+}
+
+/** Routes that only the master may call. Mount after requireUser, which sets req.user. */
+export function requireMaster(req, res, next) {
+  if (req.user?.role !== 'master') return res.status(403).json({ error: 'Not allowed' });
+  next();
 }
 
 export const authRoutes = Router();
@@ -103,6 +110,7 @@ authRoutes.post('/login', async (req, res) => {
     fail(key);
     return res.status(401).json({ error: 'Wrong email or password' });
   }
+  if (user.disabled) return res.status(403).json({ error: 'This account has been disabled' });
   attempts.delete(key);
   await startSession(req, res, user.id);
   res.json({ user: publicUser(user) });
