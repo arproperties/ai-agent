@@ -17,6 +17,37 @@ function Select({ value, onChange, children, className = '' }) {
   );
 }
 
+/**
+ * What an agent looks like to someone who was given it rather than made it: its name,
+ * what it is for, and nothing to press. Every control in the editable version is
+ * refused by the server for a non-master, so offering them would only ever produce an
+ * error - and the persona is master-authored configuration they are not shown anyway.
+ */
+function PersonaReadOnly({ agent }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Avatar icon={agent.icon} color={agent.color} size={48} />
+        <div className="min-w-0">
+          <p className="truncate text-lg font-light">{agent.name}</p>
+          <p className="text-xs text-mute">One of your agents</p>
+        </div>
+      </div>
+      {agent.starters?.length > 0 && (
+        <div>
+          <span className={label}>THINGS TO ASK IT</span>
+          <ul className="space-y-1.5">
+            {agent.starters.map((q) => (
+              <li key={q} className="rounded-xl bg-white/5 px-3 py-2 text-sm text-txt/85">{q}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p className="text-xs text-mute">Agents are set up for you. Ask whoever runs this workspace if you need a change.</p>
+    </div>
+  );
+}
+
 function PersonaTab({ agent, config, onSaved }) {
   const [f, setF] = useState({
     name: agent.name || '', icon: agent.icon || 'sparkles', color: agent.color || 'violet', persona: agent.persona || '',
@@ -143,7 +174,11 @@ export default function AgentSheet({ agent, config, me, onClose, onSaved }) {
     <Sheet title={agent.id ? agent.name : 'New agent'} onClose={onClose} tab={tab} onTab={setTab}
       tabs={agent.id ? [['persona', 'Persona'], ['files', 'Shelf']] : []}
       icon={agent.id && <Avatar icon={agent.icon} color={agent.color} size={32} className="shadow-none" />}>
-      {tab === 'persona' ? <PersonaTab agent={agent} config={config} onSaved={onSaved} /> : (
+      {tab === 'persona' ? (
+        me?.role === 'master'
+          ? <PersonaTab agent={agent} config={config} onSaved={onSaved} />
+          : <PersonaReadOnly agent={agent} />
+      ) : (
         <FilesPanel agentId={agent.id} folders={config.folders || []} me={me} shelfName={agent.name} hint={`Only ${agent.name} uses these files. They also help Jarvis know when to pick ${agent.name}.`} />
       )}
     </Sheet>

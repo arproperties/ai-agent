@@ -366,7 +366,11 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
   const ref = useRef();
 
   const counts = useMemo(() => (docs || []).reduce((m, d) => ({ ...m, [d.folder]: (m[d.folder] || 0) + 1 }), {}), [docs]);
-  const shown = (docs || []).filter((d) => (folder === 'All' || d.folder === folder) && matches(d, q));
+  const learnedCount = (docs || []).filter((d) => d.kind === 'fact').length;
+  // "Learned" is a pseudo-folder over kind rather than folder: §7.4 wants a plain list
+  // of captured facts to prune, and this Shelf is already that list.
+  const inFolder = (d) => (folder === 'All' ? true : folder === 'Learned' ? d.kind === 'fact' : d.folder === folder);
+  const shown = (docs || []).filter((d) => inFolder(d) && matches(d, q));
   const openDoc = open && docs?.find((d) => d.id === open);
 
   const drop = (e) => { e.preventDefault(); setDragging(false); upload(e.dataTransfer.files); };
@@ -412,16 +416,23 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
             <section>
               <h2 className="mb-3 text-[11px] font-medium tracking-[0.14em] text-mute">FOLDERS</h2>
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
-                {['All', ...folders.filter((f) => counts[f])].map((f) => {
-                  const [FI, tone, bg] = f === 'All' ? [FolderOpen, 'text-txt', 'from-p1/40 to-p2/20'] : folderStyle(f);
+                {['All', ...(learnedCount ? ['Learned'] : []), ...folders.filter((f) => counts[f])].map((f) => {
+                  const [FI, tone, bg] = f === 'All' ? [FolderOpen, 'text-txt', 'from-p1/40 to-p2/20']
+                    : f === 'Learned' ? [Sparkles, 'text-amber-300', 'from-amber-400/35 to-amber-400/5']
+                    : folderStyle(f);
                   const active = folder === f;
                   return (
                     <button key={f} onClick={() => setFolder(active && f !== 'All' ? 'All' : f)}
                       className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${active ? 'border-p1/60 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.06]'}`}>
                       <span className={`grid size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br ${bg}`}><FI size={19} strokeWidth={1.6} className={tone} /></span>
                       <span className="min-w-0">
-                        <span className="line-clamp-2 text-[13px] leading-tight">{f === 'All' ? 'All files' : f}</span>
-                        <span className="text-xs text-mute">{f === 'All' ? docs.length : counts[f]} {(f === 'All' ? docs.length : counts[f]) === 1 ? 'file' : 'files'}</span>
+                        <span className="line-clamp-2 text-[13px] leading-tight">{f === 'All' ? 'All files' : f === 'Learned' ? 'Learned in chat' : f}</span>
+                        <span className="text-xs text-mute">
+                          {(() => {
+                            const n = f === 'All' ? docs.length : f === 'Learned' ? learnedCount : counts[f];
+                            return `${n} ${n === 1 ? 'file' : 'files'}`;
+                          })()}
+                        </span>
                       </span>
                     </button>
                   );
@@ -431,7 +442,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
 
             <section>
               <h2 className="mb-3 text-[11px] font-medium tracking-[0.14em] text-mute">{(folder === 'All' ? 'ALL FILES' : folder.toUpperCase())}{q && ` · “${q}”`}</h2>
-              {shown.length === 0 ? <p className="py-10 text-center text-sm text-mute">No matching files</p> : (
+              {shown.length === 0 ? <p className="py-10 text-center text-sm text-mute">{folder === 'Learned' ? 'Nothing learned yet.' : 'No matching files'}</p> : (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                   {shown.map((d) => <FileCard key={d.id} d={d} onOpen={setViewing} />)}
                 </div>

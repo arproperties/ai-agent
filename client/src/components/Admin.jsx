@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Star, UserPlus, Ban, ChevronLeft, ExternalLink } from 'lucide-react';
+import { Loader2, Star, UserPlus, Ban, ChevronLeft, ExternalLink, Eye } from 'lucide-react';
 import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
@@ -19,8 +19,8 @@ function AddPerson({ onAdded, onCancel }) {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post('/admin/users', f);
-      onAdded();
+      const created = await api.post('/admin/users', f);
+      onAdded(created.id);
     } catch (err) { setError(err.message); }
     setBusy(false);
   };
@@ -47,7 +47,7 @@ function AddPerson({ onAdded, onCancel }) {
  * One person's agents. The PUT replaces the whole set, so this edits a local copy of
  * it and sends the end state - which is also why it has to read the current set first.
  */
-function PersonSheet({ person, agents, me, onClose, onChanged }) {
+function PersonDetail({ person, agents, me, onBack, onChanged }) {
   const [rows, setRows] = useState(null); // { [agentId]: { mode, primary } }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -77,7 +77,7 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
         agents: Object.entries(rows).map(([agentId, v]) => ({ agentId: Number(agentId), mode: v.mode, primary: v.primary })),
       });
       onChanged();
-      onClose();
+      setBusy(false);
     } catch (e) { setError(e.message); setBusy(false); }
   };
 
@@ -90,7 +90,6 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
     try {
       await api.put(`/admin/users/${person.id}/disabled`, { disabled: next });
       onChanged();
-      onClose();
     } catch (e) { setError(e.message); }
   };
 
@@ -101,14 +100,34 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
   // letting one press quietly empty someone's sidebar.
   const foreign = Object.keys(rows || {}).filter((id) => !agents.some((a) => a.id === Number(id))).length;
 
+  const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'], ['memory', 'Memory'], ['activity', 'Activity']];
+
   return (
-    <Sheet title={person.name} onClose={onClose} tab={tab} onTab={setTab}
-      tabs={[['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'], ['memory', 'Memory']]}
-      icon={<span className="grid size-8 place-items-center rounded-full bg-white/10 text-sm font-medium">{person.name[0]?.toUpperCase()}</span>}>
-      <div className="space-y-4">
-        <p className="-mt-1 text-xs text-mute">{person.email}{person.disabled && ' · disabled'}</p>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="border-b border-stroke/60 px-4 pb-3 pt-4 md:px-6">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} aria-label="Back to everyone" className="-ml-2 grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
+            <ChevronLeft size={20} />
+          </button>
+          <span className="grid size-11 shrink-0 place-items-center rounded-full bg-white/10 text-base font-medium">{person.name[0]?.toUpperCase()}</span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-lg font-light leading-tight">{person.name}</p>
+            <p className="truncate text-xs text-mute">{person.email}{person.disabled && ' · disabled'}</p>
+          </div>
+          {person.role === 'master' && <span className="shrink-0 rounded-full bg-p1/25 px-2.5 py-1 text-[11px] text-p1">master</span>}
+        </div>
+        <div className="mt-3 flex gap-1 overflow-x-auto">
+          {TABS.map(([k, l]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className={`shrink-0 rounded-full px-3.5 py-1.5 text-sm transition ${tab === k ? 'bg-white/15 text-txt' : 'text-mute hover:bg-white/5'}`}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 pb-safe md:px-6">
 
         {tab === 'memory' && <Memories person={person} />}
+        {tab === 'activity' && <Activity person={person} />}
         {(tab === 'documents' || tab === 'conversations') && <Browse person={person} kind={tab} />}
 
         {tab === 'agents' && (rows === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
@@ -177,11 +196,41 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
           </>
         ))}
       </div>
-    </Sheet>
+    </div>
   );
 }
 
 const when = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+const exactly = (ts) => (ts ? new Date(ts * 1000).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+
+export const ACCESS_WORDS = {
+  document: 'opened a file',
+  file: 'opened a file',
+  conversation: 'read a chat',
+  memory: 'looked at the memory',
+};
+
+/** What the master has read about this person. The same rows they can see themselves. */
+function Activity({ person }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api.get(`/admin/users/${person.id}/access`).then(setRows).catch(() => setRows([])); }, [person.id]);
+  if (rows === null) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
+  if (!rows.length) return <p className="py-6 text-center text-sm text-mute">You have not opened anything of theirs.</p>;
+  return (
+    <>
+      <p className="text-xs text-mute">{person.name} can see this list too, on their own account.</p>
+      <ul className="space-y-1.5">
+        {rows.map((r) => (
+          <li key={r.id} className="flex items-center gap-2.5 rounded-xl bg-white/5 px-3 py-2 text-sm">
+            <Eye size={14} className="shrink-0 text-mute" />
+            <span className="flex-1">You {ACCESS_WORDS[r.action] || r.action}</span>
+            <span className="shrink-0 text-xs text-mute">{exactly(r.created_at)}</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
 
 /**
  * Someone else's workspace, read-only. Master can see all of it (spec §2), but nothing
@@ -277,7 +326,44 @@ function Memories({ person }) {
   );
 }
 
-export default function AdminSheet({ agents, me, onClose }) {
+/**
+ * The other side of the ledger: shown to the person who was looked at, not the one
+ * looking. This is what makes the record an audit trail rather than a diary.
+ */
+export function MyActivitySheet({ onClose }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api.get('/access').then(setRows).catch(() => setRows([])); }, []);
+  return (
+    <Sheet title="Who has looked at your workspace" onClose={onClose}
+      icon={<span className="grid size-8 place-items-center rounded-full bg-white/10 text-mute"><Eye size={17} /></span>}>
+      {rows === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
+        <div className="space-y-3">
+          <p className="text-sm text-mute">
+            Whoever runs this workspace can open your files, chats and memory. Every time they do, it is listed here.
+          </p>
+          <ul className="space-y-1.5">
+            {rows.map((r) => (
+              <li key={r.id} className="flex items-center gap-2.5 rounded-xl bg-white/5 px-3 py-2 text-sm">
+                <Eye size={14} className="shrink-0 text-mute" />
+                <span className="flex-1"><b className="font-medium">{r.actor_name || r.actor_email}</b> {ACCESS_WORDS[r.action] || r.action}</span>
+                <span className="shrink-0 text-xs text-mute">{exactly(r.created_at)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+/**
+ * Master's people screen. A full-screen panel like the Shelf rather than a dialog: it
+ * holds somebody's whole workspace - their files, chats, memory and the record of what
+ * has been read - and that is more than a modal should carry. On a wide screen the
+ * list stays beside the person so moving between people does not mean closing anything;
+ * on a phone the list hands over to the detail and a back arrow returns.
+ */
+export default function AdminPage({ agents, me, onBack }) {
   const [people, setPeople] = useState(null);
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState(null);
@@ -287,17 +373,31 @@ export default function AdminSheet({ agents, me, onClose }) {
   const person = open && people?.find((p) => p.id === open);
 
   return (
-    <>
-      <Sheet title="People" onClose={onClose}
-        icon={<span className="grid size-8 place-items-center rounded-full bg-emerald-400/20 text-emerald-300"><UserPlus size={17} /></span>}>
-        <div className="space-y-3">
+    <div className="absolute inset-0 z-20 flex flex-col bg-bg/95 backdrop-blur-xl">
+      <header className="flex items-center gap-2 border-b border-stroke/60 px-4 py-3 pt-safe md:px-6">
+        <button onClick={onBack} aria-label="Back" className="-ml-2 grid size-10 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
+          <ChevronLeft size={22} />
+        </button>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[22px] font-light leading-tight">People</h1>
+          <p className="text-xs text-mute">{people ? `${people.length} with an account` : 'Loading…'}</p>
+        </div>
+        <button onClick={() => { setAdding(true); setOpen(null); }}
+          className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-95">
+          <UserPlus size={16} /> Add
+        </button>
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+        <aside className={`min-h-0 w-full shrink-0 overflow-y-auto border-stroke/60 p-3 md:block md:w-80 md:border-r ${person || adding ? 'hidden' : 'block'}`}>
           {people === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
-            <>
-              <ul className="space-y-1.5">
-                {people.map((p) => (
+            <ul className="space-y-1.5">
+              {people.map((p) => {
+                const active = p.id === open;
+                return (
                   <li key={p.id}>
-                    <button onClick={() => setOpen(p.id)}
-                      className="flex w-full items-center gap-3 rounded-2xl border border-stroke bg-white/[0.03] px-3 py-2.5 text-left transition hover:bg-white/[0.07]">
+                    <button onClick={() => { setOpen(p.id); setAdding(false); }}
+                      className={`flex w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${active ? 'border-p1/60 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.07]'}`}>
                       <span className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-medium">{p.name[0]?.toUpperCase()}</span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2">
@@ -306,29 +406,36 @@ export default function AdminSheet({ agents, me, onClose }) {
                           {p.disabled && <span className="shrink-0 rounded-full bg-bad/20 px-2 py-0.5 text-[10px] text-bad">disabled</span>}
                         </span>
                         <span className="block truncate text-xs text-mute">
-                          {p.email} · {p.role === 'master' ? `${agents.length} own` : `${p.agents} agent${p.agents === 1 ? '' : 's'}`}
+                          {p.role === 'master' ? `${agents.length} agents of their own` : `${p.agents} agent${p.agents === 1 ? '' : 's'}`}
                         </span>
                       </span>
-                      <ChevronLeft size={16} className="shrink-0 rotate-180 text-mute" />
+                      <ChevronLeft size={15} className="shrink-0 rotate-180 text-mute md:hidden" />
                     </button>
                   </li>
-                ))}
-              </ul>
-
-              {adding
-                ? <AddPerson onAdded={() => { setAdding(false); load(); }} onCancel={() => setAdding(false)} />
-                : (
-                  <button onClick={() => setAdding(true)}
-                    className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-p1/50 py-3 text-sm text-p1 hover:bg-p1/10">
-                    <UserPlus size={16} /> Add a person
-                  </button>
-                )}
-            </>
+                );
+              })}
+            </ul>
           )}
-        </div>
-      </Sheet>
+        </aside>
 
-      {person && <PersonSheet person={person} agents={agents} me={me} onClose={() => setOpen(null)} onChanged={load} />}
-    </>
+        <section className={`min-h-0 min-w-0 flex-1 flex-col ${person || adding ? 'flex' : 'hidden md:flex'}`}>
+          {adding ? (
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+              <div className="mx-auto max-w-md space-y-3">
+                <h2 className="text-lg font-light">Add a person</h2>
+                <AddPerson onAdded={(id) => { setAdding(false); load().then(() => setOpen(id ?? null)); }} onCancel={() => setAdding(false)} />
+              </div>
+            </div>
+          ) : person ? (
+            <PersonDetail person={person} agents={agents} me={me} onBack={() => setOpen(null)} onChanged={load} />
+          ) : (
+            <div className="hidden flex-1 flex-col items-center justify-center gap-2 px-8 text-center md:flex">
+              <span className="grid size-16 place-items-center rounded-3xl bg-gradient-to-br from-emerald-400/25 to-p1/10 text-emerald-300"><UserPlus size={28} strokeWidth={1.4} /></span>
+              <p className="text-sm text-mute">Pick someone to see what they have and what they can use.</p>
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
   );
 }

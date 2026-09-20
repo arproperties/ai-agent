@@ -114,6 +114,33 @@ export function userMemories(userId) {
   return db.prepare('SELECT id, text, created_at FROM memories WHERE user_id = ? ORDER BY id DESC').all(Number(userId));
 }
 
+// ---------- the record of having looked ----------
+// Master can read anyone's workspace. That is recorded, and shown to both sides: a log
+// only the reader can see is a diary. Content reads only - opening a file, reading a
+// transcript, viewing memory. Listing titles is not recorded, or every tab switch
+// would write a row and the useful entries would be lost in it.
+
+export async function recordAccess(actor, subjectUserId, action, targetId = null) {
+  const subject = Number(subjectUserId);
+  if (!subject || subject === actor.id) return; // reading your own things is not oversight
+  await db.prepare('INSERT INTO access_log (actor_user_id, subject_user_id, action, target_id) VALUES (?, ?, ?, ?)')
+    .run(actor.id, subject, action, targetId ?? null);
+}
+
+/** What was read about this person, for them to see. */
+export function accessOfMe(userId) {
+  return db.prepare(`SELECT l.id, l.action, l.target_id, l.created_at, u.email actor_email, u.name actor_name
+    FROM access_log l JOIN users u ON u.id = l.actor_user_id
+    WHERE l.subject_user_id = ? ORDER BY l.id DESC LIMIT 200`).all(Number(userId));
+}
+
+/** What this master has read about one person, for the People screen. */
+export function accessByMe(actorId, subjectUserId) {
+  return db.prepare(`SELECT id, action, target_id, created_at FROM access_log
+    WHERE actor_user_id = ? AND subject_user_id = ? ORDER BY id DESC LIMIT 200`)
+    .all(Number(actorId), Number(subjectUserId));
+}
+
 export const adminRoutes = Router();
 adminRoutes.use(requireMaster);
 
@@ -152,6 +179,7 @@ adminRoutes.get('/users/:id/documents', wrap(async (req, res) => {
 adminRoutes.get('/users/:id/documents/:docId', wrap(async (req, res) => {
   const doc = await userDocument(req.params.id, req.params.docId);
   if (!doc) return res.status(404).json({ error: 'Not found' });
+  await recordAccess(req.user, req.params.id, 'document', doc.id);
   const { path, ...rest } = doc;
   res.json({ ...rest, tags: JSON.parse(doc.tags || '[]'), openable: !!path });
 }));
@@ -160,6 +188,7 @@ adminRoutes.get('/users/:id/documents/:docId', wrap(async (req, res) => {
 adminRoutes.get('/users/:id/documents/:docId/file', wrap(async (req, res) => {
   const doc = await userDocument(req.params.id, req.params.docId);
   if (!doc?.path) return res.status(404).json({ error: 'Not found' });
+  await recordAccess(req.user, req.params.id, 'file', doc.id);
   const inline = !req.query.download && inlineType(doc);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(doc.name)}`);
@@ -172,9 +201,17 @@ adminRoutes.get('/users/:id/conversations', wrap(async (req, res) => {
 
 adminRoutes.get('/users/:id/conversations/:convId', wrap(async (req, res) => {
   const conv = await userConversation(req.params.id, req.params.convId);
-  conv ? res.json(conv) : res.status(404).json({ error: 'Not found' });
+  if (!conv) return res.status(404).json({ error: 'Not found' });
+  await recordAccess(req.user, req.params.id, 'conversation', conv.id);
+  res.json(conv);
 }));
 
+// The memory list is the content, so viewing it at all is the read.
 adminRoutes.get('/users/:id/memories', wrap(async (req, res) => {
+  await recordAccess(req.user, req.params.id, 'memory');
   res.json(await userMemories(req.params.id));
+}));
+
+adminRoutes.get('/users/:id/access', wrap(async (req, res) => {
+  res.json(await accessByMe(req.user.id, req.params.id));
 }));

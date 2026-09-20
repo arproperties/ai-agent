@@ -281,6 +281,19 @@ await db.exec(`
   -- (No origin_user_id: facts are captured from the master's own chats, so it would
   --  always repeat documents.user_id. Add it if that is ever widened.)
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS origin_conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL;
+
+  -- Master can read anyone's workspace, so it is recorded, and both sides can see it.
+  -- target_id is deliberately NOT a foreign key: deleting the file that was read must
+  -- not delete the record of it having been read.
+  CREATE TABLE IF NOT EXISTS access_log (
+    id SERIAL PRIMARY KEY,
+    actor_user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subject_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    action     TEXT NOT NULL,
+    target_id  INTEGER,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_access_subject ON access_log(subject_user_id, id DESC);
 `);
 
 // Databases created before this treated agents.id as the OWNER of a document, so
