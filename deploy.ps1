@@ -29,7 +29,7 @@ $tar = Join-Path $env:TEMP "jarvis-app.tar.gz"
 if (Test-Path $tar) { Remove-Item $tar -Force }
 Push-Location $root
 try {
-    tar -czf $tar server scripts package.json package-lock.json README.md client/dist
+    tar -czf $tar server scripts tests package.json package-lock.json README.md client/dist
     if ($LASTEXITCODE -ne 0) { throw "tar failed (exit $LASTEXITCODE)" }
 } finally { Pop-Location }
 
@@ -40,7 +40,7 @@ if ($LASTEXITCODE -ne 0) { throw "scp failed" }
 $remote = @'
 set -e
 cd /var/www/jarvis
-rm -rf server scripts client package.json package-lock.json README.md
+rm -rf server scripts tests client package.json package-lock.json README.md
 tar -xzf /tmp/jarvis-app.tar.gz -C /var/www/jarvis
 rm -f /tmp/jarvis-app.tar.gz
 # onnxruntime otherwise pulls ~1GB of CUDA runtimes onto a droplet with no GPU

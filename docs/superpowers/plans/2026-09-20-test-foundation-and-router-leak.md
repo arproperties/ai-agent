@@ -84,17 +84,28 @@ Create `tests/helpers/db.js`:
 // environment, so this wins over the project's .env without touching config.js.
 import { randomBytes } from 'node:crypto';
 
-if (!process.env.TEST_DATABASE_URL) {
+const url = process.env.TEST_DATABASE_URL;
+if (!url) {
   throw new Error(
     'TEST_DATABASE_URL is not set. Create a throwaway database and point at it:\n' +
     '  createdb jarvis_test && psql -d jarvis_test -c "CREATE EXTENSION vector;"\n' +
     '  TEST_DATABASE_URL=postgres://user:pass@localhost:5432/jarvis_test npm test'
   );
 }
-if (process.env.TEST_DATABASE_URL === process.env.DATABASE_URL) {
-  throw new Error('TEST_DATABASE_URL must not be the development or production database.');
+
+// reset() TRUNCATEs every table. Against the production database that is
+// unrecoverable, so refuse to run unless the database is named like a test one.
+// Checking the name rather than comparing against DATABASE_URL is deliberate: the
+// project's .env has not been loaded at this point, so DATABASE_URL may still be
+// unset here and a comparison would silently pass.
+const dbName = new URL(url).pathname.replace(/^\//, '');
+if (!/_test$/.test(dbName)) {
+  throw new Error(
+    `Refusing to run: the test database must be named with a "_test" suffix (got "${dbName}").\n` +
+    'Every test truncates every table.'
+  );
 }
-process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+process.env.DATABASE_URL = url;
 
 const { db, tx, closeDb } = await import('../../server/db.js');
 export { db, tx, closeDb };
@@ -172,11 +183,23 @@ test('the factories link rows together', async () => {
 In `package.json`, add to `"scripts"` after `"start"`:
 
 ```json
-"test": "node --test tests/",
+"test": "node --test --test-force-exit",
 ```
 
-Node's runner only treats files matching `*.test.js` (and similar) as tests, so
+No path argument: Node 22 (which the droplet runs) rejects `node --test tests/` with
+`Cannot find module '/var/www/jarvis/tests'`, while Node 24 accepts it. With no path
+the runner auto-discovers from the working directory, which works on both and skips
+`node_modules` by default.
+
+The runner only treats files matching `*.test.js` (and similar) as tests, so
 `tests/helpers/db.js` is loaded as a plain module, not executed as a suite.
+
+`--test-force-exit` is needed because of a side effect in `server/ai.js:60`: it calls
+`embedder()` at import time to warm the local embedding model. `tests/router.test.js`
+imports `server/router.js`, which imports `ai.js`, so that warm-up starts on every
+test run. It is wrapped in `.catch()` so it cannot fail the suite, but a pending model
+load is an open handle and the runner would otherwise sit waiting for it after the
+last assertion.
 
 - [ ] **Step 5: Run the tests**
 
