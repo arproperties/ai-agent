@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileSignature, Building2, Receipt, Landmark, Scale, Users, IdCard, BadgeCheck, Mail, Megaphone, Image as ImageIcon,
-  Folder, FolderOpen, Search, Download, ExternalLink, Loader2, AlertCircle, Upload, ChevronLeft, ChevronDown, Trash2, MessageSquare, X, Info,
+  Folder, FolderOpen, Search, Download, ExternalLink, Loader2, AlertCircle, Upload, ChevronLeft, ChevronDown, Trash2, MessageSquare, X, Info, PenLine,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
@@ -60,7 +60,45 @@ function useFiles(agentId) {
     setUploading(false);
     load();
   };
-  return { docs, load, upload, uploading, notes };
+
+  // A typed note takes the identical path as an upload on the server, so it is named,
+  // filed and searchable the same way.
+  const write = async (text) => {
+    setUploading(true);
+    try {
+      const res = await api.post('/documents/note', { text, ...(agentId ? { agent: agentId } : {}) });
+      setNotes(res.duplicate ? [`You have already written that note${res.shelf ? `, filed under ${res.shelf}` : ''}`] : []);
+    } catch (e) { setNotes([e.message]); }
+    setUploading(false);
+    load();
+  };
+  return { docs, load, upload, write, uploading, notes };
+}
+
+function NoteSheet({ onSave, onClose }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    await onSave(text);
+    onClose();
+  };
+  return (
+    <Sheet title="Write a note" onClose={onClose}
+      icon={<span className="grid size-8 place-items-center rounded-full bg-amber-400/20 text-amber-300"><PenLine size={17} /></span>}>
+      <form onSubmit={save} className="space-y-3">
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} autoFocus required
+          placeholder="Anything worth keeping — a policy, a decision, a number you keep looking up…"
+          className="glass w-full resize-none rounded-2xl px-3.5 py-3 leading-relaxed outline-none focus:border-p1/70" />
+        <p className="text-xs text-mute">It will be named, filed and made searchable just like an uploaded file.</p>
+        <button disabled={busy || !text.trim()}
+          className="w-full rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white disabled:opacity-60">
+          {busy ? 'Saving…' : 'Save note'}
+        </button>
+      </form>
+    </Sheet>
+  );
 }
 
 // ---------- pieces ----------
@@ -299,8 +337,9 @@ const matches = (d, q) => !q || [d.title, d.name, d.summary, d.folder, ...(d.tag
 
 // ---------- full-screen Files page ----------
 export function FilesPage({ folders, me, onBack, onOpenChat }) {
-  const { docs, load, upload, uploading, notes } = useFiles(null);
+  const { docs, load, upload, write, uploading, notes } = useFiles(null);
   const [folder, setFolder] = useState('All');
+  const [writing, setWriting] = useState(false);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(null); // details sheet
   const [viewing, setViewing] = useState(null); // full-screen viewer
@@ -327,6 +366,10 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
             <h1 className="text-[22px] font-light leading-tight">Files</h1>
             <p className="text-xs text-mute">{docs ? `${docs.length} files · sorted automatically` : 'Loading…'}</p>
           </div>
+          <button onClick={() => setWriting(true)} disabled={uploading}
+            className="glass flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition hover:bg-white/10 active:scale-95 disabled:opacity-60">
+            <PenLine size={16} /> Note
+          </button>
           <button onClick={() => ref.current.click()} disabled={uploading}
             className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-95 disabled:opacity-60">
             {uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} {uploading ? 'Adding…' : 'Upload'}
@@ -386,14 +429,16 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
       )}
       {viewing && <FileViewer d={viewing} onClose={() => setViewing(null)} onInfo={(d) => { setViewing(null); setOpen(d.id); }} />}
       {openDoc && <FileDetail d={openDoc} folders={folders} me={me} onClose={() => setOpen(null)} onChanged={load} onOpenChat={onOpenChat} />}
+      {writing && <NoteSheet onSave={write} onClose={() => setWriting(false)} />}
     </div>
   );
 }
 
 // ---------- compact version for an agent's own files (inside the agent sheet) ----------
 export function FilesPanel({ agentId, hint, folders, me, shelfName }) {
-  const { docs, load, upload, uploading, notes } = useFiles(agentId);
+  const { docs, load, upload, write, uploading, notes } = useFiles(agentId);
   const [open, setOpen] = useState(null);
+  const [writing, setWriting] = useState(false);
   const ref = useRef();
   const openDoc = open && docs?.find((d) => d.id === open);
 
@@ -405,12 +450,17 @@ export function FilesPanel({ agentId, hint, folders, me, shelfName }) {
         className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-p1/50 py-4 text-sm text-p1 hover:bg-p1/10 disabled:opacity-60">
         {uploading ? <><Loader2 size={16} className="animate-spin" /> Reading and organising…</> : <><Upload size={16} /> Upload files</>}
       </button>
+      <button onClick={() => setWriting(true)} disabled={uploading}
+        className="flex w-full items-center justify-center gap-2 rounded-2xl border border-stroke py-2.5 text-sm text-mute hover:bg-white/5 hover:text-txt disabled:opacity-60">
+        <PenLine size={15} /> Write a note
+      </button>
       {notes.map((n) => <p key={n} className="text-sm text-warn">{n}</p>)}
       {docs?.length === 0 && <p className="py-4 text-center text-sm text-mute">No files yet</p>}
       <div className="grid grid-cols-2 gap-2.5">
         {docs?.map((d) => <FileCard key={d.id} d={d} onOpen={(x) => setOpen(x.id)} />)}
       </div>
       {openDoc && <FileDetail d={openDoc} folders={folders} me={me} shelfName={shelfName} onClose={() => setOpen(null)} onChanged={load} />}
+      {writing && <NoteSheet onSave={write} onClose={() => setWriting(false)} />}
     </div>
   );
 }

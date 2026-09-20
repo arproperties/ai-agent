@@ -10,7 +10,7 @@ import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, canUseAgent, isMaster } from './access.js';
 import { chat } from './chat.js';
 import { addMemory } from './knowledge.js';
-import { saveUpload, processDocument, deleteDocument, inlineType, docxPreview, setShared } from './files.js';
+import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes } from './admin.js';
@@ -177,6 +177,20 @@ app.post('/api/documents', upload.array('files', 10), wrap(async (req, res) => {
   }));
   res.json(results);
 }));
+// A typed note. Runs the identical path as an upload - classify, file to a shelf,
+// index - so it is searchable and openable like any other file. Users get these too:
+// their notes are their own, and like their uploads can never be shared.
+app.post('/api/documents/note', wrap(async (req, res) => {
+  const agentId = Number(req.body.agent) || null;
+  if (agentId && !await canUseAgent(req.user, agentId)) return notFound(res);
+  const { doc, duplicate } = await saveNote(req.user.id, agentId, req.body.text);
+  if (!duplicate) await processDocument(doc, null, String(req.body.text).trim(), agentId ? [] : await chatAgents(req.user));
+  const shelf = duplicate && doc.agent_id
+    ? (await db.prepare('SELECT name FROM agents WHERE id = ?').get(doc.agent_id))?.name ?? null
+    : null;
+  res.json({ id: doc.id, name: doc.name, duplicate, shelf });
+}));
+
 // view (safe types only) or download the original file
 app.get('/api/documents/:id/file', wrap(async (req, res) => {
   const doc = await own('documents', req.params.id, req.user.id);
