@@ -5,7 +5,8 @@ import { extname } from 'node:path';
 import { db } from './db.js';
 import { ask } from './ai.js';
 import { DATA_DIR, FOLDERS } from './config.js';
-import { IMAGE_TYPES, extractText, describeImage, indexChunks } from './knowledge.js';
+import { IMAGE_TYPES, extractText, describeImage, indexChunks, retrievalScope } from './knowledge.js';
+import { shelfIds } from './access.js';
 
 const UPLOAD_DIR = `${DATA_DIR}/uploads`;
 
@@ -95,9 +96,11 @@ export async function deleteDocument(userId, id) {
   return true;
 }
 
-// Compact catalogue of the user's files, so agents can answer "what files do I have?" or "find my lease"
-export async function libraryCatalog(userId, agentId) {
-  const rows = await db.prepare(`SELECT title, folder, name, doc_date FROM documents
-    WHERE user_id = ? AND (agent_id IS NULL OR agent_id = ?) AND status = 'ready' ORDER BY id DESC LIMIT 40`).all(userId, agentId);
+// Compact catalogue of the files this user can see, so agents can answer
+// "what files do I have?" or "find my lease". Same scope as recall().
+export async function libraryCatalog(user) {
+  const scope = retrievalScope(user.id, await shelfIds(user));
+  const rows = await db.prepare(`SELECT title, folder, name, doc_date FROM documents t
+    WHERE ${scope.sql} AND status = 'ready' ORDER BY id DESC LIMIT 40`).all(...scope.params);
   return rows.map((d) => `- ${d.title} (${d.folder}${d.doc_date ? `, ${d.doc_date}` : ''}; file: ${d.name})`);
 }

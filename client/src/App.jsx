@@ -14,7 +14,6 @@ if (outlookReturn) window.history.replaceState(null, '', '/');
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
-  const [inviteRequired, setInviteRequired] = useState(false);
   const [config, setConfig] = useState({ models: [], voices: [], folders: [], voice: false });
   const [agents, setAgents] = useState([]);
   const [convs, setConvs] = useState([]);
@@ -24,7 +23,7 @@ export default function App() {
   const [panel, setPanel] = useState(outlookReturn ? 'email' : null); // 'files' | 'memory' | 'email'
 
   useEffect(() => {
-    api.get('/auth/me').then((r) => { setMe(r.user); setInviteRequired(r.inviteRequired); }).catch(() => setMe(null));
+    api.get('/auth/me').then((r) => setMe(r.user)).catch(() => setMe(null));
     const out = () => setMe(null);
     window.addEventListener('jarvis:signedout', out);
     return () => window.removeEventListener('jarvis:signedout', out);
@@ -55,7 +54,7 @@ export default function App() {
 
   if (me === undefined) return null;
   const resetting = new URLSearchParams(window.location.search).has('reset'); // opened a password-reset link
-  if (!me || resetting) return <Auth inviteRequired={inviteRequired} onAuthed={(u) => { setMe(u); setChat({ key: Date.now(), id: null }); }} />;
+  if (!me || resetting) return <Auth onAuthed={(u) => { setMe(u); setChat({ key: Date.now(), id: null }); }} />;
 
   return (
     <div className="relative z-10 flex h-dvh">

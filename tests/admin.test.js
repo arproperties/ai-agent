@@ -1,0 +1,85 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
+import { createUser, setAssignments, listUsers } from '../server/admin.js';
+
+test.after(() => closeDb());
+
+async function fixture() {
+  await reset();
+  const masterId = await makeUser('Master');
+  await db.prepare("UPDATE users SET role = 'master' WHERE id = ?").run(masterId);
+  const master = await db.prepare('SELECT * FROM users WHERE id = ?').get(masterId);
+  const lawyer = await makeAgent(masterId, 'Lawyer');
+  const hr = await makeAgent(masterId, 'HR');
+  return { master, lawyer, hr };
+}
+
+test('createUser makes a normal, enabled account recorded against its creator', async () => {
+  const { master } = await fixture();
+  const u = await createUser(master, { name: 'Sara', email: 'SARA@Example.com ', password: 'hunter2hunter2' });
+  assert.equal(u.email, 'sara@example.com', 'email is normalised');
+  assert.equal(u.role, 'user');
+
+  const row = await db.prepare('SELECT role, disabled, created_by, password_hash FROM users WHERE id = ?').get(u.id);
+  assert.equal(row.disabled, false);
+  assert.equal(row.created_by, master.id);
+  assert.match(row.password_hash, /^scrypt\$/, 'the password must be hashed');
+});
+
+test('createUser rejects a duplicate email', async () => {
+  const { master } = await fixture();
+  await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  await assert.rejects(
+    () => createUser(master, { name: 'Other', email: 'sara@example.com', password: 'hunter2hunter2' }),
+    /already exists/
+  );
+});
+
+test('createUser rejects a short password', async () => {
+  const { master } = await fixture();
+  await assert.rejects(
+    () => createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'short' }),
+    /at least 8/
+  );
+});
+
+test('setAssignments replaces the whole set', async () => {
+  const { master, lawyer, hr } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+
+  await setAssignments(master, sara.id, [{ agentId: lawyer, mode: 'chat', primary: true }]);
+  await setAssignments(master, sara.id, [
+    { agentId: lawyer, mode: 'chat' },
+    { agentId: hr, mode: 'knowledge' },
+  ]);
+
+  const rows = await db.prepare('SELECT agent_id, mode FROM agent_assignments WHERE user_id = ? ORDER BY agent_id').all(sara.id);
+  assert.deepEqual(rows, [{ agent_id: lawyer, mode: 'chat' }, { agent_id: hr, mode: 'knowledge' }].sort((a, b) => a.agent_id - b.agent_id));
+});
+
+test('setAssignments refuses an agent the master does not own', async () => {
+  const { master } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  const strayOwner = await makeUser('Stray');
+  const stray = await makeAgent(strayOwner, 'Stray');
+
+  await assert.rejects(() => setAssignments(master, sara.id, [{ agentId: stray, mode: 'chat' }]), /not found/i);
+});
+
+test('setAssignments rejects an unknown mode', async () => {
+  const { master, lawyer } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  await assert.rejects(() => setAssignments(master, sara.id, [{ agentId: lawyer, mode: 'root' }]), /mode/i);
+});
+
+test('listUsers reports each user with their assignment count and never a password', async () => {
+  const { master, lawyer } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  await setAssignments(master, sara.id, [{ agentId: lawyer, mode: 'chat' }]);
+
+  const users = await listUsers();
+  const row = users.find((u) => u.id === sara.id);
+  assert.equal(row.agents, 1);
+  assert.ok(!('password_hash' in row), 'never expose the hash');
+});

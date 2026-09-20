@@ -4,6 +4,7 @@ import { pickAgent } from './router.js';
 import { extractText, recall, learn } from './knowledge.js';
 import { saveUpload, processDocument, isImage, fileName, libraryCatalog } from './files.js';
 import { EMAIL_TOOLS, connectedMailbox } from './email.js';
+import { chatAgents } from './access.js';
 
 const MAX_INLINE = 60000; // chars of a document sent in full on the turn it is attached
 
@@ -85,7 +86,7 @@ async function readAttachments(user, convId, files, send) {
 
 export async function chat(req, res) {
   const user = req.user;
-  const team = await db.prepare('SELECT * FROM agents WHERE user_id = ? ORDER BY id').all(user.id);
+  const team = await chatAgents(user);
   if (!team.length) return res.status(400).json({ error: 'You have no agents yet' });
   const text = (req.body.text || '').trim();
   const files = req.files || [];
@@ -116,8 +117,8 @@ export async function chat(req, res) {
   send('status', { label: `${agent.name} is thinking…` });
   const email = await connectedMailbox(user.id);
   const mailbox = email?.address ?? null;
-  const { memories, knowledge } = await recall(user.id, agent.id, text || meta.map((f) => f.name).join(' '));
-  const library = await libraryCatalog(user.id, agent.id); // same every turn, so read it once
+  const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
+  const library = await libraryCatalog(user); // same every turn, so read it once
   await db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?)').run(convId, 'user', text, JSON.stringify(savedFiles));
 
   // 3. Stream the reply (with web search, and email tools when a mailbox is connected).
