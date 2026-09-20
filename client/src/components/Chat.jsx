@@ -209,7 +209,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
         </Sheet>
       )}
       {viewer && <FileViewer d={viewer} onClose={() => setViewer(null)} onInfo={(d) => { setViewer(null); setDetails(d); }} />}
-      {details && <FileDetail d={details} folders={folders} onClose={() => setDetails(null)} onChanged={() => {}} />}
+      {details && <FileDetail d={details} folders={folders} me={user} onClose={() => setDetails(null)} onChanged={() => {}} />}
 
       {toast && (
         <div className="rise absolute inset-x-4 top-20 z-30 mx-auto max-w-md rounded-2xl border border-warn/30 bg-[#1d1830]/95 px-4 py-3 text-sm shadow-xl">{toast}</div>

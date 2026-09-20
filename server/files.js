@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 import mammoth from 'mammoth';
 import { mkdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { extname } from 'node:path';
-import { db } from './db.js';
+import { db, tx } from './db.js';
 import { ask } from './ai.js';
 import { DATA_DIR, FOLDERS } from './config.js';
 import { IMAGE_TYPES, extractText, describeImage, indexChunks, retrievalScope } from './knowledge.js';
-import { shelfIds } from './access.js';
+import { shelfIds, isMaster } from './access.js';
 
 const UPLOAD_DIR = `${DATA_DIR}/uploads`;
 
@@ -94,6 +94,31 @@ export async function deleteDocument(userId, id) {
   await db.prepare('DELETE FROM documents WHERE id = ?').run(id);
   if (doc.path && existsSync(doc.path)) unlinkSync(doc.path);
   return true;
+}
+
+/**
+ * Publish a file to its shelf, or take it back. Master only: a user's own uploads are
+ * always private, so the flag is simply not theirs to set.
+ *
+ * chunks.shared is denormalised off documents.shared - recall() filters chunks without
+ * joining documents - so the two move together or retrieval disagrees with the screen.
+ *
+ * How wide "shared" reaches depends on where the file is filed: on a shelf it reaches
+ * the people assigned that shelf, in the library (agent_id NULL) it reaches everyone.
+ * See retrievalScope(); the UI says which.
+ */
+export async function setShared(user, docId, shared) {
+  if (!isMaster(user)) throw Object.assign(new Error('Not allowed'), { status: 403 });
+  const id = Number(docId);
+  const doc = await db.prepare('SELECT id FROM documents WHERE id = ? AND user_id = ?').get(id, user.id);
+  if (!doc) throw Object.assign(new Error('Not found'), { status: 404 });
+
+  const on = !!shared;
+  await tx(async () => {
+    await db.prepare('UPDATE documents SET shared = ? WHERE id = ?').run(on, id);
+    await db.prepare('UPDATE chunks SET shared = ? WHERE document_id = ?').run(on, id);
+  });
+  return on;
 }
 
 // Compact catalogue of the files this user can see, so agents can answer

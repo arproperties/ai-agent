@@ -81,11 +81,11 @@ export default function App() {
             </button>
           </div>
         )}
-        {panel === 'files' && <FilesPage folders={config.folders} onBack={() => setPanel(null)} onOpenChat={openChat} />}
+        {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => setPanel(null)} onOpenChat={openChat} />}
       </main>
 
       {editing && (
-        <AgentSheet agent={editing} config={config} onClose={() => setEditing(null)}
+        <AgentSheet agent={editing} config={config} me={me} onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); loadAgents(); }} />
       )}
       {panel === 'memory' && <MemorySheet onClose={() => setPanel(null)} />}
