@@ -19,8 +19,10 @@ export const isImage = (f) => IMAGE_TYPES.includes(f.mimetype);
  */
 export async function saveUpload(userId, agentId, f, conversationId = null) {
   const hash = createHash('sha256').update(f.buffer).digest('hex');
-  // IS NOT DISTINCT FROM so a NULL agent_id (the shared library) matches a NULL parameter
-  const existing = await db.prepare('SELECT * FROM documents WHERE user_id = ? AND hash = ? AND agent_id IS NOT DISTINCT FROM ?').get(userId, hash, agentId);
+  // Keyed on the bytes alone, not the shelf: the shelf is usually chosen by the
+  // classifier after this point, so including it would let the same file land twice
+  // whenever the classifier changed its mind. One copy per person, wherever it is filed.
+  const existing = await db.prepare('SELECT * FROM documents WHERE user_id = ? AND hash = ?').get(userId, hash);
   if (existing) return { doc: existing, duplicate: true };
 
   const name = fileName(f);
@@ -34,7 +36,28 @@ export async function saveUpload(userId, agentId, f, conversationId = null) {
   return { doc: await db.prepare('SELECT * FROM documents WHERE id = ?').get(id), duplicate: false };
 }
 
-async function classify(name, text) {
+/**
+ * The shelf the classifier asked for, but only if it is one actually on offer.
+ * Anything else - an id it invented, a refusal, a missing field - means the library,
+ * which already means "all of this user's agents" rather than being an error case.
+ */
+export function pickShelf(raw, agents) {
+  const id = Number(raw);
+  return agents.some((a) => a.id === id) ? id : null;
+}
+
+async function classify(name, text, agents = []) {
+  // The roster rides along in the prompt that was already being sent: same call, same
+  // cost. The wording about type and purpose is router.js's, which makes the same
+  // judgement about attachments and should not drift from this one.
+  const roster = agents.length ? `
+ "agent": <one of the id numbers below, or null if none clearly fits>` : '';
+  const team = agents.length ? `
+
+The user's agents, to file this against:
+${agents.map((a) => `- id=${a.id} · ${a.name}: ${(a.persona || '').slice(0, 200).replace(/\s+/g, ' ')}`).join('\n')}
+Judge the file by its type and purpose, not by words that merely appear in it (an offer letter for an accountant job is an HR matter; a tenancy contract is a property matter). Use null when nothing clearly fits - that is the normal answer for personal paperwork.` : '';
+
   const out = await ask(`File name: ${name}\n\nContent (start):\n${text.slice(0, 6000)}`, {
     maxTokens: 400,
     system: `You file documents for a UAE-based user. Reply with ONLY JSON:
@@ -42,8 +65,8 @@ async function classify(name, text) {
  "folder": "<exactly one of: ${FOLDERS.join(' | ')}>",
  "summary": "<1-2 sentences with the key facts: parties, amounts (AED), dates, deadlines>",
  "tags": ["<up to 5 short lowercase tags>"],
- "date": "<the document's own date as YYYY-MM-DD, or null>"}
-Photos of people, places or things with no document content go in "Photos". UAE documents write dates as DD/MM/YYYY.`,
+ "date": "<the document's own date as YYYY-MM-DD, or null>"${roster}}
+Photos of people, places or things with no document content go in "Photos". UAE documents write dates as DD/MM/YYYY.${team}`,
   });
   const d = JSON.parse(out.match(/\{[\s\S]*\}/)[0]);
   return {
@@ -52,18 +75,30 @@ Photos of people, places or things with no document content go in "Photos". UAE 
     summary: String(d.summary || '').slice(0, 600),
     tags: (Array.isArray(d.tags) ? d.tags : []).map((t) => String(t).toLowerCase().slice(0, 30)).slice(0, 5),
     date: /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : null,
+    agentId: pickShelf(d.agent, agents),
   };
 }
 
-/** Read → classify → index for search. Safe to run in the background. Pass `text` if already extracted. */
-export async function processDocument(doc, f, text) {
+/**
+ * Read → classify → index for search. Safe to run in the background. Pass `text` if
+ * already extracted, and `agents` to let the classifier file it against one of them.
+ *
+ * A file uploaded into a particular agent's shelf keeps that shelf: an explicit choice
+ * outranks a guess. The classifier only decides for files that arrived without one.
+ */
+export async function processDocument(doc, f, text, agents = []) {
   try {
     const content = text ?? (isImage(f) ? await describeImage(f) : await extractText({ ...f, originalname: doc.name }));
     if (!content?.trim()) throw new Error('No readable text found');
-    const c = await classify(doc.name, content);
-    await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ? WHERE id = ?')
-      .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, doc.id);
-    await indexChunks({ ...doc, title: c.title, folder: c.folder }, content);
+    const c = await classify(doc.name, content, doc.agent_id ? [] : agents);
+    await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
+      .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, c.agentId, doc.id);
+    // Re-read rather than spreading over the copy we were handed: `doc` predates the
+    // UPDATE, and chunks carry agent_id and shared of their own. Indexing from a stale
+    // copy would file the chunks on the shelf the document just left, leaving the file
+    // listed under one agent and retrievable by another.
+    const filed = await db.prepare('SELECT * FROM documents WHERE id = ?').get(doc.id);
+    await indexChunks(filed, content);
     await db.prepare("UPDATE documents SET status = 'ready', error = NULL WHERE id = ?").run(doc.id);
   } catch (e) {
     console.error('[files]', doc.name, e.message);

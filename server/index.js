@@ -162,9 +162,11 @@ app.get('/api/documents/:id', wrap(async (req, res) => {
 app.post('/api/documents', upload.array('files', 10), wrap(async (req, res) => {
   const agentId = Number(req.body.agent) || null;
   if (agentId && !await canUseAgent(req.user, agentId)) return notFound(res);
+  // Only needed when no shelf was chosen, but reading it once beats once per file.
+  const team = agentId ? [] : await chatAgents(req.user);
   const results = await Promise.all((req.files || []).map(async (f) => {
     const { doc, duplicate } = await saveUpload(req.user.id, agentId, f);
-    if (!duplicate) await processDocument(doc, f);
+    if (!duplicate) await processDocument(doc, f, undefined, team);
     return { id: doc.id, name: doc.name, duplicate };
   }));
   res.json(results);
