@@ -67,6 +67,12 @@ export async function setAssignments(master, userId, wanted) {
   return rows.length;
 }
 
+/** The current set, so the screen can show it before setAssignments replaces it. */
+export function listAssignments(userId) {
+  return db.prepare(`SELECT agent_id, mode, is_primary FROM agent_assignments
+    WHERE user_id = ? ORDER BY agent_id`).all(Number(userId));
+}
+
 export function listUsers() {
   return db.prepare(`SELECT u.id, u.name, u.email, u.role, u.disabled, u.created_at,
       (SELECT COUNT(*)::int FROM agent_assignments aa WHERE aa.user_id = u.id) agents
@@ -82,6 +88,10 @@ adminRoutes.get('/users', wrap(async (req, res) => res.json(await listUsers())))
 
 adminRoutes.post('/users', wrap(async (req, res) => {
   res.json(await createUser(req.user, req.body));
+}));
+
+adminRoutes.get('/users/:id/agents', wrap(async (req, res) => {
+  res.json(await listAssignments(req.params.id));
 }));
 
 adminRoutes.put('/users/:id/agents', wrap(async (req, res) => {

@@ -6,6 +6,7 @@ import Chat from './components/Chat';
 import AgentSheet from './components/AgentSheet';
 import { FilesPage, MemorySheet } from './components/Knowledge';
 import EmailSheet from './components/EmailSheet';
+import AdminSheet from './components/Admin';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
@@ -20,7 +21,7 @@ export default function App() {
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : null); // 'files' | 'memory' | 'email'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : null); // 'files' | 'memory' | 'email' | 'people'
 
   useEffect(() => {
     api.get('/auth/me').then((r) => setMe(r.user)).catch(() => setMe(null));
@@ -63,7 +64,7 @@ export default function App() {
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel === 'files' ? null : chat.id} filesOpen={panel === 'files'}
           onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
-          onEmail={() => { setPanel('email'); setDrawer(false); }}
+          onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
       </aside>
 
@@ -90,6 +91,7 @@ export default function App() {
       )}
       {panel === 'memory' && <MemorySheet onClose={() => setPanel(null)} />}
       {panel === 'email' && <EmailSheet returned={outlookReturn} onClose={() => setPanel(null)} />}
+      {panel === 'people' && <AdminSheet agents={agents} me={me} onClose={() => setPanel(null)} />}
     </div>
   );
 }
