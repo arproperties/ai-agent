@@ -98,7 +98,7 @@ export async function deleteDocument(userId, id) {
 
 // Compact catalogue of the files this user can see, so agents can answer
 // "what files do I have?" or "find my lease". Same scope as recall().
-export async function libraryCatalog(user, agentId) {
+export async function libraryCatalog(user) {
   const scope = retrievalScope(user.id, await shelfIds(user));
   const rows = await db.prepare(`SELECT title, folder, name, doc_date FROM documents t
     WHERE ${scope.sql} AND status = 'ready' ORDER BY id DESC LIMIT 40`).all(...scope.params);

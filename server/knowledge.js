@@ -148,7 +148,7 @@ export function retrievalScope(userId, shelves) {
   };
 }
 
-export async function recall(user, agentId, query) {
+export async function recall(user, query) {
   const [qvec] = await embed([query]);
   const { n: memCount } = await db.prepare('SELECT COUNT(*)::int n FROM memories WHERE user_id = ?').get(user.id);
   // Memories are facts about a person, never about the company, so they are never
