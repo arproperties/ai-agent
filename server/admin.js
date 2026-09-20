@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db, tx } from './db.js';
 import { hashPassword, requireMaster } from './auth.js';
+import { inlineType } from './files.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
 // as an "OR is_master" widening of the ordinary queries. Every cross-user guard in the
@@ -79,6 +80,40 @@ export function listUsers() {
     FROM users u ORDER BY u.id`).all();
 }
 
+// ---------- oversight: browsing one person's workspace ----------
+// requireMaster on the router is what makes these master-only. The user_id scoping
+// here is for correctness: asking under the wrong person finds nothing rather than
+// quietly answering about someone else. Read-only, all of it - nothing here writes.
+
+export function userDocuments(userId) {
+  return db.prepare(`SELECT id, name, title, folder, doc_date, shared, kind, agent_id, status, created_at
+    FROM documents WHERE user_id = ? ORDER BY id DESC LIMIT 200`).all(Number(userId));
+}
+
+export function userDocument(userId, docId) {
+  return db.prepare(`SELECT id, name, title, folder, summary, tags, doc_date, shared, kind, mime, size, agent_id, path, created_at
+    FROM documents WHERE id = ? AND user_id = ?`).get(Number(docId), Number(userId));
+}
+
+export function userConversations(userId) {
+  return db.prepare(`SELECT id, title, updated_at FROM conversations
+    WHERE user_id = ? ORDER BY updated_at DESC LIMIT 200`).all(Number(userId));
+}
+
+export async function userConversation(userId, convId) {
+  const conv = await db.prepare('SELECT id, title, updated_at FROM conversations WHERE id = ? AND user_id = ?')
+    .get(Number(convId), Number(userId));
+  if (!conv) return null;
+  const messages = await db.prepare(`SELECT m.id, m.role, m.content, m.created_at, a.name agent_name
+    FROM messages m LEFT JOIN agents a ON a.id = m.agent_id
+    WHERE m.conversation_id = ? ORDER BY m.id`).all(conv.id);
+  return { ...conv, messages };
+}
+
+export function userMemories(userId) {
+  return db.prepare('SELECT id, text, created_at FROM memories WHERE user_id = ? ORDER BY id DESC').all(Number(userId));
+}
+
 export const adminRoutes = Router();
 adminRoutes.use(requireMaster);
 
@@ -111,11 +146,35 @@ adminRoutes.put('/users/:id/disabled', wrap(async (req, res) => {
 }));
 
 adminRoutes.get('/users/:id/documents', wrap(async (req, res) => {
-  res.json(await db.prepare(`SELECT id, name, title, folder, doc_date, shared, agent_id, created_at
-    FROM documents WHERE user_id = ? ORDER BY id DESC LIMIT 200`).all(Number(req.params.id)));
+  res.json(await userDocuments(req.params.id));
+}));
+
+adminRoutes.get('/users/:id/documents/:docId', wrap(async (req, res) => {
+  const doc = await userDocument(req.params.id, req.params.docId);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  const { path, ...rest } = doc;
+  res.json({ ...rest, tags: JSON.parse(doc.tags || '[]'), openable: !!path });
+}));
+
+// The bytes. Served inline where that is safe, exactly as the owner's own route does.
+adminRoutes.get('/users/:id/documents/:docId/file', wrap(async (req, res) => {
+  const doc = await userDocument(req.params.id, req.params.docId);
+  if (!doc?.path) return res.status(404).json({ error: 'Not found' });
+  const inline = !req.query.download && inlineType(doc);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(doc.name)}`);
+  res.type(inline || 'application/octet-stream').sendFile(doc.path);
 }));
 
 adminRoutes.get('/users/:id/conversations', wrap(async (req, res) => {
-  res.json(await db.prepare('SELECT id, title, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 200')
-    .all(Number(req.params.id)));
+  res.json(await userConversations(req.params.id));
+}));
+
+adminRoutes.get('/users/:id/conversations/:convId', wrap(async (req, res) => {
+  const conv = await userConversation(req.params.id, req.params.convId);
+  conv ? res.json(conv) : res.status(404).json({ error: 'Not found' });
+}));
+
+adminRoutes.get('/users/:id/memories', wrap(async (req, res) => {
+  res.json(await userMemories(req.params.id));
 }));
