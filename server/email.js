@@ -33,6 +33,19 @@ export const EMAIL_READ_TOOLS = [
 
 const MESSAGE_ID = { type: 'string', description: 'The id of an email, exactly as search_email gave it (for example "INBOX:1423").' };
 
+/**
+ * Who a reply goes to. The mailbox's own address is dropped — answering yourself is never
+ * what was meant — and when that empties the list (a reply to something you sent), the
+ * original recipients are the right audience instead.
+ */
+export function replyRecipients(original, myAddress) {
+  const mine = String(myAddress || '').trim().toLowerCase();
+  const norm = (list) => [...new Set((list || []).map((a) => String(a).trim().toLowerCase()).filter(Boolean))];
+  const from = norm(original.from).filter((a) => a !== mine);
+  if (from.length) return from;
+  return norm(original.to).filter((a) => a !== mine);
+}
+
 export const EMAIL_WRITE_TOOLS = [
   {
     name: 'create_draft',
@@ -133,11 +146,10 @@ function writeTools(ctx) {
     reply_email: async (userId, { message_id, body }) => {
       const o = await imapActions.original(userId, message_id);
       const acc = await imapAccount(userId);
-      const mine = String(acc.email || '').toLowerCase();
-      const to = o.from.filter((a) => a !== mine);
+      const to = replyRecipients(o, acc.email);
       const d = show(await createDraft(userId, {
         agentId: ctx.agentId, conversationId: ctx.conversationId,
-        to: to.length ? to : o.from,
+        to,
         subject: replySubject(o.subject),
         body,
         inReplyTo: o.messageId, refs: o.refs, replyToId: message_id,

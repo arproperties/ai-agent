@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
-import { connectedMailbox, EMAIL_READ_TOOLS, EMAIL_WRITE_TOOLS, statusFor } from '../server/email.js';
+import { connectedMailbox, EMAIL_READ_TOOLS, EMAIL_WRITE_TOOLS, statusFor, replyRecipients } from '../server/email.js';
 import { getDraft, listDrafts, decideDraft } from '../server/drafts.js';
 
 test.after(() => closeDb());
@@ -131,4 +131,42 @@ test('the status line names the tool in the user\'s words', () => {
   assert.match(statusFor('mark_read', {}), /read/i);
   assert.match(statusFor('search_email', { query: 'invoice' }), /invoice/);
   assert.equal(typeof statusFor('read_email', {}), 'string');
+});
+
+test('a reply drops your own address, whatever case the header used', () => {
+  assert.deepEqual(
+    replyRecipients({ from: ['Sara@ACME.ae', 'bob@example.com'], to: [] }, 'sara@acme.ae'),
+    ['bob@example.com'],
+  );
+});
+
+test('replying to something you sent goes to the people you sent it to', () => {
+  assert.deepEqual(
+    replyRecipients({ from: ['sara@acme.ae'], to: ['bob@example.com', 'jo@example.com'] }, 'sara@acme.ae'),
+    ['bob@example.com', 'jo@example.com'],
+    'never back to yourself',
+  );
+});
+
+test('a reply with nobody left to write to comes back empty, not addressed to you', () => {
+  assert.deepEqual(replyRecipients({ from: ['sara@acme.ae'], to: ['SARA@acme.ae'] }, 'sara@acme.ae'), []);
+});
+
+test('a recipient listed twice is written to once', () => {
+  assert.deepEqual(
+    replyRecipients({ from: ['bob@example.com', 'BOB@example.com'], to: [] }, 'sara@acme.ae'),
+    ['bob@example.com'],
+  );
+});
+
+test('an Outlook mailbox is never given the write tools', async () => {
+  await reset();
+  const userId = await makeUser('Sara');
+  await db.prepare(`INSERT INTO outlook_accounts (user_id, email, refresh_token) VALUES (?, ?, ?)`)
+    .run(userId, 'sara@outlook.com', 'refresh-token');
+
+  const m = await connectedMailbox(userId);
+
+  assert.equal(m.canWrite, false, 'sending through Graph is a separate integration that does not exist');
+  assert.deepEqual(m.definitions.map((t) => t.name).sort(), ['read_email', 'search_email']);
 });
