@@ -6,7 +6,7 @@ import { db } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
-import { agentOut, agentIn } from './agents.js';
+import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, canUseAgent } from './access.js';
 import { chat } from './chat.js';
 import { addMemory } from './knowledge.js';
@@ -75,13 +75,25 @@ app.put('/api/agents/:id', requireMaster, wrap(async (req, res) => {
   res.json(agentOut(await own('agents', req.params.id, req.user.id), req.user));
 }));
 app.delete('/api/agents/:id', requireMaster, wrap(async (req, res) => {
-  // NOTE (spec §10 item 3, deferred to Plan 3): documents and chunks cascade on
-  // agents.id, so deleting a shared agent also wipes every assigned user's uploads
-  // for it. Only the master's own documents are cleaned up here.
-  for (const d of await db.prepare('SELECT id FROM documents WHERE agent_id = ? AND user_id = ?').all(Number(req.params.id), req.user.id)) {
+  const id = Number(req.params.id);
+  if (!await own('agents', id, req.user.id)) return notFound(res);
+
+  // Agents are shared by reference, so other people's work is filed against this one.
+  // Unassigning is reversible and this is not, so it goes first — and their files are
+  // not the owner's to delete.
+  const links = await agentLinks(req.user.id, id);
+  if (links.users || links.documents) {
+    const parts = [links.users && `${links.users} user(s) assigned`, links.documents && `${links.documents} file(s) filed by others`];
+    return res.status(409).json({
+      error: `This agent is still in use — ${parts.filter(Boolean).join(' and ')}. Unassign it first.`,
+      ...links,
+    });
+  }
+
+  for (const d of await db.prepare('SELECT id FROM documents WHERE agent_id = ? AND user_id = ?').all(id, req.user.id)) {
     await deleteDocument(req.user.id, d.id);
   }
-  await db.prepare('DELETE FROM agents WHERE id = ? AND user_id = ?').run(Number(req.params.id), req.user.id);
+  await db.prepare('DELETE FROM agents WHERE id = ? AND user_id = ?').run(id, req.user.id);
   res.json({ ok: true });
 }));
 
