@@ -56,7 +56,7 @@ const toClaude = (rows) => rows.map((r) => {
 });
 
 // Attachments are read in full for this turn, stored in the user's library, and organised in the background
-async function readAttachments(user, convId, files, send) {
+async function readAttachments(user, convId, files, send, team) {
   const blocks = [];
   const meta = [];
   for (const f of files) {
@@ -65,14 +65,14 @@ async function readAttachments(user, convId, files, send) {
       if (isImage(f)) {
         const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
         blocks.push({ type: 'image', source: { type: 'base64', media_type: f.mimetype, data: f.buffer.toString('base64') } });
-        if (!duplicate) processDocument(doc, f);
+        if (!duplicate) processDocument(doc, f, undefined, team);
         meta.push({ name, kind: 'image', docId: doc.id });
       } else {
         send('status', { label: `Reading ${name}…` });
         const content = await extractText({ ...f, originalname: name }); // read first, so unreadable files are never stored
         if (!content.trim()) throw new Error(`No readable text found in ${name}`);
         const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
-        if (!duplicate) processDocument(doc, f, content);
+        if (!duplicate) processDocument(doc, f, content, team);
         meta.push({ name, kind: 'doc', docId: doc.id, snippet: content.slice(0, 600) });
         const inline = content.length > MAX_INLINE ? `${content.slice(0, MAX_INLINE)}\n…(truncated — the rest is in your knowledge base)` : content;
         blocks.push({ type: 'text', text: `<file name="${name}">\n${inline}\n</file>` });
@@ -106,7 +106,7 @@ export async function chat(req, res) {
   // 1. Read attachments, then pick the agent (the router sees what the files are about)
   const prior = await recentMessages(convId);
   const currentAgentId = [...prior].reverse().find((m) => m.agent_id)?.agent_id;
-  const { blocks, meta } = await readAttachments(user, convId, files, send);
+  const { blocks, meta } = await readAttachments(user, convId, files, send, team);
   const savedFiles = meta.map(({ snippet, ...m }) => m);
   if (savedFiles.length) send('files', savedFiles); // lets the app link the just-sent attachments
   send('status', { label: 'Choosing the best agent…' });

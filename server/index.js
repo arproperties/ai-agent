@@ -162,10 +162,18 @@ app.get('/api/documents/:id', wrap(async (req, res) => {
 app.post('/api/documents', upload.array('files', 10), wrap(async (req, res) => {
   const agentId = Number(req.body.agent) || null;
   if (agentId && !await canUseAgent(req.user, agentId)) return notFound(res);
+  // Only needed when no shelf was chosen, but reading it once beats once per file.
+  const team = agentId ? [] : await chatAgents(req.user);
   const results = await Promise.all((req.files || []).map(async (f) => {
     const { doc, duplicate } = await saveUpload(req.user.id, agentId, f);
-    if (!duplicate) await processDocument(doc, f);
-    return { id: doc.id, name: doc.name, duplicate };
+    if (!duplicate) await processDocument(doc, f, undefined, team);
+    // Files dedup on their bytes alone, so the copy already held may be filed somewhere
+    // other than where this one was headed. Naming the shelf turns "already in your
+    // files" from an apparent no-op into an explanation.
+    const shelf = duplicate && doc.agent_id
+      ? (await db.prepare('SELECT name FROM agents WHERE id = ?').get(doc.agent_id))?.name ?? null
+      : null;
+    return { id: doc.id, name: doc.name, duplicate, shelf };
   }));
   res.json(results);
 }));
