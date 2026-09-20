@@ -345,12 +345,17 @@ These exist in the current code or appear as a direct consequence of the change.
    own agents. The moment an agent is shared, one user's router prompt lists another
    user's filenames. Must be fixed as part of this work.
 
-2. **Zero-agent users crash the app.**
-   [router.js:20](../../../server/router.js#L20) does `fallback = agents[0]`; with an
-   empty team that is `undefined` and `chat.js` dies on it. On the client,
-   [App.jsx:72](../../../client/src/App.jsx#L72) gates the whole chat on
-   `agents.length > 0`, so a freshly created user sees a blank screen. Needs a real
-   empty state, and new users should be auto-assigned the general assistant.
+2. **Zero-agent users get a blank screen and misleading copy.**
+   [App.jsx:72](../../../client/src/App.jsx#L72) gates the whole chat pane on
+   `agents.length > 0`, so a freshly created user with nothing assigned sees an empty
+   main area with no explanation. On the server,
+   [chat.js:89](../../../server/chat.js#L89) answers `"Create an agent first"` — advice
+   a normal user will not be able to follow once agent creation is master-only.
+
+   Not a crash: `chat.js:89` guards `!team.length` before `pickAgent` is called, and
+   that is `pickAgent`'s only caller, so `agents[0]` is never `undefined` in practice.
+   The fix is a real empty state, corrected server copy, and auto-assigning the general
+   assistant to new users.
 
 3. **Deleting an agent destroys other users' files.** `documents.agent_id` and
    `chunks.agent_id` are `ON DELETE CASCADE`
