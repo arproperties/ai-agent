@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from './lib/api';
 import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
+import Icon from './components/Icon';
 import Chat from './components/Chat';
 import AgentSheet from './components/AgentSheet';
 import { FilesPage, MemorySheet } from './components/Knowledge';
@@ -73,13 +74,30 @@ export default function App() {
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} conversationId={chat.id} voiceEnabled={config.voice}
             onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} />
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
-            <p className="text-lg font-medium">No agents yet</p>
-            <p className="max-w-sm text-sm text-mute">You need at least one agent before you can start a conversation.</p>
-            <button onClick={() => setEditing({})}
-              className="mt-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2.5 font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98]">
-              Create an agent
-            </button>
+          // No chat here means no chat header, so carry the menu button ourselves —
+          // otherwise there is no way back to the sidebar (or to sign out) on mobile.
+          <div className="flex h-full flex-col">
+            <header className="flex items-center gap-1 border-b border-stroke/60 px-2 pb-2 pt-safe md:px-4">
+              <button onClick={() => setDrawer(true)} aria-label="Menu" title="Menu"
+                className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
+                <Icon name="menu" />
+              </button>
+            </header>
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
+              <p className="text-lg font-medium">No agents yet</p>
+              {me.role === 'master' ? (
+                <>
+                  <p className="max-w-sm text-sm text-mute">You need at least one agent before you can start a conversation.</p>
+                  <button onClick={() => setEditing({})}
+                    className="mt-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2.5 font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98]">
+                    Create an agent
+                  </button>
+                </>
+              ) : (
+                // Only the master creates agents, so do not offer a button that would be refused.
+                <p className="max-w-sm text-sm text-mute">No agents have been assigned to you yet. Ask your administrator to give you access to one.</p>
+              )}
+            </div>
           </div>
         )}
         {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => setPanel(null)} onOpenChat={openChat} />}

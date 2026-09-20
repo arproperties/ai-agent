@@ -6,8 +6,11 @@ import Sheet from './Sheet';
 
 // Master's people screen. Everything here is also enforced server-side in
 // server/admin.js, behind requireMaster - this is the convenient way in, not the guard.
-
-const MODES = [['chat', 'Chats with'], ['knowledge', 'Reads its shelf']];
+//
+// Assignments carry a mode, but this screen only ever writes 'chat'. The other mode,
+// 'knowledge', hides the agent while still lending its shelf; nobody wanted the choice,
+// and 'chat' is its superset - shelfIds() ignores mode entirely. The column and the
+// server still honour both, so the picker can come back without a migration.
 
 function AddPerson({ onAdded, onCancel }) {
   const [f, setF] = useState({ name: '', email: '', password: '' });
@@ -64,8 +67,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
     if (next[id]) delete next[id]; else next[id] = { mode: 'chat', primary: false };
     return next;
   });
-  const setMode = (id, mode) => setRows((r) => ({ ...r, [id]: { ...r[id], mode } }));
-  // At most one primary, and only a chat agent can be one.
+  // At most one primary.
   const setPrimary = (id) => setRows((r) => Object.fromEntries(
     Object.entries(r).map(([k, v]) => [k, { ...v, primary: Number(k) === id && !v.primary }]),
   ));
@@ -144,7 +146,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
                         <Avatar icon={a.icon} color={a.color} size={30} className={on ? '' : 'opacity-40 grayscale'} />
                         <span className="min-w-0 flex-1 truncate text-sm">{a.name}</span>
                       </button>
-                      {on && rows[a.id].mode === 'chat' && (
+                      {on && (
                         <button onClick={() => setPrimary(a.id)} aria-label="Make primary"
                           title={rows[a.id].primary ? 'Primary agent' : 'Make this their primary agent'}
                           className={rows[a.id].primary ? 'text-amber-300' : 'text-mute hover:text-txt'}>
@@ -154,21 +156,13 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
                       <input type="checkbox" checked={on} onChange={() => toggle(a.id)} aria-label={`Give ${a.name} to ${person.name}`}
                         className="size-4 shrink-0 accent-p1" />
                     </div>
-                    {on && (
-                      <select value={rows[a.id].mode} onChange={(e) => setMode(a.id, e.target.value)}
-                        className="glass mt-2 w-full rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-p1/70">
-                        {MODES.map(([v, l]) => <option key={v} value={v} className="bg-bg">{l}</option>)}
-                      </select>
-                    )}
                   </div>
                 );
               })}
             </div>
 
             <p className="text-xs text-mute">
-              <b className="font-medium text-txt/80">Chats with</b> puts the agent in their sidebar.{' '}
-              <b className="font-medium text-txt/80">Reads its shelf</b> keeps the agent hidden but lets their other agents
-              use what you have shared on it.
+              Ticked agents appear in their sidebar, and can use what you have shared on those shelves.
               {chatCount > 1 && ' The starred agent is the one their new chats open with.'}
             </p>
 
