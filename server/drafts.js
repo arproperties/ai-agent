@@ -78,3 +78,48 @@ export const draftOut = (d) => d && {
   createdAt: d.created_at,
   sentAt: d.sent_at,
 };
+
+// ---------- the record, and the limit ----------
+// Titan caps outbound mail per mailbox per day. Going over does not bounce one message, it
+// gets the mailbox throttled, so the limit lives here and is checked before every send.
+// Over the limit is not an error: the draft stays approved and the outbox comes back to it.
+
+export const PER_HOUR = Number(process.env.EMAIL_SEND_PER_HOUR) || 20;
+export const PER_DAY = Number(process.env.EMAIL_SEND_PER_DAY) || 100;
+
+export async function logAction(userId, { agentId = null, action, draftId = null, recipients = null, target = null, messageId = null, ok = true, error = null }) {
+  await db.prepare(
+    `INSERT INTO email_action_log (user_id, agent_id, action, draft_id, recipients, target, message_id, ok, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    userId, agentId, action, draftId,
+    recipients == null ? null : typeof recipients === 'string' ? recipients : JSON.stringify(recipients),
+    target, messageId, ok, error ? String(error).slice(0, 500) : null,
+  );
+}
+
+export async function sendQuota(userId) {
+  const now = Math.floor(Date.now() / 1000);
+  const rows = await db.prepare(
+    `SELECT created_at FROM email_action_log
+     WHERE user_id = ? AND action = 'send' AND ok AND created_at > ? ORDER BY created_at`
+  ).all(userId, now - 86400);
+
+  const hourly = rows.filter((r) => r.created_at > now - 3600);
+  const hour = hourly.length;
+  const day = rows.length;
+  const allowed = hour < PER_HOUR && day < PER_DAY;
+
+  // When the next slot frees: the oldest send still inside whichever window is full.
+  let retryInSeconds = 0;
+  if (!allowed) {
+    const hourWait = hour >= PER_HOUR ? hourly[0].created_at + 3600 - now : 0;
+    const dayWait = day >= PER_DAY ? rows[0].created_at + 86400 - now : 0;
+    retryInSeconds = Math.max(1, hourWait, dayWait);
+  }
+  return { hour, day, perHour: PER_HOUR, perDay: PER_DAY, allowed, retryInSeconds };
+}
+
+export const actionLog = (userId, limit = 100) =>
+  db.prepare('SELECT * FROM email_action_log WHERE user_id = ? ORDER BY id DESC LIMIT ?')
+    .all(userId, Math.min(Number(limit) || 100, 500));
