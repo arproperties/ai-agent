@@ -45,10 +45,24 @@ export async function setAssignments(master, userId, wanted) {
     if (!owned) throw fail(404, `Agent not found: ${r.agentId}`);
   }
 
+  const keep = rows.map((r) => r.agentId);
   await tx(async () => {
     await db.prepare('DELETE FROM agent_assignments WHERE user_id = ?').run(target.id);
     const ins = db.prepare('INSERT INTO agent_assignments (agent_id, user_id, mode, is_primary) VALUES (?, ?, ?, ?)');
     for (const r of rows) await ins.run(r.agentId, target.id, r.mode, r.primary);
+
+    // Losing a shelf must not mean losing what you filed on it. Their own material
+    // moves to their library (agent_id NULL), where all of their agents still reach it.
+    // This is also what makes "unassign it first" a complete instruction: DELETE
+    // /api/agents/:id refuses while anyone else's material is still on the shelf.
+    //
+    // `shared` is cleared with it for the same reason the agent-delete trigger does:
+    // recall() reads `shared AND agent_id IS NULL` as "reaches every user", so a shared
+    // item must never arrive in the library still flagged.
+    for (const table of ['documents', 'chunks']) {
+      await db.prepare(`UPDATE ${table} SET agent_id = NULL, shared = false
+        WHERE user_id = ? AND agent_id IS NOT NULL AND NOT (agent_id = ANY(?::int[]))`).run(target.id, keep);
+    }
   });
   return rows.length;
 }

@@ -1,5 +1,22 @@
 import { MODELS, VOICES, COLORS } from './config.js';
+import { db } from './db.js';
 import { isMaster } from './access.js';
+
+/**
+ * What still points at this agent from someone other than its owner.
+ *
+ * An agent is shared by reference, so other people's material is filed against it.
+ * Removing it under them is not the owner's call to make silently: unassigning is a
+ * separate, reversible operation, and deletion waits until nobody else is attached.
+ */
+export async function agentLinks(ownerId, agentId) {
+  const id = Number(agentId);
+  const [{ n: users }, { n: documents }] = await Promise.all([
+    db.prepare('SELECT COUNT(*)::int n FROM agent_assignments WHERE agent_id = ? AND user_id <> ?').get(id, ownerId),
+    db.prepare('SELECT COUNT(*)::int n FROM documents WHERE agent_id = ? AND user_id <> ?').get(id, ownerId),
+  ]);
+  return { users, documents };
+}
 
 /**
  * An agent as the API returns it. persona and model are master-authored configuration:

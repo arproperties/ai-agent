@@ -154,10 +154,13 @@ await db.exec(`
   );
 
   -- files: agent_id NULL = shared library (visible to all the user's agents)
+  -- agent_id is which shelf a file sits on, not who owns it - user_id is the owner.
+  -- So it detaches when an agent goes, the way messages.agent_id already does; it must
+  -- never take other people's files down with it.
   CREATE TABLE IF NOT EXISTS documents (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,
+    agent_id INTEGER REFERENCES agents(id) ON DELETE SET NULL,
     conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     title TEXT,
@@ -180,7 +183,7 @@ await db.exec(`
   CREATE TABLE IF NOT EXISTS chunks (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,
+    agent_id INTEGER REFERENCES agents(id) ON DELETE SET NULL, -- a shelf label; see documents.agent_id
     document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
     text TEXT NOT NULL,
     embedding vector(${EMBED_DIMS}),
@@ -272,4 +275,47 @@ await db.exec(`
   ALTER TABLE chunks    ADD COLUMN IF NOT EXISTS shared BOOLEAN NOT NULL DEFAULT false;
 
   CREATE INDEX IF NOT EXISTS idx_chunks_shared ON chunks(shared) WHERE shared;
+`);
+
+// Databases created before this treated agents.id as the OWNER of a document, so
+// deleting a shared agent destroyed every assigned user's files. agent_id is a shelf
+// label; the owner is user_id. Swap the two foreign keys over to SET NULL so a deleted
+// shelf detaches its contents instead of taking them with it.
+await db.exec(`
+  DO $$
+  DECLARE t text; c text;
+  BEGIN
+    FOREACH t IN ARRAY ARRAY['documents', 'chunks'] LOOP
+      SELECT tc.constraint_name INTO c
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name
+        JOIN information_schema.referential_constraints rc ON rc.constraint_name = tc.constraint_name
+       WHERE tc.table_name = t AND tc.constraint_type = 'FOREIGN KEY'
+         AND kcu.column_name = 'agent_id' AND rc.delete_rule = 'CASCADE';
+      IF c IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', t, c);
+        EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL', t, t || '_agent_id_fkey');
+        RAISE NOTICE '%.agent_id now detaches instead of cascading', t;
+      END IF;
+    END LOOP;
+  END $$;
+`);
+
+// A detached item must not become MORE visible than it was. recall() reads
+// `shared AND agent_id IS NULL` as "reaches every user", so a shared shelf item whose
+// agent_id has just been nulled would go from "the people assigned this shelf" to
+// "everyone". Unsharing it as the agent goes closes that on the way out, at the same
+// layer the SET NULL happens, so no deletion path can skip it.
+await db.exec(`
+  CREATE OR REPLACE FUNCTION unshare_orphaned_shelf_items() RETURNS trigger AS $$
+  BEGIN
+    UPDATE documents SET shared = false WHERE agent_id = OLD.id AND shared;
+    UPDATE chunks    SET shared = false WHERE agent_id = OLD.id AND shared;
+    RETURN OLD;
+  END $$ LANGUAGE plpgsql;
+
+  DROP TRIGGER IF EXISTS trg_unshare_orphaned_shelf_items ON agents;
+  CREATE TRIGGER trg_unshare_orphaned_shelf_items
+    BEFORE DELETE ON agents
+    FOR EACH ROW EXECUTE FUNCTION unshare_orphaned_shelf_items();
 `);
