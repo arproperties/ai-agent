@@ -11,6 +11,7 @@
     "reset-password": "node scripts/reset-password.js",
     "make-master": "node scripts/make-master.js",
     "migrate-to-assignments": "node scripts/migrate-to-assignments.js",
+    "consolidate-agents": "node scripts/consolidate-agents.js",
     "backfill-embeddings": "node scripts/backfill-embeddings.js"
   },
   "engines": {
