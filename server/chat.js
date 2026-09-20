@@ -86,7 +86,7 @@ async function readAttachments(user, convId, files, send) {
 export async function chat(req, res) {
   const user = req.user;
   const team = await db.prepare('SELECT * FROM agents WHERE user_id = ? ORDER BY id').all(user.id);
-  if (!team.length) return res.status(400).json({ error: 'Create an agent first' });
+  if (!team.length) return res.status(400).json({ error: 'You have no agents yet' });
   const text = (req.body.text || '').trim();
   const files = req.files || [];
   if (!text && !files.length) return res.status(400).json({ error: 'Empty message' });
@@ -109,7 +109,7 @@ export async function chat(req, res) {
   const savedFiles = meta.map(({ snippet, ...m }) => m);
   if (savedFiles.length) send('files', savedFiles); // lets the app link the just-sent attachments
   send('status', { label: 'Choosing the best agent…' });
-  const { agent, why } = await pickAgent({ agents: team, text, attachments: meta, recent: prior, currentAgentId });
+  const { agent, why } = await pickAgent({ agents: team, userId: user.id, text, attachments: meta, recent: prior, currentAgentId });
   send('agent', { id: agent.id, why });
 
   // 2. Context: recalled memories + relevant file excerpts
