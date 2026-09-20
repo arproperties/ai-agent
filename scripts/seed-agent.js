@@ -1,11 +1,19 @@
 // Add one of the DEFAULT_AGENTS to the live team.
 //
 // Agents are master-owned and reach people through agent_assignments, so seeding one
-// is two steps: create it under the master, then give every account a row for it.
+// is two steps: create it under the master, then give every other account a row for it.
+//
+// That row is ALWAYS mode 'knowledge'. A person has one agent they talk to, and every
+// other agent lends its shelf - the rule the People screen enforces on save
+// (client/src/components/Admin.jsx). Seeding with mode 'chat' instead drops the new
+// agent into everybody's sidebar uninvited, and the only way back out is opening each
+// person and pressing Save. The master needs no row at all: they reach their own agents
+// by ownership (access.js chatAgents).
+//
 // Both steps are idempotent - an agent the master already owns by that name is reused,
 // and an assignment that already exists is left as it is. Nothing else is touched:
-// unlike setAssignments this never rewrites a user's existing rows, so no one's filed
-// documents can be detached by running it.
+// unlike setAssignments this never rewrites a user's existing rows, so nobody's chat
+// agent changes and no filed documents can be detached by running it.
 //
 //   node scripts/seed-agent.js "Operations Manager" [--apply]
 import { db, closeDb } from '../server/db.js';
@@ -45,21 +53,21 @@ if (agent) {
   say(`Would create ${spec.name} (icon ${spec.icon}, colour ${spec.color}).`);
 }
 
-const users = await db.prepare('SELECT id, email FROM users ORDER BY id').all();
+const users = await db.prepare("SELECT id, email FROM users WHERE role <> 'master' ORDER BY id").all();
 const already = agent
   ? new Set((await db.prepare('SELECT user_id FROM agent_assignments WHERE agent_id = ?').all(agent.id)).map((r) => r.user_id))
   : new Set();
 const missing = users.filter((u) => !already.has(u.id));
 
-say(`\n${users.length} account(s), ${missing.length} without ${spec.name}:`);
+say(`\n${users.length} other account(s), ${missing.length} without ${spec.name} on their shelves:`);
 for (const u of missing) say(`  ${u.email}`);
 
 if (apply && agent) {
   for (const u of missing) {
     await db.prepare(`INSERT INTO agent_assignments (agent_id, user_id, mode, is_primary)
-      VALUES (?, ?, 'chat', false) ON CONFLICT (agent_id, user_id) DO NOTHING`).run(agent.id, u.id);
+      VALUES (?, ?, 'knowledge', false) ON CONFLICT (agent_id, user_id) DO NOTHING`).run(agent.id, u.id);
   }
-  say(`\nAssigned to ${missing.length} account(s).`);
+  say(`\nAdded as a background shelf for ${missing.length} account(s). No sidebar changed.`);
 } else if (!apply) {
   say('\nDry run. Re-run with --apply to make these changes.');
 }
