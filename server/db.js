@@ -275,6 +275,12 @@ await db.exec(`
   ALTER TABLE chunks    ADD COLUMN IF NOT EXISTS shared BOOLEAN NOT NULL DEFAULT false;
 
   CREATE INDEX IF NOT EXISTS idx_chunks_shared ON chunks(shared) WHERE shared;
+
+  -- Where a learned fact came from, so a wrong one can be traced to the conversation
+  -- that produced it and deleted at the source. Only facts set it.
+  -- (No origin_user_id: facts are captured from the master's own chats, so it would
+  --  always repeat documents.user_id. Add it if that is ever widened.)
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS origin_conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL;
 `);
 
 // Databases created before this treated agents.id as the OWNER of a document, so

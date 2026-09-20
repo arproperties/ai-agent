@@ -193,5 +193,5 @@ export async function chat(req, res) {
   if (!res.writableEnded) { send('done', { messageId }); res.end(); }
 
   // 4. Learn from this turn (background, never blocks the reply)
-  if (reply && text) learn(user.id, text, reply).catch((e) => console.error('[learn]', e.message));
+  if (reply && text) learn(user, text, reply, { agentId: agent.id, conversationId: convId }).catch((e) => console.error('[learn]', e.message));
 }
