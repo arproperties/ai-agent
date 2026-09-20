@@ -126,6 +126,23 @@ test('a mailbox with sending turned off cannot be made to send', async () => {
   assert.equal((await getDraft(userId, d.id)).status, 'failed');
 });
 
+test('a mailbox password the server cannot read leaves the draft queued, not failed', async () => {
+  await reset();
+  const userId = await mailbox();
+  await db.prepare('UPDATE imap_accounts SET password_enc = ? WHERE user_id = ?').run('not-a-ciphertext', userId);
+  const d = await createDraft(userId, { to: ['bob@example.com'], body: 'hi' });
+  await decideDraft(userId, d.id, true);
+  const s = spy();
+
+  await assert.rejects(deliver(await getDraft(userId, d.id), s), (e) => {
+    assert.ok(!/EMAIL_KEY|\.env/.test(e.message), 'the card is not the place to name an environment variable');
+    return true;
+  });
+
+  assert.equal(s.calls.sent.length, 0);
+  assert.equal((await getDraft(userId, d.id)).status, 'approved', 'a misconfigured server is not an unsendable email');
+});
+
 test('the queue sends approved drafts in order and leaves everything else alone', async () => {
   await reset();
   const userId = await mailbox();
@@ -197,4 +214,62 @@ test('one draft blowing up does not stop the rest of the queue', async () => {
 
   assert.equal(sent, 1);
   assert.deepEqual(order, [good.id]);
+});
+
+test('two drains running at once never send the same draft twice', async () => {
+  await reset();
+  const userId = await mailbox();
+  const a = await createDraft(userId, { to: ['a@x.com'], body: '1' });
+  const b = await createDraft(userId, { to: ['b@x.com'], body: '2' });
+  await decideDraft(userId, a.id, true);
+  await decideDraft(userId, b.id, true);
+
+  const order = [];
+  const deliverOne = async (d) => {
+    order.push(d.id);
+    await new Promise((r) => setTimeout(r, 50)); // still in SMTP while the other drain runs
+    await db.prepare("UPDATE email_drafts SET status = 'sent' WHERE id = ?").run(d.id);
+    return { messageId: '<x>' };
+  };
+
+  await Promise.all([drain({ deliverOne }), drain({ deliverOne })]);
+
+  assert.deepEqual(order.sort(), [a.id, b.id], 'each draft delivered exactly once');
+});
+
+test('a draft rejected while the queue is draining is not sent', async () => {
+  await reset();
+  const userId = await mailbox();
+  const d = await createDraft(userId, { to: ['a@x.com'], body: '1' });
+  await decideDraft(userId, d.id, true);
+  await db.prepare("UPDATE email_drafts SET status = 'rejected' WHERE id = ?").run(d.id);
+
+  const sent = await drain({ deliverOne: async () => assert.fail('must not send a rejected draft') });
+  assert.equal(sent, 0);
+});
+
+test('a draft that could not be delivered is never left holding the claim', async () => {
+  await reset();
+  const userId = await mailbox();
+  const d = await createDraft(userId, { to: ['a@x.com'], body: '1' });
+  await decideDraft(userId, d.id, true);
+
+  // A throw before deliver() has decided anything about the row — a dropped database
+  // connection, say. The draft must go back in the queue, not sit in 'sending' for ever.
+  await drain({ deliverOne: async () => { throw new Error('the world fell over'); } });
+
+  assert.equal((await getDraft(userId, d.id)).status, 'approved');
+});
+
+test('a decision only lands once, however many tabs are open', async () => {
+  await reset();
+  const userId = await mailbox();
+  const d = await createDraft(userId, { to: ['a@x.com'], body: '1' });
+
+  const both = await Promise.allSettled([decideDraft(userId, d.id, true), decideDraft(userId, d.id, false)]);
+  const ok = both.filter((r) => r.status === 'fulfilled');
+
+  assert.equal(ok.length, 1, 'the second tap is refused, not applied on top of the first');
+  assert.equal(both.find((r) => r.status === 'rejected').reason.status, 409);
+  assert.equal((await getDraft(userId, d.id)).status, ok[0].value.status);
 });

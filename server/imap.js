@@ -74,6 +74,22 @@ export function applySmtp(body, imapHost) {
   return { smtp_host: host, smtp_port: port, smtp_secure: secure };
 }
 
+/**
+ * Store the connection. Exported rather than inlined in the route because of what it does
+ * NOT do: can_write is absent from the UPDATE list, so reconnecting a mailbox (new
+ * password, moved server) neither re-grants sending nor revokes it. It is changed only by
+ * PATCH, which is the switch the user sees — and that omission is now testable.
+ */
+export async function saveAccount(userId, { email, host, port, username, passwordEnc, smtp }) {
+  await db.prepare(`INSERT INTO imap_accounts (user_id, email, host, port, username, password_enc, smtp_host, smtp_port, smtp_secure)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, host = excluded.host, port = excluded.port,
+      username = excluded.username, password_enc = excluded.password_enc,
+      smtp_host = excluded.smtp_host, smtp_port = excluded.smtp_port, smtp_secure = excluded.smtp_secure,
+      created_at = extract(epoch from now())::bigint`)
+    .run(userId, email, host, port, username, passwordEnc, smtp.smtp_host, smtp.smtp_port, smtp.smtp_secure);
+}
+
 // ---------- routes (signed-in user) ----------
 export const imapRoutes = Router();
 const accountOut = (a) => a && {
@@ -115,16 +131,7 @@ imapRoutes.post('/', async (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: friendly(e, host), host, port });
   }
-  // can_write is deliberately absent from the UPDATE list: reconnecting a mailbox (new
-  // password, moved server) must not silently re-grant sending, and must not silently
-  // revoke it either. It is changed only by PATCH, which is the switch the user sees.
-  await db.prepare(`INSERT INTO imap_accounts (user_id, email, host, port, username, password_enc, smtp_host, smtp_port, smtp_secure)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, host = excluded.host, port = excluded.port,
-      username = excluded.username, password_enc = excluded.password_enc,
-      smtp_host = excluded.smtp_host, smtp_port = excluded.smtp_port, smtp_secure = excluded.smtp_secure,
-      created_at = extract(epoch from now())::bigint`)
-    .run(req.user.id, email, host, port, username, enc, smtp.smtp_host, smtp.smtp_port, smtp.smtp_secure);
+  await saveAccount(req.user.id, { email, host, port, username, passwordEnc: enc, smtp });
   res.json({ account: accountOut(await imapAccount(req.user.id)) });
 });
 

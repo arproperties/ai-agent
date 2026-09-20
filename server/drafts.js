@@ -58,8 +58,12 @@ export async function decideDraft(userId, id, approved) {
   const d = await getDraft(userId, id);
   if (!d) throw fail(404, 'Draft not found');
   if (d.status !== 'pending') throw fail(409, `This draft is already ${d.status}`);
-  await db.prepare(`UPDATE email_drafts SET status = ?, decided_at = extract(epoch from now())::bigint WHERE id = ?`)
-    .run(approved ? 'approved' : 'rejected', d.id);
+  // The read above is only for the message. The decision itself is this one statement:
+  // two tabs tapping at once both pass the check, and only one of them changes a row.
+  const { changes } = await db.prepare(
+    `UPDATE email_drafts SET status = ?, decided_at = extract(epoch from now())::bigint WHERE id = ? AND status = 'pending'`
+  ).run(approved ? 'approved' : 'rejected', d.id);
+  if (changes !== 1) throw fail(409, 'This draft has already been decided');
   return getDraft(userId, id);
 }
 

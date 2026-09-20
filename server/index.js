@@ -292,6 +292,7 @@ if (existsSync(dist)) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-  startOutbox(); // drafts approved while the rate limit was full go out when it clears
+  // drafts approved while the rate limit was full go out when it clears
+  startOutbox().catch((e) => console.error('[outbox]', e.message));
   console.log(`Jarvis server → http://localhost:${PORT}`);
 });

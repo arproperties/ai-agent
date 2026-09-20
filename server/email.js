@@ -1,6 +1,6 @@
 import { outlookAccount, outlookTools } from './outlook.js';
 import { imapAccount, imapTools, imapActions, replySubject } from './imap.js';
-import { createDraft, getDraft, draftOut } from './drafts.js';
+import { createDraft, getDraft, draftOut, logAction } from './drafts.js';
 import { kick } from './outbox.js';
 
 // The tool surface the agents see. Reading works against an IMAP mailbox or Outlook.
@@ -130,6 +130,24 @@ function writeTools(ctx) {
   const waiting = (d) => `Draft ${d.id} is written and is now in front of ${ctx.userName || 'the user'} with Approve and Reject buttons. ` +
     'It has NOT been sent and you cannot send it — tell them it is ready for them to approve.';
 
+  // Marking and moving happen without anyone tapping anything, so the log is the only
+  // record that they happened at all — and the only way a user finds out that an email
+  // telling the agent to file everything away was obeyed. Failures are recorded too: a
+  // refusal is as much a thing that happened as a success.
+  const act = async (userId, action, target, fn) => {
+    try {
+      const out = await fn();
+      await logAction(userId, { agentId: ctx.agentId, action, target });
+      return out;
+    } catch (e) {
+      await logAction(userId, { agentId: ctx.agentId, action, target, ok: false, error: e.message });
+      throw e;
+    }
+  };
+
+  const drafted = (userId, d) =>
+    logAction(userId, { agentId: ctx.agentId, action: 'draft', draftId: d.id, recipients: d.to_addrs, target: d.reply_to_id });
+
   return {
     create_draft: async (userId, { to, cc, subject, body, in_reply_to }) => {
       // in_reply_to is optional here and best-effort: a draft that cannot be threaded is
@@ -140,6 +158,7 @@ function writeTools(ctx) {
         to, cc, subject, body,
         inReplyTo: thread?.messageId ?? null, refs: thread?.refs ?? null, replyToId: in_reply_to ?? null,
       }));
+      await drafted(userId, d);
       return waiting(d);
     },
 
@@ -154,6 +173,7 @@ function writeTools(ctx) {
         body,
         inReplyTo: o.messageId, refs: o.refs, replyToId: message_id,
       }));
+      await drafted(userId, d);
       return `${waiting(d)} It is threaded onto “${o.subject || '(no subject)'}”.`;
     },
 
@@ -163,14 +183,19 @@ function writeTools(ctx) {
       switch (d.status) {
         case 'pending': return `Draft ${d.id} is waiting for the user to tap Approve. It will go out the moment they do — there is nothing more for you to do.`;
         case 'approved': kick(); return `Draft ${d.id} is approved and queued; it will be sent shortly.`;
+        case 'sending': return `Draft ${d.id} is approved and is going out now.`;
         case 'sent': return `Draft ${d.id} has already been sent.`;
         default: return `Draft ${d.id} was ${d.status} and cannot be sent. Write a new one if the user asks.`;
       }
     },
 
-    mark_read: (userId, { message_id }) => imapActions.markSeen(userId, message_id, true),
-    mark_unread: (userId, { message_id }) => imapActions.markSeen(userId, message_id, false),
-    move_email: (userId, { message_id, folder }) => imapActions.moveMessage(userId, message_id, folder),
+    mark_read: (userId, { message_id }) =>
+      act(userId, 'mark_read', message_id, () => imapActions.markSeen(userId, message_id, true)),
+    mark_unread: (userId, { message_id }) =>
+      act(userId, 'mark_unread', message_id, () => imapActions.markSeen(userId, message_id, false)),
+    // target carries both ends of the move: which email, and where it went.
+    move_email: (userId, { message_id, folder }) =>
+      act(userId, 'move_email', `${message_id} → ${folder}`, () => imapActions.moveMessage(userId, message_id, folder)),
   };
 }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2, Check, X, Send, AlertCircle } from 'lucide-react';
 import { api } from '../lib/api';
 
@@ -9,15 +9,38 @@ import { api } from '../lib/api';
 const STATE = {
   pending: { label: 'Waiting for your approval', tone: 'border-warn/40 bg-warn/[0.06]', dot: 'text-warn' },
   approved: { label: 'Approved — sending', tone: 'border-p1/40 bg-p1/[0.06]', dot: 'text-p1' },
+  sending: { label: 'Sending…', tone: 'border-p1/40 bg-p1/[0.06]', dot: 'text-p1' },
   sent: { label: 'Sent', tone: 'border-ok/40 bg-ok/[0.06]', dot: 'text-ok' },
   rejected: { label: 'Rejected', tone: 'border-stroke bg-white/[0.03]', dot: 'text-mute' },
   failed: { label: 'Could not be sent', tone: 'border-bad/40 bg-bad/[0.06]', dot: 'text-bad' },
 };
 
+const SETTLED = ['sent', 'failed', 'rejected'];
+const EVERY = 2000;
+const TRIES = 15; // about half a minute, which is longer than a healthy send takes
+
 export default function DraftCard({ draft, from, onChanged }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
+  const watch = useRef(null);
   const s = STATE[draft.status] || STATE.pending;
+
+  useEffect(() => () => clearTimeout(watch.current), []);
+
+  // Approving answers the moment the draft is queued, not when the email lands, so without
+  // this the card would say "sending" for ever — whether it went or not. Ask the one draft
+  // what became of it until it settles. Giving up shows the last thing known to be true
+  // rather than a guess; the next time the screen loads drafts it will say.
+  const follow = (id, left = TRIES) => {
+    clearTimeout(watch.current);
+    if (left <= 0) return;
+    watch.current = setTimeout(async () => {
+      const { draft: d } = await api.get(`/email/drafts/${id}`).catch(() => ({}));
+      if (!d) return;
+      onChanged(d);
+      if (!SETTLED.includes(d.status)) follow(id, left - 1);
+    }, EVERY);
+  };
 
   const decide = async (what) => {
     setBusy(what);
@@ -25,6 +48,7 @@ export default function DraftCard({ draft, from, onChanged }) {
     try {
       const { draft: updated } = await api.post(`/email/drafts/${draft.id}/${what}`);
       onChanged(updated);
+      if (!SETTLED.includes(updated.status)) follow(updated.id);
     } catch (e) {
       setError(e.message);
     }

@@ -76,6 +76,22 @@ test('create_draft writes a pending draft and tells the screen about it', async 
   assert.deepEqual(seen[0].to, ['bob@example.com']);
 });
 
+test('writing a draft is recorded in the action log', async () => {
+  await reset();
+  const userId = await mailbox(true);
+  const m = await connectedMailbox(userId, { agentId: null, conversationId: null });
+
+  await m.run({ id: 'tu1', name: 'create_draft', input: { to: ['bob@example.com'], subject: 'Hi', body: 'Hello' } });
+
+  const [d] = await listDrafts(userId, {});
+  const rows = await db.prepare('SELECT * FROM email_action_log WHERE user_id = ?').all(userId);
+  const row = rows.find((r) => r.action === 'draft');
+  assert.ok(row, 'the spec asks for a row per action, and writing an email is one');
+  assert.equal(row.draft_id, d.id);
+  assert.match(row.recipients, /bob@example\.com/);
+  assert.equal(row.ok, true);
+});
+
 test('a bad recipient comes back as a tool error the model can correct, not a crash', async () => {
   await reset();
   const m = await connectedMailbox(await mailbox(true));

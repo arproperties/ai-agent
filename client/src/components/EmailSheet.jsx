@@ -45,10 +45,34 @@ function ImapCard({ account, onChange }) {
     await api.del('/imap').catch((err) => setError(err.message));
     onChange();
   };
+
+  // Opening Advanced on a connected account starts from what is stored, so saving it back
+  // does not quietly replace a server the user set earlier with the provider's default.
+  const openAdvanced = () => {
+    if (account) {
+      setForm((f) => ({
+        ...f,
+        smtpHost: f.smtpHost || account.smtpHost || '',
+        smtpPort: f.smtpPort || String(account.smtpPort || ''),
+      }));
+    } else suggest();
+    setAdvanced(true);
+  };
+
+  // One request at a time: tapping the toggle twice quickly would otherwise leave the
+  // mailbox in whichever state the slower of two answers happened to describe.
   const setWrite = async (canWrite) => {
-    setError(null);
+    if (busy) return;
+    setBusy(true); setError(null);
     try { await api.patch('/imap', { canWrite }); onChange(); }
-    catch (err) { setError(err.message); setAdvanced(true); }
+    catch (err) { setError(err.message); openAdvanced(); }
+    setBusy(false);
+  };
+  const saveSmtp = async () => {
+    setBusy(true); setError(null);
+    try { await api.patch('/imap', { smtpHost: form.smtpHost, smtpPort: form.smtpPort }); onChange(); }
+    catch (err) { setError(err.message); }
+    setBusy(false);
   };
 
   return (
@@ -65,23 +89,45 @@ function ImapCard({ account, onChange }) {
         )}
       </div>
 
+      {/* Above both branches: a PATCH that fails on a connected account has to say so
+          somewhere, and the toggle snapping back on its own explains nothing. */}
+      {error && <div className="mt-3.5"><Notice>{error}</Notice></div>}
+
       {account && (
-        <label className="mt-3.5 flex cursor-pointer items-start gap-3 rounded-xl border border-stroke bg-white/[0.03] p-3">
-          <input type="checkbox" checked={!!account.canWrite} onChange={(e) => setWrite(e.target.checked)}
-            className="mt-0.5 size-4 shrink-0 accent-p1" />
-          <span className="min-w-0">
-            <span className="block text-sm font-medium">Allow sending and actions</span>
-            <span className="block text-xs leading-relaxed text-mute">
-              Your agents can write drafts and replies, mark emails read or unread, and file them in folders.
-              Nothing is sent until you tap Approve.
+        <>
+          <label className="mt-3.5 flex cursor-pointer items-start gap-3 rounded-xl border border-stroke bg-white/[0.03] p-3">
+            <input type="checkbox" checked={!!account.canWrite} disabled={busy} onChange={(e) => setWrite(e.target.checked)}
+              className="mt-0.5 size-4 shrink-0 accent-p1 disabled:opacity-60" />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">Allow sending and actions</span>
+              <span className="block text-xs leading-relaxed text-mute">
+                Your agents can write drafts and replies, mark emails read or unread, and file them in folders.
+                Nothing is sent until you tap Approve.
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+
+          {advanced ? (
+            <div className="mt-2.5 space-y-2">
+              <p className="text-xs text-mute">Outgoing (SMTP) — used only if you allow sending</p>
+              <div className="grid grid-cols-[1fr_88px] gap-2">
+                <input placeholder="Server" value={form.smtpHost} onChange={set('smtpHost')} className={field} />
+                <input inputMode="numeric" placeholder="465" value={form.smtpPort} onChange={set('smtpPort')} className={field} />
+              </div>
+              <p className="text-[11px] text-mute">Port 465 uses SSL, 587 uses STARTTLS. Titan: smtp.titan.email on 465.</p>
+              <button type="button" onClick={saveSmtp} disabled={busy}
+                className="rounded-full border border-stroke px-3.5 py-1.5 text-sm text-mute hover:border-p1/60 hover:text-txt disabled:opacity-60">
+                {busy ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={openAdvanced} className="mt-2.5 text-xs text-mute underline-offset-2 hover:text-txt hover:underline">Advanced</button>
+          )}
+        </>
       )}
 
       {!account && (
         <form onSubmit={connect} className="mt-3.5 space-y-2.5">
-          {error && <Notice>{error}</Notice>}
           <input type="email" required autoComplete="username" placeholder="you@company.com" value={form.email} onChange={set('email')} onBlur={suggest} className={field} />
           <input type="password" required autoComplete="current-password" placeholder="Email password" value={form.password} onChange={set('password')} className={field} />
           {advanced ? (
@@ -99,7 +145,7 @@ function ImapCard({ account, onChange }) {
               <p className="text-[11px] text-mute">Port 465 uses SSL, 587 uses STARTTLS. Titan: smtp.titan.email on 465.</p>
             </div>
           ) : (
-            <button type="button" onClick={() => { setAdvanced(true); suggest(); }} className="text-xs text-mute underline-offset-2 hover:text-txt hover:underline">Advanced</button>
+            <button type="button" onClick={openAdvanced} className="text-xs text-mute underline-offset-2 hover:text-txt hover:underline">Advanced</button>
           )}
           <button disabled={busy}
             className="flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white shadow-lg shadow-p1/25 active:scale-[0.98] disabled:opacity-60">
@@ -155,6 +201,7 @@ export default function EmailSheet({ returned, onClose }) {
     return () => window.removeEventListener('focus', load);
   }, []);
   const changed = (status) => { setDone(status === 'connected'); setError(null); load(); };
+  const waiting = drafts.filter((d) => d.status === 'pending').length;
 
   return (
     <Sheet title="Email" onClose={onClose}
@@ -166,12 +213,16 @@ export default function EmailSheet({ returned, onClose }) {
         <div className="space-y-3">
           {drafts.length > 0 && (
             <div className="space-y-2.5">
-              <p className="text-xs font-medium text-warn">
-                {drafts.length === 1 ? 'One email is waiting for you' : `${drafts.length} emails are waiting for you`}
-              </p>
+              {/* A draft you have just decided stays on screen so you can see what became
+                  of it, but it is no longer one of the ones waiting. */}
+              {waiting > 0 && (
+                <p className="text-xs font-medium text-warn">
+                  {waiting === 1 ? 'One email is waiting for you' : `${waiting} emails are waiting for you`}
+                </p>
+              )}
               {drafts.map((d) => (
                 <DraftCard key={d.id} draft={d} from={imap?.account?.email}
-                  onChanged={(u) => setDrafts((ds) => (u.status === 'pending' ? ds.map((x) => (x.id === u.id ? u : x)) : ds.filter((x) => x.id !== u.id)))} />
+                  onChanged={(u) => setDrafts((ds) => ds.map((x) => (x.id === u.id ? u : x)))} />
               ))}
             </div>
           )}

@@ -323,7 +323,7 @@ await db.exec(`
     refs        TEXT,
     reply_to_id TEXT,
     status     TEXT NOT NULL DEFAULT 'pending'
-               CHECK (status IN ('pending', 'approved', 'sent', 'rejected', 'failed')),
+               CHECK (status IN ('pending', 'approved', 'sending', 'sent', 'rejected', 'failed')),
     message_id TEXT,
     error      TEXT,
     created_at BIGINT DEFAULT ${NOW},
@@ -352,6 +352,15 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_drafts_queue ON email_drafts(id) WHERE status = 'approved';
   CREATE INDEX IF NOT EXISTS idx_drafts_user  ON email_drafts(user_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_email_log_rate ON email_action_log(user_id, created_at) WHERE action = 'send' AND ok;
+`);
+
+// 'sending' is the claim a drain takes on a draft before it touches SMTP, so that two
+// drains running at once cannot both deliver the same email. Databases created before
+// that existed have the older five-value constraint, which would reject the claim.
+await db.exec(`
+  ALTER TABLE email_drafts DROP CONSTRAINT IF EXISTS email_drafts_status_check;
+  ALTER TABLE email_drafts ADD CONSTRAINT email_drafts_status_check
+    CHECK (status IN ('pending', 'approved', 'sending', 'sent', 'rejected', 'failed'));
 `);
 
 // Databases created before this treated agents.id as the OWNER of a document, so
