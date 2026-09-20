@@ -662,7 +662,7 @@ git commit -m "feat: a mailbox that knows how to send, and a switch that says wh
   - `getDraft(userId, id): Promise<row|undefined>`
   - `listDrafts(userId, { conversationId?, status? }): Promise<row[]>`
   - `decideDraft(userId, id, approved: boolean): Promise<row>`
-  - `draftOut(row): { id, agentId, conversationId, to, cc, subject, body, status, error, messageId, createdAt, sentAt }`
+  - `draftOut(row): { id, agentId, conversationId, to, cc, subject, body, status, error, messageId, isReply, createdAt, sentAt }`
 
 - [ ] **Step 1: Write the failing test**
 
