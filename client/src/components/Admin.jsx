@@ -94,6 +94,11 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
   };
 
   const chatCount = Object.values(rows || {}).filter((v) => v.mode === 'chat').length;
+  // Assignments to agents the master does not own - every account still holds its own
+  // copy of the starter agents from before agents became master-owned. The checkbox
+  // list cannot show them, and saving replaces the whole set, so say so rather than
+  // letting one press quietly empty someone's sidebar.
+  const foreign = Object.keys(rows || {}).filter((id) => !agents.some((a) => a.id === Number(id))).length;
 
   return (
     <Sheet title={person.name} onClose={onClose}
@@ -142,6 +147,14 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
               use what you have shared on it.
               {chatCount > 1 && ' The starred agent is the one their new chats open with.'}
             </p>
+
+            {foreign > 0 && (
+              <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2.5 text-xs leading-relaxed text-warn">
+                {person.name} also has {foreign} agent{foreign === 1 ? '' : 's'} that you do not own, left over from before
+                agents became yours to hand out. {foreign === 1 ? 'It is' : 'They are'} not listed above, and saving here
+                will take {foreign === 1 ? 'it' : 'them'} away — their files stay, moving into their own library.
+              </p>
+            )}
 
             {error && <p className="text-sm text-bad">{error}</p>}
 
