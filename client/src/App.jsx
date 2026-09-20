@@ -6,7 +6,7 @@ import Chat from './components/Chat';
 import AgentSheet from './components/AgentSheet';
 import { FilesPage, MemorySheet } from './components/Knowledge';
 import EmailSheet from './components/EmailSheet';
-import AdminSheet, { MyActivitySheet } from './components/Admin';
+import AdminPage, { MyActivitySheet } from './components/Admin';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
@@ -83,6 +83,7 @@ export default function App() {
           </div>
         )}
         {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => setPanel(null)} onOpenChat={openChat} />}
+        {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
       </main>
 
       {editing && (
@@ -91,7 +92,6 @@ export default function App() {
       )}
       {panel === 'memory' && <MemorySheet onClose={() => setPanel(null)} />}
       {panel === 'email' && <EmailSheet returned={outlookReturn} onClose={() => setPanel(null)} />}
-      {panel === 'people' && <AdminSheet agents={agents} me={me} onClose={() => setPanel(null)} />}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
     </div>
   );
