@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
-import { createUser, setAssignments, listUsers } from '../server/admin.js';
+import { createUser, setAssignments, listUsers, listAssignments } from '../server/admin.js';
 
 test.after(() => closeDb());
 
@@ -115,6 +115,28 @@ test("unassigning one user never moves another user's files", async () => {
 
   const doc = await db.prepare('SELECT agent_id FROM documents WHERE user_id = ?').get(tom.id);
   assert.equal(doc.agent_id, lawyer, "Tom still has Lawyer; Sara's change must not touch his files");
+});
+
+// setAssignments replaces the whole set, so the admin screen has to be able to read
+// the current one back before it can offer a checkbox per agent.
+test('listAssignments reads back what was assigned', async () => {
+  const { master, lawyer, hr } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  await setAssignments(master, sara.id, [
+    { agentId: hr, mode: 'knowledge' },
+    { agentId: lawyer, mode: 'chat', primary: true },
+  ]);
+
+  assert.deepEqual(await listAssignments(sara.id), [
+    { agent_id: lawyer, mode: 'chat', is_primary: true },
+    { agent_id: hr, mode: 'knowledge', is_primary: false },
+  ], 'ordered by agent id, with the mode and primary flag the screen needs');
+});
+
+test('listAssignments is empty for a user with nothing assigned', async () => {
+  const { master } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  assert.deepEqual(await listAssignments(sara.id), []);
 });
 
 test('listUsers reports each user with their assignment count and never a password', async () => {
