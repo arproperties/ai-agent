@@ -6,6 +6,8 @@ import { db } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo } from './tts.js';
 import { authRoutes, requireUser } from './auth.js';
+import { agentOut, agentIn } from './agents.js';
+import { chatAgents, canUseAgent } from './access.js';
 import { chat } from './chat.js';
 import { addMemory } from './knowledge.js';
 import { saveUpload, processDocument, deleteDocument, inlineType, docxPreview } from './files.js';
@@ -31,19 +33,8 @@ const ilike = (q) => `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 app.get('/api/config', (req, res) => res.json({ models: MODELS, voices: VOICES, folders: FOLDERS, voice: !!process.env.OPENAI_API_KEY }));
 
 // ---------- agents ----------
-const agentOut = (a) => a && { ...a, starters: JSON.parse(a.starters || '[]') };
-const agentIn = (b) => ({
-  name: String(b.name || 'New agent').slice(0, 60),
-  icon: /^[a-z-]{1,30}$/.test(b.icon) ? b.icon : 'bot',
-  color: COLORS.includes(b.color) ? b.color : 'violet',
-  persona: String(b.persona || '').slice(0, 8000),
-  model: MODELS.some((m) => m.id === b.model) ? b.model : MODELS[0].id,
-  voice: VOICES.includes(b.voice) ? b.voice : 'alloy',
-  starters: JSON.stringify((Array.isArray(b.starters) ? b.starters : []).map(String).filter(Boolean).slice(0, 8)),
-});
-
 app.get('/api/agents', wrap(async (req, res) => {
-  res.json((await db.prepare('SELECT * FROM agents WHERE user_id = ? ORDER BY id').all(req.user.id)).map(agentOut));
+  res.json((await chatAgents(req.user)).map((a) => agentOut(a, req.user)));
 }));
 // ✨ turn a name + one line into a full agent (persona, icon, colour, quick prompts)
 app.post('/api/agents/draft', wrap(async (req, res) => {
@@ -72,14 +63,14 @@ app.post('/api/agents', wrap(async (req, res) => {
   const a = agentIn(req.body);
   const { id } = await db.prepare('INSERT INTO agents (user_id, name, icon, color, persona, model, voice, starters) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id')
     .run(req.user.id, a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters);
-  res.json(agentOut(await own('agents', id, req.user.id)));
+  res.json(agentOut(await own('agents', id, req.user.id), req.user));
 }));
 app.put('/api/agents/:id', wrap(async (req, res) => {
   if (!await own('agents', req.params.id, req.user.id)) return notFound(res);
   const a = agentIn(req.body);
   await db.prepare('UPDATE agents SET name = ?, icon = ?, color = ?, persona = ?, model = ?, voice = ?, starters = ? WHERE id = ?')
     .run(a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, Number(req.params.id));
-  res.json(agentOut(await own('agents', req.params.id, req.user.id)));
+  res.json(agentOut(await own('agents', req.params.id, req.user.id), req.user));
 }));
 app.delete('/api/agents/:id', wrap(async (req, res) => {
   const { n } = await db.prepare('SELECT COUNT(*)::int n FROM agents WHERE user_id = ?').get(req.user.id);
@@ -155,7 +146,7 @@ app.get('/api/documents/:id', wrap(async (req, res) => {
 }));
 app.post('/api/documents', upload.array('files', 10), wrap(async (req, res) => {
   const agentId = Number(req.body.agent) || null;
-  if (agentId && !await own('agents', agentId, req.user.id)) return notFound(res);
+  if (agentId && !await canUseAgent(req.user, agentId)) return notFound(res);
   const results = await Promise.all((req.files || []).map(async (f) => {
     const { doc, duplicate } = await saveUpload(req.user.id, agentId, f);
     if (!duplicate) await processDocument(doc, f);
@@ -215,7 +206,9 @@ app.post('/api/voice/transcribe', upload.single('audio'), wrap(async (req, res) 
 // Reading a reply aloud is two calls: register the text, then stream the audio.
 app.post('/api/voice/speak', wrap(async (req, res) => {
   if (!process.env.OPENAI_API_KEY) return res.status(400).json({ error: 'Voice is not configured (OPENAI_API_KEY missing)' });
-  const agent = await own('agents', req.body.agentId, req.user.id);
+  const agent = (await canUseAgent(req.user, req.body.agentId))
+    ? await db.prepare('SELECT * FROM agents WHERE id = ?').get(Number(req.body.agentId))
+    : null;
   const text = spoken(req.body.text);
   if (!text) return res.status(400).json({ error: 'There is nothing to read out' });
   res.json(prepare({ userId: req.user.id, text, voice: agent?.voice || 'alloy', tone: agent?.persona }));
