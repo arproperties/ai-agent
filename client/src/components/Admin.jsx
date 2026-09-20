@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Star, UserPlus, Ban, ChevronLeft } from 'lucide-react';
+import { Loader2, Star, UserPlus, Ban, ChevronLeft, ExternalLink } from 'lucide-react';
 import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
@@ -51,6 +51,7 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
   const [rows, setRows] = useState(null); // { [agentId]: { mode, primary } }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [tab, setTab] = useState('agents');
 
   useEffect(() => {
     api.get(`/admin/users/${person.id}/agents`)
@@ -101,12 +102,16 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
   const foreign = Object.keys(rows || {}).filter((id) => !agents.some((a) => a.id === Number(id))).length;
 
   return (
-    <Sheet title={person.name} onClose={onClose}
+    <Sheet title={person.name} onClose={onClose} tab={tab} onTab={setTab}
+      tabs={[['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'], ['memory', 'Memory']]}
       icon={<span className="grid size-8 place-items-center rounded-full bg-white/10 text-sm font-medium">{person.name[0]?.toUpperCase()}</span>}>
       <div className="space-y-4">
         <p className="-mt-1 text-xs text-mute">{person.email}{person.disabled && ' · disabled'}</p>
 
-        {rows === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
+        {tab === 'memory' && <Memories person={person} />}
+        {(tab === 'documents' || tab === 'conversations') && <Browse person={person} kind={tab} />}
+
+        {tab === 'agents' && (rows === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
           <>
             <div className="space-y-1.5">
               <span className="block text-[11px] font-medium tracking-[0.14em] text-mute">AGENTS</span>
@@ -170,9 +175,105 @@ function PersonSheet({ person, agents, me, onClose, onChanged }) {
               </button>
             )}
           </>
-        )}
+        ))}
       </div>
     </Sheet>
+  );
+}
+
+const when = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+
+/**
+ * Someone else's workspace, read-only. Master can see all of it (spec §2), but nothing
+ * on this screen writes: it is for looking, and the person's own app remains the only
+ * place it can be changed.
+ */
+function Browse({ person, kind }) {
+  const [rows, setRows] = useState(null);
+  const [open, setOpen] = useState(null);   // the expanded document or conversation
+  const [error, setError] = useState('');
+  const base = `/admin/users/${person.id}`;
+
+  useEffect(() => {
+    setRows(null); setOpen(null);
+    api.get(`${base}/${kind}`).then(setRows).catch((e) => { setError(e.message); setRows([]); });
+  }, [person.id, kind]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const expand = async (id) => {
+    if (open?.id === id) return setOpen(null);
+    setOpen({ id, loading: true });
+    try { setOpen({ id, ...(await api.get(`${base}/${kind}/${id}`)) }); }
+    catch (e) { setOpen({ id, error: e.message }); }
+  };
+
+  if (error) return <p className="py-4 text-sm text-bad">{error}</p>;
+  if (rows === null) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
+  if (!rows.length) return <p className="py-6 text-center text-sm text-mute">Nothing here.</p>;
+
+  return (
+    <ul className="space-y-1.5">
+      {rows.map((r) => {
+        const showing = open?.id === r.id;
+        return (
+          <li key={r.id} className="rounded-2xl border border-stroke bg-white/[0.03]">
+            <button onClick={() => expand(r.id)} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm">{r.title || r.name || 'Untitled'}</span>
+                <span className="block truncate text-xs text-mute">
+                  {kind === 'documents'
+                    ? [r.folder, r.kind === 'note' && 'note', when(r.doc_date ? null : r.created_at)].filter(Boolean).join(' · ')
+                    : when(r.updated_at)}
+                </span>
+              </span>
+              <ChevronLeft size={15} className={`shrink-0 text-mute transition ${showing ? '-rotate-90' : 'rotate-180'}`} />
+            </button>
+
+            {showing && (
+              <div className="space-y-2 border-t border-stroke/60 px-3 py-2.5 text-sm">
+                {open.loading && <Loader2 size={15} className="animate-spin text-mute" />}
+                {open.error && <p className="text-bad">{open.error}</p>}
+
+                {kind === 'documents' && open.summary !== undefined && (
+                  <>
+                    {open.summary && <p className="leading-relaxed text-txt/85">{open.summary}</p>}
+                    <p className="text-xs text-mute">{[open.name, open.mime, open.shared && 'shared'].filter(Boolean).join(' · ')}</p>
+                    {open.openable && (
+                      <a href={`/api${base}/documents/${open.id}/file`} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs text-p1 hover:underline">
+                        <ExternalLink size={13} /> Open the file
+                      </a>
+                    )}
+                  </>
+                )}
+
+                {kind === 'conversations' && open.messages && (
+                  open.messages.length
+                    ? open.messages.map((m) => (
+                      <p key={m.id} className="leading-relaxed">
+                        <span className="text-[11px] uppercase tracking-wide text-mute">{m.role === 'user' ? person.name : m.agent_name || 'Assistant'}</span>
+                        <span className="mt-0.5 block whitespace-pre-wrap text-txt/85">{m.content}</span>
+                      </p>
+                    ))
+                    : <p className="text-mute">No messages.</p>
+                )}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function Memories({ person }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api.get(`/admin/users/${person.id}/memories`).then(setRows).catch(() => setRows([])); }, [person.id]);
+  if (rows === null) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
+  if (!rows.length) return <p className="py-6 text-center text-sm text-mute">Nothing learned yet.</p>;
+  return (
+    <ul className="space-y-1.5">
+      {rows.map((m) => <li key={m.id} className="rounded-xl bg-white/5 px-3 py-2 text-sm leading-relaxed">{m.text}</li>)}
+    </ul>
   );
 }
 
