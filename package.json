@@ -12,7 +12,8 @@
     "make-master": "node scripts/make-master.js",
     "migrate-to-assignments": "node scripts/migrate-to-assignments.js",
     "consolidate-agents": "node scripts/consolidate-agents.js",
-    "backfill-embeddings": "node scripts/backfill-embeddings.js"
+    "backfill-embeddings": "node scripts/backfill-embeddings.js",
+    "backfill-companies": "node scripts/backfill-companies.js"
   },
   "engines": {
     "node": ">=22.13"

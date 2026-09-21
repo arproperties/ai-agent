@@ -282,6 +282,10 @@ await db.exec(`
   --  always repeat documents.user_id. Add it if that is ever widened.)
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS origin_conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL;
 
+  -- The company a file is for, read off the document by the classifier. NULL means it
+  -- names no company (only people, or nobody), which the Shelf shows as "Other".
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS company TEXT;
+
   -- Master can read anyone's workspace, so it is recorded, and both sides can see it.
   -- target_id is deliberately NOT a foreign key: deleting the file that was read must
   -- not delete the record of it having been read.

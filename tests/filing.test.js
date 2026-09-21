@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
-import { pickShelf, saveUpload } from '../server/files.js';
+import { pickShelf, pickCompany, saveUpload } from '../server/files.js';
 
 test.after(() => closeDb());
 
@@ -29,6 +29,25 @@ test('pickShelf falls back to the library when the model declines', () => {
 
 test('pickShelf returns the library when there is no roster', () => {
   assert.equal(pickShelf(3, []), null);
+});
+
+// ---------- pickCompany: one company, one group ----------
+
+test('pickCompany reuses the spelling already on file', () => {
+  const known = ['Ain Al Reem Properties LLC'];
+  for (const raw of ['AIN AL REEM PROPERTIES L.L.C', 'Ain Al Reem Properties', 'ain al reem  properties llc']) {
+    assert.equal(pickCompany(raw, known), 'Ain Al Reem Properties LLC', `${raw} should join the existing group`);
+  }
+});
+
+test('pickCompany keeps a new company as written', () => {
+  assert.equal(pickCompany('  Hostinger Global S.à r.l ', ['Ain Al Reem Properties LLC']), 'Hostinger Global S.à r.l');
+});
+
+test('pickCompany turns a refusal into Other', () => {
+  for (const raw of [null, undefined, '', '  ', 'null', 'None', 'N/A', 'Other', 'LLC', 42, {}]) {
+    assert.equal(pickCompany(raw, []), null, `${JSON.stringify(raw)} should mean Other`);
+  }
 });
 
 // ---------- dedup: one copy of a file per person, wherever it is filed ----------

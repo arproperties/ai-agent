@@ -69,7 +69,48 @@ export function pickShelf(raw, agents) {
   return agents.some((a) => a.id === id) ? id : null;
 }
 
-async function classify(name, text, agents = []) {
+// Which company a document is "for". The side it concerns, not whoever issued it: an
+// invoice belongs to the company billed, not the supplier. Shared by classify() and
+// findCompany() so an upload and the backfill judge it the same way.
+const COMPANY_RULE = `the company this document is for - the business it concerns: the one billed, the licence or trade-name holder, the employer, the company tenant or buyer. Not a company that merely issued, sent or serviced it (a supplier, a bank, a developer, a government authority), unless the document is about that company itself. It must be an organisation: a private person - an owner, client, landlord, employee - is never the company, even when the document is for them, so use null for them. A bare personal name with no business form or word in it (LLC, L.L.C, Ltd, FZE, FZCO, Est., Group, Trading, Properties, Contracting, Consultants...) is a person, however it is capitalised. Write the name as the document does. null if it names only individuals or no company`;
+
+const knownCompanies = (companies) => (companies.length ? `
+Companies already on file - when it is one of these, reply with that exact spelling:
+${companies.map((c) => `- ${c}`).join('\n')}` : '');
+
+// "AIN AL REEM PROPERTIES L.L.C" and "Ain Al Reem Properties LLC" are one company.
+const companyKey = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+  .replace(/(llc|fzllc|fze|fzco|fzc|ltd|limited|inc|sarl|plc|co|company|est|establishment)$/u, '');
+
+/**
+ * The company the model named, cleaned up. Refusals come back as null (the Shelf's
+ * "Other"), and a name matching one already on file takes that spelling, so one
+ * company does not split into several groups over punctuation or capitals.
+ */
+export function pickCompany(raw, companies = []) {
+  const name = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+  if (!name || /^(null|none|n\/?a|unknown|other|-)$/i.test(name)) return null;
+  const key = companyKey(name);
+  if (!key) return null;
+  return companies.find((c) => companyKey(c) === key) ?? name;
+}
+
+export async function userCompanies(userId) {
+  const rows = await db.prepare(`SELECT company FROM documents WHERE user_id = ? AND company IS NOT NULL
+    GROUP BY company ORDER BY COUNT(*) DESC LIMIT 50`).all(userId);
+  return rows.map((r) => r.company);
+}
+
+/** Just the company, for files filed before companies were recorded. */
+export async function findCompany(name, text, companies = []) {
+  const out = await ask(`File name: ${name}\n\nContent (start):\n${text.slice(0, 6000)}`, {
+    maxTokens: 100,
+    system: `Reply with ONLY JSON: {"company": "<${COMPANY_RULE}>"}${knownCompanies(companies)}`,
+  });
+  return pickCompany(JSON.parse(out.match(/\{[\s\S]*\}/)[0]).company, companies);
+}
+
+async function classify(name, text, agents = [], companies = []) {
   // The roster rides along in the prompt that was already being sent: same call, same
   // cost. The wording about type and purpose is router.js's, which makes the same
   // judgement about attachments and should not drift from this one.
@@ -88,8 +129,9 @@ Judge the file by its type and purpose, not by words that merely appear in it (a
  "folder": "<exactly one of: ${FOLDERS.join(' | ')}>",
  "summary": "<1-2 sentences with the key facts: parties, amounts (AED), dates, deadlines>",
  "tags": ["<up to 5 short lowercase tags>"],
+ "company": "<${COMPANY_RULE}>",
  "date": "<the document's own date as YYYY-MM-DD, or null>"${roster}}
-Photos of people, places or things with no document content go in "Photos". UAE documents write dates as DD/MM/YYYY.${team}`,
+Photos of people, places or things with no document content go in "Photos". UAE documents write dates as DD/MM/YYYY.${knownCompanies(companies)}${team}`,
   });
   const d = JSON.parse(out.match(/\{[\s\S]*\}/)[0]);
   return {
@@ -98,6 +140,7 @@ Photos of people, places or things with no document content go in "Photos". UAE 
     summary: String(d.summary || '').slice(0, 600),
     tags: (Array.isArray(d.tags) ? d.tags : []).map((t) => String(t).toLowerCase().slice(0, 30)).slice(0, 5),
     date: /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : null,
+    company: pickCompany(d.company, companies),
     agentId: pickShelf(d.agent, agents),
   };
 }
@@ -113,9 +156,9 @@ export async function processDocument(doc, f, text, agents = []) {
   try {
     const content = text ?? (isImage(f) ? await describeImage(f) : await extractText({ ...f, originalname: doc.name }));
     if (!content?.trim()) throw new Error('No readable text found');
-    const c = await classify(doc.name, content, doc.agent_id ? [] : agents);
-    await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
-      .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, c.agentId, doc.id);
+    const c = await classify(doc.name, content, doc.agent_id ? [] : agents, await userCompanies(doc.user_id));
+    await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, company = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
+      .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, c.company, c.agentId, doc.id);
     // Re-read rather than spreading over the copy we were handed: `doc` predates the
     // UPDATE, and chunks carry agent_id and shared of their own. Indexing from a stale
     // copy would file the chunks on the shelf the document just left, leaving the file

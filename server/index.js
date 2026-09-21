@@ -10,7 +10,7 @@ import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, canUseAgent, isMaster } from './access.js';
 import { chat } from './chat.js';
 import { addMemory } from './knowledge.js';
-import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared } from './files.js';
+import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, pickCompany, userCompanies } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
@@ -138,13 +138,16 @@ app.delete('/api/conversations/:id', wrap(async (req, res) => {
 
 app.post('/api/chat', upload.array('files', 10), wrap(chat));
 
-// ---------- files: ?agent=<id> for one agent's files, otherwise the shared library ----------
+// ---------- files: ?agent=<id> for one agent's shelf, otherwise everything this user owns ----------
 const docOut = ({ path, hash, user_id, ...d }) => ({ ...d, tags: JSON.parse(d.tags || '[]') });
 
-const DOC_SELECT = `SELECT d.*, c.title conversation_title FROM documents d
-  LEFT JOIN conversations c ON c.id = d.conversation_id AND c.user_id = d.user_id`;
+const DOC_SELECT = `SELECT d.*, c.title conversation_title, a.name shelf_name FROM documents d
+  LEFT JOIN conversations c ON c.id = d.conversation_id AND c.user_id = d.user_id
+  LEFT JOIN agents a ON a.id = d.agent_id`;
 
-// ?ids=1,2,3 for specific files (e.g. a chat's attachments), ?agent=<id> for an agent's files, otherwise the shared library
+// ?ids=1,2,3 for specific files (e.g. a chat's attachments), ?agent=<id> for one agent's shelf,
+// otherwise all of this user's files. The Shelf screen lists the lot: the classifier files
+// most uploads onto an agent, and listing only the unfiled ones made them vanish on arrival.
 app.get('/api/documents', wrap(async (req, res) => {
   if (req.query.ids) {
     const ids = String(req.query.ids).split(',').map(Number).filter(Boolean).slice(0, 200);
@@ -154,8 +157,8 @@ app.get('/api/documents', wrap(async (req, res) => {
     return res.json(rows.map(docOut));
   }
   const agentId = Number(req.query.agent) || null;
-  const rows = await db.prepare(`${DOC_SELECT} WHERE d.user_id = ? AND d.agent_id IS NOT DISTINCT FROM ?
-    ORDER BY COALESCE(d.doc_date, to_char(to_timestamp(d.created_at), 'YYYY-MM-DD')) DESC, d.id DESC`).all(req.user.id, agentId);
+  const rows = await db.prepare(`${DOC_SELECT} WHERE d.user_id = ? AND (?::int IS NULL OR d.agent_id = ?)
+    ORDER BY COALESCE(d.doc_date, to_char(to_timestamp(d.created_at), 'YYYY-MM-DD')) DESC, d.id DESC`).all(req.user.id, agentId, agentId);
   res.json(rows.map(docOut));
 }));
 app.get('/api/documents/:id', wrap(async (req, res) => {
@@ -210,13 +213,15 @@ app.get('/api/documents/:id/preview', wrap(async (req, res) => {
   res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src data:");
   res.type('html').send(await docxPreview(doc));
 }));
-// move to another folder, rename, or (master only) publish to the shelf
+// move to another folder or company, rename, or (master only) publish to the shelf
 app.patch('/api/documents/:id', wrap(async (req, res) => {
   const doc = await own('documents', req.params.id, req.user.id);
   if (!doc) return notFound(res);
   const folder = FOLDERS.includes(req.body.folder) ? req.body.folder : doc.folder;
   const title = String(req.body.title || doc.title).slice(0, 120);
-  await db.prepare('UPDATE documents SET folder = ?, title = ? WHERE id = ?').run(folder, title, doc.id);
+  // An empty company means "Other"; a typed one is matched to an existing spelling.
+  const company = 'company' in req.body ? pickCompany(req.body.company, await userCompanies(req.user.id)) : doc.company;
+  await db.prepare('UPDATE documents SET folder = ?, title = ?, company = ? WHERE id = ?').run(folder, title, company, doc.id);
   // A field-level permission, not a route-level one: everyone renames and refiles here,
   // but only the master may publish. A user sending `shared` simply does not get it.
   if ('shared' in req.body && isMaster(req.user)) await setShared(req.user, doc.id, req.body.shared);

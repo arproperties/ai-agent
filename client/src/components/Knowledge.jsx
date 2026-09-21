@@ -119,7 +119,9 @@ function Preview({ d, className = '', big }) {
   );
 }
 
-export function FileCard({ d, onOpen }) {
+// showShelf: on the main Shelf, say which agent a file was filed with. Inside an agent's
+// own shelf that would just repeat the agent's name on every card.
+export function FileCard({ d, onOpen, showShelf = false }) {
   const busy = d.status === 'processing';
   return (
     <button onClick={() => !busy && onOpen(d)}
@@ -146,7 +148,7 @@ export function FileCard({ d, onOpen }) {
       </div>
       <div className="flex flex-1 flex-col p-3">
         <p className="line-clamp-2 text-[13px] font-medium leading-snug">{busy ? d.name : d.title}</p>
-        <p className="mt-auto truncate pt-1 text-[11px] text-mute">{[fmtDate(d.doc_date || d.created_at * 1000), fmtSize(d.size)].join(' · ')}</p>
+        <p className="mt-auto truncate pt-1 text-[11px] text-mute">{[showShelf && d.shelf_name, fmtDate(d.doc_date || d.created_at * 1000), fmtSize(d.size)].filter(Boolean).join(' · ')}</p>
       </div>
     </button>
   );
@@ -251,13 +253,31 @@ function Visibility({ shared, folder, shelfName, onChange }) {
   );
 }
 
-export function FileDetail({ d, folders, me, shelfName, onClose, onChanged, onOpenChat }) {
+export function FileDetail({ d, folders, companies = [], me, shelfName, onClose, onChanged, onOpenChat }) {
   const [FolderIcon, tone] = folderStyle(d.folder);
   const [viewing, setViewing] = useState(false);
   // Held locally as well as on the row: one caller passes a no-op onChanged, and the
   // control still has to respond to being pressed.
   const [shared, setShared] = useState(!!d.shared);
   const move = async (folder) => { await api.patch(`/documents/${d.id}`, { folder }); onChanged(); onClose(); };
+  // Saved on leaving the field, not per keystroke. Cleared means "Other".
+  // Companies or Others, fixable by hand because the classifier does get it wrong.
+  // Others clears the company at once; Companies asks which company, saved on leaving
+  // the field. Leaving it empty keeps the file in Others.
+  const [company, setCompany] = useState(d.company || '');
+  const [inCompanies, setInCompanies] = useState(!!d.company);
+  const companyRef = useRef();
+  const saveCompany = async (value) => {
+    const name = value.trim();
+    if (!name) setInCompanies(false);
+    if (name === (d.company || '')) return;
+    const next = await api.patch(`/documents/${d.id}`, { company: name });
+    setCompany(next.company || '');
+    setInCompanies(!!next.company);
+    onChanged();
+  };
+  const toOthers = () => { setCompany(''); setInCompanies(false); saveCompany(''); };
+  const toCompanies = () => { setInCompanies(true); setTimeout(() => companyRef.current?.focus(), 0); };
   const share = async (next) => {
     setShared(next);
     try {
@@ -310,6 +330,28 @@ export function FileDetail({ d, folders, me, shelfName, onClose, onChanged, onOp
           </span>
         </label>
 
+        <div>
+          <span className="mb-1.5 block text-xs font-medium tracking-wide text-mute">FILED UNDER</span>
+          <div className="glass grid grid-cols-2 gap-1 rounded-xl p-1">
+            {[[true, 'Companies', Building2, toCompanies], [false, 'Others', Folder, toOthers]].map(([on, label, BI, pick]) => (
+              <button key={label} onClick={() => inCompanies !== on && pick()}
+                className={`flex items-center justify-center gap-2 rounded-lg py-2 text-sm transition ${inCompanies === on ? 'bg-p1/20 text-txt' : 'text-mute hover:text-txt'}`}>
+                <BI size={15} /> {label}
+              </button>
+            ))}
+          </div>
+          {inCompanies && (
+            <span className="relative mt-2 block">
+              <Building2 size={16} className="pointer-events-none absolute left-3.5 top-1/2 z-10 -translate-y-1/2 text-sky-300" />
+              <input ref={companyRef} value={company} onChange={(e) => setCompany(e.target.value)} onBlur={(e) => saveCompany(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                list={`companies-${d.id}`} placeholder="Which company?" aria-label="Company"
+                className="glass w-full rounded-xl py-2.5 pl-10 pr-3 outline-none placeholder:text-mute/70 focus:border-p1/70" />
+              <datalist id={`companies-${d.id}`}>{companies.map((c) => <option key={c} value={c} />)}</datalist>
+            </span>
+          )}
+        </div>
+
         {d.kind === 'fact' && (
           <div className="space-y-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2.5">
             <p className="text-xs leading-relaxed text-amber-200">
@@ -352,11 +394,67 @@ function SearchBox({ value, onChange }) {
   );
 }
 
-const matches = (d, q) => !q || [d.title, d.name, d.summary, d.folder, ...(d.tags || [])].join(' ').toLowerCase().includes(q.toLowerCase());
+const matches = (d, q) => !q || [d.title, d.name, d.summary, d.folder, d.company, ...(d.tags || [])].join(' ').toLowerCase().includes(q.toLowerCase());
+
+// A top-level card. `preview` ([name, count] pairs) shows what is inside, so the two
+// cards say something before they are opened; `small` is the plain company tile.
+function GroupCard({ icon: GI, tone, bg, label, sub, onClick, preview, empty, small = false }) {
+  const head = (
+    <span className="flex items-center gap-3">
+      <span className={`grid shrink-0 place-items-center rounded-xl bg-gradient-to-br ${bg} ${small ? 'size-10' : 'size-12'}`}>
+        <GI size={small ? 19 : 22} strokeWidth={1.6} className={tone} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className={`line-clamp-2 leading-tight ${small ? 'text-[13px]' : 'text-lg font-light'}`}>{label}</span>
+        <span className="text-xs text-mute">{sub}</span>
+      </span>
+      {!small && <ChevronLeft size={18} className="rotate-180 text-mute" />}
+    </span>
+  );
+  if (small) {
+    return (
+      <button onClick={onClick} className="rounded-2xl border border-stroke bg-white/[0.03] p-3 text-left transition hover:bg-white/[0.06]">{head}</button>
+    );
+  }
+  return (
+    <button onClick={onClick}
+      className={`flex flex-col gap-4 rounded-3xl border border-stroke bg-gradient-to-br ${bg} p-5 text-left transition hover:-translate-y-0.5 hover:border-white/20`}>
+      {head}
+      <span className="flex min-h-[3.5rem] flex-wrap content-start gap-1.5">
+        {preview?.length ? (
+          <>
+            {preview.slice(0, 5).map(([name, n]) => (
+              <span key={name} className="max-w-full truncate rounded-full bg-black/25 px-2.5 py-1 text-xs text-txt/85">
+                {name} <span className="opacity-60">{n}</span>
+              </span>
+            ))}
+            {preview.length > 5 && <span className="rounded-full px-2 py-1 text-xs text-mute">+{preview.length - 5} more</span>}
+          </>
+        ) : <span className="text-xs text-mute">{empty}</span>}
+      </span>
+    </button>
+  );
+}
+
+function FileGrid({ title, files, onOpen, empty = 'No matching files' }) {
+  return (
+    <section>
+      <h2 className="mb-3 text-[11px] font-medium tracking-[0.14em] text-mute">{title}</h2>
+      {files.length === 0 ? <p className="py-10 text-center text-sm text-mute">{empty}</p> : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {files.map((d) => <FileCard key={d.id} d={d} onOpen={onOpen} showShelf />)}
+        </div>
+      )}
+    </section>
+  );
+}
 
 // ---------- full-screen Files page ----------
 export function FilesPage({ folders, me, onBack, onOpenChat }) {
   const { docs, load, upload, write, uploading, notes } = useFiles(null);
+  // Two levels: Companies (then one company) or Others (files naming no company).
+  const [group, setGroup] = useState(null); // null = the two top cards, 'companies' | 'others'
+  const [company, setCompany] = useState(null); // a company's name, inside Companies
   const [folder, setFolder] = useState('All');
   const [writing, setWriting] = useState(false);
   const [q, setQ] = useState('');
@@ -365,12 +463,23 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
   const [dragging, setDragging] = useState(false);
   const ref = useRef();
 
-  const counts = useMemo(() => (docs || []).reduce((m, d) => ({ ...m, [d.folder]: (m[d.folder] || 0) + 1 }), {}), [docs]);
-  const learnedCount = (docs || []).filter((d) => d.kind === 'fact').length;
-  // "Learned" is a pseudo-folder over kind rather than folder: §7.4 wants a plain list
-  // of captured facts to prune, and this Shelf is already that list.
+  const companies = useMemo(() => {
+    const n = (docs || []).reduce((m, d) => (d.company ? { ...m, [d.company]: (m[d.company] || 0) + 1 } : m), {});
+    return { n, names: Object.keys(n).sort((a, b) => n[b] - n[a] || a.localeCompare(b)) };
+  }, [docs]);
+  const others = (docs || []).filter((d) => !d.company);
+  // A company emptied by moving its last file out falls back to the list of companies.
+  const inCompany = company && companies.n[company] ? company : null;
+  const scope = group === 'others' ? others : inCompany ? docs.filter((d) => d.company === inCompany) : null;
+  const go = (g, c = null) => { setGroup(g); setCompany(c); setFolder('All'); };
+
+  // Folders narrow the files inside a company or Others. "Learned" is a pseudo-folder
+  // over kind rather than folder: a plain list of captured facts to prune.
+  const counts = (scope || []).reduce((m, d) => ({ ...m, [d.folder]: (m[d.folder] || 0) + 1 }), {});
+  const learnedCount = (scope || []).filter((d) => d.kind === 'fact').length;
   const inFolder = (d) => (folder === 'All' ? true : folder === 'Learned' ? d.kind === 'fact' : d.folder === folder);
-  const shown = (docs || []).filter((d) => inFolder(d) && matches(d, q));
+  // Search always covers every file, whichever level is open.
+  const shown = q ? (docs || []).filter((d) => matches(d, q)) : (scope || []).filter(inFolder);
   const openDoc = open && docs?.find((d) => d.id === open);
 
   const drop = (e) => { e.preventDefault(); setDragging(false); upload(e.dataTransfer.files); };
@@ -412,42 +521,59 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
             </div>
           </div>
         ) : docs && (
-          <div className="mx-auto max-w-6xl space-y-7 py-5">
-            <section>
-              <h2 className="mb-3 text-[11px] font-medium tracking-[0.14em] text-mute">FOLDERS</h2>
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
-                {['All', ...(learnedCount ? ['Learned'] : []), ...folders.filter((f) => counts[f])].map((f) => {
-                  const [FI, tone, bg] = f === 'All' ? [FolderOpen, 'text-txt', 'from-p1/40 to-p2/20']
-                    : f === 'Learned' ? [Sparkles, 'text-amber-300', 'from-amber-400/35 to-amber-400/5']
-                    : folderStyle(f);
-                  const active = folder === f;
-                  return (
-                    <button key={f} onClick={() => setFolder(active && f !== 'All' ? 'All' : f)}
-                      className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${active ? 'border-p1/60 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.06]'}`}>
-                      <span className={`grid size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br ${bg}`}><FI size={19} strokeWidth={1.6} className={tone} /></span>
-                      <span className="min-w-0">
-                        <span className="line-clamp-2 text-[13px] leading-tight">{f === 'All' ? 'All files' : f === 'Learned' ? 'Learned in chat' : f}</span>
-                        <span className="text-xs text-mute">
-                          {(() => {
-                            const n = f === 'All' ? docs.length : f === 'Learned' ? learnedCount : counts[f];
-                            return `${n} ${n === 1 ? 'file' : 'files'}`;
-                          })()}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
+          <div className="mx-auto max-w-6xl space-y-5 py-5">
+            {!q && group && (
+              <button onClick={() => (inCompany ? go('companies') : go(null))}
+                className="-ml-1 flex items-center gap-1 text-sm text-mute transition hover:text-txt">
+                <ChevronLeft size={17} /> {inCompany ? 'Companies' : 'Shelf'}
+              </button>
+            )}
 
-            <section>
-              <h2 className="mb-3 text-[11px] font-medium tracking-[0.14em] text-mute">{(folder === 'All' ? 'ALL FILES' : folder.toUpperCase())}{q && ` · “${q}”`}</h2>
-              {shown.length === 0 ? <p className="py-10 text-center text-sm text-mute">{folder === 'Learned' ? 'Nothing learned yet.' : 'No matching files'}</p> : (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                  {shown.map((d) => <FileCard key={d.id} d={d} onOpen={setViewing} />)}
+            {q ? (
+              <FileGrid title={`SEARCH · “${q}”`} files={shown} onOpen={setViewing} />
+            ) : !group ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <GroupCard icon={Building2} tone="text-sky-300" bg="from-sky-500/30 to-sky-500/5" label="Companies"
+                    sub={`${companies.names.length} ${companies.names.length === 1 ? 'company' : 'companies'} · ${docs.length - others.length} ${docs.length - others.length === 1 ? 'file' : 'files'}`}
+                    preview={companies.names.map((c) => [c, companies.n[c]])} empty="Files that name a company gather here"
+                    onClick={() => go('companies')} />
+                  <GroupCard icon={Folder} tone="text-mute" bg="from-white/15 to-white/[0.03]" label="Others"
+                    sub={`${others.length} ${others.length === 1 ? 'file' : 'files'}`}
+                    preview={Object.entries(others.reduce((m, d) => ({ ...m, [d.folder]: (m[d.folder] || 0) + 1 }), {})).sort((a, b) => b[1] - a[1])}
+                    empty="Everything else - personal papers, notes, photos" onClick={() => go('others')} />
                 </div>
-              )}
-            </section>
+                <FileGrid title="RECENT FILES" files={[...docs].sort((a, b) => b.created_at - a.created_at || b.id - a.id).slice(0, 10)} onOpen={setViewing} />
+              </>
+            ) : group === 'companies' && !inCompany ? (
+              <section>
+                <h2 className="mb-3 text-[11px] font-medium tracking-[0.14em] text-mute">COMPANIES</h2>
+                {companies.names.length === 0 ? (
+                  <p className="py-10 text-center text-sm text-mute">No companies yet. Files that name a company appear here.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+                    {companies.names.map((c) => (
+                      <GroupCard key={c} icon={Building2} tone="text-sky-300" bg="from-sky-500/30 to-sky-500/5" label={c}
+                        sub={`${companies.n[c]} ${companies.n[c] === 1 ? 'file' : 'files'}`} onClick={() => go('companies', c)} small />
+                    ))}
+                  </div>
+                )}
+              </section>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {['All', ...(learnedCount ? ['Learned'] : []), ...folders.filter((f) => counts[f])].map((f) => (
+                    <button key={f} onClick={() => setFolder(f)}
+                      className={`rounded-full border px-3 py-1.5 text-xs transition ${folder === f ? 'border-p1/60 bg-p1/15 text-txt' : 'border-stroke bg-white/[0.03] text-mute hover:bg-white/[0.06] hover:text-txt'}`}>
+                      {f === 'All' ? 'All' : f === 'Learned' ? 'Learned in chat' : f}
+                      <span className="ml-1.5 opacity-60">{f === 'All' ? scope.length : f === 'Learned' ? learnedCount : counts[f]}</span>
+                    </button>
+                  ))}
+                </div>
+                <FileGrid title={[inCompany || 'OTHERS', folder !== 'All' && (folder === 'Learned' ? 'LEARNED IN CHAT' : folder)].filter(Boolean).join(' · ').toUpperCase()}
+                  files={shown} onOpen={setViewing} empty={group === 'others' && folder === 'All' ? 'Every file here names a company.' : 'No files'} />
+              </>
+            )}
           </div>
         )}
       </div>
@@ -458,7 +584,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
         </div>
       )}
       {viewing && <FileViewer d={viewing} onClose={() => setViewing(null)} onInfo={(d) => { setViewing(null); setOpen(d.id); }} />}
-      {openDoc && <FileDetail d={openDoc} folders={folders} me={me} onClose={() => setOpen(null)} onChanged={load} onOpenChat={onOpenChat} />}
+      {openDoc && <FileDetail d={openDoc} folders={folders} companies={companies.names} me={me} shelfName={openDoc.shelf_name} onClose={() => setOpen(null)} onChanged={load} onOpenChat={onOpenChat} />}
       {writing && <NoteSheet onSave={write} onClose={() => setWriting(false)} />}
     </div>
   );
