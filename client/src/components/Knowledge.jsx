@@ -3,8 +3,11 @@ import { createPortal } from 'react-dom';
 import {
   FileSignature, Building2, Receipt, Landmark, Scale, Users, IdCard, BadgeCheck, Mail, Megaphone, Image as ImageIcon,
   Folder, FolderOpen, Search, Download, ExternalLink, Loader2, AlertCircle, Upload, ChevronLeft, ChevronDown, Trash2, MessageSquare, X, Info, PenLine, Sparkles,
+  FileArchive, FolderInput, CheckCircle2, Clock,
 } from 'lucide-react';
 import { api } from '../lib/api';
+import { startImport, importState, onImport, clearImportError } from '../lib/importer';
+import { describeIgnored } from '../lib/zip';
 import Icon from './Icon';
 import Sheet from './Sheet';
 
@@ -40,10 +43,12 @@ function useFiles(agentId) {
   const load = () => api.get(`/documents${agentId ? `?agent=${agentId}` : ''}`).then(setDocs);
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // files attached in chat are organised in the background: refresh until they are done
+  // files attached in chat are organised in the background: refresh until they are done.
+  // An import queues thousands at once, and reloading the whole list every few seconds
+  // for an hour would be wasteful: while one is filing, look less often.
   useEffect(() => {
-    if (!docs?.some((d) => d.status === 'processing')) return;
-    const t = setTimeout(load, 2500);
+    if (!docs?.some((d) => d.status === 'processing' || d.status === 'queued')) return;
+    const t = setTimeout(load, docs.some((d) => d.status === 'queued') ? 20000 : 2500);
     return () => clearTimeout(t);
   }, [docs]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -122,7 +127,7 @@ function Preview({ d, className = '', big }) {
 // showShelf: on the main Shelf, say which agent a file was filed with. Inside an agent's
 // own shelf that would just repeat the agent's name on every card.
 export function FileCard({ d, onOpen, showShelf = false }) {
-  const busy = d.status === 'processing';
+  const busy = d.status === 'processing' || d.status === 'queued';
   return (
     <button onClick={() => !busy && onOpen(d)}
       className="group flex flex-col overflow-hidden rounded-2xl border border-stroke bg-white/[0.035] text-left transition hover:-translate-y-0.5 hover:border-white/20 hover:bg-white/[0.06]">
@@ -130,7 +135,9 @@ export function FileCard({ d, onOpen, showShelf = false }) {
         <Preview d={d} className="aspect-[4/3]" />
         {busy && (
           <div className="absolute inset-0 grid place-items-center bg-black/55 text-xs text-white/80">
-            <span className="flex items-center gap-2"><Loader2 size={15} className="animate-spin" /> Organising…</span>
+            {d.status === 'queued'
+              ? <span className="flex items-center gap-2"><Clock size={15} /> Waiting…</span>
+              : <span className="flex items-center gap-2"><Loader2 size={15} className="animate-spin" /> Organising…</span>}
           </div>
         )}
         {d.status === 'error' && <AlertCircle size={18} className="absolute right-2.5 top-2.5 text-bad" />}
@@ -449,6 +456,92 @@ function FileGrid({ title, files, onOpen, empty = 'No matching files' }) {
   );
 }
 
+// ---------- folder / ZIP imports: progress while it runs, a receipt when it is done ----------
+function ImportBar({ onChanged }) {
+  const [local, setLocal] = useState(importState()); // the browser sending files
+  const [list, setList] = useState([]); // the server filing them
+  const load = () => api.get('/imports').then(setList).catch(() => {});
+  useEffect(() => onImport(setLocal), []);
+  useEffect(() => { load(); }, [local?.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  // once the upload is done, the Shelf picks up the queued files (and keeps refreshing slowly)
+  const prevPhase = useRef(local?.phase);
+  useEffect(() => { if (prevPhase.current === 'uploading' && !local) onChanged(); prevPhase.current = local?.phase; }, [local]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const active = local?.phase === 'reading' || local?.phase === 'uploading' || list.some((i) => i.waiting > 0 || (!i.uploaded && !i.stalled));
+  const waiting = list.reduce((n, i) => n + i.waiting, 0);
+  useEffect(() => {
+    if (!active) return;
+    const t = setTimeout(load, 5000);
+    return () => clearTimeout(t);
+  }, [list, active]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the Shelf behind catches up the moment the last file is filed
+  const prevWaiting = useRef(waiting);
+  useEffect(() => { if (prevWaiting.current > 0 && waiting === 0) onChanged(); prevWaiting.current = waiting; }, [waiting]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dismiss = async (id) => { setList((l) => l.filter((i) => i.id !== id)); await api.post(`/imports/${id}/dismiss`).catch(() => {}); };
+  const box = 'flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm';
+
+  return (
+    <>
+      {local?.phase === 'reading' && (
+        <div className={`${box} border-stroke bg-white/[0.035]`}>
+          <Loader2 size={17} className="mt-0.5 shrink-0 animate-spin text-p1" />
+          <p>Opening <b className="font-medium">{local.name}</b>…</p>
+        </div>
+      )}
+      {local?.phase === 'uploading' && (
+        <div className={`${box} border-stroke bg-white/[0.035]`}>
+          <Loader2 size={17} className="mt-0.5 shrink-0 animate-spin text-p1" />
+          <div className="min-w-0 flex-1">
+            <p>Uploading <b className="font-medium">{local.name}</b>: {local.sent.toLocaleString()} of {local.total.toLocaleString()}</p>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-p1 transition-all" style={{ width: `${(100 * local.sent) / local.total}%` }} /></div>
+            <p className="mt-1.5 text-xs text-mute">Keep this tab open until the upload finishes. Filing carries on by itself after that.</p>
+          </div>
+        </div>
+      )}
+      {local?.phase === 'error' && (
+        <div className={`${box} border-bad/40 bg-bad/10`}>
+          <AlertCircle size={17} className="mt-0.5 shrink-0 text-bad" />
+          <p className="flex-1">Could not import {local.name}: {local.error}</p>
+          <button onClick={clearImportError} aria-label="Dismiss" className="text-mute hover:text-txt"><X size={16} /></button>
+        </div>
+      )}
+      {list.map((i) => {
+        const ignored = describeIgnored(i.ignored);
+        const total = Object.values(i.ignored).reduce((a, b) => a + b, 0);
+        if (!i.uploaded && !i.stalled) return null; // still uploading: the bar above covers it
+        if (i.waiting > 0) {
+          const done = i.filed + i.failed;
+          return (
+            <div key={i.id} className={`${box} border-stroke bg-white/[0.035]`}>
+              {i.paused ? <Clock size={17} className="mt-0.5 shrink-0 text-warn" /> : <Loader2 size={17} className="mt-0.5 shrink-0 animate-spin text-p1" />}
+              <div className="min-w-0 flex-1">
+                <p>Filing <b className="font-medium">{i.name}</b>: {done.toLocaleString()} of {(done + i.waiting).toLocaleString()}</p>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-ok transition-all" style={{ width: `${(100 * done) / (done + i.waiting)}%` }} /></div>
+                {i.paused === 'credits' && <p className="mt-1.5 text-xs text-warn">Paused: the Claude credit balance ran out. It carries on by itself once credits are topped up.</p>}
+                {i.paused === 'busy' && <p className="mt-1.5 text-xs text-mute">Claude is busy; carrying on in a moment.</p>}
+                {!i.paused && <p className="mt-1.5 text-xs text-mute">You can close this page; filing continues on the server.</p>}
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div key={i.id} className={`${box} border-ok/30 bg-ok/10`}>
+            <CheckCircle2 size={17} className="mt-0.5 shrink-0 text-ok" />
+            <div className="min-w-0 flex-1 space-y-1">
+              <p><b className="font-medium">{i.name}</b>{i.stalled && !i.uploaded ? ' (upload stopped part-way)' : ''}: <b className="font-medium">{i.filed.toLocaleString()} files added</b>
+                {i.duplicates > 0 && ` · ${i.duplicates.toLocaleString()} already on your shelf`}
+                {i.failed > 0 && ` · ${i.failed.toLocaleString()} could not be read`}</p>
+              {ignored && <p className="text-mute">Ignored {total.toLocaleString()}: {ignored}</p>}
+            </div>
+            <button onClick={() => dismiss(i.id)} aria-label="Dismiss" className="text-mute hover:text-txt"><X size={16} /></button>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 // ---------- full-screen Files page ----------
 export function FilesPage({ folders, me, onBack, onOpenChat }) {
   const { docs, load, upload, write, uploading, notes } = useFiles(null);
@@ -461,7 +554,10 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
   const [open, setOpen] = useState(null); // details sheet
   const [viewing, setViewing] = useState(null); // full-screen viewer
   const [dragging, setDragging] = useState(false);
+  const [importMenu, setImportMenu] = useState(false);
   const ref = useRef();
+  const zipRef = useRef();
+  const dirRef = useRef();
 
   const companies = useMemo(() => {
     const n = (docs || []).reduce((m, d) => (d.company ? { ...m, [d.company]: (m[d.company] || 0) + 1 } : m), {});
@@ -482,12 +578,23 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
   const shown = q ? (docs || []).filter((d) => matches(d, q)) : (scope || []).filter(inFolder);
   const openDoc = open && docs?.find((d) => d.id === open);
 
-  const drop = (e) => { e.preventDefault(); setDragging(false); upload(e.dataTransfer.files); };
+  // A single ZIP dropped on the Shelf is an import; anything else is an ordinary upload.
+  const drop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    const files = e.dataTransfer.files;
+    if (files.length === 1 && /\.zip$/i.test(files[0].name)) startImport(files[0], files[0].name.replace(/\.zip$/i, ''));
+    else upload(files);
+  };
 
   return (
     <div className="absolute inset-0 z-20 flex flex-col bg-bg/95 backdrop-blur-xl"
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)} onDrop={drop}>
       <input ref={ref} type="file" multiple hidden accept={FILE_TYPES} onChange={(e) => { upload(e.target.files); e.target.value = ''; }} />
+      <input ref={zipRef} type="file" hidden accept=".zip,application/zip"
+        onChange={(e) => { const f = e.target.files[0]; if (f) startImport(f, f.name.replace(/\.zip$/i, '')); e.target.value = ''; }} />
+      <input ref={dirRef} type="file" hidden webkitdirectory=""
+        onChange={(e) => { const fs = e.target.files; if (fs.length) startImport([...fs], fs[0].webkitRelativePath.split('/')[0] || 'Folder'); e.target.value = ''; }} />
 
       <header className="space-y-3 border-b border-stroke/60 px-4 pb-4 pt-safe md:px-8">
         <div className="flex items-center gap-2 pt-1">
@@ -502,6 +609,25 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
             className="glass flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition hover:bg-white/10 active:scale-95 disabled:opacity-60">
             <PenLine size={16} /> Note
           </button>
+          <div className="relative">
+            <button onClick={() => setImportMenu((v) => !v)} title="Import a whole folder or ZIP"
+              className="glass flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition hover:bg-white/10 active:scale-95">
+              <FolderInput size={16} /> <span className="hidden sm:inline">Import</span>
+            </button>
+            {importMenu && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setImportMenu(false)} />
+                <div className="absolute right-0 top-full z-20 mt-2 w-60 overflow-hidden rounded-2xl border border-stroke bg-[#15132b] shadow-xl">
+                  <button onClick={() => { setImportMenu(false); zipRef.current.click(); }} className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-white/10">
+                    <FileArchive size={17} className="text-p1" /> <span>ZIP file<span className="block text-xs text-mute">e.g. a WhatsApp chat export</span></span>
+                  </button>
+                  <button onClick={() => { setImportMenu(false); dirRef.current.click(); }} className="flex w-full items-center gap-3 border-t border-stroke px-4 py-3 text-left text-sm hover:bg-white/10">
+                    <FolderOpen size={17} className="text-p3" /> <span>Folder<span className="block text-xs text-mute">every file inside it</span></span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <button onClick={() => ref.current.click()} disabled={uploading}
             className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-95 disabled:opacity-60">
             {uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} {uploading ? 'Adding…' : 'Upload'}
@@ -509,6 +635,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
         </div>
         {docs?.length > 0 && <SearchBox value={q} onChange={setQ} />}
         {notes.map((n) => <p key={n} className="text-sm text-warn">{n}</p>)}
+        <ImportBar onChanged={load} />
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">

@@ -32,7 +32,7 @@ export { db, tx, closeDb };
 
 const TABLES = [
   'users', 'sessions', 'password_resets', 'agents', 'agent_assignments', 'conversations', 'messages',
-  'documents', 'chunks', 'memories', 'outlook_accounts', 'imap_accounts', 'email_drafts', 'email_action_log',
+  'imports', 'documents', 'chunks', 'memories', 'outlook_accounts', 'imap_accounts', 'email_drafts', 'email_action_log',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

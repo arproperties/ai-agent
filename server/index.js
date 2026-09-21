@@ -16,6 +16,7 @@ import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
 import { emailRoutes } from './emailRoutes.js';
 import { startOutbox } from './outbox.js';
+import { importRoutes, startImportQueue } from './imports.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -28,6 +29,7 @@ app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api/outlook', outlookRoutes);
 app.use('/api/imap', imapRoutes);
 app.use('/api/email', emailRoutes);
+app.use('/api/imports', importRoutes);
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -299,5 +301,7 @@ if (existsSync(dist)) {
 app.listen(PORT, '0.0.0.0', () => {
   // drafts approved while the rate limit was full go out when it clears
   startOutbox().catch((e) => console.error('[outbox]', e.message));
+  // files from a folder or ZIP import that were still waiting when the server stopped
+  startImportQueue().catch((e) => console.error('[imports]', e.message));
   console.log(`Jarvis server → http://localhost:${PORT}`);
 });

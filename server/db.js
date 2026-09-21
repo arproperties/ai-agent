@@ -286,6 +286,25 @@ await db.exec(`
   -- names no company (only people, or nobody), which the Shelf shows as "Other".
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS company TEXT;
 
+  -- A folder or ZIP brought in at once. Its files are ordinary documents, filed one by one
+  -- from the queue (status 'queued'); this row is the receipt: how many arrived, how many
+  -- were already there, and what was deliberately left out (voice notes, videos, ...).
+  CREATE TABLE IF NOT EXISTS imports (
+    id SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    added      INTEGER NOT NULL DEFAULT 0,
+    duplicates INTEGER NOT NULL DEFAULT 0,
+    ignored    TEXT NOT NULL DEFAULT '{}',
+    uploaded   BOOLEAN NOT NULL DEFAULT false,
+    dismissed  BOOLEAN NOT NULL DEFAULT false,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS import_id INTEGER REFERENCES imports(id) ON DELETE SET NULL;
+  CREATE INDEX IF NOT EXISTS idx_docs_queued ON documents(id) WHERE status = 'queued';
+  CREATE INDEX IF NOT EXISTS idx_docs_import ON documents(import_id) WHERE import_id IS NOT NULL;
+
   -- Master can read anyone's workspace, so it is recorded, and both sides can see it.
   -- target_id is deliberately NOT a foreign key: deleting the file that was read must
   -- not delete the record of it having been read.
