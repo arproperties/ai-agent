@@ -25,7 +25,7 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox) 
   const others = team.filter((a) => a.id !== agent.id).map((a) => a.name);
   const parts = [
     agent.persona || `You are ${agent.name}, a helpful assistant.`,
-    `Your name is ${agent.name}. You are talking with ${user.name}. Current date and time: ${new Date().toString()}. Dates in UAE documents are usually written DD/MM/YYYY.`,
+    `Your name is ${agent.name}. You are talking with ${user.name}. Dates in UAE documents are usually written DD/MM/YYYY.`,
     'You live inside a personal AI app with long-term memory and a knowledge base made from files the user shared. ' +
       'Use them naturally — do not explain these mechanics unless asked. When you use the knowledge base, mention the file name. ' +
       'If the answer is not in the knowledge base or memory, say so instead of guessing. Format replies in Markdown; keep them concise and mobile-friendly.',
@@ -54,10 +54,31 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox) 
     parts.push(`You are one of several specialist agents on ${user.name}'s team (teammates: ${others.join(', ')}). ` +
       'The app automatically routes each message to the best agent, so earlier assistant turns in this conversation may have been written by a teammate. Continue seamlessly.');
   }
-  if (memories.length) parts.push(`<memory>\nThings you remember about the user from earlier conversations:\n${memories.map((m) => `- ${m}`).join('\n')}\n</memory>`);
-  if (library.length) parts.push(`<file_library>\nThe user's saved files (newest first). Their content is searchable; relevant excerpts appear in <knowledge>. Files can be opened from the Shelf screen in the app.\n${library.join('\n')}\n</file_library>`);
-  if (knowledge.length) parts.push(`<knowledge>\nExcerpts from the user's files that may be relevant:\n${knowledge.join('\n---\n')}\n</knowledge>`);
-  return parts.join('\n\n');
+  // Everything above stays the same from one message to the next, so it is cached: read back at
+  // a tenth of the price for five minutes. What changes every message (the time, what was
+  // recalled) comes after the cache mark, or it would spoil the match.
+  const context = [`Current date and time: ${new Date().toString()}.`];
+  if (memories.length) context.push(`<memory>\nThings you remember about the user from earlier conversations:\n${memories.map((m) => `- ${m}`).join('\n')}\n</memory>`);
+  if (library.length) context.push(`<file_library>\nThe user's saved files (newest first). Their content is searchable; relevant excerpts appear in <knowledge>. Files can be opened from the Shelf screen in the app.\n${library.join('\n')}\n</file_library>`);
+  if (knowledge.length) context.push(`<knowledge>\nExcerpts from the user's files that may be relevant:\n${knowledge.join('\n---\n')}\n</knowledge>`);
+  return [
+    { type: 'text', text: parts.join('\n\n'), cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: context.join('\n\n') },
+  ];
+}
+
+/**
+ * A copy of the conversation with a cache mark on its last block, for the rounds after an email
+ * tool answered: each round re-sends the whole turn, so the next one reads it back cheaply. Not
+ * on the first round, where most messages end and the mark would only add the write surcharge;
+ * not on an assistant turn, whose last block can be thinking, which cannot carry a mark.
+ */
+export function withCacheMark(convo) {
+  const last = convo.at(-1);
+  if (last?.role !== 'user' || !Array.isArray(last.content) || !last.content.length) return convo;
+  const content = [...last.content];
+  content[content.length - 1] = { ...content.at(-1), cache_control: { type: 'ephemeral' } };
+  return [...convo.slice(0, -1), { ...last, content }];
 }
 
 async function recentMessages(conversationId) {
@@ -163,7 +184,7 @@ export async function chat(req, res) {
         max_tokens: 16000,
         system: systemPrompt(user, agent, team, memories, knowledge, library, mailbox),
         tools: [webSearch(agent.model), ...(email ? email.definitions : [])],
-        messages: convo,
+        messages: turn ? withCacheMark(convo) : convo,
       });
       stream.on('streamEvent', (ev) => {
         if (ev.type !== 'content_block_start') return;
