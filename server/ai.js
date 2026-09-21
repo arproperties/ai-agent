@@ -59,10 +59,19 @@ function embedder() {
 }
 embedder(); // warm up on boot
 
+// Texts per model run. The runtime keeps whatever memory its largest run needed: 32 long
+// chunks at once took it past 1 GB for good, and PM2 restarts the app at 900 MB. 8 peaks
+// near 350 MB, for much the same total time.
+const EMBED_BATCH = 8;
+
 export async function embed(texts) {
   const fn = await embedder();
   if (!fn) return texts.map(() => null);
-  const out = await fn(texts, { pooling: 'mean', normalize: true });
-  const dims = out.dims[1];
-  return texts.map((_, i) => new Float32Array(out.data.slice(i * dims, (i + 1) * dims)));
+  const vectors = [];
+  for (let i = 0; i < texts.length; i += EMBED_BATCH) {
+    const out = await fn(texts.slice(i, i + EMBED_BATCH), { pooling: 'mean', normalize: true });
+    const dims = out.dims[1];
+    for (let j = 0; j < out.dims[0]; j++) vectors.push(new Float32Array(out.data.slice(j * dims, (j + 1) * dims)));
+  }
+  return vectors;
 }

@@ -154,7 +154,8 @@ Photos of people, places or things with no document content go in "Photos". UAE 
  */
 export async function processDocument(doc, f, text, agents = []) {
   try {
-    const content = text ?? (isImage(f) ? await describeImage(f) : await extractText({ ...f, originalname: doc.name }));
+    // Some PDFs carry NUL characters in their text layer, which Postgres refuses to store.
+    const content = (text ?? (isImage(f) ? await describeImage(f) : await extractText({ ...f, originalname: doc.name })))?.replace(/\u0000/g, '');
     if (!content?.trim()) throw new Error('No readable text found');
     const c = await classify(doc.name, content, doc.agent_id ? [] : agents, await userCompanies(doc.user_id));
     await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, company = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
