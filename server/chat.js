@@ -6,7 +6,13 @@ import { saveUpload, processDocument, isImage, fileName, libraryCatalog } from '
 import { connectedMailbox, statusFor } from './email.js';
 import { chatAgents } from './access.js';
 
-const MAX_INLINE = 60000; // chars of a document sent in full on the turn it is attached
+// Chars of attached documents sent to the agent on the turn they arrive, shared between the
+// files. The agent's model costs several times the filing model, and the whole turn is re-sent
+// on every web search or email round, so a large file here is paid for again and again. The
+// full text still goes into the knowledge base, where later turns find what they need.
+const INLINE_BUDGET = 24000;
+const MIN_INLINE = 4000;
+export const inlineShare = (files) => Math.max(MIN_INLINE, Math.floor(INLINE_BUDGET / Math.max(1, files)));
 
 // Server-side web search, run by Anthropic. Sonnet 5 / Opus 5 take the newer tool version; Haiku 4.5 the basic one.
 const webSearch = (model) => ({
@@ -70,6 +76,7 @@ const toClaude = (rows) => rows.map((r) => {
 async function readAttachments(user, convId, files, send, team) {
   const blocks = [];
   const meta = [];
+  const share = inlineShare(files.filter((f) => !isImage(f)).length);
   for (const f of files) {
     const name = fileName(f);
     try {
@@ -85,7 +92,7 @@ async function readAttachments(user, convId, files, send, team) {
         const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
         if (!duplicate) processDocument(doc, f, content, team);
         meta.push({ name, kind: 'doc', docId: doc.id, snippet: content.slice(0, 600) });
-        const inline = content.length > MAX_INLINE ? `${content.slice(0, MAX_INLINE)}\n…(truncated — the rest is in your knowledge base)` : content;
+        const inline = content.length > share ? `${content.slice(0, share)}\n…(truncated: the full file is in the knowledge base)` : content;
         blocks.push({ type: 'text', text: `<file name="${name}">\n${inline}\n</file>` });
       }
     } catch (e) {

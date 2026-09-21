@@ -22,15 +22,47 @@ export async function extractText({ buffer, mimetype, originalname }) {
   throw new Error(`Unsupported file type: ${originalname}`);
 }
 
+// Every scanned page is sent to Claude as a picture, so pages are what cost. The first few
+// are read on their own: a drawing set is recognised there and the rest is never sent.
+export const FIRST_LOOK = 4;
+const DRAWING_SET = 'DRAWING SET';
+const TRANSCRIBE = 'Transcribe all text in these scanned pages exactly, page by page, keeping Arabic and English as written. Use Markdown for headings and tables. Note stamps, signatures and handwriting in [brackets]. ' +
+  'A page that is a drawing (architectural or engineering plan, layout, section, elevation, site plan, map) is not transcribed: give it one line instead - what it shows, plus the drawing number, project, parties and date from its title block. Output only the transcription.';
+
+/** Pages [from, to) of a PDF as a new PDF. */
+export async function pdfPages(buffer, from, to) {
+  const { PDFDocument } = await import('pdf-lib');
+  const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
+  const out = await PDFDocument.create();
+  const idx = Array.from({ length: Math.min(to, src.getPageCount()) - from }, (_, i) => from + i);
+  for (const p of await out.copyPages(src, idx)) out.addPage(p);
+  return Buffer.from(await out.save());
+}
+
+const pdfBlock = (buf) => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buf.toString('base64') } });
+
 async function readScannedPdf(buffer, pages) {
   if (pages > 100) throw new Error(`This scanned PDF has ${pages} pages; the limit for scanned documents is 100`);
-  return ask(null, {
-    maxTokens: 16000,
-    content: [
-      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } },
-      { type: 'text', text: 'Transcribe all text in this scanned document exactly, page by page, keeping Arabic and English as written. Use Markdown for headings and tables. Note stamps, signatures and handwriting in [brackets]. Output only the transcription.' },
-    ],
+  const more = pages > FIRST_LOOK;
+  const head = more ? await pdfPages(buffer, 0, FIRST_LOOK) : buffer;
+  const first = await ask(null, {
+    maxTokens: 8000,
+    content: [pdfBlock(head), {
+      type: 'text',
+      text: more
+        ? `These are the first ${FIRST_LOOK} of ${pages} pages. If they are all drawings, start your reply with the line "${DRAWING_SET}" and then give the one-line descriptions only. ${TRANSCRIBE}`
+        : TRANSCRIBE,
+    }],
   });
+  if (!more) return first;
+  if (first.trimStart().startsWith(DRAWING_SET)) {
+    return `Drawing set, ${pages} pages. First ${FIRST_LOOK} pages:\n${first.trimStart().slice(DRAWING_SET.length).trim()}`;
+  }
+  const rest = await ask(null, {
+    maxTokens: 16000,
+    content: [pdfBlock(await pdfPages(buffer, FIRST_LOOK, pages)), { type: 'text', text: `These are pages ${FIRST_LOOK + 1}-${pages} of the document. ${TRANSCRIBE}` }],
+  });
+  return `${first}\n\n${rest}`;
 }
 
 export async function describeImage({ buffer, mimetype }) {
