@@ -18,7 +18,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, conversationId, voiceEnabled, onConversation, onMenu, onNewChat }) {
+export default function Chat({ user, agents, folders, conversationId, voiceEnabled, onConversation, onMenu, onNewChat, menuBadge = 0 }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -135,7 +135,10 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
     <div className="relative flex h-full flex-col">
       {/* header */}
       <header className="flex items-center gap-1 border-b border-stroke/60 px-2 pb-2 pt-safe md:px-4">
-        <IconBtn icon="menu" label="Menu" onClick={onMenu} className="md:hidden" />
+        <span className="relative md:hidden">
+          <IconBtn icon="menu" label={menuBadge ? 'Menu (new messages)' : 'Menu'} onClick={onMenu} />
+          {menuBadge > 0 && <span className="pointer-events-none absolute right-1.5 top-1.5 size-2.5 rounded-full bg-emerald-400 ring-2 ring-bg" />}
+        </span>
         <div className="flex min-w-0 flex-1 items-center gap-3 py-1 pl-1">
           {lastAgent ? (
             <Avatar icon={lastAgent.icon} color={lastAgent.color} size={38}

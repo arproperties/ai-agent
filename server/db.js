@@ -428,3 +428,49 @@ await db.exec(`
     BEFORE DELETE ON agents
     FOR EACH ROW EXECUTE FUNCTION unshare_orphaned_shelf_items();
 `);
+
+// Messages between people (the Messages screen). Entirely separate from the AI chats:
+// none of these tables touch conversations/messages, and nothing here is sent to an agent.
+//   dm_chats.direct_key: "<lower id>:<higher id>" for a one-to-one chat, so two people
+//   only ever share one; NULL for groups.
+//   dm_members.last_read_id / last_delivered_id: how far each member has got, which is
+//   all the ticks need — a message is read by someone once their pointer passes its id.
+//   dm_messages.user_id NULL is a system line ("Sara added Tom").
+await db.exec(`
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at BIGINT;
+
+  CREATE TABLE IF NOT EXISTS dm_chats (
+    id SERIAL PRIMARY KEY,
+    kind       TEXT NOT NULL CHECK (kind IN ('direct', 'group')),
+    name       TEXT,
+    direct_key TEXT UNIQUE,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS dm_members (
+    chat_id INTEGER NOT NULL REFERENCES dm_chats(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
+    role    TEXT    NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
+    last_read_id      INTEGER NOT NULL DEFAULT 0,
+    last_delivered_id INTEGER NOT NULL DEFAULT 0,
+    joined_at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (chat_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS dm_messages (
+    id SERIAL PRIMARY KEY,
+    chat_id     INTEGER NOT NULL REFERENCES dm_chats(id) ON DELETE CASCADE,
+    user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    kind        TEXT NOT NULL DEFAULT 'text' CHECK (kind IN ('text', 'image', 'file', 'system')),
+    body        TEXT NOT NULL DEFAULT '',
+    reply_to_id INTEGER REFERENCES dm_messages(id) ON DELETE SET NULL,
+    file_path TEXT,
+    file_name TEXT,
+    file_mime TEXT,
+    file_size INTEGER,
+    deleted   BOOLEAN NOT NULL DEFAULT false,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_dm_members_user ON dm_members(user_id);
+  CREATE INDEX IF NOT EXISTS idx_dm_messages_chat ON dm_messages(chat_id, id);
+`);

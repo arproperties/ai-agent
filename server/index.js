@@ -17,6 +17,7 @@ import { adminRoutes, accessOfMe } from './admin.js';
 import { emailRoutes } from './emailRoutes.js';
 import { startOutbox } from './outbox.js';
 import { importRoutes, startImportQueue } from './imports.js';
+import { messengerRoutes } from './messenger.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -30,6 +31,7 @@ app.use('/api/outlook', outlookRoutes);
 app.use('/api/imap', imapRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/imports', importRoutes);
+app.use('/api/messenger', messengerRoutes); // people-to-people chat, separate from the AI chats
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

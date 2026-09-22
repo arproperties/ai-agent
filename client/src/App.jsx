@@ -8,6 +8,8 @@ import AgentSheet from './components/AgentSheet';
 import { FilesPage, MemorySheet } from './components/Knowledge';
 import EmailSheet from './components/EmailSheet';
 import AdminPage, { MyActivitySheet } from './components/Admin';
+import MessengerPage from './components/Messenger';
+import { useMessenger } from './lib/useMessenger';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
@@ -22,7 +24,8 @@ export default function App() {
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : null); // 'files' | 'memory' | 'email' | 'people'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages'
+  const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
   useEffect(() => {
     api.get('/auth/me').then((r) => setMe(r.user)).catch(() => setMe(null));
@@ -62,7 +65,8 @@ export default function App() {
     <div className="relative z-10 flex h-dvh">
       {drawer && <div className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden" onClick={() => setDrawer(false)} />}
       <aside className={`fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke bg-[#0f0d20] transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 md:bg-transparent ${drawer ? 'translate-x-0' : '-translate-x-full'}`}>
-        <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel === 'files' ? null : chat.id} filesOpen={panel === 'files'}
+        <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel === 'files' || panel === 'messages' ? null : chat.id} filesOpen={panel === 'files'}
+          messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
           onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
@@ -72,15 +76,16 @@ export default function App() {
       <main className="relative flex min-w-0 flex-1 flex-col">
         {agents.length > 0 ? (
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} conversationId={chat.id} voiceEnabled={config.voice}
-            onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} />
+            onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —
           // otherwise there is no way back to the sidebar (or to sign out) on mobile.
           <div className="flex h-full flex-col">
             <header className="flex items-center gap-1 border-b border-stroke/60 px-2 pb-2 pt-safe md:px-4">
-              <button onClick={() => setDrawer(true)} aria-label="Menu" title="Menu"
-                className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
+              <button onClick={() => setDrawer(true)} aria-label={dm.unread ? 'Menu (new messages)' : 'Menu'} title="Menu"
+                className="relative grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
                 <Icon name="menu" />
+                {dm.unread > 0 && <span className="absolute right-1.5 top-1.5 size-2.5 rounded-full bg-emerald-400 ring-2 ring-bg" />}
               </button>
             </header>
             <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
@@ -102,6 +107,7 @@ export default function App() {
         )}
         {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => setPanel(null)} onOpenChat={openChat} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
+        {panel === 'messages' && <MessengerPage dm={dm} onBack={() => setPanel(null)} />}
       </main>
 
       {editing && (
