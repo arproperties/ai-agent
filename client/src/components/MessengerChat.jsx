@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import {
   ChevronLeft, Check, CheckCheck, Clock, AlertCircle, Paperclip, SendHorizontal, Reply, Copy, Trash2,
-  X, ArrowDown, FileText, Download, Users, ChevronDown, Ban,
+  X, ArrowDown, FileText, Download, Users, ChevronDown, Ban, Smile, Info,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { onLive } from '../lib/live';
@@ -86,6 +86,13 @@ function Linked({ text }) {
 
 const isTouch = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
 
+// One to three emoji on their own are shown large, without a bubble, as in WhatsApp.
+const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional_Indicator}|\u200d|\ufe0f|\s)+$/u;
+const bigEmoji = (t) => !!t && t.length <= 20 && EMOJI_ONLY.test(t) && (t.match(/\p{Extended_Pictographic}/gu) || []).length <= 3;
+
+const MINE = '#005c4b';
+const THEIRS = '#252140';
+
 // ---------- one message ----------
 function Bubble({ m, mine, showName, sender, nameColor, others, first, onMenu, onReply, onRetry, onView, onJump }) {
   const [dx, setDx] = useState(0);
@@ -113,7 +120,8 @@ function Bubble({ m, mine, showName, sender, nameColor, others, first, onMenu, o
   };
 
   const canAct = !m.pending && !m.failed;
-  const tail = first ? (mine ? 'rounded-tr-md' : 'rounded-tl-md') : '';
+  const big = m.kind === 'text' && !m.deleted && !m.replyTo && bigEmoji(m.body);
+  const tail = first && !big ? (mine ? 'rounded-tr-none' : 'rounded-tl-none') : '';
 
   return (
     <div className={`group relative flex ${mine ? 'justify-end' : 'justify-start'} ${first ? 'mt-2' : 'mt-0.5'}`}>
@@ -122,12 +130,21 @@ function Bubble({ m, mine, showName, sender, nameColor, others, first, onMenu, o
         onTouchStart={canAct ? start : undefined} onTouchMove={canAct ? move : undefined} onTouchEnd={canAct ? end : undefined}
         onContextMenu={(e) => { if (!canAct) return; e.preventDefault(); onMenu(m, e.clientX, e.clientY); }}
         onClick={m.failed ? () => onRetry(m) : undefined}
-        style={{ transform: dx ? `translateX(${dx}px)` : undefined, transition: dx ? 'none' : 'transform .2s' }}
-        className={`relative max-w-[82%] select-none rounded-2xl px-2.5 pb-1.5 pt-1.5 shadow-sm md:max-w-[65%] md:select-text [-webkit-touch-callout:none]
-          ${mine ? 'bg-[#005c4b] text-white' : 'bg-[#211d3d] text-txt'} ${tail} ${m.failed ? 'cursor-pointer ring-1 ring-bad/60' : ''}`}>
+        className={`relative max-w-[82%] select-none rounded-2xl md:max-w-[65%] md:select-text [-webkit-touch-callout:none]
+          ${big ? 'px-1 pb-5 pt-0' : `px-2.5 pb-1.5 pt-1.5 shadow-[0_1px_1.5px_rgb(0_0_0/0.35)] ${mine ? 'text-white' : 'text-txt'}`}
+          ${tail} ${m.failed ? 'cursor-pointer ring-1 ring-bad/60' : ''}`}
+        style={{ background: big ? 'transparent' : mine ? MINE : THEIRS, transform: dx ? `translateX(${dx}px)` : undefined, transition: dx ? 'none' : 'transform .2s' }}>
+        {/* the little corner tail on the first bubble of a run */}
+        {first && !big && (
+          <svg viewBox="0 0 8 13" width="8" height="13" aria-hidden="true" className={`absolute top-0 ${mine ? '-right-2' : '-left-2'}`}
+            style={mine ? undefined : { transform: 'scaleX(-1)' }}>
+            <path d="M0 0h6.5c1.3 0 1.9 1.5 1 2.4L0 11z" fill={mine ? MINE : THEIRS} />
+          </svg>
+        )}
         {canAct && !isTouch && (
           <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); onMenu(m, r.left, r.bottom); }} aria-label="Message options"
-            className={`absolute right-1 top-1 z-10 grid size-6 place-items-center rounded-full opacity-0 transition group-hover:opacity-100 ${mine ? 'bg-[#005c4b]' : 'bg-[#211d3d]'}`}>
+            style={{ background: big ? 'rgb(0 0 0 / 0.4)' : mine ? MINE : THEIRS }}
+            className="absolute right-1 top-1 z-10 grid size-6 place-items-center rounded-full opacity-0 transition group-hover:opacity-100">
             <ChevronDown size={16} className="text-white/70" />
           </button>
         )}
@@ -161,17 +178,17 @@ function Bubble({ m, mine, showName, sender, nameColor, others, first, onMenu, o
                 {!m.pending && <Download size={18} className="shrink-0 text-white/70" />}
               </a>
             )}
-            {m.body && m.kind !== 'file' && (
-              <span className="whitespace-pre-wrap break-words text-[15px] leading-snug"><Linked text={m.body} /></span>
-            )}
+            {m.body && m.kind !== 'file' && (big
+              ? <span className="text-5xl leading-tight">{m.body}</span>
+              : <span className="whitespace-pre-wrap break-words text-[15px] leading-snug"><Linked text={m.body} /></span>)}
             {m.kind === 'file' && m.body && m.body !== m.file?.name && (
               <span className="whitespace-pre-wrap break-words text-[15px] leading-snug"><Linked text={m.body} /></span>
             )}
           </>
         )}
         {/* the invisible spacer keeps the time from sitting on top of the last word */}
-        <span className="invisible inline-block w-16 align-bottom" aria-hidden="true" />
-        <span className="absolute bottom-1 right-2 flex items-center gap-1 text-[11px] leading-none text-white/55">
+        {!big && <span className={`invisible inline-block align-bottom ${mine ? 'w-[4.25rem]' : 'w-10'}`} aria-hidden="true" />}
+        <span className={`absolute bottom-1 right-2 flex items-center gap-1 text-[11px] leading-none text-white/55 ${big ? 'rounded-full bg-black/40 px-1.5 py-0.5' : ''}`}>
           {m.failed ? <span className="text-bad">Tap to retry</span> : clock(m.createdAt)}
           {mine && <Ticks m={m} others={others} />}
         </span>
@@ -205,8 +222,13 @@ function Menu({ at, mine, onClose, onReply, onCopy, onDelete }) {
 }
 
 // ---------- typing box ----------
+const EMOJI = ['😀', '😂', '🥰', '😍', '😊', '😉', '😎', '🤔', '😅', '😭', '😢', '😮', '😡', '🥳', '😴', '🤗',
+  '👍', '👎', '👏', '🙏', '💪', '👌', '🤝', '🙌', '👋', '🤲', '❤️', '💚', '🔥', '🎉', '✨', '💯',
+  '✅', '❌', '⭐', '📌', '📎', '📅', '⏰', '📞', '📧', '🏠', '🏢', '💼', '💰', '🚗', '✈️', '☕'];
+
 function Composer({ chatId, reply, onCancelReply, replyName, onSend }) {
   const [text, setText] = useState('');
+  const [emoji, setEmoji] = useState(false);
   const [file, setFile] = useState(null);
   const box = useRef();
   const pick = useRef();
@@ -230,6 +252,13 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend }) {
       api.post(`/messenger/chats/${chatId}/typing`).catch(() => {});
     }
   };
+  const addEmoji = (e) => {
+    const el = box.current;
+    const at = el ? el.selectionStart : text.length;
+    const end = el ? el.selectionEnd : text.length;
+    change(text.slice(0, at) + e + text.slice(end));
+    requestAnimationFrame(() => { if (el) { el.focus(); el.selectionStart = el.selectionEnd = at + e.length; } });
+  };
   const send = () => {
     const body = text.trim();
     if (!body && !file) return;
@@ -239,7 +268,8 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend }) {
   };
 
   return (
-    <div className="border-t border-stroke/60 px-2 pb-safe pt-2 md:px-4">
+    <div className="relative border-t border-white/[0.06] bg-[#13112a]/85 px-2 pb-safe pt-2 backdrop-blur-xl md:px-4">
+     <div className="mx-auto max-w-4xl">
       {(reply || file) && (
         <div className="mb-2 space-y-2">
           {reply && (
@@ -263,22 +293,39 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend }) {
           )}
         </div>
       )}
+      {emoji && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setEmoji(false)} />
+          <div className="rise absolute bottom-full left-2 z-50 mb-2 grid w-[min(22rem,calc(100vw-1rem))] grid-cols-8 gap-0.5 rounded-2xl border border-stroke bg-[#1b1834]/95 p-2 shadow-2xl shadow-black/60 backdrop-blur-xl md:left-4">
+            {EMOJI.map((e) => (
+              <button key={e} onClick={() => addEmoji(e)} className="grid aspect-square place-items-center rounded-lg text-2xl transition hover:scale-110 hover:bg-white/10">{e}</button>
+            ))}
+          </div>
+        </>
+      )}
       <div className="flex items-end gap-2">
         <input ref={pick} type="file" hidden onChange={(e) => { const f = e.target.files[0]; if (f) setFile(f); e.target.value = ''; }} />
-        <button onClick={() => pick.current.click()} aria-label="Attach a photo or file" title="Attach a photo or file"
-          className="grid size-11 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
-          <Paperclip size={21} />
-        </button>
-        <textarea ref={box} rows={1} value={text} placeholder="Message"
-          onChange={(e) => change(e.target.value)}
-          onPaste={(e) => { const f = e.clipboardData?.files?.[0]; if (f) { e.preventDefault(); setFile(f); } }}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
-          className="max-h-36 min-h-11 flex-1 resize-none rounded-3xl border border-stroke bg-white/[0.06] px-4 py-2.5 leading-snug outline-none placeholder:text-mute/70 focus:border-emerald-400/60" />
+        <div className="flex min-w-0 flex-1 items-end rounded-[24px] border border-white/10 bg-white/[0.07] transition focus-within:border-emerald-400/50 focus-within:bg-white/[0.09]">
+          <button onClick={() => setEmoji((v) => !v)} aria-label="Emoji" title="Emoji"
+            className={`grid size-11 shrink-0 place-items-center rounded-full transition hover:text-txt ${emoji ? 'text-emerald-300' : 'text-mute'}`}>
+            <Smile size={22} />
+          </button>
+          <textarea ref={box} rows={1} value={text} placeholder="Type a message"
+            onChange={(e) => change(e.target.value)}
+            onPaste={(e) => { const f = e.clipboardData?.files?.[0]; if (f) { e.preventDefault(); setFile(f); } }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
+            className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 leading-snug outline-none placeholder:text-mute/70" />
+          <button onClick={() => pick.current.click()} aria-label="Attach a photo or file" title="Attach a photo or file"
+            className="grid size-11 shrink-0 place-items-center rounded-full text-mute transition hover:text-txt">
+            <Paperclip size={20} />
+          </button>
+        </div>
         <button onClick={send} aria-label="Send" disabled={!text.trim() && !file}
-          className="grid size-11 shrink-0 place-items-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 transition active:scale-95 disabled:opacity-40">
+          className="grid size-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 text-white shadow-lg shadow-emerald-500/30 transition hover:brightness-110 active:scale-95 disabled:opacity-45 disabled:shadow-none">
           <SendHorizontal size={20} />
         </button>
       </div>
+     </div>
     </div>
   );
 }
@@ -471,25 +518,33 @@ export default function MessengerChat({ chat, dm, onBack, onInfo }) {
     <div className="relative flex h-full min-h-0 flex-col"
       onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }}
       onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)} onDrop={drop}>
-      <header className="flex items-center gap-2 border-b border-stroke/60 px-2 pb-2 pt-safe md:px-4">
+      <header className="z-10 flex items-center gap-2 border-b border-white/[0.06] bg-[#13112a]/85 px-2 pb-2 pt-safe backdrop-blur-xl md:px-4">
         <button onClick={onBack} aria-label="Back to chats" className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
           <ChevronLeft size={24} />
         </button>
         <button onClick={onInfo} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl py-1 pr-2 text-left hover:bg-white/5">
-          <PersonAvatar id={chat.kind === 'group' ? chat.id : chat.peerId} name={chat.name} size={40} group={chat.kind === 'group'} />
+          <PersonAvatar id={chat.kind === 'group' ? chat.id : chat.peerId} name={chat.name} size={42} group={chat.kind === 'group'}
+            online={chat.kind === 'direct' && dm.online.has(chat.peerId)} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate font-medium">{chat.name}</span>
+            <span className="block truncate text-[16px] font-medium">{chat.name}</span>
             <span className="block truncate text-xs text-mute">{status || ' '}</span>
           </span>
         </button>
+        <button onClick={onInfo} aria-label={chat.kind === 'group' ? 'Group info' : 'Contact info'} title={chat.kind === 'group' ? 'Group info' : 'Contact info'}
+          className="grid size-10 shrink-0 place-items-center rounded-full text-mute transition hover:bg-white/10 hover:text-txt">
+          <Info size={20} />
+        </button>
       </header>
 
-      <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 md:px-8">
+      <div ref={scroller} onScroll={onScroll} className="dm-wallpaper min-h-0 flex-1 overflow-y-auto">
+       <div className="mx-auto w-full max-w-4xl px-4 pb-4 md:px-10">
         {messages === null && <p className="py-10 text-center text-sm text-mute">Loading…</p>}
         {more && <p className="py-3 text-center text-xs text-mute">Loading earlier messages…</p>}
         {messages?.length === 0 && (
-          <div className="mx-auto mt-10 max-w-xs rounded-2xl bg-white/5 px-4 py-3 text-center text-sm text-mute">
-            Say hello to {chat.kind === 'group' ? 'the group' : chat.name.split(' ')[0]} 👋
+          <div className="mx-auto mt-16 flex max-w-xs flex-col items-center gap-3 rounded-3xl border border-white/[0.06] bg-[#1b1834]/80 px-6 py-6 text-center shadow-xl backdrop-blur">
+            <PersonAvatar id={chat.kind === 'group' ? chat.id : chat.peerId} name={chat.name} size={64} group={chat.kind === 'group'} />
+            <p className="text-sm text-mute">Say hello to {chat.kind === 'group' ? 'the group' : chat.name.split(' ')[0]}</p>
+            <span className="text-4xl">👋</span>
           </div>
         )}
         {messages?.map((m) => {
@@ -505,12 +560,12 @@ export default function MessengerChat({ chat, dm, onBack, onInfo }) {
             <div key={m.nonce || m.id} id={typeof m.id === 'number' ? `dm-${m.id}` : undefined} className="rounded-xl">
               {newDay && (
                 <div className="sticky top-2 z-[5] my-3 flex justify-center">
-                  <span className="rounded-lg bg-[#1b1834]/95 px-3 py-1 text-xs text-mute shadow">{dayLabel(m.createdAt)}</span>
+                  <span className="rounded-full border border-white/[0.06] bg-[#1b1834]/90 px-3.5 py-1 text-xs font-medium text-mute shadow-md backdrop-blur">{dayLabel(m.createdAt)}</span>
                 </div>
               )}
               {m.kind === 'system' ? (
                 <div className="my-2 flex justify-center">
-                  <span className="max-w-[85%] rounded-lg bg-white/[0.06] px-3 py-1 text-center text-xs text-mute">{m.body}</span>
+                  <span className="max-w-[85%] rounded-full bg-[#1b1834]/80 px-3.5 py-1 text-center text-xs text-mute backdrop-blur">{m.body}</span>
                 </div>
               ) : (
                 <Bubble m={withName} mine={mine} first={first} others={others}
@@ -520,11 +575,12 @@ export default function MessengerChat({ chat, dm, onBack, onInfo }) {
             </div>
           );
         })}
+       </div>
       </div>
 
       {!atBottom && (
         <button onClick={toBottom} aria-label="Jump to the latest message"
-          className="absolute bottom-24 right-4 grid size-11 place-items-center rounded-full border border-stroke bg-[#1b1834] text-txt shadow-xl">
+          className="absolute bottom-24 right-4 grid size-11 place-items-center rounded-full border border-white/10 bg-[#1b1834]/95 text-txt shadow-xl backdrop-blur md:right-8">
           <ArrowDown size={20} />
           {below > 0 && <span className="absolute -top-1.5 -right-1 grid min-w-5 place-items-center rounded-full bg-emerald-500 px-1 text-[11px] font-semibold">{below}</span>}
         </button>

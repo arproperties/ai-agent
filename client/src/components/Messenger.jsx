@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, Search, X, SquarePen, Users, UserPlus, Check, ArrowRight, LogOut, Pencil, MessageCircle, Crown, UserMinus } from 'lucide-react';
+import { ChevronLeft, Search, X, SquarePen, Users, UserPlus, Check, ArrowRight, LogOut, Pencil, MessageCircle, Crown, UserMinus, Lock } from 'lucide-react';
 import { api } from '../lib/api';
 import Sheet from './Sheet';
 import MessengerChat, { PersonAvatar, Ticks, listTime, preview, lastSeenText } from './MessengerChat';
@@ -16,10 +16,15 @@ const SearchBox = ({ value, onChange, placeholder }) => (
 const match = (q, ...texts) => { const t = q.trim().toLowerCase(); return !t || texts.some((x) => x?.toLowerCase().includes(t)); };
 
 // ---------- the list of chats ----------
+const FILTERS = [['all', 'All'], ['unread', 'Unread'], ['groups', 'Groups']];
+
 function ChatList({ dm, activeId, onOpen, onNew, onBack }) {
   const [q, setQ] = useState('');
+  const [filter, setFilter] = useState('all');
   const me = dm.me;
-  const list = (dm.chats || []).filter((c) => match(q, c.name, c.last?.body));
+  const unreadCount = (dm.chats || []).filter((c) => c.unread).length;
+  const list = (dm.chats || []).filter((c) => match(q, c.name, c.last?.body)
+    && (filter === 'all' || (filter === 'unread' ? c.unread > 0 || c.id === activeId : c.kind === 'group')));
 
   return (
     <>
@@ -34,7 +39,19 @@ function ChatList({ dm, activeId, onOpen, onNew, onBack }) {
           <SquarePen size={21} />
         </button>
       </header>
-      {(dm.chats?.length || 0) > 0 && <SearchBox value={q} onChange={setQ} placeholder="Search chats" />}
+      {(dm.chats?.length || 0) > 0 && (
+        <>
+          <SearchBox value={q} onChange={setQ} placeholder="Search chats" />
+          <div className="flex gap-2 px-3 pb-2">
+            {FILTERS.map(([k, label]) => (
+              <button key={k} onClick={() => setFilter(k)}
+                className={`rounded-full px-3.5 py-1 text-[13px] transition ${filter === k ? 'bg-emerald-400/20 text-emerald-200' : 'bg-white/[0.06] text-mute hover:bg-white/10 hover:text-txt'}`}>
+                {label}{k === 'unread' && unreadCount > 0 ? ` ${unreadCount}` : ''}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       <ul className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-safe">
         {dm.chats === null && <li className="px-4 py-6 text-sm text-mute">Loading…</li>}
@@ -49,7 +66,11 @@ function ChatList({ dm, activeId, onOpen, onNew, onBack }) {
             </button>
           </li>
         )}
-        {q && dm.chats?.length > 0 && list.length === 0 && <li className="px-4 py-6 text-sm text-mute">No chats match “{q.trim()}”</li>}
+        {dm.chats?.length > 0 && list.length === 0 && (
+          <li className="px-4 py-8 text-center text-sm text-mute">
+            {q ? `No chats match “${q.trim()}”` : filter === 'unread' ? 'You’re all caught up ✨' : 'No groups yet'}
+          </li>
+        )}
         {list.map((c) => {
           const typers = Object.keys(dm.typing[c.id] || {}).map(Number).filter((id) => id !== me.id);
           const mine = c.last?.userId === me.id;
@@ -59,12 +80,12 @@ function ChatList({ dm, activeId, onOpen, onNew, onBack }) {
           return (
             <li key={c.id}>
               <button onClick={() => onOpen(c.id)}
-                className={`flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition ${c.id === activeId ? 'bg-white/10' : 'hover:bg-white/5'}`}>
+                className={`flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition ${c.id === activeId ? 'bg-gradient-to-r from-emerald-400/[0.14] to-white/[0.04] ring-1 ring-emerald-400/20' : 'hover:bg-white/[0.05]'}`}>
                 <PersonAvatar id={c.kind === 'group' ? c.id : c.peerId} name={c.name} size={48} group={c.kind === 'group'}
                   online={c.kind === 'direct' && dm.online.has(c.peerId)} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
-                    <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
+                    <span className={`min-w-0 flex-1 truncate font-medium ${c.unread ? 'text-white' : ''}`}>{c.name}</span>
                     {c.last && <span className={`shrink-0 text-xs ${c.unread ? 'text-emerald-300' : 'text-mute'}`}>{listTime(c.last.createdAt)}</span>}
                   </span>
                   <span className="mt-0.5 flex items-center gap-1.5">
@@ -349,8 +370,8 @@ export default function MessengerPage({ dm, onBack }) {
   }, [openId, mode, info, onBack]);
 
   return (
-    <div className="absolute inset-0 z-20 flex bg-bg/95 backdrop-blur-xl">
-      <section className={`${openId ? 'hidden md:flex' : 'flex'} relative w-full min-w-0 flex-col border-stroke/60 md:w-80 md:border-r lg:w-96`}>
+    <div className="absolute inset-0 z-20 flex bg-bg/85 backdrop-blur-xl">
+      <section className={`${openId ? 'hidden md:flex' : 'flex'} relative w-full min-w-0 flex-col border-white/[0.06] bg-[#100e22]/80 md:w-80 md:border-r lg:w-96`}>
         {mode === 'new'
           ? <NewChat dm={dm} onClose={() => setMode('list')} onOpened={(id) => { setMode('list'); setOpenId(id); }} />
           : <ChatList dm={dm} activeId={openId} onOpen={setOpenId} onNew={() => setMode('new')} onBack={onBack} />}
@@ -359,10 +380,23 @@ export default function MessengerPage({ dm, onBack }) {
         {chat ? (
           <MessengerChat key={chat.id} chat={chat} dm={dm} onBack={() => setOpenId(null)} onInfo={() => setInfo(true)} />
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center text-mute">
-            <span className="grid size-20 place-items-center rounded-full bg-emerald-400/10 text-emerald-300"><MessageCircle size={36} /></span>
-            <p className="text-lg text-txt">Team chat</p>
-            <p className="max-w-xs text-sm">Pick a chat on the left, or start a new one. Messages arrive instantly — no need to refresh.</p>
+          <div className="dm-wallpaper flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
+            <div className="relative mb-2 grid size-32 place-items-center">
+              <span className="absolute inset-2 rounded-full bg-emerald-400/25 blur-2xl" />
+              <span className="absolute left-2 top-4 grid size-16 -rotate-12 place-items-center rounded-[22px] bg-gradient-to-br from-violet-400 to-fuchsia-500 text-white shadow-xl shadow-fuchsia-500/20">
+                <Users size={28} />
+              </span>
+              <span className="relative ml-8 mt-6 grid size-20 rotate-6 place-items-center rounded-[26px] bg-gradient-to-br from-emerald-400 to-teal-600 text-white shadow-2xl shadow-emerald-500/30">
+                <MessageCircle size={38} />
+              </span>
+            </div>
+            <h2 className="text-2xl font-light text-txt">Team chat</h2>
+            <p className="max-w-sm text-sm text-mute">Message anyone on your team, one to one or in a group. Messages arrive instantly — no refresh needed.</p>
+            <button onClick={() => setMode('new')}
+              className="mt-1 flex items-center gap-2 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-emerald-500/25 transition hover:brightness-110 active:scale-[0.98]">
+              <SquarePen size={16} /> Start a new chat
+            </button>
+            <p className="mt-6 flex items-center gap-1.5 text-xs text-mute/80"><Lock size={12} /> Private to your team — never sent to the AI</p>
           </div>
         )}
       </section>
