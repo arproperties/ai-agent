@@ -456,6 +456,50 @@ function FileGrid({ title, files, onOpen, empty = 'No matching files' }) {
   );
 }
 
+/**
+ * Master's "share everything here" control, over whatever company or folder is open.
+ * Learned facts are left out unless the Learned view itself is open: each one is meant
+ * to be read before it is published, and a company-wide tap is not a read.
+ */
+function ShareAll({ files, label, withFacts, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const pick = files.filter((d) => withFacts || d.kind !== 'fact');
+  const priv = pick.filter((d) => !d.shared);
+  const pub = pick.filter((d) => d.shared);
+  const skipped = files.length - pick.length;
+  if (!pick.length) return null;
+
+  const apply = async (list, on) => {
+    const n = `${list.length} ${list.length === 1 ? 'file' : 'files'}`;
+    const ask = on
+      ? `Share ${n} in ${label}?\n\nFiles filed with an agent can be read by the people given that agent; the rest by every user.`
+        + (skipped ? `\n\n${skipped} learned in chat ${skipped === 1 ? 'stays' : 'stay'} private: review ${skipped === 1 ? 'it' : 'them'} under “Learned in chat”.` : '')
+      : `Make ${n} in ${label} private again?`;
+    if (!confirm(ask)) return;
+    setBusy(true);
+    try { await api.post('/documents/share', { ids: list.map((d) => d.id), shared: on }); } finally { setBusy(false); onDone(); }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-stroke bg-white/[0.035] px-3.5 py-2.5 text-sm">
+      <Users size={16} className="shrink-0 text-p1" />
+      <span className="min-w-0 flex-1 text-mute">{pub.length} of {pick.length} shared</span>
+      {busy ? <Loader2 size={16} className="animate-spin text-mute" /> : (
+        <>
+          {pub.length > 0 && (
+            <button onClick={() => apply(pub, false)} className="rounded-full px-3 py-1.5 text-xs text-mute transition hover:bg-white/10 hover:text-txt">Make all private</button>
+          )}
+          {priv.length > 0 && (
+            <button onClick={() => apply(priv, true)} className="rounded-full bg-p1/25 px-3 py-1.5 text-xs font-medium text-txt transition hover:bg-p1/40">
+              Share all {priv.length}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ---------- folder / ZIP imports: progress while it runs, a receipt when it is done ----------
 function ImportBar({ onChanged }) {
   const [local, setLocal] = useState(importState()); // the browser sending files
@@ -697,6 +741,10 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
                     </button>
                   ))}
                 </div>
+                {me?.role === 'master' && (
+                  <ShareAll files={shown} withFacts={folder === 'Learned'} onDone={load}
+                    label={[inCompany || 'Others', folder !== 'All' && (folder === 'Learned' ? 'Learned in chat' : folder)].filter(Boolean).join(' · ')} />
+                )}
                 <FileGrid title={[inCompany || 'OTHERS', folder !== 'All' && (folder === 'Learned' ? 'LEARNED IN CHAT' : folder)].filter(Boolean).join(' · ').toUpperCase()}
                   files={shown} onOpen={setViewing} empty={group === 'others' && folder === 'All' ? 'Every file here names a company.' : 'No files'} />
               </>

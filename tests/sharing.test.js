@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
-import { setShared } from '../server/files.js';
+import { setShared, setSharedMany } from '../server/files.js';
 import { retrievalScope, indexChunks } from '../server/knowledge.js';
 import { shelfIds } from '../server/access.js';
 
@@ -121,4 +121,51 @@ test('sharing a library file with no shelf reaches everyone', async () => {
 
   assert.deepEqual(await visibleTo(sara), ['contents of holiday-calendar.pdf'],
     'no shelf means no shelf filter - this is the wide one the UI must label clearly');
+});
+
+// ---------- sharing a whole company or folder at once ----------
+
+test('bulk sharing marks every listed file and its chunks', async () => {
+  const { master, hr } = await fixture();
+  const a = await makeFile(master.id, hr, 'handbook.pdf');
+  const b = await makeFile(master.id, null, 'licence.pdf');
+
+  assert.equal(await setSharedMany(master, [a, b], true), 2);
+  assert.deepEqual(await state(a), { doc: true, chunk: true });
+  assert.deepEqual(await state(b), { doc: true, chunk: true });
+
+  assert.equal(await setSharedMany(master, [a, b], false), 2);
+  assert.deepEqual(await state(a), { doc: false, chunk: false });
+});
+
+test('bulk sharing counts only files that actually changed', async () => {
+  const { master, hr } = await fixture();
+  const a = await makeFile(master.id, hr, 'handbook.pdf');
+  const b = await makeFile(master.id, hr, 'policy.pdf');
+  await setShared(master, a, true);
+
+  assert.equal(await setSharedMany(master, [a, b], true), 1);
+});
+
+test('bulk sharing skips files that are not the master\'s', async () => {
+  const { master, sara, hr } = await fixture();
+  const mine = await makeFile(master.id, hr, 'handbook.pdf');
+  const hers = await makeFile(sara.id, hr, 'sara-payslip.pdf');
+
+  assert.equal(await setSharedMany(master, [mine, hers], true), 1);
+  assert.deepEqual(await state(hers), { doc: false, chunk: false });
+});
+
+test('a normal user cannot bulk share', async () => {
+  const { sara, hr } = await fixture();
+  const id = await makeFile(sara.id, hr, 'sara-payslip.pdf');
+
+  await assert.rejects(() => setSharedMany(sara, [id], true), /not allowed/i);
+  assert.deepEqual(await state(id), { doc: false, chunk: false });
+});
+
+test('bulk sharing ignores junk ids', async () => {
+  const { master } = await fixture();
+  assert.equal(await setSharedMany(master, ['x', null, 1.5], true), 0);
+  assert.equal(await setSharedMany(master, 'nope', true), 0);
 });

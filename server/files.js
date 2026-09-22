@@ -223,6 +223,25 @@ export async function setShared(user, docId, shared) {
   return on;
 }
 
+/**
+ * setShared for a whole company or folder at once. Same rules: master only, and only
+ * ids that are the master's own - anything else in the list is skipped, not an error,
+ * so one stale id cannot sink the rest. Returns how many files changed.
+ */
+export async function setSharedMany(user, docIds, shared) {
+  if (!isMaster(user)) throw Object.assign(new Error('Not allowed'), { status: 403 });
+  const ids = [...new Set((Array.isArray(docIds) ? docIds : []).map(Number).filter(Number.isInteger))];
+  if (!ids.length) return 0;
+
+  const on = !!shared;
+  return tx(async () => {
+    const rows = await db.prepare('UPDATE documents SET shared = ? WHERE user_id = ? AND id = ANY(?::int[]) AND shared <> ? RETURNING id')
+      .all(on, user.id, ids, on);
+    if (rows.length) await db.prepare('UPDATE chunks SET shared = ? WHERE document_id = ANY(?::int[])').run(on, rows.map((r) => r.id));
+    return rows.length;
+  });
+}
+
 // Compact catalogue of the files this user can see, so agents can answer
 // "what files do I have?" or "find my lease". Same scope as recall().
 export async function libraryCatalog(user) {

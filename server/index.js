@@ -10,7 +10,7 @@ import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, canUseAgent, isMaster } from './access.js';
 import { chat } from './chat.js';
 import { addMemory } from './knowledge.js';
-import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, pickCompany, userCompanies } from './files.js';
+import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
@@ -214,6 +214,10 @@ app.get('/api/documents/:id/preview', wrap(async (req, res) => {
   if (!doc?.path || !/\.docx$/i.test(doc.name)) return notFound(res);
   res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src data:");
   res.type('html').send(await docxPreview(doc));
+}));
+// master only: share or unshare a whole company or folder in one go
+app.post('/api/documents/share', wrap(async (req, res) => {
+  res.json({ changed: await setSharedMany(req.user, req.body.ids, req.body.shared) });
 }));
 // move to another folder or company, rename, or (master only) publish to the shelf
 app.patch('/api/documents/:id', wrap(async (req, res) => {
