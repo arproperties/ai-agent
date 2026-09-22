@@ -28,7 +28,7 @@ function ChatList({ dm, activeId, onOpen, onNew, onBack }) {
           className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="flex-1 text-xl font-light">Messages</h1>
+        <h1 className="flex-1 text-xl font-light">Team chat</h1>
         <button onClick={onNew} aria-label="New chat" title="New chat"
           className="grid size-10 place-items-center rounded-full text-emerald-300 hover:bg-white/10">
           <SquarePen size={21} />
@@ -361,7 +361,7 @@ export default function MessengerPage({ dm, onBack }) {
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center text-mute">
             <span className="grid size-20 place-items-center rounded-full bg-emerald-400/10 text-emerald-300"><MessageCircle size={36} /></span>
-            <p className="text-lg text-txt">Jarvis Messages</p>
+            <p className="text-lg text-txt">Team chat</p>
             <p className="max-w-xs text-sm">Pick a chat on the left, or start a new one. Messages arrive instantly — no need to refresh.</p>
           </div>
         )}

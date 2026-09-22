@@ -165,7 +165,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
             <span className="absolute right-1 top-1 grid min-w-4 place-items-center rounded-full bg-p1 px-1 text-[10px] font-semibold leading-4 text-white">{docIds.length}</span>
           </button>
         )}
-        <IconBtn icon="edit" label="New chat" onClick={onNewChat} />
+        <IconBtn icon="edit" label="New Jarvis chat" onClick={onNewChat} />
       </header>
 
       {/* messages */}

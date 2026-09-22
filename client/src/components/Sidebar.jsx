@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, X, Users, Eye, MessageCircle } from 'lucide-react';
+import { Search, X, Users, Eye } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
 import Avatar from './Avatar';
@@ -60,12 +60,12 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
       <div className="flex gap-2 px-4">
         <button onClick={onNewChat}
           className="flex flex-1 items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98]">
-          <Icon name="edit" size={17} /> New chat
+          <Icon name="sparkles" size={17} /> Ask Jarvis
         </button>
-        {/* Messages between people - separate from the AI chats below */}
-        <button onClick={onMessages} aria-label={unreadMessages ? `Messages, ${unreadMessages} unread` : 'Messages'}
+        {/* Team chat: messages between people - separate from the AI chats below */}
+        <button onClick={onMessages} aria-label={unreadMessages ? `Team chat, ${unreadMessages} unread` : 'Team chat'}
           className={`relative flex items-center justify-center gap-2 rounded-full border px-4 py-2.5 text-sm font-medium transition active:scale-[0.98] ${messagesOpen ? 'border-emerald-400/60 bg-emerald-400/15 text-emerald-200' : 'border-stroke bg-white/[0.05] hover:bg-white/10'}`}>
-          <MessageCircle size={17} className="text-emerald-300" /> Messages
+          <Users size={17} className="text-emerald-300" /> Team chat
           {unreadMessages > 0 && (
             <span className="absolute -right-1 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-semibold text-white ring-2 ring-[#0f0d20]">
               {unreadMessages > 99 ? '99+' : unreadMessages}
@@ -94,7 +94,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
         )}
       </div>
 
-      <Label>CHATS</Label>
+      <Label>JARVIS CHATS</Label>
       {convs.length > 0 && (
         <div className="mx-4 mb-2 flex items-center gap-2 rounded-full border border-stroke bg-white/[0.04] px-3 focus-within:border-p1/60">
           <Search size={15} className="shrink-0 text-mute" />
