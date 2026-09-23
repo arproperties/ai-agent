@@ -211,7 +211,9 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   // No Activity tab: reading is still recorded, and each person still sees who looked
   // at their workspace from the eye in their own sidebar - the master just does not get
   // a screen for it here.
-  const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'],
+  // "AI chats" and "Team chat" sit next to each other, so neither may be called just
+  // "Chats": the whole point of the pair is which side of the app a message came from.
+  const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
     ['messages', 'Team chat'], ['memory', 'Memory']];
 
   return (
