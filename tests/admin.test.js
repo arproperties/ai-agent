@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
-import { createUser, setAssignments, listUsers, listAssignments } from '../server/admin.js';
+import { createUser, updateUser, setAssignments, listUsers, listAssignments } from '../server/admin.js';
 
 test.after(() => closeDb());
 
@@ -148,4 +148,93 @@ test('listUsers reports each user with their assignment count and never a passwo
   const row = users.find((u) => u.id === sara.id);
   assert.equal(row.agents, 1);
   assert.ok(!('password_hash' in row), 'never expose the hash');
+});
+
+// ---------- updateUser: fixing an account after it was made ----------
+
+test('updateUser changes the name and the sign-in email, normalising it', async () => {
+  const { master } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  const before = await db.prepare('SELECT password_hash FROM users WHERE id = ?').get(sara.id);
+
+  const out = await updateUser(master, sara.id, { name: '  Sara Khan ', email: ' Sara.Khan@Example.COM ' });
+  assert.equal(out.name, 'Sara Khan');
+  assert.equal(out.email, 'sara.khan@example.com');
+  assert.equal(out.passwordChanged, false);
+
+  const row = await db.prepare('SELECT name, email, password_hash FROM users WHERE id = ?').get(sara.id);
+  assert.equal(row.email, 'sara.khan@example.com');
+  assert.equal(row.password_hash, before.password_hash, 'an empty password box leaves the password alone');
+});
+
+test('updateUser rejects an email another account already uses, and a bad one', async () => {
+  const { master } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  await createUser(master, { name: 'Tom', email: 'tom@example.com', password: 'hunter2hunter2' });
+
+  await assert.rejects(() => updateUser(master, sara.id, { email: 'TOM@example.com' }), /already exists/);
+  await assert.rejects(() => updateUser(master, sara.id, { email: 'not-an-email' }), /valid email/);
+  await assert.rejects(() => updateUser(master, sara.id, { name: '   ' }), /enter a name/);
+
+  const row = await db.prepare('SELECT name, email FROM users WHERE id = ?').get(sara.id);
+  assert.equal(row.email, 'sara@example.com', 'nothing is written when a check fails');
+  assert.equal(row.name, 'Sara');
+});
+
+test('updateUser keeps its own email, so saving a name change twice is fine', async () => {
+  const { master } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  await updateUser(master, sara.id, { name: 'Sara K', email: 'sara@example.com' });
+  await updateUser(master, sara.id, { name: 'Sara Khan', email: 'sara@example.com' });
+  const row = await db.prepare('SELECT name FROM users WHERE id = ?').get(sara.id);
+  assert.equal(row.name, 'Sara Khan');
+});
+
+test('a new password is hashed, ends every session and kills old reset links', async () => {
+  const { master } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  const before = await db.prepare('SELECT password_hash FROM users WHERE id = ?').get(sara.id);
+  const soon = Math.floor(Date.now() / 1000) + 3600;
+  await db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run('phone', sara.id, soon);
+  await db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run('laptop', sara.id, soon);
+  await db.prepare('INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run('link', sara.id, soon);
+
+  const out = await updateUser(master, sara.id, { password: 'brand-new-password' });
+  assert.equal(out.passwordChanged, true);
+
+  const row = await db.prepare('SELECT password_hash FROM users WHERE id = ?').get(sara.id);
+  assert.match(row.password_hash, /^scrypt\$/);
+  assert.notEqual(row.password_hash, before.password_hash);
+  const sessions = await db.prepare('SELECT token_hash FROM sessions WHERE user_id = ?').all(sara.id);
+  assert.deepEqual(sessions, [], 'signed out everywhere');
+  const resets = await db.prepare('SELECT 1 FROM password_resets WHERE user_id = ?').all(sara.id);
+  assert.deepEqual(resets, [], 'an old reset link cannot undo it');
+});
+
+test('changing your own password spares the browser you are doing it from', async () => {
+  const { master } = await fixture();
+  const soon = Math.floor(Date.now() / 1000) + 3600;
+  await db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run('here', master.id, soon);
+  await db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run('old-phone', master.id, soon);
+
+  await updateUser(master, master.id, { password: 'brand-new-password' }, 'here');
+
+  const sessions = await db.prepare('SELECT token_hash FROM sessions WHERE user_id = ?').all(master.id);
+  assert.deepEqual(sessions.map((s) => s.token_hash), ['here']);
+});
+
+test('updateUser rejects a short password and an unknown account', async () => {
+  const { master } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  await assert.rejects(() => updateUser(master, sara.id, { password: 'short' }), /at least 8/);
+  await assert.rejects(() => updateUser(master, 9999, { name: 'Ghost' }), /not found/);
+});
+
+test('updateUser never changes what somebody is allowed to be', async () => {
+  const { master } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  await updateUser(master, sara.id, { name: 'Sara', email: 'sara@example.com', role: 'master', disabled: true });
+  const row = await db.prepare('SELECT role, disabled FROM users WHERE id = ?').get(sara.id);
+  assert.equal(row.role, 'user', 'role is not something this form can set');
+  assert.equal(row.disabled, false);
 });

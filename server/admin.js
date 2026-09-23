@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db, tx } from './db.js';
-import { hashPassword, requireMaster } from './auth.js';
+import { hashPassword, requireMaster, sessionHash } from './auth.js';
 import { inlineType } from './files.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
@@ -28,6 +28,48 @@ export async function createUser(master, { name, email, password }) {
     'INSERT INTO users (email, name, password_hash, role, created_by) VALUES (?, ?, ?, ?, ?) RETURNING id'
   ).run(clean.email, clean.name, hash, 'user', master.id);
   return { id, name: clean.name, email: clean.email, role: 'user' };
+}
+
+/**
+ * Fixes who someone is: their name, the email they sign in with, and - only when one is
+ * typed - a new password. The checks are the same ones createUser applies, because an
+ * edited account has to end up as valid as a fresh one.
+ *
+ * A new password signs them out everywhere, so an account handed to somebody else does
+ * not stay open on the old phone. `keepSessionHash` spares the browser the master is
+ * editing from, which matters only when they change their own password.
+ */
+export async function updateUser(master, userId, { name, email, password }, keepSessionHash = null) {
+  const id = Number(userId);
+  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!target) throw fail(404, 'User not found');
+
+  const clean = {
+    name: String(name ?? target.name).trim().slice(0, 60),
+    email: String(email ?? target.email).trim().toLowerCase().slice(0, 200),
+  };
+  if (!clean.name) throw fail(400, 'Please enter a name');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean.email)) throw fail(400, 'Please enter a valid email');
+  if (await db.prepare('SELECT 1 FROM users WHERE email = ? AND id <> ?').get(clean.email, id)) {
+    throw fail(409, 'An account with this email already exists');
+  }
+
+  // Blank means "leave it alone" - the field is empty every time the form opens, so an
+  // untouched form must not reset anybody's password.
+  const pw = String(password ?? '');
+  if (pw && pw.length < 8) throw fail(400, 'Password must be at least 8 characters');
+  const hash = pw ? await hashPassword(pw) : null;
+
+  await tx(async () => {
+    await db.prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').run(clean.name, clean.email, id);
+    if (hash) {
+      await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
+      await db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(id);  // old reset links die with it
+      await db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(id, keepSessionHash ?? '');
+    }
+  });
+
+  return { id, name: clean.name, email: clean.email, role: target.role, passwordChanged: !!hash };
 }
 
 /** Replaces the user's entire assignment set, so the caller sends the desired end state. */
@@ -150,6 +192,10 @@ adminRoutes.get('/users', wrap(async (req, res) => res.json(await listUsers())))
 
 adminRoutes.post('/users', wrap(async (req, res) => {
   res.json(await createUser(req.user, req.body));
+}));
+
+adminRoutes.put('/users/:id', wrap(async (req, res) => {
+  res.json(await updateUser(req.user, req.params.id, req.body, sessionHash(req)));
 }));
 
 adminRoutes.get('/users/:id/agents', wrap(async (req, res) => {

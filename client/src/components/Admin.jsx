@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, Check } from 'lucide-react';
+import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, Check, Pencil } from 'lucide-react';
 import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
@@ -12,7 +12,7 @@ import Sheet from './Sheet';
 function AgentCard({ agent, on, label, onClick }) {
   return (
     <button onClick={onClick} aria-pressed={on} aria-label={label}
-      className={`group relative flex items-center gap-3.5 overflow-hidden rounded-[1.25rem] border p-3.5 text-left transition-all duration-200 hover:-translate-y-0.5 ${
+      className={`group relative flex items-center gap-3 overflow-hidden rounded-[1.25rem] border p-3 text-left transition-all duration-200 hover:-translate-y-0.5 ${
         on
           ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent shadow-lg shadow-p1/20'
           : 'border-stroke bg-white/[0.035] hover:border-white/20 hover:bg-white/[0.07]'}`}>
@@ -20,7 +20,7 @@ function AgentCard({ agent, on, label, onClick }) {
           reads as light rather than as one more outline. */}
       {on && <span aria-hidden className="pointer-events-none absolute -left-6 top-1/2 size-24 -translate-y-1/2 rounded-full bg-p1/30 blur-2xl" />}
 
-      <Avatar icon={agent.icon} color={agent.color} size={46}
+      <Avatar icon={agent.icon} color={agent.color} size={42}
         className={`relative transition duration-200 ${on ? 'ring-2 ring-white/25' : 'opacity-65 saturate-50 group-hover:opacity-90 group-hover:saturate-100'}`} />
       <span className={`relative min-w-0 flex-1 truncate text-sm font-medium transition ${on ? 'text-txt' : 'text-mute group-hover:text-txt/80'}`}>
         {agent.name}
@@ -42,6 +42,8 @@ function AgentCard({ agent, on, label, onClick }) {
 // and 'chat' is its superset - shelfIds() ignores mode entirely. The column and the
 // server still honour both, so the picker can come back without a migration.
 
+const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
+
 function AddPerson({ onAdded, onCancel }) {
   const [f, setF] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
@@ -58,7 +60,7 @@ function AddPerson({ onAdded, onCancel }) {
     setBusy(false);
   };
 
-  const field = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
+  const field = FIELD;
   return (
     <form onSubmit={submit} className="space-y-2.5 rounded-2xl border border-stroke bg-white/[0.04] p-3.5">
       <input value={f.name} onChange={set('name')} placeholder="Their name" required className={field} />
@@ -69,6 +71,60 @@ function AddPerson({ onAdded, onCancel }) {
       <div className="flex gap-2">
         <button disabled={busy} className="flex-1 rounded-full bg-gradient-to-br from-p1 to-p2 py-2 text-sm font-medium text-white disabled:opacity-60">
           {busy ? 'Adding…' : 'Add person'}
+        </button>
+        <button type="button" onClick={onCancel} className="glass rounded-full px-4 py-2 text-sm text-mute">Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * The three things about an account that can go wrong after it was made: a misspelt
+ * name, the wrong email, a password nobody remembers. Whatever is typed here replaces
+ * what is there - except the password, which is left alone when the box stays empty,
+ * so saving a name change never quietly locks somebody out.
+ */
+function EditPerson({ person, isMe, onSaved, onCancel }) {
+  const [f, setF] = useState({ name: person.name, email: person.email, password: '' });
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const set = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setError(''); };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api.put(`/admin/users/${person.id}`, f);
+      onSaved(f.password
+        ? `Saved. ${f.name} signs in with the new password from now on, and is signed out everywhere${isMe ? ' except here' : ''}.`
+        : 'Saved.');
+    } catch (err) { setError(err.message); setBusy(false); }
+  };
+
+  return (
+    <form onSubmit={submit} className="mt-3 max-w-md space-y-2.5 rounded-2xl border border-stroke bg-white/[0.04] p-3.5">
+      <label className="block space-y-1">
+        <span className="text-[11px] font-medium tracking-[0.14em] text-mute">NAME</span>
+        <input value={f.name} onChange={set('name')} required className={FIELD} />
+      </label>
+      <label className="block space-y-1">
+        <span className="text-[11px] font-medium tracking-[0.14em] text-mute">EMAIL THEY SIGN IN WITH</span>
+        <input type="email" value={f.email} onChange={set('email')} required className={FIELD} />
+      </label>
+      <label className="block space-y-1">
+        <span className="text-[11px] font-medium tracking-[0.14em] text-mute">NEW PASSWORD</span>
+        <input value={f.password} onChange={set('password')} placeholder="Leave empty to keep the current one"
+          minLength={8} autoComplete="new-password" className={FIELD} />
+      </label>
+      <p className="text-xs leading-relaxed text-mute">
+        {f.password
+          ? `You will need to pass this password on to ${f.name}. They can change it again from the sign-in screen.`
+          : 'Their password stays as it is unless you type a new one.'}
+      </p>
+      {error && <p className="text-sm text-bad">{error}</p>}
+      <div className="flex gap-2">
+        <button disabled={busy} className="flex-1 rounded-full bg-gradient-to-br from-p1 to-p2 py-2 text-sm font-medium text-white disabled:opacity-60">
+          {busy ? 'Saving…' : 'Save details'}
         </button>
         <button type="button" onClick={onCancel} className="glass rounded-full px-4 py-2 text-sm text-mute">Cancel</button>
       </div>
@@ -96,6 +152,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('agents');
+  const [editing, setEditing] = useState(false);
+  const [note, setNote] = useState('');
 
   useEffect(() => {
     setLoaded(false);
@@ -150,11 +208,18 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
 
   const chatAgent = agents.find((a) => a.id === chatId);
 
-  const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'], ['memory', 'Memory'], ['activity', 'Activity']];
+  // No Activity tab: reading is still recorded, and each person still sees who looked
+  // at their workspace from the eye in their own sidebar - the master just does not get
+  // a screen for it here.
+  const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'], ['memory', 'Memory']];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* Everything on this screen sits in one centred column. On a wide monitor the
+          panel is over a thousand pixels across, and a row of controls stretched to
+          that width reads as a stripe rather than as a card. */}
       <div className="border-b border-stroke/60 px-4 pb-3 pt-4 md:px-6">
+        <div className="mx-auto w-full max-w-4xl">
         <div className="flex items-center gap-3">
           <button onClick={onBack} aria-label="Back to everyone" className="-ml-2 grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
             <ChevronLeft size={20} />
@@ -165,19 +230,37 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
             <p className="truncate text-xs text-mute">{person.email}{person.disabled && ' · disabled'}</p>
           </div>
           {person.role === 'master' && <span className="shrink-0 rounded-full bg-p1/25 px-2.5 py-1 text-[11px] text-p1">master</span>}
+          {!editing && (
+            <button onClick={() => { setEditing(true); setNote(''); }} title="Change their name, email or password"
+              aria-label={`Change ${person.name}'s name, email or password`}
+              className="grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
+              <Pencil size={16} />
+            </button>
+          )}
         </div>
-        <div className="mt-3 flex gap-1 overflow-x-auto">
-          {TABS.map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)}
-              className={`shrink-0 rounded-full px-3.5 py-1.5 text-sm transition ${tab === k ? 'bg-white/15 text-txt' : 'text-mute hover:bg-white/5'}`}>{l}</button>
-          ))}
+
+        {editing ? (
+          <EditPerson key={person.id} person={person} isMe={person.id === me.id}
+            onSaved={(msg) => { setEditing(false); setNote(msg); onChanged(); }}
+            onCancel={() => setEditing(false)} />
+        ) : (
+          <>
+            {note && <p className="mt-2.5 rounded-xl border border-ok/40 bg-ok/10 px-3 py-2 text-xs leading-relaxed text-ok">{note}</p>}
+            <div className="-mx-1 mt-3 flex gap-1 overflow-x-auto px-1">
+              {TABS.map(([k, l]) => (
+                <button key={k} onClick={() => setTab(k)}
+                  className={`shrink-0 rounded-full px-3.5 py-1.5 text-sm transition ${tab === k ? 'bg-white/15 text-txt' : 'text-mute hover:bg-white/5'}`}>{l}</button>
+              ))}
+            </div>
+          </>
+        )}
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 pb-safe md:px-6">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-safe md:px-6">
+        <div className="@container mx-auto w-full max-w-4xl space-y-4">
 
         {tab === 'memory' && <Memories person={person} />}
-        {tab === 'activity' && <Activity person={person} />}
         {(tab === 'documents' || tab === 'conversations') && <Browse person={person} kind={tab} />}
 
         {tab === 'agents' && (!loaded ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
@@ -190,7 +273,12 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
                   <span className="text-[11px] font-medium tracking-[0.14em] text-mute">THEIR AGENT</span>
                   <span className="text-[11px] text-mute">pick one</span>
                 </div>
-                <div className="grid grid-cols-2 gap-2.5">
+                {/* Container queries, not screen ones: this panel sits beside a
+                    sidebar and a people list, so on a tablet the window is wide while
+                    the panel is not. Asking the window gave two columns there and cut
+                    "Operations Manager" down to "Opera…". One card a row until the
+                    panel itself has room for two, three once it is properly wide. */}
+                <div className="grid grid-cols-1 gap-2.5 @md:grid-cols-2 @3xl:grid-cols-3">
                   {agents.map((a) => (
                     <AgentCard key={a.id} agent={a} on={chatId === a.id} onClick={() => chooseChat(a.id)}
                       label={`Make ${a.name} the agent ${person.name} chats with`} />
@@ -226,19 +314,25 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
 
             {error && <p className="text-sm text-bad">{error}</p>}
 
-            <button onClick={save} disabled={busy}
-              className="w-full rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white disabled:opacity-60">
-              {busy ? 'Saving…' : 'Save agents'}
-            </button>
+            {/* Column-reverse on a phone puts Save under the thumb and the account
+                switch below it; from a tablet up they become a footer row, the quiet
+                action on the left and the one they came for on the right. */}
+            <div className="flex flex-col-reverse gap-2 pt-1 @md:flex-row @md:items-center @md:justify-between">
+              {person.id !== me.id ? (
+                <button onClick={disable}
+                  className="flex w-full items-center justify-center gap-2 rounded-full border border-bad/40 py-2.5 text-sm text-bad hover:bg-bad/10 @md:w-auto @md:px-5">
+                  <Ban size={15} /> {person.disabled ? 'Re-enable this account' : 'Disable this account'}
+                </button>
+              ) : <span className="hidden @md:block" />}
 
-            {person.id !== me.id && (
-              <button onClick={disable}
-                className="flex w-full items-center justify-center gap-2 rounded-full border border-bad/40 py-2.5 text-sm text-bad hover:bg-bad/10">
-                <Ban size={15} /> {person.disabled ? 'Re-enable this account' : 'Disable this account'}
+              <button onClick={save} disabled={busy}
+                className="w-full rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white shadow-lg shadow-p1/20 transition active:scale-[0.99] disabled:opacity-60 @md:w-auto @md:px-8">
+                {busy ? 'Saving…' : 'Save agents'}
               </button>
-            )}
+            </div>
           </>
         ))}
+        </div>
       </div>
     </div>
   );
@@ -253,28 +347,6 @@ export const ACCESS_WORDS = {
   conversation: 'read a chat',
   memory: 'looked at the memory',
 };
-
-/** What the master has read about this person. The same rows they can see themselves. */
-function Activity({ person }) {
-  const [rows, setRows] = useState(null);
-  useEffect(() => { api.get(`/admin/users/${person.id}/access`).then(setRows).catch(() => setRows([])); }, [person.id]);
-  if (rows === null) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
-  if (!rows.length) return <p className="py-6 text-center text-sm text-mute">You have not opened anything of theirs.</p>;
-  return (
-    <>
-      <p className="text-xs text-mute">{person.name} can see this list too, on their own account.</p>
-      <ul className="space-y-1.5">
-        {rows.map((r) => (
-          <li key={r.id} className="flex items-center gap-2.5 rounded-xl bg-white/5 px-3 py-2 text-sm">
-            <Eye size={14} className="shrink-0 text-mute" />
-            <span className="flex-1">You {ACCESS_WORDS[r.action] || r.action}</span>
-            <span className="shrink-0 text-xs text-mute">{exactly(r.created_at)}</span>
-          </li>
-        ))}
-      </ul>
-    </>
-  );
-}
 
 /**
  * Someone else's workspace, read-only. Master can see all of it (spec §2), but nothing
@@ -433,7 +505,7 @@ export default function AdminPage({ agents, me, onBack }) {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <aside className={`min-h-0 w-full shrink-0 overflow-y-auto border-stroke/60 p-3 md:block md:w-80 md:border-r ${person || adding ? 'hidden' : 'block'}`}>
+        <aside className={`min-h-0 w-full shrink-0 overflow-y-auto border-stroke/60 p-3 md:block md:w-64 md:border-r xl:w-80 ${person || adding ? 'hidden' : 'block'}`}>
           {people === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
             <ul className="space-y-1.5">
               {people.map((p) => {
@@ -471,7 +543,7 @@ export default function AdminPage({ agents, me, onBack }) {
               </div>
             </div>
           ) : person ? (
-            <PersonDetail person={person} agents={agents} me={me} onBack={() => setOpen(null)} onChanged={load} />
+            <PersonDetail key={person.id} person={person} agents={agents} me={me} onBack={() => setOpen(null)} onChanged={load} />
           ) : (
             <div className="hidden flex-1 flex-col items-center justify-center gap-2 px-8 text-center md:flex">
               <span className="grid size-16 place-items-center rounded-3xl bg-gradient-to-br from-emerald-400/25 to-p1/10 text-emerald-300"><UserPlus size={28} strokeWidth={1.4} /></span>

@@ -63,6 +63,16 @@ export function requireUser(req, res, next) {
   }, next);
 }
 
+/**
+ * The session this request arrives on, as the hash stored in `sessions`. Changing
+ * someone's password clears their sessions; the master editing their own account can
+ * pass this to spare the browser they are doing it from.
+ */
+export function sessionHash(req) {
+  const token = readCookie(req, COOKIE);
+  return token ? sha(token) : null;
+}
+
 /** Routes that only the master may call. Mount after requireUser, which sets req.user. */
 export function requireMaster(req, res, next) {
   if (req.user?.role !== 'master') return res.status(403).json({ error: 'Not allowed' });
