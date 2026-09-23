@@ -9,6 +9,7 @@ import DraftCard from './DraftCard';
 import Composer from './Composer';
 import LiveVoice from './LiveVoice';
 import Sheet from './Sheet';
+import { Welcome, InstallHint } from './FirstRun';
 import { FileCard, FileViewer, FileDetail } from './Knowledge';
 
 const IconBtn = ({ icon, label, onClick, className = '' }) => (
@@ -18,7 +19,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, conversationId, voiceEnabled, onConversation, onMenu, onNewChat, menuBadge = 0 }) {
+export default function Chat({ user, agents, folders, conversationId, voiceEnabled, firstRun = false, onConversation, onMenu, onNewChat, menuBadge = 0 }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -172,10 +173,16 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
       <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
         {messages.length === 0 ? (
           <div className="flex min-h-full flex-col items-center justify-center gap-6 px-5 py-8 text-center">
-            <Orb state={orb} className="w-[min(52vw,220px)]" />
+            {/* Smaller on somebody's very first visit: the orb is the welcome for a
+                returning user, but on day one what is under it has to be on the screen. */}
+            <Orb state={orb} className={firstRun ? 'w-[min(32vw,132px)]' : 'w-[min(52vw,220px)]'} />
             <div>
-              <b className="block text-[21px] font-light">{orb === 'listening' ? 'Listening…' : orb === 'thinking' ? 'Thinking…' : `Hi ${firstName}`}</b>
-              <span className="text-sm text-mute">Ask anything. The right agent will answer.</span>
+              <b className="block text-[21px] font-light">
+                {orb === 'listening' ? 'Listening…' : orb === 'thinking' ? 'Thinking…' : firstRun ? `Welcome, ${firstName}` : `Hi ${firstName}`}
+              </b>
+              <span className="text-sm text-mute">
+                {firstRun ? 'Start with one of these. The right agent answers.' : 'Ask anything. The right agent will answer.'}
+              </span>
             </div>
             <div className="flex -space-x-2">
               {agents.slice(0, 7).map((a) => <Avatar key={a.id} icon={a.icon} color={a.color} size={30} className="ring-2 ring-bg" />)}
@@ -190,6 +197,8 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
                 ))}
               </div>
             )}
+            {firstRun && <Welcome />}
+            <InstallHint />
           </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 md:px-6">

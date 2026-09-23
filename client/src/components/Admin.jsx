@@ -228,6 +228,11 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
           <div className="min-w-0 flex-1">
             <p className="truncate text-lg font-light leading-tight">{person.name}</p>
             <p className="truncate text-xs text-mute">{person.email}{person.disabled && ' · disabled'}</p>
+            <p className={`truncate text-xs ${activity(person).cold ? 'text-warn' : activity(person).quiet ? 'text-mute' : 'text-ok/80'}`}>
+              {[activity(person).label,
+                person.asked_7d > 0 ? `${person.asked_7d} asked this week` : 'nothing asked this week',
+              ].join(' · ')}
+            </p>
           </div>
           {person.role === 'master' && <span className="shrink-0 rounded-full bg-p1/25 px-2.5 py-1 text-[11px] text-p1">master</span>}
           {!editing && (
@@ -340,6 +345,28 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
 
 const when = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const exactly = (ts) => (ts ? new Date(ts * 1000).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+
+/**
+ * How alive an account is, in the few words a list row has space for. Last seen and last
+ * question are both taken because they fail in opposite directions: somebody can keep the
+ * app open all week without asking anything, and somebody who only reads their files
+ * never adds a message. The later of the two is the honest answer to "are they using it".
+ */
+const DAY = 86400;
+function activity(p) {
+  const seen = Math.max(p.last_seen_at || 0, p.last_asked_at || 0);
+  if (!seen) return { label: 'Never signed in', quiet: false, cold: true };
+  const days = Math.floor((Date.now() / 1000 - seen) / DAY);
+  return {
+    label: days <= 0 ? 'Active today' : days === 1 ? 'Active yesterday'
+      : days < 7 ? `Active ${days} days ago` : `Last here ${when(seen)}`,
+    quiet: days >= 7,
+    cold: false,
+  };
+}
+
+/** Someone counts as active if they have used the app at all in the last seven days. */
+const activeThisWeek = (p) => Math.max(p.last_seen_at || 0, p.last_asked_at || 0) > Date.now() / 1000 - 7 * DAY;
 
 export const ACCESS_WORDS = {
   document: 'opened a file',
@@ -496,7 +523,11 @@ export default function AdminPage({ agents, me, onBack }) {
         </button>
         <div className="min-w-0 flex-1">
           <h1 className="text-[22px] font-light leading-tight">People</h1>
-          <p className="text-xs text-mute">{people ? `${people.length} with an account` : 'Loading…'}</p>
+          <p className="text-xs text-mute">
+            {people
+              ? `${people.length} with an account · ${people.filter(activeThisWeek).length} here this week`
+              : 'Loading…'}
+          </p>
         </div>
         <button onClick={() => { setAdding(true); setOpen(null); }}
           className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-95">
@@ -515,13 +546,20 @@ export default function AdminPage({ agents, me, onBack }) {
                     <button onClick={() => { setOpen(p.id); setAdding(false); }}
                       className={`flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition ${active ? 'border-p1/60 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.07]'}`}>
                       <span className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-medium">{p.name[0]?.toUpperCase()}</span>
-                      {/* The name and nothing else. The agent count used to sit under
-                          it, but it is the same number for everybody and says nothing
-                          about the person; it is on their screen if it is ever wanted. */}
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        <span className="truncate text-sm">{p.name}</span>
-                        {p.role === 'master' && <span className="shrink-0 rounded-full bg-p1/25 px-2 py-0.5 text-[10px] text-p1">master</span>}
-                        {p.disabled && <span className="shrink-0 rounded-full bg-bad/20 px-2 py-0.5 text-[10px] text-bad">disabled</span>}
+                      {/* The name, and under it whether the account is being used. The
+                          agent count used to sit there and was taken out because it was
+                          the same number for everybody; this line differs per person,
+                          and it is the one thing this screen could not tell you before:
+                          who was handed an account and never came back. */}
+                      <span className="min-w-0 flex-1">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate text-sm">{p.name}</span>
+                          {p.role === 'master' && <span className="shrink-0 rounded-full bg-p1/25 px-2 py-0.5 text-[10px] text-p1">master</span>}
+                          {p.disabled && <span className="shrink-0 rounded-full bg-bad/20 px-2 py-0.5 text-[10px] text-bad">disabled</span>}
+                        </span>
+                        <span className={`block truncate text-xs ${activity(p).cold ? 'text-warn' : activity(p).quiet ? 'text-mute' : 'text-ok/80'}`}>
+                          {[activity(p).label, p.asked_7d > 0 && `${p.asked_7d} asked this week`].filter(Boolean).join(' · ')}
+                        </span>
                       </span>
                       <ChevronLeft size={15} className="shrink-0 rotate-180 text-mute md:hidden" />
                     </button>

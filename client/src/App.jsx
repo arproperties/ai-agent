@@ -21,6 +21,7 @@ export default function App() {
   const [config, setConfig] = useState({ models: [], voices: [], folders: [], voice: false });
   const [agents, setAgents] = useState([]);
   const [convs, setConvs] = useState([]);
+  const [convsLoaded, setConvsLoaded] = useState(false); // an empty list means nothing until it has arrived
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
@@ -35,7 +36,7 @@ export default function App() {
   }, []);
 
   const loadAgents = useCallback(() => api.get('/agents').then(setAgents), []);
-  const loadConvs = useCallback(() => api.get('/conversations').then(setConvs), []);
+  const loadConvs = useCallback(() => api.get('/conversations').then((c) => { setConvs(c); setConvsLoaded(true); }), []);
 
   useEffect(() => {
     if (!me) return;
@@ -76,6 +77,7 @@ export default function App() {
       <main className="relative flex min-w-0 flex-1 flex-col">
         {agents.length > 0 ? (
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} conversationId={chat.id} voiceEnabled={config.voice}
+            firstRun={convsLoaded && convs.length === 0}
             onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —

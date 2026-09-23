@@ -116,9 +116,23 @@ export function listAssignments(userId) {
     WHERE user_id = ? ORDER BY agent_id`).all(Number(userId));
 }
 
+/**
+ * Everyone with an account, and whether they are actually using it. The three activity
+ * columns answer the only questions the People screen is really asked: has this person
+ * ever started, are they still here, and how much are they asking. Questions are counted
+ * rather than all messages - a reply is the app talking to itself, and doubling every
+ * number would only make them look busier than they are.
+ */
+const WEEK = 7 * 86400;
+
 export function listUsers() {
-  return db.prepare(`SELECT u.id, u.name, u.email, u.role, u.disabled, u.created_at,
-      (SELECT COUNT(*)::int FROM agent_assignments aa WHERE aa.user_id = u.id) agents
+  return db.prepare(`SELECT u.id, u.name, u.email, u.role, u.disabled, u.created_at, u.last_seen_at,
+      (SELECT COUNT(*)::int FROM agent_assignments aa WHERE aa.user_id = u.id) agents,
+      (SELECT COUNT(*)::int FROM messages m JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.user_id = u.id AND m.role = 'user'
+           AND m.created_at > extract(epoch from now()) - ${WEEK}) asked_7d,
+      (SELECT MAX(m.created_at) FROM messages m JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.user_id = u.id AND m.role = 'user') last_asked_at
     FROM users u ORDER BY u.id`).all();
 }
 

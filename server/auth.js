@@ -54,11 +54,30 @@ export async function currentUser(req) {
     WHERE s.token_hash = ? AND s.expires_at > extract(epoch from now())`).get(sha(token)) || null;
 }
 
+/**
+ * When each account was last actually used. Written from here because this is the one
+ * place every signed-in request passes through, and at most once every few minutes per
+ * person: the People screen asks who is still using Jarvis, and a coarse answer serves
+ * that as well as an exact one would while costing one write an hour instead of one a
+ * request. Fire-and-forget - somebody's request must never fail over a statistic.
+ */
+const SEEN_EVERY = 5 * 60_000;
+const lastWrote = new Map(); // user id -> when this process last recorded them
+function recordSeen(userId) {
+  const now = Date.now();
+  if (now - (lastWrote.get(userId) || 0) < SEEN_EVERY) return;
+  lastWrote.set(userId, now);
+  db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?')
+    .run(Math.floor(now / 1000), userId)
+    .catch((e) => console.error('[seen]', e.message));
+}
+
 export function requireUser(req, res, next) {
   currentUser(req).then((user) => {
     if (!user) return res.status(401).json({ error: 'Please sign in' });
     if (user.disabled) return res.status(403).json({ error: 'This account has been disabled' });
     req.user = user;
+    recordSeen(user.id);
     next();
   }, next);
 }

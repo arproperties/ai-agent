@@ -150,6 +150,39 @@ test('listUsers reports each user with their assignment count and never a passwo
   assert.ok(!('password_hash' in row), 'never expose the hash');
 });
 
+/**
+ * The People screen is the only place that can tell whether an account somebody was given
+ * is being used, so the numbers behind it are checked here: questions only (a reply is the
+ * app talking to itself), only this person's, and only this week's.
+ */
+test('listUsers reports how recently and how much each account is used', async () => {
+  const { master, lawyer } = await fixture();
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+  const quiet = await createUser(master, { name: 'Quiet', email: 'quiet@example.com', password: 'hunter2hunter2' });
+
+  const now = Math.floor(Date.now() / 1000);
+  await db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(now - 120, sara.id);
+
+  const { id: conv } = await db.prepare('INSERT INTO conversations (user_id, title) VALUES (?, ?) RETURNING id').run(sara.id, 'Rent');
+  const say = (role, ago) => db.prepare('INSERT INTO messages (conversation_id, agent_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(conv, lawyer, role, 'x', now - ago);
+  await say('user', 60);              // this week
+  await say('user', 3 * 86400);       // this week
+  await say('assistant', 60);         // a reply, never counted
+  await say('user', 30 * 86400);      // last month: outside the window, but still her last-asked floor
+
+  const rows = await listUsers();
+  const hers = rows.find((u) => u.id === sara.id);
+  assert.equal(hers.asked_7d, 2, 'only her own questions, only this week');
+  assert.equal(hers.last_asked_at, now - 60);
+  assert.equal(hers.last_seen_at, now - 120);
+
+  const theirs = rows.find((u) => u.id === quiet.id);
+  assert.equal(theirs.asked_7d, 0, 'an account nobody has used counts nothing');
+  assert.equal(theirs.last_asked_at, null);
+  assert.equal(theirs.last_seen_at, null, 'never signed in');
+});
+
 // ---------- updateUser: fixing an account after it was made ----------
 
 test('updateUser changes the name and the sign-in email, normalising it', async () => {
