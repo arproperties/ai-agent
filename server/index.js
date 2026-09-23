@@ -18,6 +18,7 @@ import { emailRoutes } from './emailRoutes.js';
 import { startOutbox } from './outbox.js';
 import { importRoutes, startImportQueue } from './imports.js';
 import { messengerRoutes } from './messenger.js';
+import { errorRoutes, recordError } from './errors.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -26,6 +27,7 @@ app.use(express.json({ limit: '1mb' }));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; checked by its one-time state
+app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api/outlook', outlookRoutes);
 app.use('/api/imap', imapRoutes);
@@ -297,6 +299,9 @@ app.get('/api/voice/speak/:key', wrap(async (req, res) => {
 app.use('/api', (req, res) => notFound(res));
 app.use((err, req, res, next) => {
   console.error('[error]', err.message);
+  // Written down as well as printed: the console scrolls away and nobody reads it, which
+  // is how a fault that hits one person every day stays invisible for weeks.
+  recordError({ userId: req.user?.id ?? null, source: 'server', message: err.message, stack: err.stack, url: req.originalUrl });
   if (res.headersSent) {
     // A chat stream is already open: say what went wrong rather than just
     // cutting the connection, which leaves the app waiting on a dead reply.

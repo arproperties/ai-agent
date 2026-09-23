@@ -312,6 +312,22 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_docs_queued ON documents(id) WHERE status = 'queued';
   CREATE INDEX IF NOT EXISTS idx_docs_import ON documents(import_id) WHERE import_id IS NOT NULL;
 
+  -- Whatever broke, wherever it broke. user_id is nulled rather than cascaded when an
+  -- account goes: the fault outlives the account that met it, and a crash nobody is left
+  -- to name is still a crash worth seeing. Anonymous rows are ordinary - a failure on the
+  -- sign-in screen has no user to attach to.
+  CREATE TABLE IF NOT EXISTS error_log (
+    id SERIAL PRIMARY KEY,
+    user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    source     TEXT NOT NULL CHECK (source IN ('client', 'server')),
+    message    TEXT NOT NULL,
+    stack      TEXT,
+    url        TEXT,
+    agent      TEXT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_errors_recent ON error_log(id DESC);
+
   -- Master can read anyone's workspace, so it is recorded, and both sides can see it.
   -- target_id is deliberately NOT a foreign key: deleting the file that was read must
   -- not delete the record of it having been read.

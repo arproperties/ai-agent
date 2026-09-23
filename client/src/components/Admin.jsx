@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, Check, Pencil } from 'lucide-react';
+import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, Check, Pencil, AlertTriangle } from 'lucide-react';
 import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
@@ -500,6 +500,51 @@ export function MyActivitySheet({ onClose }) {
 }
 
 /**
+ * What has broken lately. Client crashes and server faults in one list, newest first,
+ * because the question being asked is "is something wrong right now", not "which half of
+ * the app was it in". Each row names whoever met it, so a fault that only one person
+ * hits - one phone, one file, one mailbox - can be traced to them and asked about.
+ */
+function ProblemsSheet({ onClose }) {
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(null);
+  useEffect(() => { api.get('/admin/errors').then(setData).catch(() => setData({ errors: [], week: 0 })); }, []);
+
+  return (
+    <Sheet title="What has broken" onClose={onClose}
+      icon={<span className="grid size-8 place-items-center rounded-full bg-warn/20 text-warn"><AlertTriangle size={16} /></span>}>
+      {data === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
+        <div className="space-y-3">
+          <p className="text-sm text-mute">
+            {data.errors.length === 0
+              ? 'Nothing has gone wrong. Crashes in anybody’s browser and faults on the server both land here.'
+              : `${data.week} in the last seven days. Kept for a month, newest first.`}
+          </p>
+          <ul className="space-y-1.5">
+            {data.errors.map((e) => (
+              <li key={e.id} className="rounded-2xl border border-stroke bg-white/[0.03]">
+                <button onClick={() => setOpen(open === e.id ? null : e.id)} className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left">
+                  <span className={`mt-1 size-2 shrink-0 rounded-full ${e.source === 'client' ? 'bg-warn' : 'bg-bad'}`} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{e.message}</span>
+                    <span className="block truncate text-xs text-mute">
+                      {[e.source === 'client' ? 'in the browser' : 'on the server', e.user_name || 'nobody signed in', e.url, exactly(e.created_at)].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
+                </button>
+                {open === e.id && e.stack && (
+                  <pre className="overflow-x-auto border-t border-stroke/60 px-3 py-2.5 text-[11px] leading-relaxed text-mute">{e.stack}</pre>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+/**
  * Master's people screen. A full-screen panel like the Shelf rather than a dialog: it
  * holds somebody's whole workspace - their files, chats, memory and the record of what
  * has been read - and that is more than a modal should carry. On a wide screen the
@@ -510,8 +555,10 @@ export default function AdminPage({ agents, me, onBack }) {
   const [people, setPeople] = useState(null);
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState(null);
+  const [problems, setProblems] = useState(false);
+  const [broken, setBroken] = useState(0); // faults in the last week
   const load = () => api.get('/admin/users').then(setPeople);
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api.get('/admin/errors').then((r) => setBroken(r.week)).catch(() => {}); }, []);
 
   const person = open && people?.find((p) => p.id === open);
 
@@ -529,6 +576,14 @@ export default function AdminPage({ agents, me, onBack }) {
               : 'Loading…'}
           </p>
         </div>
+        {/* Only when there is something to see. A permanent "0 problems" button is a
+            thing to learn to ignore, and then it is ignored on the day it says 3. */}
+        {broken > 0 && (
+          <button onClick={() => setProblems(true)} title="What has broken lately"
+            className="flex items-center gap-2 rounded-full border border-warn/40 bg-warn/10 px-3.5 py-2 text-sm text-warn transition active:scale-95">
+            <AlertTriangle size={16} /> {broken}
+          </button>
+        )}
         <button onClick={() => { setAdding(true); setOpen(null); }}
           className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-95">
           <UserPlus size={16} /> Add
@@ -588,6 +643,7 @@ export default function AdminPage({ agents, me, onBack }) {
           )}
         </section>
       </div>
+      {problems && <ProblemsSheet onClose={() => setProblems(false)} />}
     </div>
   );
 }

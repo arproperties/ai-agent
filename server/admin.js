@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db, tx } from './db.js';
 import { hashPassword, requireMaster, sessionHash } from './auth.js';
 import { inlineType } from './files.js';
+import { recentErrors, errorCount } from './errors.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
 // as an "OR is_master" widening of the ordinary queries. Every cross-user guard in the
@@ -203,6 +204,12 @@ adminRoutes.use(requireMaster);
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 adminRoutes.get('/users', wrap(async (req, res) => res.json(await listUsers())));
+
+// What has broken lately, for everybody. Master-only like the rest of this router: a
+// stack trace names files and routes, which is the owner's business and nobody else's.
+adminRoutes.get('/errors', wrap(async (req, res) => {
+  res.json({ errors: await recentErrors(100), week: (await errorCount(7)).n });
+}));
 
 adminRoutes.post('/users', wrap(async (req, res) => {
   res.json(await createUser(req.user, req.body));
