@@ -536,7 +536,7 @@ export default function MessengerChat({ chat, dm, onBack, onInfo }) {
         </button>
       </header>
 
-      <div ref={scroller} onScroll={onScroll} className="dm-wallpaper min-h-0 flex-1 overflow-y-auto">
+      <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
        <div className="mx-auto w-full max-w-4xl px-4 pb-4 md:px-10">
         {messages === null && <p className="py-10 text-center text-sm text-mute">Loading…</p>}
         {more && <p className="py-3 text-center text-xs text-mute">Loading earlier messages…</p>}

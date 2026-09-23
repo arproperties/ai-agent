@@ -513,17 +513,15 @@ export default function AdminPage({ agents, me, onBack }) {
                 return (
                   <li key={p.id}>
                     <button onClick={() => { setOpen(p.id); setAdding(false); }}
-                      className={`flex w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${active ? 'border-p1/60 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.07]'}`}>
+                      className={`flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition ${active ? 'border-p1/60 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.07]'}`}>
                       <span className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-medium">{p.name[0]?.toUpperCase()}</span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2">
-                          <span className="truncate text-sm">{p.name}</span>
-                          {p.role === 'master' && <span className="shrink-0 rounded-full bg-p1/25 px-2 py-0.5 text-[10px] text-p1">master</span>}
-                          {p.disabled && <span className="shrink-0 rounded-full bg-bad/20 px-2 py-0.5 text-[10px] text-bad">disabled</span>}
-                        </span>
-                        <span className="block truncate text-xs text-mute">
-                          {p.role === 'master' ? `${agents.length} agents of their own` : `${p.agents} agent${p.agents === 1 ? '' : 's'}`}
-                        </span>
+                      {/* The name and nothing else. The agent count used to sit under
+                          it, but it is the same number for everybody and says nothing
+                          about the person; it is on their screen if it is ever wanted. */}
+                      <span className="flex min-w-0 flex-1 items-center gap-2">
+                        <span className="truncate text-sm">{p.name}</span>
+                        {p.role === 'master' && <span className="shrink-0 rounded-full bg-p1/25 px-2 py-0.5 text-[10px] text-p1">master</span>}
+                        {p.disabled && <span className="shrink-0 rounded-full bg-bad/20 px-2 py-0.5 text-[10px] text-bad">disabled</span>}
                       </span>
                       <ChevronLeft size={15} className="shrink-0 rotate-180 text-mute md:hidden" />
                     </button>

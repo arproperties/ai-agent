@@ -380,7 +380,7 @@ export default function MessengerPage({ dm, onBack }) {
         {chat ? (
           <MessengerChat key={chat.id} chat={chat} dm={dm} onBack={() => setOpenId(null)} onInfo={() => setInfo(true)} />
         ) : (
-          <div className="dm-wallpaper flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
+          <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
             <div className="relative mb-2 grid size-32 place-items-center">
               <span className="absolute inset-2 rounded-full bg-emerald-400/25 blur-2xl" />
               <span className="absolute left-2 top-4 grid size-16 -rotate-12 place-items-center rounded-[22px] bg-gradient-to-br from-violet-400 to-fuchsia-500 text-white shadow-xl shadow-fuchsia-500/20">
