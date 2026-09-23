@@ -226,6 +226,22 @@ function NewChat({ dm, onClose, onOpened }) {
 }
 
 // ---------- group / contact info ----------
+/**
+ * Said wherever somebody might be forming a picture of who can see this. Team chat is
+ * private from the AI and from everyone not in the chat — but not from whoever runs the
+ * workspace, whose People screen lists every one of these transcripts. That is a
+ * deliberate choice about a workplace tool; the only indefensible version of it is the
+ * one nobody is told about. If this ever stops being true, this line changes with it.
+ */
+function PrivacyNote({ className = '' }) {
+  return (
+    <p className={`flex items-start gap-1.5 text-xs leading-relaxed text-mute/80 ${className}`}>
+      <Lock size={12} className="mt-0.5 shrink-0" />
+      <span>Never sent to the AI. Whoever runs this workspace can read these messages.</span>
+    </p>
+  );
+}
+
 function ChatInfo({ chat, dm, onClose, onLeft }) {
   const me = dm.me;
   const mine = chat.members.find((m) => m.id === me.id);
@@ -260,6 +276,7 @@ function ChatInfo({ chat, dm, onClose, onLeft }) {
           {p?.email && <p className="text-sm text-mute">{p.email}</p>}
           <p className="text-sm text-mute">{dm.online.has(chat.peerId) ? 'online' : lastSeenText(dm.lastSeen[chat.peerId])}</p>
         </div>
+        <PrivacyNote className="border-t border-stroke/60 pt-3" />
       </Sheet>
     );
   }
@@ -341,6 +358,7 @@ function ChatInfo({ chat, dm, onClose, onLeft }) {
           <button onClick={leave} className="mt-3 flex w-full items-center gap-3 rounded-2xl px-2.5 py-3 text-bad hover:bg-bad/10">
             <LogOut size={20} /> Leave group
           </button>
+          <PrivacyNote className="mt-3 border-t border-stroke/60 pt-3" />
         </>
       )}
     </Sheet>
@@ -396,7 +414,7 @@ export default function MessengerPage({ dm, onBack }) {
               className="mt-1 flex items-center gap-2 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-emerald-500/25 transition hover:brightness-110 active:scale-[0.98]">
               <SquarePen size={16} /> Start a new chat
             </button>
-            <p className="mt-6 flex items-center gap-1.5 text-xs text-mute/80"><Lock size={12} /> Private to your team — never sent to the AI</p>
+            <PrivacyNote className="mt-6 max-w-xs justify-center text-center" />
           </div>
         )}
       </section>

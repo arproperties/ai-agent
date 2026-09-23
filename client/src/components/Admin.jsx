@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, Check, Pencil, AlertTriangle } from 'lucide-react';
+import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, EyeOff, Check, Pencil, AlertTriangle } from 'lucide-react';
 import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
@@ -211,7 +211,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   // No Activity tab: reading is still recorded, and each person still sees who looked
   // at their workspace from the eye in their own sidebar - the master just does not get
   // a screen for it here.
-  const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'], ['memory', 'Memory']];
+  const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'Chats'],
+    ['messages', 'Team chat'], ['memory', 'Memory']];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -266,7 +267,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
         <div className="@container mx-auto w-full max-w-4xl space-y-4">
 
         {tab === 'memory' && <Memories person={person} />}
-        {(tab === 'documents' || tab === 'conversations') && <Browse person={person} kind={tab} />}
+        {(tab === 'documents' || tab === 'conversations' || tab === 'messages') && <Browse person={person} kind={tab} />}
 
         {tab === 'agents' && (!loaded ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
           <>
@@ -403,6 +404,16 @@ function Browse({ person, kind }) {
   if (!rows.length) return <p className="py-6 text-center text-sm text-mute">Nothing here.</p>;
 
   return (
+    <>
+    {/* Said once, at the top, because it is the thing worth knowing before reading:
+        the other side of a team chat is not told, and no tick moves. */}
+    {kind === 'messages' && (
+      <p className="mb-2 flex items-start gap-1.5 text-xs leading-relaxed text-mute">
+        <EyeOff size={13} className="mt-0.5 shrink-0" />
+        Messages between people. Reading them here changes nothing on their side — no
+        blue tick, no unread count, nothing in their activity.
+      </p>
+    )}
     <ul className="space-y-1.5">
       {rows.map((r) => {
         const showing = open?.id === r.id;
@@ -414,7 +425,11 @@ function Browse({ person, kind }) {
                 <span className="block truncate text-xs text-mute">
                   {kind === 'documents'
                     ? [r.folder, r.kind === 'note' && 'note', when(r.doc_date ? null : r.created_at)].filter(Boolean).join(' · ')
-                    : when(r.updated_at)}
+                    : kind === 'messages'
+                      // A group needs its size to be placed; a one-to-one is already named
+                      // after the other person, so the last line said is the useful half.
+                      ? [r.kind === 'group' && `${r.people.length} people`, when(r.updated_at), r.preview].filter(Boolean).join(' · ')
+                      : when(r.updated_at)}
                 </span>
               </span>
               <ChevronLeft size={15} className={`shrink-0 text-mute transition ${showing ? '-rotate-90' : 'rotate-180'}`} />
@@ -448,12 +463,42 @@ function Browse({ person, kind }) {
                     ))
                     : <p className="text-mute">No messages.</p>
                 )}
+
+                {kind === 'messages' && open.messages && (
+                  <>
+                    {open.kind === 'group' && <p className="text-xs text-mute">{open.people.join(', ')}</p>}
+                    {open.more && <p className="text-xs text-mute">The most recent messages. Older ones are not shown.</p>}
+                    {open.messages.map((m) => (
+                      // A system line ("Sara added Tom") has no sender, and reads as a
+                      // note about the chat rather than as something anybody said.
+                      m.userName === null
+                        ? <p key={m.id} className="py-0.5 text-center text-xs text-mute">{m.body}</p>
+                        : (
+                          <p key={m.id} className="leading-relaxed">
+                            <span className="text-[11px] uppercase tracking-wide text-mute">{m.userName} · {exactly(m.createdAt)}</span>
+                            {m.deleted
+                              ? <span className="mt-0.5 block italic text-mute">Deleted — gone for everyone, including here.</span>
+                              : <>
+                                {m.body && <span className="mt-0.5 block whitespace-pre-wrap text-txt/85">{m.body}</span>}
+                                {m.file && (
+                                  <a href={m.file.url} target="_blank" rel="noreferrer"
+                                    className="mt-0.5 inline-flex items-center gap-1.5 text-xs text-p1 hover:underline">
+                                    <ExternalLink size={13} /> {m.file.name}
+                                  </a>
+                                )}
+                              </>}
+                          </p>
+                        )
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </li>
         );
       })}
     </ul>
+    </>
   );
 }
 

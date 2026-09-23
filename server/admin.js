@@ -3,6 +3,7 @@ import { db, tx } from './db.js';
 import { hashPassword, requireMaster, sessionHash } from './auth.js';
 import { inlineType } from './files.js';
 import { recentErrors, errorCount } from './errors.js';
+import { MSG_SELECT, messageOut } from './messenger.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
 // as an "OR is_master" widening of the ordinary queries. Every cross-user guard in the
@@ -171,6 +172,115 @@ export function userMemories(userId) {
   return db.prepare('SELECT id, text, created_at FROM memories WHERE user_id = ? ORDER BY id DESC').all(Number(userId));
 }
 
+// ---------- oversight: team chat ----------
+// Team chat is people talking to each other rather than to an agent, so reading it is a
+// quieter act than opening a file, and the owner asked for it to leave the chat exactly
+// as it found it. Nothing below writes: dm_members is only read, so no tick turns blue,
+// no unread count drops and no "delivered" pointer moves; emit() is never called, so
+// nobody's open app is told anything; and unlike the routes further down, these reads
+// are not recorded, so they do not surface in the person's own "Who has looked at your
+// workspace". That is the owner's decision about their own workspace, and it is only
+// tolerable because the team chat screen now says plainly that whoever runs the
+// workspace can read it - the app must never promise a privacy it does not keep.
+//
+// Deleted messages stay deleted here too. A bubble someone removed is gone for everyone,
+// master included: messageOut() blanks it, and the file it carried is already unlinked.
+
+const CHAT_PAGE = 500;
+
+const chatMembers = (chatIds) =>
+  db.prepare(`SELECT mb.chat_id, u.id, u.name FROM dm_members mb JOIN users u ON u.id = mb.user_id
+    WHERE mb.chat_id = ANY(?::int[]) ORDER BY mb.joined_at, u.name`).all(chatIds);
+
+/** Name a chat the way the app does: a group by its name, a one-to-one by the other person. */
+const chatTitle = (chat, members, userId) =>
+  chat.kind === 'group'
+    ? chat.name || 'Group'
+    : members.find((m) => m.id !== userId)?.name || 'Deleted user';
+
+/** One line of preview for the list, so a transcript need not be opened to place it. */
+const preview = (m) => {
+  if (m.deleted) return 'Deleted message';
+  if (m.kind === 'image') return 'Photo';
+  if (m.kind === 'file') return m.file_name || 'File';
+  return (m.body || '').slice(0, 120);
+};
+
+/**
+ * Every team chat this person is in that has anything in it, newest first. The inner
+ * LATERAL join is what drops the empty ones: a chat somebody opened and never typed in
+ * has nothing to read.
+ */
+export async function userChats(userId) {
+  const id = Number(userId);
+  const rows = await db.prepare(`SELECT c.id, c.kind, c.name, l.created_at updated_at,
+      l.body, l.kind last_kind, l.deleted, l.file_name
+    FROM dm_chats c
+    JOIN dm_members mb ON mb.chat_id = c.id AND mb.user_id = ?
+    JOIN LATERAL (SELECT created_at, body, kind, deleted, file_name
+                  FROM dm_messages WHERE chat_id = c.id ORDER BY id DESC LIMIT 1) l ON true
+    ORDER BY l.created_at DESC, c.id DESC LIMIT 200`).all(id);
+  if (!rows.length) return [];
+
+  const members = await chatMembers(rows.map((r) => r.id));
+  return rows.map((c) => {
+    const ms = members.filter((m) => m.chat_id === c.id);
+    return {
+      id: c.id,
+      kind: c.kind,
+      name: chatTitle(c, ms, id),
+      people: ms.map((m) => m.name),
+      updated_at: c.updated_at,
+      preview: preview({ ...c, kind: c.last_kind }),
+    };
+  });
+}
+
+/** The transcript: the last CHAT_PAGE messages, in the order they were sent. */
+export async function userChat(userId, chatId) {
+  const id = Number(userId);
+  const chat = await db.prepare(`SELECT c.id, c.kind, c.name FROM dm_chats c
+    JOIN dm_members mb ON mb.chat_id = c.id AND mb.user_id = ? WHERE c.id = ?`).get(id, Number(chatId));
+  if (!chat) return null;
+
+  const members = await chatMembers([chat.id]);
+  const rows = await db.prepare(`${MSG_SELECT} WHERE m.chat_id = ? ORDER BY m.id DESC LIMIT ${CHAT_PAGE}`).all(chat.id);
+
+  // Names come from users, not from dm_members: somebody who has left a group is no
+  // longer a member, but what they said is still in the transcript.
+  const senders = [...new Set(rows.map((m) => m.user_id).filter(Boolean))];
+  const named = senders.length
+    ? await db.prepare('SELECT id, name FROM users WHERE id = ANY(?::int[])').all(senders)
+    : [];
+  const nameOf = Object.fromEntries(named.map((u) => [u.id, u.name]));
+
+  const messages = rows.reverse().map((m) => {
+    const out = messageOut(m);
+    return {
+      ...out,
+      userName: out.userId ? nameOf[out.userId] || 'Deleted user' : null, // null is a system line
+      // The ordinary file route demands membership, which the master does not have.
+      file: out.file ? { ...out.file, url: `/api/admin/users/${id}/messenger/files/${out.id}` } : null,
+    };
+  });
+
+  return {
+    id: chat.id,
+    kind: chat.kind,
+    name: chatTitle(chat, members, id),
+    people: members.map((m) => m.name),
+    messages,
+    more: messages.length === CHAT_PAGE,
+  };
+}
+
+/** One attachment, scoped to a chat this person is actually in. */
+export function userChatFile(userId, msgId) {
+  return db.prepare(`SELECT m.* FROM dm_messages m
+    JOIN dm_members mb ON mb.chat_id = m.chat_id AND mb.user_id = ?
+    WHERE m.id = ? AND NOT m.deleted`).get(Number(userId), Number(msgId));
+}
+
 // ---------- the record of having looked ----------
 // Master can read anyone's workspace. That is recorded, and shown to both sides: a log
 // only the reader can see is a diary. Content reads only - opening a file, reading a
@@ -277,6 +387,27 @@ adminRoutes.get('/users/:id/conversations/:convId', wrap(async (req, res) => {
 adminRoutes.get('/users/:id/memories', wrap(async (req, res) => {
   await recordAccess(req.user, req.params.id, 'memory');
   res.json(await userMemories(req.params.id));
+}));
+
+// Team chat, read-only and silent - see the block above for what that costs and why.
+adminRoutes.get('/users/:id/messages', wrap(async (req, res) => {
+  res.json(await userChats(req.params.id));
+}));
+
+adminRoutes.get('/users/:id/messages/:chatId', wrap(async (req, res) => {
+  const chat = await userChat(req.params.id, req.params.chatId);
+  if (!chat) return res.status(404).json({ error: 'Not found' });
+  res.json(chat);
+}));
+
+adminRoutes.get('/users/:id/messenger/files/:msgId', wrap(async (req, res) => {
+  const m = await userChatFile(req.params.id, req.params.msgId);
+  if (!m?.file_path) return res.status(404).json({ error: 'Not found' });
+  // The same narrow list the owner's own route uses: an SVG served inline is a script.
+  const inline = /^image\/(png|jpe?g|gif|webp)$/.test(m.file_mime || '') && !req.query.download;
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(m.file_name)}`);
+  res.type(inline ? m.file_mime : 'application/octet-stream').sendFile(m.file_path);
 }));
 
 adminRoutes.get('/users/:id/access', wrap(async (req, res) => {

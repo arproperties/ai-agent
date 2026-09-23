@@ -38,7 +38,10 @@ const memberIds = async (chatId) =>
   (await db.prepare('SELECT user_id FROM dm_members WHERE chat_id = ?').all(chatId)).map((r) => r.user_id);
 
 // ---------- shapes sent to the app ----------
-const MSG_SELECT = `SELECT m.*, r.user_id r_user_id, r.kind r_kind, r.body r_body, r.file_name r_file_name, r.deleted r_deleted
+// Exported so the master's oversight routes in admin.js can shape a transcript the
+// same way this file does. Reading it from there is deliberate: the cross-user read
+// lives behind requireMaster, not as a widening of the membership checks below.
+export const MSG_SELECT = `SELECT m.*, r.user_id r_user_id, r.kind r_kind, r.body r_body, r.file_name r_file_name, r.deleted r_deleted
   FROM dm_messages m LEFT JOIN dm_messages r ON r.id = m.reply_to_id`;
 
 export function messageOut(m) {
