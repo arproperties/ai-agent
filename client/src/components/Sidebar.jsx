@@ -47,6 +47,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
     return () => clearTimeout(t);
   }, [q, convs]);
   const list = results ?? convs;
+  const showTeam = user.role === 'master' || agents.length > 1;
 
   return (
     <div className="flex h-full flex-col pt-safe">
@@ -74,6 +75,10 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
         </button>
       </div>
 
+      {/* With a single agent the grid is just one avatar saying what the whole app
+          already says, so only show it to the master (who adds agents here) or to
+          anyone who really does have a team. */}
+      {showTeam && (<>
       <Label action={<span>{agents.length}</span>}>YOUR TEAM</Label>
       <div className="grid grid-cols-4 gap-y-3 px-4">
         {agents.map((a) => (
@@ -93,6 +98,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
           </button>
         )}
       </div>
+      </>)}
 
       <Label>JARVIS CHATS</Label>
       {convs.length > 0 && (
