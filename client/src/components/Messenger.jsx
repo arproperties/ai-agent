@@ -391,7 +391,7 @@ export default function MessengerPage({ dm, onBack }) {
               </span>
             </div>
             <h2 className="text-2xl font-light text-txt">Team chat</h2>
-            <p className="max-w-sm text-sm text-mute">Message anyone on your team, one to one or in a group. Messages arrive instantly — no refresh needed.</p>
+            <p className="max-w-sm text-sm text-mute">Message anyone on your team, one to one or in a group. New messages appear the moment someone sends one.</p>
             <button onClick={() => setMode('new')}
               className="mt-1 flex items-center gap-2 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-emerald-500/25 transition hover:brightness-110 active:scale-[0.98]">
               <SquarePen size={16} /> Start a new chat
