@@ -74,6 +74,11 @@ export function pickShelf(raw, agents) {
 // findCompany() so an upload and the backfill judge it the same way.
 const COMPANY_RULE = `the company this document is for - the business it concerns: the one billed, the licence or trade-name holder, the employer, the company tenant or buyer. Not a company that merely issued, sent or serviced it (a supplier, a bank, a developer, a government authority), unless the document is about that company itself. It must be an organisation: a private person - an owner, client, landlord, employee - is never the company, even when the document is for them, so use null for them. A bare personal name with no business form or word in it (LLC, L.L.C, Ltd, FZE, FZCO, Est., Group, Trading, Properties, Contracting, Consultants...) is a person, however it is capitalised. Write the name as the document does. null if it names only individuals or no company`;
 
+// What counts as an expiry, in one place: the classifier asks it of every new file and
+// findExpiry asks the same of the files that were filed before the question existed.
+const EXPIRY_RULE = `the date this document stops being valid, as YYYY-MM-DD, or null`;
+const EXPIRY_GUIDE = `An expiry belongs only to paper that genuinely runs out: a trade licence or establishment card, a residence visa, an Emirates ID, a passport, a tenancy contract (its end date), an insurance policy, a warranty, a fixed-term employment contract, a vehicle registration (mulkiya). An invoice due date, a payment date, a meeting date or the date something was signed is NOT an expiry - answer null. Null is the ordinary answer.`;
+
 const knownCompanies = (companies) => (companies.length ? `
 Companies already on file - when it is one of these, reply with that exact spelling:
 ${companies.map((c) => `- ${c}`).join('\n')}` : '');
@@ -110,6 +115,17 @@ export async function findCompany(name, text, companies = []) {
   return pickCompany(JSON.parse(out.match(/\{[\s\S]*\}/)[0]).company, companies);
 }
 
+/** Just the expiry, for files filed before expiries were recorded. */
+export async function findExpiry(name, text) {
+  const out = await ask(`File name: ${name}\n\nContent (start):\n${text.slice(0, 6000)}`, {
+    maxTokens: 60,
+    system: `Reply with ONLY JSON: {"expires": "<${EXPIRY_RULE}>"}
+${EXPIRY_GUIDE} UAE documents write dates as DD/MM/YYYY.`,
+  });
+  const d = JSON.parse(out.match(/\{[\s\S]*\}/)[0]);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d.expires) ? d.expires : null;
+}
+
 async function classify(name, text, agents = [], companies = []) {
   // The roster rides along in the prompt that was already being sent: same call, same
   // cost. The wording about type and purpose is router.js's, which makes the same
@@ -130,8 +146,10 @@ Judge the file by its type and purpose, not by words that merely appear in it (a
  "summary": "<1-2 sentences with the key facts: parties, amounts (AED), dates, deadlines>",
  "tags": ["<up to 5 short lowercase tags>"],
  "company": "<${COMPANY_RULE}>",
- "date": "<the document's own date as YYYY-MM-DD, or null>"${roster}}
-Photos of people, places or things with no document content go in "Photos". UAE documents write dates as DD/MM/YYYY.${knownCompanies(companies)}${team}`,
+ "date": "<the document's own date as YYYY-MM-DD, or null>",
+ "expires": "<${EXPIRY_RULE}>"${roster}}
+Photos of people, places or things with no document content go in "Photos". UAE documents write dates as DD/MM/YYYY.
+${EXPIRY_GUIDE}${knownCompanies(companies)}${team}`,
   });
   const d = JSON.parse(out.match(/\{[\s\S]*\}/)[0]);
   return {
@@ -140,6 +158,7 @@ Photos of people, places or things with no document content go in "Photos". UAE 
     summary: String(d.summary || '').slice(0, 600),
     tags: (Array.isArray(d.tags) ? d.tags : []).map((t) => String(t).toLowerCase().slice(0, 30)).slice(0, 5),
     date: /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : null,
+    expires: /^\d{4}-\d{2}-\d{2}$/.test(d.expires) ? d.expires : null,
     company: pickCompany(d.company, companies),
     agentId: pickShelf(d.agent, agents),
   };
@@ -158,8 +177,8 @@ export async function processDocument(doc, f, text, agents = []) {
     const content = (text ?? (isImage(f) ? await describeImage(f) : await extractText({ ...f, originalname: doc.name })))?.replace(/\u0000/g, '');
     if (!content?.trim()) throw new Error('No readable text found');
     const c = await classify(doc.name, content, doc.agent_id ? [] : agents, await userCompanies(doc.user_id));
-    await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, company = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
-      .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, c.company, c.agentId, doc.id);
+    await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, expires_on = ?, company = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
+      .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, c.expires, c.company, c.agentId, doc.id);
     // Re-read rather than spreading over the copy we were handed: `doc` predates the
     // UPDATE, and chunks carry agent_id and shared of their own. Indexing from a stale
     // copy would file the chunks on the shelf the document just left, leaving the file
@@ -246,7 +265,23 @@ export async function setSharedMany(user, docIds, shared) {
 // "what files do I have?" or "find my lease". Same scope as recall().
 export async function libraryCatalog(user) {
   const scope = retrievalScope(user.id, await shelfIds(user));
-  const rows = await db.prepare(`SELECT title, folder, name, doc_date FROM documents t
+  const rows = await db.prepare(`SELECT title, folder, name, doc_date, expires_on FROM documents t
     WHERE ${scope.sql} AND status = 'ready' ORDER BY id DESC LIMIT 40`).all(...scope.params);
-  return rows.map((d) => `- ${d.title} (${d.folder}${d.doc_date ? `, ${d.doc_date}` : ''}; file: ${d.name})`);
+  return rows.map((d) => `- ${d.title} (${d.folder}${d.doc_date ? `, ${d.doc_date}` : ''}${d.expires_on ? `; expires ${d.expires_on}` : ''}; file: ${d.name})`);
+}
+
+/**
+ * The user's own paperwork that has run out or is about to, soonest first. Their own and
+ * not the wider retrieval scope: an expiry is something to act on, and nobody can renew
+ * a licence that was lent to them from somebody else's shelf.
+ *
+ * `within` counts forward from today; everything already expired comes back regardless,
+ * because a licence that lapsed last month is the most urgent row on the screen.
+ */
+export function expiringDocuments(userId, within = 90) {
+  const days = Math.min(Math.max(Number(within) || 90, 1), 3650);
+  return db.prepare(`SELECT * FROM documents
+    WHERE user_id = ? AND status = 'ready' AND expires_on IS NOT NULL
+      AND expires_on <= to_char(now() + (? || ' days')::interval, 'YYYY-MM-DD')
+    ORDER BY expires_on ASC, id DESC LIMIT 100`).all(userId, String(days));
 }

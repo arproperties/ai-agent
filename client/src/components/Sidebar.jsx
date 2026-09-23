@@ -31,7 +31,7 @@ const Label = ({ children, action }) => (
   </div>
 );
 
-export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
+export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
@@ -138,8 +138,15 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
 
       <div className="space-y-1 border-t border-stroke/60 p-3 pb-safe">
         <div className={`grid gap-1 ${user.role === 'master' ? 'grid-cols-4' : 'grid-cols-3'}`}>
-          <button onClick={onFiles} className={`flex flex-col items-center gap-1 rounded-xl py-2 text-xs ${filesOpen ? 'bg-white/10' : 'hover:bg-white/5'}`}>
-            <span className="grid size-8 place-items-center rounded-full bg-sky-400/20 text-sky-300"><Icon name="folder" size={17} /></span> Shelf
+          <button onClick={onFiles} className={`flex flex-col items-center gap-1 rounded-xl py-2 text-xs ${filesOpen ? 'bg-white/10' : 'hover:bg-white/5'}`}
+            aria-label={expiring ? `Shelf (${expiring} expiring)` : 'Shelf'}>
+            <span className="relative grid size-8 place-items-center rounded-full bg-sky-400/20 text-sky-300">
+              <Icon name="folder" size={17} />
+              {/* A licence about to lapse is the one thing in here worth interrupting for. */}
+              {expiring > 0 && (
+                <span className="absolute -right-1 -top-1 grid min-w-[18px] place-items-center rounded-full bg-warn px-1 text-[10px] font-semibold leading-[18px] text-[#141128] ring-2 ring-[#0f0d20]">{expiring}</span>
+              )}
+            </span> Shelf
           </button>
           <button onClick={onMemory} className="flex flex-col items-center gap-1 rounded-xl py-2 text-xs hover:bg-white/5">
             <span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><Icon name="brain" size={17} /></span> Memory

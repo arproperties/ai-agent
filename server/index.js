@@ -10,7 +10,7 @@ import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, canUseAgent, isMaster } from './access.js';
 import { chat } from './chat.js';
 import { addMemory } from './knowledge.js';
-import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies } from './files.js';
+import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
@@ -165,6 +165,12 @@ app.get('/api/documents', wrap(async (req, res) => {
     ORDER BY COALESCE(d.doc_date, to_char(to_timestamp(d.created_at), 'YYYY-MM-DD')) DESC, d.id DESC`).all(req.user.id, agentId, agentId);
   res.json(rows.map(docOut));
 }));
+// Above /api/documents/:id, which would otherwise read "expiring" as an id.
+// ?days=30 for the badge on the menu, the default 90 for the Shelf's own list.
+app.get('/api/documents/expiring', wrap(async (req, res) => {
+  const rows = await expiringDocuments(req.user.id, req.query.days);
+  res.json(rows.map(docOut));
+}));
 app.get('/api/documents/:id', wrap(async (req, res) => {
   const doc = await db.prepare(`${DOC_SELECT} WHERE d.id = ? AND d.user_id = ?`).get(Number(req.params.id), req.user.id);
   doc ? res.json(docOut(doc)) : notFound(res);
@@ -229,7 +235,12 @@ app.patch('/api/documents/:id', wrap(async (req, res) => {
   const title = String(req.body.title || doc.title).slice(0, 120);
   // An empty company means "Other"; a typed one is matched to an existing spelling.
   const company = 'company' in req.body ? pickCompany(req.body.company, await userCompanies(req.user.id)) : doc.company;
-  await db.prepare('UPDATE documents SET folder = ?, title = ?, company = ? WHERE id = ?').run(folder, title, company, doc.id);
+  // A read expiry is a guess, and one nobody can correct is worse than none at all.
+  // Anything that is not a date clears it, which is how the field is emptied.
+  const expires = 'expires_on' in req.body
+    ? (/^\d{4}-\d{2}-\d{2}$/.test(req.body.expires_on) ? req.body.expires_on : null)
+    : doc.expires_on;
+  await db.prepare('UPDATE documents SET folder = ?, title = ?, company = ?, expires_on = ? WHERE id = ?').run(folder, title, company, expires, doc.id);
   // A field-level permission, not a route-level one: everyone renames and refiles here,
   // but only the master may publish. A user sending `shared` simply does not get it.
   if ('shared' in req.body && isMaster(req.user)) await setShared(req.user, doc.id, req.body.shared);

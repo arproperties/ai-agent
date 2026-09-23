@@ -10,7 +10,7 @@ import Composer from './Composer';
 import LiveVoice from './LiveVoice';
 import Sheet from './Sheet';
 import { Welcome, InstallHint } from './FirstRun';
-import { FileCard, FileViewer, FileDetail } from './Knowledge';
+import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
 
 const IconBtn = ({ icon, label, onClick, className = '' }) => (
   <button onClick={onClick} aria-label={label} title={label}
@@ -19,7 +19,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, conversationId, voiceEnabled, firstRun = false, onConversation, onMenu, onNewChat, menuBadge = 0 }) {
+export default function Chat({ user, agents, folders, conversationId, voiceEnabled, firstRun = false, expiring = [], onConversation, onMenu, onNewChat, onOpenFiles, menuBadge = 0 }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -187,6 +187,26 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
             <div className="flex -space-x-2">
               {agents.slice(0, 7).map((a) => <Avatar key={a.id} icon={a.icon} color={a.color} size={30} className="ring-2 ring-bg" />)}
             </div>
+            {expiring.length > 0 && onOpenFiles && (
+              <button onClick={onOpenFiles}
+                className={`flex w-full max-w-md items-center gap-3 rounded-2xl border px-3.5 py-3 text-left transition hover:bg-white/[0.07] ${
+                  expiring.some((d) => expiry(d)?.gone) ? 'border-bad/40 bg-bad/[0.07]' : 'border-warn/40 bg-warn/[0.07]'}`}>
+                <span className={`grid size-8 shrink-0 place-items-center rounded-full ${expiring.some((d) => expiry(d)?.gone) ? 'bg-bad/20 text-bad' : 'bg-warn/20 text-warn'}`}>
+                  <Icon name="file" size={16} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <b className="block text-sm font-medium">
+                    {expiring.length === 1 ? '1 document needs attention' : `${expiring.length} documents need attention`}
+                  </b>
+                  {/* The date first: this line is one truncation away from being useless,
+                      and a title that runs out of room still leaves the warning readable. */}
+                  <span className="block truncate text-xs text-mute">
+                    {expiry(expiring[0]).label} · {expiring[0].title || expiring[0].name}
+                  </span>
+                </span>
+                <Icon name="chevron" size={16} className="shrink-0 text-mute" />
+              </button>
+            )}
             {starters.length > 0 && (
               <div className="flex max-w-xl flex-wrap justify-center gap-2">
                 {starters.map(({ s, a }) => (

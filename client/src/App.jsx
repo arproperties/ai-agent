@@ -22,6 +22,7 @@ export default function App() {
   const [agents, setAgents] = useState([]);
   const [convs, setConvs] = useState([]);
   const [convsLoaded, setConvsLoaded] = useState(false); // an empty list means nothing until it has arrived
+  const [expiring, setExpiring] = useState([]); // paperwork running out inside a month
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
@@ -37,13 +38,17 @@ export default function App() {
 
   const loadAgents = useCallback(() => api.get('/agents').then(setAgents), []);
   const loadConvs = useCallback(() => api.get('/conversations').then((c) => { setConvs(c); setConvsLoaded(true); }), []);
+  // A month ahead, not the Shelf's ninety days: this feeds a badge and one line on the
+  // first screen, and both are only worth showing for what has to be acted on now.
+  const loadExpiring = useCallback(() => api.get('/documents/expiring?days=30').then(setExpiring).catch(() => {}), []);
 
   useEffect(() => {
     if (!me) return;
     api.get('/config').then(setConfig);
     loadAgents();
     loadConvs();
-  }, [me, loadAgents, loadConvs]);
+    loadExpiring();
+  }, [me, loadAgents, loadConvs, loadExpiring]);
 
   const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setPanel(null); };
   const onConversation = (id) => { if (id) setChat((c) => ({ ...c, id })); loadConvs(); };
@@ -69,6 +74,7 @@ export default function App() {
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel === 'files' || panel === 'messages' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
           onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}
+          expiring={expiring.length}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
@@ -77,7 +83,7 @@ export default function App() {
       <main className="relative flex min-w-0 flex-1 flex-col">
         {agents.length > 0 ? (
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} conversationId={chat.id} voiceEnabled={config.voice}
-            firstRun={convsLoaded && convs.length === 0}
+            firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
             onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —
@@ -107,7 +113,7 @@ export default function App() {
             </div>
           </div>
         )}
-        {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => setPanel(null)} onOpenChat={openChat} />}
+        {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => { setPanel(null); loadExpiring(); }} onOpenChat={openChat} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
         {panel === 'messages' && <MessengerPage dm={dm} onBack={() => setPanel(null)} />}
       </main>

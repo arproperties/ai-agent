@@ -301,6 +301,13 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW},
     updated_at BIGINT DEFAULT ${NOW}
   );
+  -- The date a document stops being valid, read off it by the classifier: a trade licence,
+  -- a visa, an Emirates ID, a tenancy, an insurance policy. Text in the same YYYY-MM-DD
+  -- shape as doc_date, so the two sort and compare the same way. NULL is the normal
+  -- answer - most paperwork does not expire, and a guessed expiry is worse than none.
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS expires_on TEXT;
+  CREATE INDEX IF NOT EXISTS idx_docs_expiry ON documents(user_id, expires_on) WHERE expires_on IS NOT NULL;
+
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS import_id INTEGER REFERENCES imports(id) ON DELETE SET NULL;
   CREATE INDEX IF NOT EXISTS idx_docs_queued ON documents(id) WHERE status = 'queued';
   CREATE INDEX IF NOT EXISTS idx_docs_import ON documents(import_id) WHERE import_id IS NOT NULL;

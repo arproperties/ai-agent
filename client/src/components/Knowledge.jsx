@@ -35,6 +35,30 @@ const fmtSize = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math
 const ext = (name) => (name.includes('.') ? name.split('.').pop().slice(0, 4).toUpperCase() : 'FILE');
 const fileUrl = (d) => `/api/documents/${d.id}/file`;
 
+/**
+ * How long a document has left, and how loudly to say it. An expiry is a plain calendar
+ * date with no time in it, so both sides are compared as whole days at local midnight -
+ * a few hours of drift must never turn "expires today" into "expired yesterday".
+ *
+ * Exported because the Shelf is not the only screen that needs it: a licence running out
+ * is worth saying on the screen people open first.
+ */
+export function expiry(d) {
+  if (!d?.expires_on) return null;
+  const [y, m, day] = d.expires_on.split('-').map(Number);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((new Date(y, m - 1, day) - today) / 86400000);
+  const label = days < 0 ? `Expired ${fmtDate(d.expires_on)}`
+    : days === 0 ? 'Expires today'
+    : days === 1 ? 'Expires tomorrow'
+    : days <= 45 ? `Expires in ${days} days`
+    : `Expires ${fmtDate(d.expires_on)}`;
+  return { days, label, gone: days < 0, soon: days <= 30 };
+}
+/** The tint for a remaining-days figure: red once it has run out, amber in the last month. */
+const expiryTone = (e) => (e.gone ? 'text-bad' : e.soon ? 'text-warn' : 'text-mute');
+
 // ---------- data ----------
 function useFiles(agentId) {
   const [docs, setDocs] = useState(null);
@@ -155,7 +179,11 @@ export function FileCard({ d, onOpen, showShelf = false }) {
       </div>
       <div className="flex flex-1 flex-col p-3">
         <p className="line-clamp-2 text-[13px] font-medium leading-snug">{busy ? d.name : d.title}</p>
-        <p className="mt-auto truncate pt-1 text-[11px] text-mute">{[showShelf && d.shelf_name, fmtDate(d.doc_date || d.created_at * 1000), fmtSize(d.size)].filter(Boolean).join(' · ')}</p>
+        {/* The expiry replaces the date rather than joining it: on a card this narrow the
+            line that matters has to be the only one there. */}
+        {expiry(d)?.soon
+          ? <p className={`mt-auto truncate pt-1 text-[11px] font-medium ${expiryTone(expiry(d))}`}>{expiry(d).label}</p>
+          : <p className="mt-auto truncate pt-1 text-[11px] text-mute">{[showShelf && d.shelf_name, fmtDate(d.doc_date || d.created_at * 1000), fmtSize(d.size)].filter(Boolean).join(' · ')}</p>}
       </div>
     </button>
   );
@@ -273,6 +301,15 @@ export function FileDetail({ d, folders, companies = [], me, shelfName, onClose,
   // the field. Leaving it empty keeps the file in Others.
   const [company, setCompany] = useState(d.company || '');
   const [inCompanies, setInCompanies] = useState(!!d.company);
+  // The expiry was read off the document, so it is a guess. Editable for the same reason
+  // the folder is: the one the classifier got wrong is exactly the one worth fixing.
+  const [expires, setExpires] = useState(d.expires_on || '');
+  const saveExpiry = async (value) => {
+    if (value === (d.expires_on || '')) return;
+    const next = await api.patch(`/documents/${d.id}`, { expires_on: value });
+    setExpires(next.expires_on || '');
+    onChanged();
+  };
   const companyRef = useRef();
   const saveCompany = async (value) => {
     const name = value.trim();
@@ -334,6 +371,21 @@ export function FileDetail({ d, folders, companies = [], me, shelfName, onClose,
               {folders.map((f) => <option key={f} value={f} className="bg-bg">{f}</option>)}
             </select>
             <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-mute" />
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium tracking-wide text-mute">EXPIRES</span>
+          <span className="relative block">
+            <Clock size={16} className={`pointer-events-none absolute left-3.5 top-1/2 z-10 -translate-y-1/2 ${expires ? expiryTone(expiry({ expires_on: expires })) : 'text-mute'}`} />
+            <input type="date" value={expires} aria-label="Expiry date"
+              onChange={(e) => { setExpires(e.target.value); saveExpiry(e.target.value); }}
+              className="glass w-full rounded-xl py-2.5 pl-10 pr-3 outline-none focus:border-p1/70" />
+          </span>
+          <span className={`mt-1.5 block text-xs leading-relaxed ${expires ? expiryTone(expiry({ expires_on: expires })) : 'text-mute'}`}>
+            {expires
+              ? `${expiry({ expires_on: expires }).label}. Clear the date if this file does not run out.`
+              : 'Only paperwork that runs out needs this — a licence, a visa, an Emirates ID, a tenancy, an insurance policy.'}
           </span>
         </label>
 
@@ -440,6 +492,46 @@ function GroupCard({ icon: GI, tone, bg, label, sub, onClick, preview, empty, sm
         ) : <span className="text-xs text-mute">{empty}</span>}
       </span>
     </button>
+  );
+}
+
+/**
+ * What is running out, at the top of the Shelf. Expired first, then soonest: a licence
+ * that lapsed last month is more urgent than one that lapses next week, and both are
+ * more urgent than anything else on this screen. Ninety days is far enough ahead to
+ * renew a UAE trade licence or visa without it being a list of things to ignore.
+ */
+function ExpiringSoon({ docs, onOpen }) {
+  const rows = useMemo(() => (docs || [])
+    .map((d) => ({ d, e: expiry(d) }))
+    .filter(({ e, d }) => e && e.days <= 90 && d.status === 'ready')
+    .sort((a, b) => a.e.days - b.e.days || a.d.id - b.d.id)
+    .slice(0, 8), [docs]);
+  if (!rows.length) return null;
+
+  return (
+    <section>
+      <h2 className="mb-3 text-[11px] font-medium tracking-[0.14em] text-mute">RUNNING OUT</h2>
+      <ul className="space-y-1.5">
+        {rows.map(({ d, e }) => {
+          const [FolderIcon, tone] = folderStyle(d.folder);
+          return (
+            <li key={d.id}>
+              <button onClick={() => onOpen(d)}
+                className={`flex w-full items-center gap-3 rounded-2xl border px-3.5 py-3 text-left transition hover:bg-white/[0.07] ${
+                  e.gone ? 'border-bad/40 bg-bad/[0.07]' : e.soon ? 'border-warn/40 bg-warn/[0.07]' : 'border-stroke bg-white/[0.03]'}`}>
+                <FolderIcon size={17} className={`shrink-0 ${tone}`} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">{d.title || d.name}</span>
+                  <span className="block truncate text-xs text-mute">{d.company || d.folder}</span>
+                </span>
+                <span className={`shrink-0 text-xs font-medium ${expiryTone(e)}`}>{e.label}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -704,6 +796,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
               <FileGrid title={`SEARCH · “${q}”`} files={shown} onOpen={setViewing} />
             ) : !group ? (
               <>
+                <ExpiringSoon docs={docs} onOpen={(d) => setOpen(d.id)} />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <GroupCard icon={Building2} tone="text-sky-300" bg="from-sky-500/30 to-sky-500/5" label="Companies"
                     sub={`${companies.names.length} ${companies.names.length === 1 ? 'company' : 'companies'} · ${docs.length - others.length} ${docs.length - others.length === 1 ? 'file' : 'files'}`}
