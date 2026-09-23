@@ -2,10 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import {
   ChevronLeft, Check, CheckCheck, Clock, AlertCircle, Paperclip, SendHorizontal, Reply, Copy, Trash2,
-  X, ArrowDown, FileText, Download, Users, ChevronDown, Ban, Smile, Info,
+  X, ArrowDown, FileText, Download, Users, ChevronDown, Ban, Smile, Info, Sparkles, RefreshCw,
+  Flag, ListChecks, HelpCircle, MessageSquareText,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { onLive } from '../lib/live';
+import Sheet from './Sheet';
 
 // ---------- small shared helpers (also used by Messenger.jsx) ----------
 const SHADES = ['from-emerald-400 to-teal-600', 'from-sky-400 to-indigo-500', 'from-amber-300 to-orange-500',
@@ -330,10 +332,126 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend }) {
   );
 }
 
+// ---------- the summary ----------
+/**
+ * What the conversation said, and what it came to. Asked for by hand, one chat at a
+ * time: this is the only thing on the Messages screen that is read by the AI, so the
+ * panel says so rather than leaving anyone to assume either way.
+ */
+function Section({ icon, title, children }) {
+  return (
+    <section className="mt-4">
+      <h3 className="mb-1.5 flex items-center gap-1.5 text-xs tracking-[0.12em] text-mute">{icon} {title}</h3>
+      {children}
+    </section>
+  );
+}
+
+const spanText = (from, to) => {
+  const a = dayLabel(from);
+  const b = dayLabel(to);
+  return a === b ? a : `${a} – ${b}`;
+};
+
+export function ChatSummary({ chat, onClose }) {
+  const [state, setState] = useState({ loading: true });
+
+  const run = useCallback((fresh) => {
+    setState({ loading: true });
+    api.post(`/messenger/chats/${chat.id}/summary`, fresh ? { fresh: true } : {})
+      .then((data) => setState({ data }))
+      .catch((e) => setState({ error: e.message }));
+  }, [chat.id]);
+
+  useEffect(() => { run(false); }, [run]);
+
+  const { loading, error, data } = state;
+  return (
+    <Sheet title={`Summary · ${chat.name}`} icon={<Sparkles size={18} className="text-emerald-300" />} onClose={onClose}>
+      {loading && (
+        <div className="py-6">
+          <p className="flex items-center gap-2 text-sm text-mute"><Sparkles size={15} className="animate-pulse text-emerald-300" /> Reading the conversation…</p>
+          <div className="mt-4 space-y-2">
+            {[0, 1, 2, 3].map((i) => <div key={i} className="h-3 animate-pulse rounded-full bg-white/[0.07]" style={{ width: `${90 - i * 12}%`, animationDelay: `${i * 120}ms` }} />)}
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="py-6 text-center">
+          <p className="text-sm text-bad">{error}</p>
+          <button onClick={() => run(true)} className="mt-3 rounded-full bg-white/10 px-4 py-2 text-sm hover:bg-white/15">Try again</button>
+        </div>
+      )}
+
+      {data && (
+        <>
+          {data.headline && <p className="text-[15px] leading-relaxed">{data.headline}</p>}
+
+          <div className="mt-4 rounded-2xl border border-emerald-400/25 bg-emerald-400/[0.08] p-3.5">
+            <h3 className="mb-1.5 flex items-center gap-1.5 text-xs tracking-[0.12em] text-emerald-300"><Flag size={13} /> THE CONCLUSION</h3>
+            <p className="text-[15px] leading-relaxed">{data.conclusion || 'Nothing was settled in this conversation.'}</p>
+          </div>
+
+          {data.points.length > 0 && (
+            <Section icon={<MessageSquareText size={13} />} title="WHAT WAS DISCUSSED">
+              <ul className="space-y-1.5">
+                {data.points.map((p, i) => (
+                  <li key={i} className="flex gap-2 text-sm leading-relaxed text-txt/90">
+                    <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-white/30" />{p}
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {data.actions.length > 0 && (
+            <Section icon={<ListChecks size={13} />} title="WHO IS DOING WHAT">
+              <ul className="space-y-1.5">
+                {data.actions.map((a, i) => (
+                  <li key={i} className="flex gap-2.5 rounded-xl bg-white/[0.04] px-3 py-2 text-sm leading-relaxed">
+                    {a.who && <span className="shrink-0 font-medium text-emerald-300">{a.who}</span>}
+                    <span className="text-txt/90">{a.what}</span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {data.open.length > 0 && (
+            <Section icon={<HelpCircle size={13} />} title="STILL OPEN">
+              <ul className="space-y-1.5">
+                {data.open.map((o, i) => (
+                  <li key={i} className="flex gap-2 text-sm leading-relaxed text-txt/90">
+                    <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-amber-300/60" />{o}
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          <div className="mt-5 flex items-center gap-2 border-t border-stroke/60 pt-3">
+            <p className="flex-1 text-xs leading-relaxed text-mute/80">
+              {data.messages} message{data.messages === 1 ? '' : 's'} · {spanText(data.from, data.to)}
+              {data.partial && ' · the most recent part of a longer chat'}
+              <br />Written by the AI from these messages. It can get things wrong — the chat above is what was actually said.
+            </p>
+            <button onClick={() => run(true)} aria-label="Summarise again" title="Summarise again"
+              className="grid size-9 shrink-0 place-items-center rounded-full text-mute transition hover:bg-white/10 hover:text-txt">
+              <RefreshCw size={16} />
+            </button>
+          </div>
+        </>
+      )}
+    </Sheet>
+  );
+}
+
 // ---------- the conversation ----------
 export default function MessengerChat({ chat, dm, onBack, onInfo }) {
   const me = dm.me;
   const [messages, setMessages] = useState(null);
+  const [summary, setSummary] = useState(false);
   const [more, setMore] = useState(false);
   const [reply, setReply] = useState(null);
   const [menu, setMenu] = useState(null); // { m, x, y }
@@ -530,6 +648,10 @@ export default function MessengerChat({ chat, dm, onBack, onInfo }) {
             <span className="block truncate text-xs text-mute">{status || ' '}</span>
           </span>
         </button>
+        <button onClick={() => setSummary(true)} aria-label="Summarise this chat" title="Summarise this chat"
+          className="grid size-10 shrink-0 place-items-center rounded-full text-mute transition hover:bg-white/10 hover:text-emerald-300">
+          <Sparkles size={19} />
+        </button>
         <button onClick={onInfo} aria-label={chat.kind === 'group' ? 'Group info' : 'Contact info'} title={chat.kind === 'group' ? 'Group info' : 'Contact info'}
           className="grid size-10 shrink-0 place-items-center rounded-full text-mute transition hover:bg-white/10 hover:text-txt">
           <Info size={20} />
@@ -601,6 +723,7 @@ export default function MessengerChat({ chat, dm, onBack, onInfo }) {
         </div>,
         document.body,
       )}
+      {summary && <ChatSummary chat={chat} onClose={() => setSummary(false)} />}
       {dragging && (
         <div className="pointer-events-none absolute inset-0 z-30 grid place-items-center border-2 border-dashed border-emerald-400/70 bg-bg/80 text-emerald-300">
           Drop to send

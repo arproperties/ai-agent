@@ -228,16 +228,17 @@ function NewChat({ dm, onClose, onOpened }) {
 // ---------- group / contact info ----------
 /**
  * Said wherever somebody might be forming a picture of who can see this. Team chat is
- * private from the AI and from everyone not in the chat — but not from whoever runs the
- * workspace, whose People screen lists every one of these transcripts. That is a
- * deliberate choice about a workplace tool; the only indefensible version of it is the
- * one nobody is told about. If this ever stops being true, this line changes with it.
+ * private from everyone not in the chat — but not from whoever runs the workspace, whose
+ * People screen lists every one of these transcripts, and not from the AI once a member
+ * asks for a summary. That is a deliberate choice about a workplace tool; the only
+ * indefensible version of it is the one nobody is told about. When either of those two
+ * facts changes, this line changes with it.
  */
 function PrivacyNote({ className = '' }) {
   return (
     <p className={`flex items-start gap-1.5 text-xs leading-relaxed text-mute/80 ${className}`}>
       <Lock size={12} className="mt-0.5 shrink-0" />
-      <span>Never sent to the AI. Whoever runs this workspace can read these messages.</span>
+      <span>Sent to the AI only when somebody in the chat asks for a summary. Whoever runs this workspace can read these messages.</span>
     </p>
   );
 }

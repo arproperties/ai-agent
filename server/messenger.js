@@ -1,7 +1,9 @@
 // Messages between people: one-to-one and group chats, delivered live.
 //
 // Kept apart from the AI chats on purpose — its own tables (dm_*), its own routes
-// (/api/messenger), and nothing in it is ever sent to Claude.
+// (/api/messenger), and none of it reaches Claude on its own. The single exception is
+// asked for by hand: a member tapping "Summarise" sends that one chat to the model, in
+// dmSummary.js and nowhere else.
 //
 // "Live" is one Server-Sent Events stream per open app (GET /events). Sending, reading
 // and typing are ordinary POSTs; the server then pushes the result down the streams of
@@ -13,6 +15,7 @@ import multer from 'multer';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { extname } from 'node:path';
 import { db, tx } from './db.js';
+import { summarise, forget } from './dmSummary.js';
 import { DATA_DIR } from './config.js';
 
 const FILE_DIR = `${DATA_DIR}/messenger`;
@@ -303,6 +306,7 @@ export const messengerHandlers = {
     if (!m || m.deleted) throw bad('Not found', 404);
     await db.prepare(`UPDATE dm_messages SET deleted = true, body = '', file_path = NULL, file_name = NULL, file_mime = NULL, file_size = NULL WHERE id = ?`).run(m.id);
     if (m.file_path) rmSync(m.file_path, { force: true });
+    forget(m.chat_id); // deleting does not move the last id, so the cached summary has to go by hand
     emit(await memberIds(m.chat_id), 'message', await getMessage(m.id));
     res.json({ ok: true });
   },
@@ -315,6 +319,13 @@ export const messengerHandlers = {
     res.setHeader('Cache-Control', 'private, max-age=86400');
     res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(m.file_name)}`);
     res.type(inline ? m.file_mime : 'application/octet-stream').sendFile(m.file_path);
+  },
+
+  /** "Summarise": what was said, and what it came to. Members only, and asked for by hand. */
+  async summarise(req, res) {
+    const chatId = Number(req.params.id);
+    if (!await membership(chatId, req.user.id)) throw bad('Not found', 404);
+    res.json(await summarise(chatId, req.user.id, { fresh: !!req.body?.fresh }));
   },
 
   // ---------- groups ----------
@@ -411,6 +422,7 @@ messengerRoutes.get('/chats/:id/messages', wrap(h.messages));
 messengerRoutes.post('/chats/:id/messages', upload.single('file'), wrap(h.send));
 messengerRoutes.post('/chats/:id/read', wrap(h.read));
 messengerRoutes.post('/chats/:id/typing', wrap(h.typing));
+messengerRoutes.post('/chats/:id/summary', wrap(h.summarise));
 messengerRoutes.post('/chats/:id/members', wrap(h.addMembers));
 messengerRoutes.delete('/chats/:id/members/:userId', wrap(h.removeMember));
 messengerRoutes.post('/chats/:id/members/:userId/admin', wrap(h.makeAdmin));
