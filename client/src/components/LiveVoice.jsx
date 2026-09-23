@@ -113,7 +113,7 @@ export default function LiveVoice({ onAsk, onClose, onError }) {
   const ring = state === 'listening' ? Math.min(1, level * 14) : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-bg/95 backdrop-blur-xl pt-safe pb-safe">
+    <div className="sky fixed inset-0 z-50 flex flex-col pt-safe pb-safe">
       <header className="flex items-center justify-between px-4 py-3">
         <span className="text-sm font-medium text-mute">Live voice</span>
         <span className="text-xs text-mute">{turns}/{MAX_TURNS} questions</span>

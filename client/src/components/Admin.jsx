@@ -489,7 +489,7 @@ export default function AdminPage({ agents, me, onBack }) {
   const person = open && people?.find((p) => p.id === open);
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col bg-bg/95 backdrop-blur-xl">
+    <div className="sky absolute inset-0 z-20 flex flex-col">
       <header className="flex items-center gap-2 border-b border-stroke/60 px-4 py-3 pt-safe md:px-6">
         <button onClick={onBack} aria-label="Back" className="-ml-2 grid size-10 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
           <ChevronLeft size={22} />

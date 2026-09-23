@@ -2,7 +2,7 @@
 
 /* Aurora theme — taken from html/assets/core.css */
 @theme {
-  --color-bg: #0b0a1a;
+  --color-bg: #06050f;
   --color-glass: rgb(255 255 255 / 0.055);
   --color-stroke: rgb(255 255 255 / 0.1);
   --color-txt: #f2f0ff;
@@ -28,18 +28,65 @@
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior: none;
   }
-  body::before {
-    content: ""; position: fixed; inset: -20%; z-index: 0; pointer-events: none; filter: blur(20px);
+  /* ---------- Night sky: one nebula and one star field ----------
+     Two fixed layers. The body wears them, so they sit behind the chat. Any
+     full-screen panel that covers the chat (Files, People, Team chat, Live
+     voice) needs its own copy, because it has to hide the chat underneath --
+     that is what the .sky class below is for. Both get the same layers here so
+     the sky never changes from screen to screen.
+     Only transform and opacity animate, which the phone's graphics chip handles
+     on its own without redrawing anything. */
+  body::before, .sky::before {
+    content: ""; position: fixed; inset: -25%; pointer-events: none;
+    filter: blur(30px); will-change: transform;
     background:
-      radial-gradient(40% 40% at 20% 30%, rgb(167 139 250 / 0.28), transparent 60%),
-      radial-gradient(35% 35% at 70% 80%, rgb(244 114 182 / 0.18), transparent 60%),
-      radial-gradient(45% 45% at 85% 15%, rgb(56 189 248 / 0.16), transparent 60%);
+      radial-gradient(46% 42% at 80% 14%, rgb(167 139 250 / 0.34), transparent 66%),
+      radial-gradient(42% 38% at 16% 90%, rgb(56 189 248 / 0.18), transparent 66%);
+    animation: nebula 72s ease-in-out infinite alternate;
+  }
+  /* A 220x200 tile of dots, repeated across the screen. The stars shimmer every few
+     seconds and the whole sky slides a little over three minutes, so it is never still
+     but never distracting either. The layer is oversized so drifting shows no edge. */
+  body::after, .sky::after {
+    content: ""; position: fixed; inset: -12%; pointer-events: none;
+    will-change: transform, opacity; background-size: 220px 200px;
+    background-image:
+      radial-gradient(1.3px 1.3px at 26px 34px, #fff, transparent),
+      radial-gradient(1px 1px at 98px 72px, rgb(255 255 255 / 0.75), transparent),
+      radial-gradient(1.4px 1.4px at 162px 22px, rgb(255 255 255 / 0.6), transparent),
+      radial-gradient(1px 1px at 54px 142px, rgb(255 255 255 / 0.7), transparent),
+      radial-gradient(1.2px 1.2px at 192px 158px, rgb(255 255 255 / 0.5), transparent),
+      radial-gradient(1px 1px at 128px 108px, rgb(255 255 255 / 0.45), transparent);
+    animation: twinkle 6.5s ease-in-out infinite, sky 180s linear infinite alternate;
+  }
+  /* behind the app, which App.jsx puts at z-10 */
+  body::before, body::after { z-index: 0; }
+  @keyframes nebula {
+    from { transform: translate3d(-2%, -1%, 0) scale(1); }
+    to { transform: translate3d(3%, 2%, 0) scale(1.1); }
+  }
+  @keyframes twinkle { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.9; } }
+  @keyframes sky {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(-3%, 2%, 0); }
+  }
+  /* a still sky for anyone who has asked their phone to stop animations */
+  @media (prefers-reduced-motion: reduce) {
+    body::before, body::after, .sky::before, .sky::after { animation: none; }
   }
   /* 16px inputs stop iOS from zooming in on focus */
   input, textarea, select { font-size: 16px; }
   button { cursor: pointer; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.18); border-radius: 3px; }
+}
+
+@layer components {
+  /* Wear the night sky on a panel that covers the chat. The panel paints solid
+     first, so nothing shows through, then its own sky sits at z-index -1: above
+     that solid ground, below everything the panel puts inside it. */
+  .sky { isolation: isolate; background-color: var(--color-bg); }
+  .sky::before, .sky::after { z-index: -1; }
 }
 
 @utility glass {

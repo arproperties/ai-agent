@@ -632,7 +632,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
   };
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col bg-bg/95 backdrop-blur-xl"
+    <div className="sky absolute inset-0 z-20 flex flex-col"
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)} onDrop={drop}>
       <input ref={ref} type="file" multiple hidden accept={FILE_TYPES} onChange={(e) => { upload(e.target.files); e.target.value = ''; }} />
       <input ref={zipRef} type="file" hidden accept=".zip,application/zip"

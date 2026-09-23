@@ -370,7 +370,7 @@ export default function MessengerPage({ dm, onBack }) {
   }, [openId, mode, info, onBack]);
 
   return (
-    <div className="absolute inset-0 z-20 flex bg-bg/85 backdrop-blur-xl">
+    <div className="sky absolute inset-0 z-20 flex">
       <section className={`${openId ? 'hidden md:flex' : 'flex'} relative w-full min-w-0 flex-col border-white/[0.06] bg-[#100e22]/80 md:w-80 md:border-r lg:w-96`}>
         {mode === 'new'
           ? <NewChat dm={dm} onClose={() => setMode('list')} onOpened={(id) => { setMode('list'); setOpenId(id); }} />
