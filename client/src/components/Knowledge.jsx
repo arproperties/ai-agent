@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   FileSignature, Building2, Receipt, Landmark, Scale, Users, IdCard, BadgeCheck, Mail, Megaphone, Image as ImageIcon,
   Folder, FolderOpen, Search, Download, ExternalLink, Loader2, AlertCircle, Upload, ChevronLeft, ChevronDown, Trash2, MessageSquare, X, Info, PenLine, Sparkles,
-  FileArchive, FolderInput, CheckCircle2, Clock,
+  FileArchive, FolderInput, CheckCircle2, Clock, Play,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { startImport, importState, onImport, clearImportError } from '../lib/importer';
@@ -11,7 +11,7 @@ import { describeIgnored } from '../lib/zip';
 import Icon from './Icon';
 import Sheet from './Sheet';
 
-export const FILE_TYPES = 'image/*,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
+export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
 // icon, icon colour, tinted background for each folder
 const FOLDER_STYLE = {
@@ -133,6 +133,14 @@ function NoteSheet({ onSave, onClose }) {
 // ---------- pieces ----------
 function Preview({ d, className = '', big }) {
   const [FolderIcon, tone, bg] = folderStyle(d.folder);
+  if (d.kind === 'video') {
+    return (
+      <div className={`relative grid place-items-center bg-black/40 ${className}`}>
+        <span className="grid size-11 place-items-center rounded-full bg-white/15 backdrop-blur-sm"><Play size={big ? 22 : 18} className="ml-0.5 fill-white/90 text-white/90" /></span>
+        <span className="absolute left-2.5 top-2.5 rounded-md bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white/80">{ext(d.name)}</span>
+      </div>
+    );
+  }
   if (d.kind === 'image') {
     return (
       <div className={`relative overflow-hidden bg-black/30 ${className}`}>
@@ -192,6 +200,7 @@ export function FileCard({ d, onOpen, showShelf = false }) {
 // how a file can be shown inside the app
 const viewMode = (d) => {
   if (d.kind === 'image') return 'image';
+  if (d.kind === 'video') return 'video';
   if (/\.docx$/i.test(d.name)) return 'docx';
   if (d.mime === 'application/pdf') return 'pdf';
   if (d.mime?.startsWith('text/') || /\.(txt|md|csv|json|log|tsv|yaml|yml|xml)$/i.test(d.name)) return 'text';
@@ -239,6 +248,10 @@ export function FileViewer({ d, onClose, onInfo }) {
 
       <div className="flex min-h-0 flex-1 items-center justify-center px-3 pb-3 md:px-8 md:pb-6" onClick={(e) => mode !== 'image' && e.stopPropagation()}>
         {mode === 'image' && <img src={fileUrl(d)} alt={d.title} onClick={(e) => e.stopPropagation()} className="rise max-h-full max-w-full rounded-xl object-contain shadow-2xl" />}
+        {mode === 'video' && (
+          <video src={fileUrl(d)} controls playsInline preload="metadata" onClick={(e) => e.stopPropagation()}
+            className="rise max-h-full max-w-full rounded-xl bg-black shadow-2xl" />
+        )}
         {mode === 'text' && <TextView d={d} />}
         {(mode === 'pdf' || mode === 'docx') && (
           <iframe src={mode === 'docx' ? `/api/documents/${d.id}/preview` : fileUrl(d)} title={d.title}

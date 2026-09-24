@@ -6,6 +6,7 @@ import Icon from './Icon';
 import Avatar from './Avatar';
 
 const isImg = (f) => f.kind === 'image' || /\.(png|jpe?g|gif|webp|heic)$/i.test(f.name);
+const isVid = (f) => f.kind === 'video' || /\.(mp4|mov|webm|m4v|3gp)$/i.test(f.name);
 
 function Attachments({ files, onOpenFile }) {
   if (!files?.length) return null;
@@ -20,7 +21,7 @@ function Attachments({ files, onOpenFile }) {
       ) : (
         <button key={i} onClick={() => open(f)}
           className="glass flex max-w-[260px] items-center gap-2.5 rounded-2xl py-2 pl-2 pr-3.5 text-left transition hover:bg-white/10">
-          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-p1/20 text-p1"><Icon name={isImg(f) ? 'image' : 'file'} size={17} /></span>
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-p1/20 text-p1"><Icon name={isImg(f) ? 'image' : isVid(f) ? 'play' : 'file'} size={17} /></span>
           <span className="min-w-0">
             <span className="block truncate text-[13px]">{f.name}</span>
             <span className="text-[11px] text-mute">{f.docId ? 'Tap to view' : 'Uploading…'}</span>

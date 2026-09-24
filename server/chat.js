@@ -1,8 +1,8 @@
 import { db } from './db.js';
 import { claude } from './ai.js';
 import { pickAgent } from './router.js';
-import { extractText, recall, learn } from './knowledge.js';
-import { saveUpload, processDocument, isImage, fileName, libraryCatalog } from './files.js';
+import { extractText, readVideo, recall, learn } from './knowledge.js';
+import { saveUpload, processDocument, isImage, isVideo, fileName, libraryCatalog } from './files.js';
 import { connectedMailbox } from './email.js';
 import { todoKit } from './todos.js';
 import { routineKit } from './routines.js';
@@ -117,6 +117,17 @@ async function readAttachments(user, convId, files, send, team) {
         blocks.push({ type: 'image', source: { type: 'base64', media_type: f.mimetype, data: f.buffer.toString('base64') } });
         if (!duplicate) processDocument(doc, f, undefined, team);
         meta.push({ name, kind: 'image', docId: doc.id });
+      } else if (isVideo(f)) {
+        // The other way round from a document: ffmpeg reads off disk, so this one is
+        // stored before it is read. A video that will not open still lands in the
+        // library, where its row says why - the same as an upload that fails to process.
+        send('status', { label: `Watching ${name}…` });
+        const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
+        const content = await readVideo(doc.path);
+        if (!duplicate) processDocument(doc, f, content, team);
+        meta.push({ name, kind: 'video', docId: doc.id, snippet: content.slice(0, 600) });
+        const inline = content.length > share ? `${content.slice(0, share)}\n…(truncated: the full reading is in the knowledge base)` : content;
+        blocks.push({ type: 'text', text: `<video name="${name}">\n${inline}\n</video>` });
       } else {
         send('status', { label: `Reading ${name}…` });
         const content = await extractText({ ...f, originalname: name }); // read first, so unreadable files are never stored

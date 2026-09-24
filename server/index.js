@@ -24,7 +24,8 @@ import { errorRoutes, recordError } from './errors.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 10 } });
+export const MAX_UPLOAD_MB = 25;
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024, files: 10 } });
 app.use(express.json({ limit: '1mb' }));
 
 app.use('/api/auth', authRoutes);
@@ -302,6 +303,11 @@ app.get('/api/voice/speak/:key', wrap(async (req, res) => {
 
 app.use('/api', (req, res) => notFound(res));
 app.use((err, req, res, next) => {
+  // Multer says "File too large" and nothing else - not the limit, not which file. Videos
+  // are the ones that reach it, so the message has to be one somebody can act on.
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    err = Object.assign(new Error(`That file is too big — the limit is ${MAX_UPLOAD_MB} MB. A shorter clip, or send it another way.`), { status: 413 });
+  }
   console.error('[error]', err.message);
   // Written down as well as printed: the console scrolls away and nobody reads it, which
   // is how a fault that hits one person every day stays invisible for weeks. Only faults,

@@ -5,13 +5,17 @@ import { extname } from 'node:path';
 import { db, tx } from './db.js';
 import { ask } from './ai.js';
 import { DATA_DIR, FOLDERS } from './config.js';
-import { IMAGE_TYPES, extractText, describeImage, indexChunks, retrievalScope } from './knowledge.js';
+import { IMAGE_TYPES, VIDEO_TYPES, VIDEO_EXT, extractText, describeImage, readVideo, indexChunks, retrievalScope } from './knowledge.js';
 import { shelfIds, isMaster } from './access.js';
 
 const UPLOAD_DIR = `${DATA_DIR}/uploads`;
 
 export const fileName = (f) => Buffer.from(f.originalname, 'latin1').toString('utf8'); // multer gives latin1
 export const isImage = (f) => IMAGE_TYPES.includes(f.mimetype);
+// Browsers are inconsistent about video types (a .mov can arrive as video/quicktime, as
+// application/octet-stream, or as nothing at all), so the extension gets a say too.
+export const isVideo = (f) => VIDEO_TYPES.includes(f.mimetype)
+  || VIDEO_EXT.includes(String(f.originalname || '').split('.').pop().toLowerCase());
 
 /**
  * Store an upload. Returns { doc, duplicate }. A file the user already has (same bytes) is not stored twice.
@@ -28,7 +32,7 @@ export async function saveUpload(userId, agentId, f, conversationId = null, kind
   const name = fileName(f);
   const { id } = await db.prepare(`INSERT INTO documents (user_id, agent_id, conversation_id, name, title, kind, size, mime, hash, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing') RETURNING id`)
-    .run(userId, agentId, conversationId, name, name, kind ?? (isImage(f) ? 'image' : 'doc'), f.size, f.mimetype, hash);
+    .run(userId, agentId, conversationId, name, name, kind ?? (isImage(f) ? 'image' : isVideo(f) ? 'video' : 'doc'), f.size, f.mimetype, hash);
   mkdirSync(`${UPLOAD_DIR}/${userId}`, { recursive: true });
   const path = `${UPLOAD_DIR}/${userId}/${id}${extname(name).toLowerCase().replace(/[^.\w]/g, '')}`;
   writeFileSync(path, f.buffer);
@@ -148,7 +152,7 @@ Judge the file by its type and purpose, not by words that merely appear in it (a
  "company": "<${COMPANY_RULE}>",
  "date": "<the document's own date as YYYY-MM-DD, or null>",
  "expires": "<${EXPIRY_RULE}>"${roster}}
-Photos of people, places or things with no document content go in "Photos". UAE documents write dates as DD/MM/YYYY.
+Photos and videos of people, places or things with no document content go in "Photos". UAE documents write dates as DD/MM/YYYY.
 ${EXPIRY_GUIDE}${knownCompanies(companies)}${team}`,
   });
   const d = JSON.parse(out.match(/\{[\s\S]*\}/)[0]);
@@ -173,8 +177,15 @@ ${EXPIRY_GUIDE}${knownCompanies(companies)}${team}`,
  */
 export async function processDocument(doc, f, text, agents = []) {
   try {
+    // A video is read off disk rather than out of the buffer: ffmpeg needs a file, and
+    // saveUpload has already written one.
+    const read = async () => {
+      if (isImage(f)) return describeImage(f);
+      if (isVideo(f)) return readVideo(doc.path);
+      return extractText({ ...f, originalname: doc.name });
+    };
     // Some PDFs carry NUL characters in their text layer, which Postgres refuses to store.
-    const content = (text ?? (isImage(f) ? await describeImage(f) : await extractText({ ...f, originalname: doc.name })))?.replace(/\u0000/g, '');
+    const content = (text ?? await read())?.replace(/\u0000/g, '');
     if (!content?.trim()) throw new Error('No readable text found');
     const c = await classify(doc.name, content, doc.agent_id ? [] : agents, await userCompanies(doc.user_id));
     await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, expires_on = ?, company = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
@@ -194,7 +205,7 @@ export async function processDocument(doc, f, text, agents = []) {
 
 // Types that are safe to show inside the app. Anything else (HTML, SVG, …) is only ever downloaded,
 // because rendering it on our origin could run scripts.
-const SAFE_INLINE = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+const SAFE_INLINE = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', ...VIDEO_TYPES];
 export function inlineType(doc) {
   if (SAFE_INLINE.includes(doc.mime)) return doc.mime;
   if (doc.mime?.startsWith('text/') || /\.(txt|md|csv|json|log|tsv|yaml|yml|xml)$/i.test(doc.name)) return 'text/plain; charset=utf-8';

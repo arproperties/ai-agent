@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
 import { listenUntilSilence, finishListening, stopListening, unlockAudio } from '../lib/voice';
 
-const ACCEPT = 'image/*,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
+const ACCEPT = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
 export default function Composer({ busy, voiceEnabled, onSend, onStop, onVoiceState, onError }) {
   const [text, setText] = useState('');

@@ -1,9 +1,16 @@
 import mammoth from 'mammoth';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { db, tx } from './db.js';
-import { ask, embed } from './ai.js';
+import { ask, embed, transcribe } from './ai.js';
 import { shelfIds, isMaster } from './access.js';
 
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+export const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v', 'video/3gpp'];
+export const VIDEO_EXT = ['mp4', 'mov', 'webm', 'm4v', '3gp'];
 const TEXT_EXT = ['txt', 'md', 'csv', 'json', 'html', 'xml', 'yaml', 'yml', 'log', 'js', 'ts', 'py', 'sql', 'tsv'];
 
 // ---------- extraction ----------
@@ -65,14 +72,106 @@ async function readScannedPdf(buffer, pages) {
   return `${first}\n\n${rest}`;
 }
 
-export async function describeImage({ buffer, mimetype }) {
+const DESCRIBE = 'Describe this image in detail for a searchable archive. Transcribe any visible text exactly.';
+
+export async function describeImage({ buffer, mimetype }, prompt = DESCRIBE) {
   return ask(null, {
     maxTokens: 800,
     content: [
       { type: 'image', source: { type: 'base64', media_type: mimetype, data: buffer.toString('base64') } },
-      { type: 'text', text: 'Describe this image in detail for a searchable archive. Transcribe any visible text exactly.' },
+      { type: 'text', text: prompt },
     ],
   });
+}
+
+// ---------- video ----------
+// A video is read twice over: once for what is said in it, once for what it shows. Both
+// come back as plain text, so from here on it is filed, indexed and searched exactly
+// like any other document - the recording itself stays on disk to be played back.
+const run = promisify(execFile);
+
+// Stills cost a Claude call each, so four spread through the clip - enough to catch the
+// walk-up, the problem and the walk-away without paying for a frame a second. Never the
+// very first or last moment, which on a phone recording are usually black or a blur.
+export const FRAME_AT = [0.1, 0.35, 0.6, 0.85];
+export const MAX_MINUTES = 60;
+
+/** ffmpeg and ffprobe, or a message that says what to install rather than "ENOENT". */
+let toolsChecked;
+function ffmpegReady() {
+  toolsChecked ??= Promise.all([run('ffmpeg', ['-version']), run('ffprobe', ['-version'])])
+    .catch(() => { throw new Error('Reading video needs ffmpeg on the server (sudo apt install -y ffmpeg)'); });
+  return toolsChecked;
+}
+
+export async function videoSeconds(path) {
+  const { stdout } = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', path]);
+  const secs = Number(String(stdout).trim());
+  return Number.isFinite(secs) && secs > 0 ? secs : 0;
+}
+
+const mmss = (secs) => `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
+
+/** The sound track as a small mono mp3. null when the video is silent - a fact, not a failure. */
+export async function videoAudio(path, dir) {
+  const out = join(dir, 'audio.mp3');
+  // 16 kHz mono at 32 kbps: speech survives it intact, and an hour still fits well
+  // inside what the transcriber accepts in one go.
+  try {
+    await run('ffmpeg', ['-v', 'error', '-i', path, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k', '-y', out]);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** Stills at FRAME_AT through the clip, as [{ at, path }]. Capped at 1280px wide to keep a frame's cost flat. */
+export async function videoFrames(path, dir, secs) {
+  const times = secs ? FRAME_AT.map((f) => secs * f) : [0];
+  const shots = [];
+  for (const [i, at] of times.entries()) {
+    const out = join(dir, `frame${i}.jpg`);
+    // -ss before -i seeks rather than decodes up to the mark, so a long clip is no slower than a short one
+    try {
+      await run('ffmpeg', ['-v', 'error', '-ss', at.toFixed(2), '-i', path, '-frames:v', '1',
+        '-vf', "scale='min(1280,iw)':-2", '-q:v', '3', '-y', out]);
+      shots.push({ at, path: out });
+    } catch { /* a frame that will not decode is skipped; the others still describe the clip */ }
+  }
+  return shots;
+}
+
+const FRAME_PROMPT = 'This is a still frame from a video. In 1-2 sentences, say what it shows for a searchable archive: '
+  + 'the place, the objects, and any damage, defect or work in progress. Transcribe any visible text or numbers exactly. Do not guess at what happens off-screen. '
+  + 'Reply with the description only - no heading, no preamble, no Markdown.';
+
+/**
+ * A video as text: what is said, then what is shown. Takes a path rather than a buffer
+ * because ffmpeg reads from disk, and saveUpload has already put the file there.
+ */
+export async function readVideo(path) {
+  await ffmpegReady();
+  const secs = await videoSeconds(path);
+  if (secs > MAX_MINUTES * 60) throw new Error(`This video is ${Math.round(secs / 60)} minutes long; the limit is ${MAX_MINUTES}`);
+
+  const dir = mkdtempSync(join(tmpdir(), 'jarvis-video-'));
+  try {
+    const audio = await videoAudio(path, dir);
+    const shots = await videoFrames(path, dir, secs);
+    // The transcript and the stills are independent: ask for them at once rather than in turn.
+    const [spoken, shown] = await Promise.all([
+      audio ? transcribe(readFileSync(audio), 'audio/mpeg').catch((e) => { console.warn('[video] no transcript:', e.message); return ''; }) : '',
+      Promise.all(shots.map((s) => describeImage({ buffer: readFileSync(s.path), mimetype: 'image/jpeg' }, FRAME_PROMPT))),
+    ]);
+
+    const parts = [`Video, ${mmss(secs)} long.`];
+    if (spoken.trim()) parts.push(`What is said in it:\n${spoken.trim()}`);
+    if (shown.length) parts.push(`What it shows:\n${shots.map((s, i) => `- At ${mmss(s.at)}: ${shown[i].trim()}`).join('\n')}`);
+    if (parts.length === 1) throw new Error('Nothing could be read from this video');
+    return parts.join('\n\n');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // ---------- indexing ----------
