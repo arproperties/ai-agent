@@ -42,7 +42,7 @@ const VOICE = {
   paused: { icon: 'play', label: 'Paused', hint: 'Resume' },
 };
 
-export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile }) {
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile, onShare }) {
   const [copied, setCopied] = useState(false);
 
   if (msg.role === 'user') {
@@ -120,6 +120,13 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
           <button onClick={copy} aria-label="Copy" className="grid size-8 place-items-center rounded-full hover:bg-white/10">
             <Icon name={copied ? 'check' : 'copy'} size={16} />
           </button>
+          {/* Only once the reply is saved: sharing sends its id, not the text on screen. */}
+          {onShare && (
+            <button onClick={onShare} aria-label="Share with the team" title="Share with the team"
+              className="grid size-8 place-items-center rounded-full hover:bg-white/10">
+              <Icon name="share" size={16} />
+            </button>
+          )}
         </div>
       )}
     </div>

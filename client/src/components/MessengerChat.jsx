@@ -64,6 +64,7 @@ export function preview(m) {
   if (m.deleted) return 'This message was deleted';
   if (m.kind === 'image') return m.body ? `📷 ${m.body}` : '📷 Photo';
   if (m.kind === 'file') return `📄 ${m.body || m.file?.name || m.fileName || 'File'}`;
+  if (m.sharedFrom) return `✨ ${m.body}`;
   return m.body;
 }
 
@@ -164,6 +165,12 @@ function Bubble({ m, mine, showName, sender, nameColor, others, first, onMenu, o
           <span className="inline-flex items-center gap-1.5 italic text-white/55"><Ban size={14} /> This message was deleted</span>
         ) : (
           <>
+            {/* Whoever sent it did not write it: an agent did, and the bubble says so. */}
+            {m.sharedFrom && (
+              <span className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-white/70">
+                <Sparkles size={12} className="shrink-0" /> From {m.sharedFrom}
+              </span>
+            )}
             {m.kind === 'image' && m.file && (
               <button onClick={() => onView(m.file.url)} className="mb-1 block overflow-hidden rounded-xl">
                 <img src={m.file.url} alt={m.file.name} loading="lazy" className="max-h-80 min-h-24 w-full min-w-40 max-w-72 object-cover" />

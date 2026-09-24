@@ -92,7 +92,7 @@ export default function App() {
 
       <main className="relative flex min-w-0 flex-1 flex-col">
         {agents.length > 0 ? (
-          <Chat key={chat.key} user={me} agents={agents} folders={config.folders} conversationId={chat.id} voiceEnabled={config.voice}
+          <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice}
             firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
             due={due} onOpenLists={() => setPanel('todos')}
             onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />

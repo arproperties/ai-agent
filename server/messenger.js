@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { extname } from 'node:path';
 import { db, tx } from './db.js';
 import { summarise, forget } from './dmSummary.js';
+import { shareReply } from './shareReply.js';
 import { DATA_DIR } from './config.js';
 
 const FILE_DIR = `${DATA_DIR}/messenger`;
@@ -44,8 +45,11 @@ const memberIds = async (chatId) =>
 // Exported so the master's oversight routes in admin.js can shape a transcript the
 // same way this file does. Reading it from there is deliberate: the cross-user read
 // lives behind requireMaster, not as a widening of the membership checks below.
-export const MSG_SELECT = `SELECT m.*, r.user_id r_user_id, r.kind r_kind, r.body r_body, r.file_name r_file_name, r.deleted r_deleted
-  FROM dm_messages m LEFT JOIN dm_messages r ON r.id = m.reply_to_id`;
+export const MSG_SELECT = `SELECT m.*, r.user_id r_user_id, r.kind r_kind, r.body r_body, r.file_name r_file_name, r.deleted r_deleted,
+    sh.agent_name shared_agent
+  FROM dm_messages m
+  LEFT JOIN dm_messages r ON r.id = m.reply_to_id
+  LEFT JOIN dm_shared_replies sh ON sh.message_id = m.id`;
 
 export function messageOut(m) {
   return {
@@ -56,6 +60,8 @@ export function messageOut(m) {
     body: m.deleted ? '' : m.body,
     deleted: m.deleted,
     createdAt: m.created_at,
+    // set when the words are an agent's, not the sender's own - the bubble says so
+    sharedFrom: (!m.deleted && m.shared_agent) || null,
     file: m.file_name && !m.deleted
       ? { name: m.file_name, mime: m.file_mime, size: m.file_size, url: `/api/messenger/files/${m.id}` }
       : null,
@@ -279,6 +285,25 @@ export const messengerHandlers = {
     res.json(msg);
   },
 
+  /**
+   * { messageId } - a reply an agent wrote for the sender, passed on to this chat.
+   * The text comes from the database, not the request; see shareReply.js.
+   */
+  async share(req, res) {
+    const me = req.user.id;
+    const chatId = Number(req.params.id);
+    if (!await membership(chatId, me)) throw bad('Not found', 404);
+
+    const id = await shareReply({ chatId, userId: me, messageId: req.body.messageId });
+    // Sharing means the sender has read everything up to here, exactly as sending does.
+    await db.prepare('UPDATE dm_members SET last_read_id = ?, last_delivered_id = ? WHERE chat_id = ? AND user_id = ?').run(id, id, chatId, me);
+    await db.prepare('UPDATE dm_chats SET updated_at = ? WHERE id = ?').run(now(), chatId);
+
+    const msg = await getMessage(id);
+    emit(await memberIds(chatId), 'message', msg);
+    res.json(msg);
+  },
+
   /** { upTo: <message id> } — the blue ticks. */
   async read(req, res) {
     const chatId = Number(req.params.id);
@@ -420,6 +445,7 @@ messengerRoutes.get('/chats/:id', wrap(h.get));
 messengerRoutes.patch('/chats/:id', wrap(h.rename));
 messengerRoutes.get('/chats/:id/messages', wrap(h.messages));
 messengerRoutes.post('/chats/:id/messages', upload.single('file'), wrap(h.send));
+messengerRoutes.post('/chats/:id/share', wrap(h.share));
 messengerRoutes.post('/chats/:id/read', wrap(h.read));
 messengerRoutes.post('/chats/:id/typing', wrap(h.typing));
 messengerRoutes.post('/chats/:id/summary', wrap(h.summarise));

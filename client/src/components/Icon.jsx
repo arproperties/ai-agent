@@ -1,7 +1,7 @@
 import {
   ChevronLeft, ChevronRight, Plus, ArrowUp, Square, Paperclip, Mic, Volume2, History, SquarePen,
   Settings2, X, Trash2, Copy, Check, FileText, Image, Lock, Brain, Menu, LogOut, Sparkles, Users, Folder, Mail,
-  Pause, Play, LoaderCircle, AudioLines,
+  Pause, Play, LoaderCircle, AudioLines, Forward, Search,
 } from 'lucide-react';
 
 const ICONS = {
@@ -9,7 +9,7 @@ const ICONS = {
   mic: Mic, speaker: Volume2, history: History, edit: SquarePen, gear: Settings2, x: X, trash: Trash2,
   copy: Copy, check: Check, file: FileText, image: Image, lock: Lock, brain: Brain, menu: Menu, logout: LogOut,
   sparkles: Sparkles, users: Users, folder: Folder, mail: Mail,
-  pause: Pause, play: Play, spinner: LoaderCircle, live: AudioLines,
+  pause: Pause, play: Play, spinner: LoaderCircle, live: AudioLines, share: Forward, search: Search,
 };
 
 export default function Icon({ name, size = 20, className = '' }) {

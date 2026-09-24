@@ -10,8 +10,14 @@ import DraftCard from './DraftCard';
 import Composer from './Composer';
 import LiveVoice from './LiveVoice';
 import Sheet from './Sheet';
+import ShareSheet from './ShareSheet';
 import { Welcome, InstallHint } from './FirstRun';
 import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
+
+// Which reply can be shared: one the server has written down. A reply still streaming
+// has only a made-up id here, and the share is sent by id so the team gets the words
+// Jarvis actually said, not whatever the browser is holding.
+const shareIdOf = (m) => (m.role === 'assistant' && !m.error ? m.saved ?? (typeof m.id === 'number' ? m.id : null) : null);
 
 const IconBtn = ({ icon, label, onClick, className = '' }) => (
   <button onClick={onClick} aria-label={label} title={label}
@@ -20,7 +26,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0 }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0 }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -34,6 +40,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
   const [chatFiles, setChatFiles] = useState(null); // list of this chat's attachments
   const [drafts, setDrafts] = useState([]); // emails written this session, waiting on a tap
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
+  const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
   const abortRef = useRef();
   const scrollRef = useRef();
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
@@ -94,6 +101,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
     abortRef.current = ctrl;
     let reply = '';
     let agentId = null;
+    let savedId = null; // the row id the server gave the reply, sent when sharing it
     try {
       await streamChat(form, {
         signal: ctrl.signal,
@@ -107,6 +115,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
           else if (event === 'notice') flash(d.message);
           else if (event === 'error') update({ error: d.message });
           else if (event === 'sources') update({ sources: d });
+          else if (event === 'done') savedId = d.messageId;
           else if (event === 'draft') { setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'delta') {
             if (!reply) setOrb('speaking');
@@ -120,7 +129,7 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
     } catch (e) {
       if (e.name !== 'AbortError') update({ error: e.message });
     }
-    update({ streaming: false });
+    update({ streaming: false, saved: savedId });
     setBusy(false); setOrb('idle'); setStatus('');
     onConversation(null);
     if (voice && reply) say(reply, aid, agentId);
@@ -248,7 +257,8 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
             {messages.map((m) => (
               <Message key={m.id} msg={m} agent={byId[m.agent_id]} voiceEnabled={voiceEnabled} onOpenFile={openFile}
                 voice={voice.id === m.id ? voice.state : 'idle'} onStopSpeak={stopSpeaking}
-                onSpeak={() => say(m.content, m.id, m.agent_id)} />
+                onSpeak={() => say(m.content, m.id, m.agent_id)}
+                onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined} />
             ))}
             {drafts.map((d) => (
               <DraftCard key={d.id} draft={d} from={mailbox}
@@ -274,6 +284,9 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
             {chatFiles.map((d) => <FileCard key={d.id} d={d} onOpen={setViewer} />)}
           </div>
         </Sheet>
+      )}
+      {sharing && (
+        <ShareSheet dm={dm} messageId={sharing} onClose={() => setSharing(null)} onDone={flash} />
       )}
       {viewer && <FileViewer d={viewer} onClose={() => setViewer(null)} onInfo={(d) => { setViewer(null); setDetails(d); }} />}
       {details && <FileDetail d={details} folders={folders} me={user} onClose={() => setDetails(null)} onChanged={() => {}} />}

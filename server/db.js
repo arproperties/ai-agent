@@ -498,6 +498,25 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_dm_messages_chat ON dm_messages(chat_id, id);
 `);
 
+// A Jarvis reply, carried into a team chat by the person who asked for it.
+//
+// Its own table on purpose. What lands in the chat is an ordinary dm_message and stays
+// one - it replies, deletes and reads like every other message. This row is only the
+// label saying where the words came from, so nobody mistakes Jarvis for the sender.
+//   agent_name is copied, not looked up: the agent may be renamed or removed later, and
+//     the message must keep saying who actually wrote it at the time.
+//   source_message_id detaches rather than cascades - the sender clearing his own chat
+//     history must never empty what he already shared with the team.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS dm_shared_replies (
+    message_id        INTEGER PRIMARY KEY REFERENCES dm_messages(id) ON DELETE CASCADE,
+    source_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    agent_id          INTEGER REFERENCES agents(id)   ON DELETE SET NULL,
+    agent_name        TEXT NOT NULL,
+    created_at        BIGINT DEFAULT ${NOW}
+  );
+`);
+
 // The to-do list. A reminder is remind_at and nothing more: no job runs at that moment,
 // because nothing in this app is awake when the user is not. What the time does is make
 // the todo *due*, and due work is shown the way expiring paperwork already is.
