@@ -292,7 +292,7 @@ test('losing the agent that set a routine up does not lose the routine', async (
 
 const call = (kit, name, input) => kit.run({ id: `tu_${name}`, name, input });
 
-test('an agent sets up a routine and is told not to promise an alert', async () => {
+test('an agent sets up a routine and is told not to promise the buzz', async () => {
   await reset();
   const user = await makeUser('Sara');
   const hr = await makeAgent(user, 'HR');
@@ -302,7 +302,7 @@ test('an agent sets up a routine and is told not to promise an alert', async () 
   assert.equal(out.is_error, undefined);
   assert.match(out.content, /routine #1/);
   assert.match(out.content, /quarterly/);
-  assert.match(out.content, /cannot notify them elsewhere/);
+  assert.match(out.content, /do not promise that/);
 
   const [r] = await listRoutines(user);
   assert.equal(r.agent_id, hr);

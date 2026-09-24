@@ -3,11 +3,14 @@ import { db } from './db.js';
 
 // The to-do list: one per user, each item with an optional reminder.
 //
-// A reminder here is a TIME, not a delivery. Nothing is emailed and nothing is pushed.
-// When the time arrives the todo becomes due, and due work surfaces the way expiring
-// paperwork already does — a count on the menu and a line on the first screen. That is
-// deliberate: it needs no scheduler, no SMTP and no notification permission, so it cannot
-// quietly stop working, and it cannot spend money while nobody is looking.
+// A reminder here is a TIME. When it arrives the todo becomes due, and due work surfaces
+// the way expiring paperwork does — a count on the menu and a line on the first screen.
+// That still needs no scheduler and no permission, so it cannot quietly stop working.
+//
+// Since notifications arrived, server/reminders.js also buzzes the phone at that moment
+// for anyone who has switched them on. That is an addition, not a replacement: the badge
+// and the first screen are what this table guarantees, and they keep working on their own
+// if the timer ever stops. Nothing here knows or cares whether a notice was sent.
 
 const MAX_TEXT = 300;
 const MAX_NOTES = 2000;
@@ -187,7 +190,7 @@ const handlers = {
       agentId: ctx.agentId, conversationId: ctx.conversationId, documentId: input.document_id,
     });
     const when = t.remind_at ? ` It will come up on ${stamp(t.remind_at)}.` : ' No reminder was set, so it just sits on the list.';
-    return `Added as todo #${t.id}: "${t.text}".${when} It is on their list in the app — Jarvis cannot notify them elsewhere, so tell them it is waiting there rather than promising an alert.`;
+    return `Added as todo #${t.id}: "${t.text}".${when} It is on their list in the app. ${t.remind_at ? 'If they have switched notifications on, their phone will buzz at that time; if not, it simply shows as due in the app. Do not promise a buzz — say it will come up then.' : 'No reminder, so it only sits on the list.'}`;
   },
 
   list_todos: async (userId, ctx, input) => {

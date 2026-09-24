@@ -172,7 +172,7 @@ test('deleting the account takes its todos with it', async () => {
 
 const call = (kit, name, input) => kit.run({ id: `tu_${name}`, name, input });
 
-test('an agent writes a todo down and is told not to promise an alert', async () => {
+test('an agent writes a todo down and is told not to promise the buzz', async () => {
   await reset();
   const user = await makeUser('Sara');
   const hr = await makeAgent(user, 'HR');
@@ -181,7 +181,10 @@ test('an agent writes a todo down and is told not to promise an alert', async ()
   const out = await call(kit, 'add_todo', { text: 'Renew the trade licence', remind_at: '2026-10-05T09:00:00+04:00' });
   assert.equal(out.is_error, undefined);
   assert.match(out.content, /Added as todo #1/);
-  assert.match(out.content, /cannot notify them elsewhere/, 'the tool result refuses to let the agent promise a ping');
+  // A phone only buzzes for someone who has switched notifications on, which the agent
+  // cannot know. So it is told what will happen and told not to promise it.
+  assert.match(out.content, /phone will buzz at that time/);
+  assert.match(out.content, /Do not promise a buzz/, 'the tool result refuses to let the agent guarantee a ping');
 
   const [t] = await listTodos(user);
   assert.equal(t.text, 'Renew the trade licence');

@@ -607,3 +607,27 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
 `);
+
+// One reminder already dealt with — the bookkeeping behind server/reminders.js.
+//
+// Its own table rather than a column on todos: "has this been sent" is about delivery,
+// not about the task, and routines need the same answer without a todo to hang it on.
+//   due_at is the moment it was due, not the moment it was sent, and it is what makes
+//     this idempotent. A todo moved to next week has a new due_at, so it buzzes again;
+//     one that has already buzzed matches an existing row and stays quiet however many
+//     times the timer runs.
+//   Two partial unique indexes rather than one constraint, because each row is about
+//     either a todo or a routine and never both.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS reminders_sent (
+    id SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    todo_id    INTEGER REFERENCES todos(id)    ON DELETE CASCADE,
+    routine_id INTEGER REFERENCES routines(id) ON DELETE CASCADE,
+    due_at  BIGINT NOT NULL,
+    sent_at BIGINT DEFAULT ${NOW},
+    CHECK ((todo_id IS NULL) <> (routine_id IS NULL))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_reminded_todo    ON reminders_sent(todo_id, due_at)    WHERE todo_id IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_reminded_routine ON reminders_sent(routine_id, due_at) WHERE routine_id IS NOT NULL;
+`);

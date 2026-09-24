@@ -290,7 +290,7 @@ const handlers = {
       agentId: ctx.agentId, conversationId: ctx.conversationId,
     });
     return `Set up as routine #${r.id}: "${r.text}", ${r.cadence.toLowerCase()}. The first one falls due ${stamp(r.due_at ?? r.next_at)}. ` +
-      'It lives on their Routines list in the app — Jarvis cannot notify them elsewhere, so say it will be waiting there rather than promising an alert.';
+      'It lives on their Routines list in the app, and comes up there each time it falls due. If they have switched notifications on their phone will buzz then too, but do not promise that — say it will come up.';
   },
 
   list_routines: async (userId, ctx, input) => {

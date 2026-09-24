@@ -21,6 +21,7 @@ import { messengerRoutes } from './messenger.js';
 import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
 import { pushRoutes } from './push.js';
+import { startReminders } from './reminders.js';
 import { errorRoutes, recordError } from './errors.js';
 
 const app = express();
@@ -339,5 +340,8 @@ app.listen(PORT, '0.0.0.0', () => {
   startOutbox().catch((e) => console.error('[outbox]', e.message));
   // files from a folder or ZIP import that were still waiting when the server stopped
   startImportQueue().catch((e) => console.error('[imports]', e.message));
+  // The buzz when a to-do or a routine falls due. The badge and the first screen are
+  // unchanged and keep working on their own if this timer ever stops.
+  startReminders();
   console.log(`Jarvis server → http://localhost:${PORT}`);
 });
