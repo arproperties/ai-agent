@@ -3,6 +3,7 @@ import { ChevronLeft, Search, X, SquarePen, Users, UserPlus, Check, ArrowRight, 
 import { api } from '../lib/api';
 import Sheet from './Sheet';
 import MessengerChat, { PersonAvatar, Ticks, listTime, preview, lastSeenText } from './MessengerChat';
+import { NotifyBanner } from './Notifications';
 
 const SearchBox = ({ value, onChange, placeholder }) => (
   <div className="mx-3 mb-2 flex items-center gap-2 rounded-full border border-stroke bg-white/[0.04] px-3 focus-within:border-emerald-400/60">
@@ -39,6 +40,9 @@ function ChatList({ dm, activeId, onOpen, onNew, onBack }) {
           <SquarePen size={21} />
         </button>
       </header>
+      {/* Only while notifications are off, and only here: this is the screen where a
+          missed message actually matters. */}
+      <NotifyBanner />
       {(dm.chats?.length || 0) > 0 && (
         <>
           <SearchBox value={q} onChange={setQ} placeholder="Search chats" />
@@ -367,11 +371,19 @@ function ChatInfo({ chat, dm, onClose, onLeft }) {
 }
 
 // ---------- the page ----------
-export default function MessengerPage({ dm, onBack }) {
-  const [openId, setOpenId] = useState(null);
+export default function MessengerPage({ dm, openChatId = null, onOpened, onBack }) {
+  const [openId, setOpenId] = useState(openChatId);
   const [mode, setMode] = useState('list'); // 'list' | 'new'
   const [info, setInfo] = useState(false);
   const chat = useMemo(() => dm.chats?.find((c) => c.id === openId) || null, [dm.chats, openId]);
+
+  // Sent here by a tapped notification while the screen was already open.
+  useEffect(() => {
+    if (!openChatId) return;
+    setMode('list');
+    setOpenId(openChatId);
+    onOpened?.();
+  }, [openChatId, onOpened]);
 
   // removed from the open group, or it was deleted: back to the list
   useEffect(() => {

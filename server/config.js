@@ -9,6 +9,14 @@ export const PORT = Number(process.env.PORT) || 3001;
 // Postgres. Uploads and the embedding model still live on disk in DATA_DIR.
 export const DATABASE_URL = process.env.DATABASE_URL || '';
 
+// Web push. Generated once by `node scripts/vapid-keys.js` and pasted into .env — they
+// are this server's identity to Apple's and Google's push services, not an account with
+// either of them. Missing keys simply mean notifications stay off.
+export const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+export const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+// Who to contact if this server ever misbehaves; a push service may require it.
+export const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@ainalreempro.com';
+
 export const MODELS = [
   { id: 'claude-sonnet-5', label: 'Sonnet 5 · balanced' },
   { id: 'claude-opus-5', label: 'Opus 5 · smartest' },

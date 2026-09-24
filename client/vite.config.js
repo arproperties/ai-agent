@@ -8,6 +8,11 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      // The worker is written by hand in src/sw.js rather than generated: it has to
+      // receive notifications while the app is closed, which a generated one cannot do.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
       registerType: 'autoUpdate',
       includeAssets: ['icons/apple-touch-icon.png', 'icons/favicon.svg'],
       manifest: {
@@ -25,10 +30,13 @@ export default defineConfig({
           { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
-      workbox: {
-        navigateFallbackDenylist: [/^\/api/], // never serve the app shell for API calls
+      // The list of files the worker precaches. (The /api rule that used to live here is
+      // now a line in src/sw.js, because a hand-written worker sets up its own routes.)
+      injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
       },
+      // So notifications can be tried on localhost during development, not only once live.
+      devOptions: { enabled: true, type: 'module', suppressWarnings: true },
     }),
   ],
   server: {

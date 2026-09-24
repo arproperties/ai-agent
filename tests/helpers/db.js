@@ -34,6 +34,7 @@ const TABLES = [
   'users', 'sessions', 'password_resets', 'agents', 'agent_assignments', 'conversations', 'messages',
   'imports', 'documents', 'chunks', 'memories', 'outlook_accounts', 'imap_accounts', 'email_drafts', 'email_action_log',
   'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
+  'push_subscriptions',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

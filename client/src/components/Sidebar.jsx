@@ -3,6 +3,7 @@ import { Search, X, Users, Eye, ListTodo } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
 import Avatar from './Avatar';
+import { NotifyBell } from './Notifications';
 
 // wrap each occurrence of q in <mark>
 function Highlight({ text, q }) {
@@ -182,6 +183,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
               <Eye size={16} />
             </button>
           )}
+          <NotifyBell />
           <button onClick={onLogout} aria-label="Sign out" title="Sign out" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
             <Icon name="logout" size={17} />
           </button>

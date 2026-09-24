@@ -581,3 +581,29 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_routines_user ON routines(user_id, id);
   CREATE INDEX IF NOT EXISTS idx_routine_done ON routine_completions(user_id, done_at DESC);
 `);
+
+// One switched-on device, for the notifications that arrive while the app is shut.
+//
+// A row per device, not per person: a phone, an iPad and a laptop are three separate
+// permissions and three separate rows. The row existing IS the permission — switching
+// notifications off deletes it, so there is no on/off column to fall out of step with
+// what the browser actually allows.
+//   endpoint: the address the push service gave this browser, and the thing that
+//     identifies the device. Unique across the table rather than per user, so that
+//     someone signing in as a different person on the same phone takes the row over
+//     instead of leaving it aimed at the previous account.
+//   p256dh / auth: the browser's own keys. The notice is encrypted to them, so the push
+//     service carrying it cannot read what it is carrying.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id SERIAL PRIMARY KEY,
+    user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh   TEXT NOT NULL,
+    auth     TEXT NOT NULL,
+    device   TEXT,
+    created_at   BIGINT DEFAULT ${NOW},
+    last_used_at BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
+`);

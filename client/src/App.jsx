@@ -15,7 +15,9 @@ import { useMessenger } from './lib/useMessenger';
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
 const outlookReturn = params.get('outlook') && { status: params.get('outlook'), message: params.get('message') };
-if (outlookReturn) window.history.replaceState(null, '', '/');
+// a notification tapped while Jarvis was closed: /?chat=12 opens that team chat
+const notifiedChat = Number(params.get('chat')) || null;
+if (outlookReturn || notifiedChat) window.history.replaceState(null, '', '/');
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -28,8 +30,26 @@ export default function App() {
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos'
+  const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
+
+  // A notification tapped while Jarvis was already open somewhere: the service worker
+  // brings that window forward rather than starting a second one, and tells it which
+  // chat the notice was about.
+  const chatOpened = useCallback(() => setJumpToChat(null), []);
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return undefined;
+    const tapped = (e) => {
+      if (e.data?.type !== 'notification') return;
+      const id = Number(new URL(e.data.url, window.location.origin).searchParams.get('chat')) || null;
+      if (!id) return;
+      setPanel('messages');
+      setJumpToChat(id);
+    };
+    navigator.serviceWorker.addEventListener('message', tapped);
+    return () => navigator.serviceWorker.removeEventListener('message', tapped);
+  }, []);
 
   useEffect(() => {
     api.get('/auth/me').then((r) => setMe(r.user)).catch(() => setMe(null));
@@ -127,7 +147,7 @@ export default function App() {
         {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => { setPanel(null); loadExpiring(); }} onOpenChat={openChat} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
-        {panel === 'messages' && <MessengerPage dm={dm} onBack={() => setPanel(null)} />}
+        {panel === 'messages' && <MessengerPage dm={dm} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
       </main>
 
       {editing && (

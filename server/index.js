@@ -20,6 +20,7 @@ import { importRoutes, startImportQueue } from './imports.js';
 import { messengerRoutes } from './messenger.js';
 import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
+import { pushRoutes } from './push.js';
 import { errorRoutes, recordError } from './errors.js';
 
 const app = express();
@@ -39,6 +40,7 @@ app.use('/api/imports', importRoutes);
 app.use('/api/messenger', messengerRoutes); // people-to-people chat, separate from the AI chats
 app.use('/api/todos', todoRoutes);
 app.use('/api/routines', routineRoutes); // things that come back, kept apart from the one-off todos
+app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

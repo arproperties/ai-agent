@@ -17,6 +17,7 @@ import { extname } from 'node:path';
 import { db, tx } from './db.js';
 import { summarise, forget } from './dmSummary.js';
 import { shareReply } from './shareReply.js';
+import { sendPush } from './push.js';
 import { DATA_DIR } from './config.js';
 
 const FILE_DIR = `${DATA_DIR}/messenger`;
@@ -147,6 +148,31 @@ async function postSystem(chatId, body) {
   emit(await memberIds(chatId), 'message', await getMessage(id));
 }
 
+/** What a notification says the message was, when the message itself is not words. */
+const previewText = (m) => (m.body || '').trim()
+  || (m.kind === 'image' ? '📷 Photo' : m.kind === 'file' ? `📎 ${m.file?.name || 'File'}` : 'New message');
+
+/**
+ * A buzz on the phone for every member who does NOT have the app open.
+ *
+ * Whoever is watching already had this message pushed down their live stream a moment
+ * ago; this is only for the ones who are not there to see it. Deliberately not awaited:
+ * the message is already saved and already delivered, so a push service having a bad
+ * morning must never turn a sent message into a failed request.
+ */
+function notifyOffline(mine, sender, members, msg) {
+  const away = members.filter((u) => u !== sender.id && !isOnline(u));
+  if (!away.length) return;
+  sendPush(away, {
+    // A group says which group; a one-to-one needs only the name, as WhatsApp does it.
+    title: mine.kind === 'group' ? `${sender.name} · ${mine.name}` : sender.name,
+    // A shared agent reply is not the sender's own words, and the notice says so too.
+    body: msg.sharedFrom ? `${msg.sharedFrom}: ${previewText(msg)}` : previewText(msg),
+    url: `/?chat=${msg.chatId}`,
+    tag: `chat-${msg.chatId}`, // a second message replaces the first rather than stacking up
+  }).catch((e) => console.error('[push]', e.message));
+}
+
 // ---------- handlers (exported for the tests, the router below wires them up) ----------
 export const messengerHandlers = {
   /** The live stream. Stays open; the app reconnects by itself if it drops. */
@@ -248,7 +274,8 @@ export const messengerHandlers = {
   async send(req, res) {
     const me = req.user.id;
     const chatId = Number(req.params.id);
-    if (!await membership(chatId, me)) throw bad('Not found', 404);
+    const mine = await membership(chatId, me);
+    if (!mine) throw bad('Not found', 404);
     const body = String(req.body.body || '').trim().slice(0, MAX_TEXT);
     const f = req.file;
     if (!body && !f) throw bad('The message is empty');
@@ -282,6 +309,8 @@ export const messengerHandlers = {
         WHERE chat_id = ? AND user_id = ANY(?::int[]) RETURNING chat_id, user_id, last_read_id, last_delivered_id`).all(id, chatId, online);
       await announcePointers(rows);
     }
+    // And whoever does not have it open gets the notice on their phone instead.
+    notifyOffline(mine, req.user, members, msg);
     res.json(msg);
   },
 
@@ -292,7 +321,8 @@ export const messengerHandlers = {
   async share(req, res) {
     const me = req.user.id;
     const chatId = Number(req.params.id);
-    if (!await membership(chatId, me)) throw bad('Not found', 404);
+    const mine = await membership(chatId, me);
+    if (!mine) throw bad('Not found', 404);
 
     const id = await shareReply({ chatId, userId: me, messageId: req.body.messageId });
     // Sharing means the sender has read everything up to here, exactly as sending does.
@@ -300,7 +330,9 @@ export const messengerHandlers = {
     await db.prepare('UPDATE dm_chats SET updated_at = ? WHERE id = ?').run(now(), chatId);
 
     const msg = await getMessage(id);
-    emit(await memberIds(chatId), 'message', msg);
+    const members = await memberIds(chatId);
+    emit(members, 'message', msg);
+    notifyOffline(mine, req.user, members, msg);
     res.json(msg);
   },
 
