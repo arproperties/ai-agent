@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { Agent } from 'node:https';
 import webpush from 'web-push';
 import { db } from './db.js';
 import { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT } from './config.js';
@@ -28,6 +29,13 @@ export const pushReady = () => ready;
 
 const NOW = 'extract(epoch from now())::bigint';
 const MAX_BODY = 120; // a phone truncates a long one anyway, and the words go over the wire
+
+// Apple and Google each answer on several addresses. Node's default "happy eyeballs"
+// connect races them and gives each one a quarter of a second before moving on, which is
+// not long enough for a handshake to an edge on the other side of the world: every notice
+// failed with ETIMEDOUT while curl to the same host from the same machine was fine.
+// This connects the ordinary way instead, and holds the connection open between notices.
+const agent = new Agent({ keepAlive: true, autoSelectFamily: false, timeout: 15000 });
 
 /**
  * Remember this device, so it can be woken later.
@@ -75,12 +83,14 @@ export async function sendPush(userIds, { title, body, url = '/', tag }) {
   const payload = JSON.stringify({ title, body: String(body || '').slice(0, MAX_BODY), url, tag });
   const dead = [];
   const sent = [];
-  const results = await Promise.allSettled(rows.map((r) => webpush.sendNotification(asSubscription(r), payload, { TTL: 3600 })));
+  const results = await Promise.allSettled(rows.map((r) => webpush.sendNotification(asSubscription(r), payload, { TTL: 3600, agent })));
   results.forEach((out, i) => {
     if (out.status === 'fulfilled') { sent.push(rows[i].endpoint); return; }
     const code = out.reason?.statusCode;
     if (code === 404 || code === 410) dead.push(rows[i].endpoint);
-    else console.warn('[push]', code || '', out.reason?.message);
+    // Name as well as message: a connection failure arrives as an AggregateError whose
+    // message is empty, and "[push]  " with nothing after it is how this took an hour.
+    else console.warn('[push]', code || out.reason?.name || 'failed', out.reason?.message || '');
   });
   if (dead.length) await db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ANY(?::text[])').run(dead);
   if (sent.length) await db.prepare(`UPDATE push_subscriptions SET last_used_at = ${NOW} WHERE endpoint = ANY(?::text[])`).run(sent);
