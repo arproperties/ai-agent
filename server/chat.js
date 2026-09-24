@@ -5,6 +5,7 @@ import { extractText, recall, learn } from './knowledge.js';
 import { saveUpload, processDocument, isImage, fileName, libraryCatalog } from './files.js';
 import { connectedMailbox } from './email.js';
 import { todoKit } from './todos.js';
+import { routineKit } from './routines.js';
 import { chatAgents } from './access.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
@@ -39,6 +40,10 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox) 
     'Add a todo whenever they ask you to remember something, ask to be reminded, or say they must do something later — and say you have. ' +
     'Check the list before answering anything about what they still have to do. The reminder is optional: set a time only when one was actually meant. ' +
     'A reminder is not an alert — Jarvis cannot reach them outside the app, so say it will be waiting on their list, and never promise to notify them.');
+  parts.push('Things that come back on a rhythm are routines, not todos, and live on their own list: add_routine, list_routines, ' +
+    'complete_routine and pause_routine. Use a routine the moment they say "every", "each", "daily", "weekly", "monthly" or "yearly", ' +
+    'and a todo for anything done once. A todo is finished and gone; a routine comes round again. ' +
+    'When you are asked what is outstanding, check both lists. Routines cannot notify them either.');
   if (mailbox) {
     parts.push(`You can read ${user.name}'s email (${mailbox.address}) with search_email and read_email. Use them when they ask about their emails, ` +
       'messages from someone, bills, bookings or anything likely to be in their inbox. ' +
@@ -170,7 +175,8 @@ export async function chat(req, res) {
   // Every toolkit this turn has. The to-do list is always there; the mailbox only when one
   // is connected. Each kit names its own tools, so a call is routed by name and nothing here
   // has to know which feature it belongs to.
-  const kits = [todoKit(user.id, { agentId: agent.id, conversationId: convId }), ...(email ? [email] : [])];
+  const ctx = { agentId: agent.id, conversationId: convId };
+  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), ...(email ? [email] : [])];
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
   const library = await libraryCatalog(user); // same every turn, so read it once

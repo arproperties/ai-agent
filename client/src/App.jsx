@@ -9,7 +9,7 @@ import { FilesPage, MemorySheet } from './components/Knowledge';
 import EmailSheet from './components/EmailSheet';
 import AdminPage, { MyActivitySheet } from './components/Admin';
 import MessengerPage from './components/Messenger';
-import TodosPage from './components/Todos';
+import ListsPage from './components/Lists';
 import { useMessenger } from './lib/useMessenger';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
@@ -24,7 +24,7 @@ export default function App() {
   const [convs, setConvs] = useState([]);
   const [convsLoaded, setConvsLoaded] = useState(false); // an empty list means nothing until it has arrived
   const [expiring, setExpiring] = useState([]); // paperwork running out inside a month
-  const [due, setDue] = useState([]); // todos whose reminder time has arrived
+  const [due, setDue] = useState({ todos: [], routines: [] }); // reminders that have come round, and routines asking to be done
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
@@ -44,8 +44,12 @@ export default function App() {
   // first screen, and both are only worth showing for what has to be acted on now.
   const loadExpiring = useCallback(() => api.get('/documents/expiring?days=30').then(setExpiring).catch(() => {}), []);
   // Only what is actually due: a reminder set for next month is not something to carry a
-  // badge about, and a list that is always lit is a list nobody reads.
-  const loadDue = useCallback(() => api.get('/todos/due').then(setDue).catch(() => {}), []);
+  // badge about, and a list that is always lit is a list nobody reads. Both lists feed one
+  // count, because "what do I have to do" is one question however many tables answer it.
+  const loadDue = useCallback(() => Promise.all([
+    api.get('/todos/due').catch(() => []),
+    api.get('/routines/due').catch(() => []),
+  ]).then(([todos, routines]) => setDue({ todos, routines })), []);
 
   useEffect(() => {
     if (!me) return;
@@ -80,7 +84,7 @@ export default function App() {
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'memory' && panel !== 'email' && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
           onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}
-          expiring={expiring.length} dueTodos={due.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
+          expiring={expiring.length} dueTodos={due.todos.length + due.routines.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
@@ -90,7 +94,7 @@ export default function App() {
         {agents.length > 0 ? (
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} conversationId={chat.id} voiceEnabled={config.voice}
             firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
-            due={due} onOpenTodos={() => setPanel('todos')}
+            due={due} onOpenLists={() => setPanel('todos')}
             onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —
@@ -121,7 +125,7 @@ export default function App() {
           </div>
         )}
         {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => { setPanel(null); loadExpiring(); }} onOpenChat={openChat} />}
-        {panel === 'todos' && <TodosPage onBack={() => setPanel(null)} onChanged={loadDue} />}
+        {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
         {panel === 'messages' && <MessengerPage dm={dm} onBack={() => setPanel(null)} />}
       </main>

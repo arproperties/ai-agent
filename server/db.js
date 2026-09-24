@@ -526,3 +526,39 @@ await db.exec(`
   -- always a handful of rows out of a list that only grows, so it gets its own partial index.
   CREATE INDEX IF NOT EXISTS idx_todos_due ON todos(user_id, remind_at) WHERE remind_at IS NOT NULL AND NOT done;
 `);
+
+// Routines: the things that come back, kept deliberately apart from todos. A todo is
+// finished and leaves; a routine never finishes, so it is not a repeat flag on that table.
+//
+// There is no "next occurrence" column on purpose. A routine is its first occurrence
+// (starts_at), an interval, and the times it was actually done — everything else is
+// derived in routines.js. So there is no schedule to drift out of step with reality, and
+// ticking a turn off and un-ticking it are one insert and one delete of the same row.
+//   every_n: "every N units". 1 + month = monthly, 3 + month = quarterly. Named every_n
+//     because EVERY is a reserved word in Postgres and would need quoting for ever after.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS routines (
+    id SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    agent_id        INTEGER REFERENCES agents(id) ON DELETE SET NULL,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    text      TEXT NOT NULL,
+    notes     TEXT,
+    starts_at BIGINT  NOT NULL,
+    every_n   INTEGER NOT NULL DEFAULT 1 CHECK (every_n BETWEEN 1 AND 366),
+    unit      TEXT    NOT NULL CHECK (unit IN ('day', 'week', 'month', 'year')),
+    paused    BOOLEAN NOT NULL DEFAULT false,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  -- One row per turn actually done. user_id is carried as well as routine_id so a read
+  -- can be scoped to its owner without joining, the way chunks.agent_id already is.
+  CREATE TABLE IF NOT EXISTS routine_completions (
+    id SERIAL PRIMARY KEY,
+    routine_id INTEGER NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
+    done_at    BIGINT  NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_routines_user ON routines(user_id, id);
+  CREATE INDEX IF NOT EXISTS idx_routine_done ON routine_completions(user_id, done_at DESC);
+`);

@@ -212,8 +212,10 @@ function TodoSheet({ t, onClose, onSaved }) {
   );
 }
 
-// ---------- full-screen Todos page ----------
-export default function TodosPage({ onBack, onChanged }) {
+// ---------- the panel under the To-do tab ----------
+// Only the list and its add box: the screen around it, and the tab strip that puts
+// Routines next door, live in Lists.jsx. Nothing in this file knows routines exist.
+export default function TodoPanel({ onChanged, onDue }) {
   const { open, done, load } = useTodos(onChanged);
   const [editing, setEditing] = useState(null);
   const [showDone, setShowDone] = useState(false);
@@ -230,36 +232,24 @@ export default function TodosPage({ onBack, onChanged }) {
   const someday = (open || []).filter((t) => !t.remind_at);
   const editingRow = editing && [...(open || []), ...done].find((t) => t.id === editing);
 
-  return (
-    <div className="sky absolute inset-0 z-20 flex flex-col">
-      <header className="space-y-3 border-b border-stroke/60 px-4 pb-4 pt-safe md:px-8">
-        <div className="flex items-center gap-2 pt-1">
-          <button onClick={onBack} aria-label="Back" className="-ml-2 grid size-10 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
-            <ChevronLeft size={22} />
-          </button>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-[22px] font-light leading-tight">To-do</h1>
-            <p className="text-xs text-mute">
-              {open === null ? 'Loading…'
-                : due.length ? `${due.length} due now · ${open.length} open`
-                : `${open.length} open${done.length ? ` · ${done.length} done` : ''}`}
-            </p>
-          </div>
-        </div>
-        <div className="mx-auto w-full max-w-3xl"><AddTodo onAdded={load} /></div>
-      </header>
+  useEffect(() => { if (open) onDue?.(due.length); }, [open, due.length, onDue]);
 
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="border-b border-stroke/60 px-4 pb-4 md:px-8">
+        <div className="mx-auto w-full max-w-3xl"><AddTodo onAdded={load} /></div>
+      </div>
       <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
         <div className="mx-auto max-w-3xl pb-6">
           {open?.length === 0 && done.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-4 py-20 text-center">
+            <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
               <span className="grid size-20 place-items-center rounded-3xl bg-gradient-to-br from-p1/25 to-p2/10 text-p1"><ListTodo size={36} strokeWidth={1.4} /></span>
               <div>
                 <p className="text-lg font-light">Nothing on your list</p>
                 <p className="max-w-xs text-sm text-mute">Add something above, or just tell an agent in chat — “remind me to renew the trade licence on 5 October”.</p>
               </div>
             </div>
-          ) : (
+          ) : open && (
             <>
               {due.length > 0 && <Group title="Due now" count={due.length} tone="text-bad">{due.map((t) => <Row key={t.id} t={t} onToggle={toggle} onOpen={(x) => setEditing(x.id)} />)}</Group>}
               {later.length > 0 && <Group title="Coming up" count={later.length} tone="text-warn">{later.map((t) => <Row key={t.id} t={t} onToggle={toggle} onOpen={(x) => setEditing(x.id)} />)}</Group>}
@@ -277,7 +267,6 @@ export default function TodosPage({ onBack, onChanged }) {
           )}
         </div>
       </div>
-
       {editingRow && <TodoSheet t={editingRow} onClose={() => setEditing(null)} onSaved={load} />}
     </div>
   );
