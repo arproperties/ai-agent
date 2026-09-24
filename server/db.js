@@ -497,3 +497,32 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_dm_members_user ON dm_members(user_id);
   CREATE INDEX IF NOT EXISTS idx_dm_messages_chat ON dm_messages(chat_id, id);
 `);
+
+// The to-do list. A reminder is remind_at and nothing more: no job runs at that moment,
+// because nothing in this app is awake when the user is not. What the time does is make
+// the todo *due*, and due work is shown the way expiring paperwork already is.
+//   agent_id / conversation_id: which agent raised it and where, so "who told me this?"
+//     has an answer. Both detach rather than cascade — losing the agent must not lose
+//     the task, exactly as documents.agent_id already works.
+//   document_id: the file it is about ("renew this licence"), detaching for the same reason.
+//   done_at: when it was ticked, NULL while it is open — the finished list sorts on it.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS todos (
+    id SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    agent_id        INTEGER REFERENCES agents(id) ON DELETE SET NULL,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    document_id     INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    text      TEXT NOT NULL,
+    notes     TEXT,
+    remind_at BIGINT,
+    done      BOOLEAN NOT NULL DEFAULT false,
+    done_at   BIGINT,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_todos_user ON todos(user_id, done, id DESC);
+  -- The badge asks "what is due for this user" on every load, and the answer is almost
+  -- always a handful of rows out of a list that only grows, so it gets its own partial index.
+  CREATE INDEX IF NOT EXISTS idx_todos_due ON todos(user_id, remind_at) WHERE remind_at IS NOT NULL AND NOT done;
+`);

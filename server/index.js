@@ -18,6 +18,7 @@ import { emailRoutes } from './emailRoutes.js';
 import { startOutbox } from './outbox.js';
 import { importRoutes, startImportQueue } from './imports.js';
 import { messengerRoutes } from './messenger.js';
+import { todoRoutes } from './todos.js';
 import { errorRoutes, recordError } from './errors.js';
 
 const app = express();
@@ -34,6 +35,7 @@ app.use('/api/imap', imapRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/imports', importRoutes);
 app.use('/api/messenger', messengerRoutes); // people-to-people chat, separate from the AI chats
+app.use('/api/todos', todoRoutes);
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -300,8 +302,10 @@ app.use('/api', (req, res) => notFound(res));
 app.use((err, req, res, next) => {
   console.error('[error]', err.message);
   // Written down as well as printed: the console scrolls away and nobody reads it, which
-  // is how a fault that hits one person every day stays invisible for weeks.
-  recordError({ userId: req.user?.id ?? null, source: 'server', message: err.message, stack: err.stack, url: req.originalUrl });
+  // is how a fault that hits one person every day stays invisible for weeks. Only faults,
+  // though — a 4xx is the app telling someone "no" on purpose, and logging those as crashes
+  // buries the real ones under typed-in dates and empty forms.
+  if (!err.status || err.status >= 500) recordError({ userId: req.user?.id ?? null, source: 'server', message: err.message, stack: err.stack, url: req.originalUrl });
   if (res.headersSent) {
     // A chat stream is already open: say what went wrong rather than just
     // cutting the connection, which leaves the app waiting on a dead reply.

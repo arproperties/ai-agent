@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ListTodo } from 'lucide-react';
 import { api, streamChat } from '../lib/api';
 import { speakText, stopSpeaking, togglePause } from '../lib/voice';
 import Icon from './Icon';
@@ -11,6 +12,7 @@ import LiveVoice from './LiveVoice';
 import Sheet from './Sheet';
 import { Welcome, InstallHint } from './FirstRun';
 import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
+import { reminder } from './Todos';
 
 const IconBtn = ({ icon, label, onClick, className = '' }) => (
   <button onClick={onClick} aria-label={label} title={label}
@@ -19,7 +21,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, conversationId, voiceEnabled, firstRun = false, expiring = [], onConversation, onMenu, onNewChat, onOpenFiles, menuBadge = 0 }) {
+export default function Chat({ user, agents, folders, conversationId, voiceEnabled, firstRun = false, expiring = [], due = [], onConversation, onMenu, onNewChat, onOpenFiles, onOpenTodos, menuBadge = 0 }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -187,6 +189,19 @@ export default function Chat({ user, agents, folders, conversationId, voiceEnabl
             <div className="flex -space-x-2">
               {agents.slice(0, 7).map((a) => <Avatar key={a.id} icon={a.icon} color={a.color} size={30} className="ring-2 ring-bg" />)}
             </div>
+            {/* A reminder that has come due is the closest thing this app has to being
+                tapped on the shoulder, so it sits above the paperwork warning. */}
+            {due.length > 0 && onOpenTodos && (
+              <button onClick={onOpenTodos}
+                className="flex w-full max-w-md items-center gap-3 rounded-2xl border border-p1/40 bg-p1/[0.09] px-3.5 py-3 text-left transition hover:bg-white/[0.07]">
+                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-p1/20 text-p1"><ListTodo size={16} /></span>
+                <span className="min-w-0 flex-1">
+                  <b className="block text-sm font-medium">{due.length === 1 ? '1 reminder is due' : `${due.length} reminders are due`}</b>
+                  <span className="block truncate text-xs text-mute">{reminder(due[0]).label} · {due[0].text}</span>
+                </span>
+                <Icon name="chevron" size={16} className="shrink-0 text-mute" />
+              </button>
+            )}
             {expiring.length > 0 && onOpenFiles && (
               <button onClick={onOpenFiles}
                 className={`flex w-full max-w-md items-center gap-3 rounded-2xl border px-3.5 py-3 text-left transition hover:bg-white/[0.07] ${

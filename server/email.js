@@ -214,6 +214,7 @@ export async function connectedMailbox(userId, ctx = {}) {
     address: acc.email || 'connected mailbox',
     canWrite,
     definitions: [...EMAIL_READ_TOOLS, ...(canWrite ? EMAIL_WRITE_TOOLS : [])],
+    status: statusFor,
     // runs one tool_use block and returns its tool_result
     run: async (block) => {
       try {

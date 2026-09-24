@@ -3,7 +3,8 @@ import { claude } from './ai.js';
 import { pickAgent } from './router.js';
 import { extractText, recall, learn } from './knowledge.js';
 import { saveUpload, processDocument, isImage, fileName, libraryCatalog } from './files.js';
-import { connectedMailbox, statusFor } from './email.js';
+import { connectedMailbox } from './email.js';
+import { todoKit } from './todos.js';
 import { chatAgents } from './access.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
@@ -33,6 +34,11 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox) 
       'Prefer official sources (u.ae, mohre.gov.ae, tax.gov.ae, dubailand.gov.ae, rera and other .gov.ae sites, DIFC/ADGM) and say when the official source differs from what you expected. ' +
       "Don't search for things answered by the user's files, memory, or stable general knowledge.",
   ];
+  parts.push(`You keep ${user.name}'s to-do list: add_todo writes something down, list_todos reads it back, ` +
+    'complete_todo ticks one off and reschedule_todo moves or drops a reminder. ' +
+    'Add a todo whenever they ask you to remember something, ask to be reminded, or say they must do something later — and say you have. ' +
+    'Check the list before answering anything about what they still have to do. The reminder is optional: set a time only when one was actually meant. ' +
+    'A reminder is not an alert — Jarvis cannot reach them outside the app, so say it will be waiting on their list, and never promise to notify them.');
   if (mailbox) {
     parts.push(`You can read ${user.name}'s email (${mailbox.address}) with search_email and read_email. Use them when they ask about their emails, ` +
       'messages from someone, bills, bookings or anything likely to be in their inbox. ' +
@@ -161,6 +167,11 @@ export async function chat(req, res) {
     onDraft: (d) => send('draft', d), // the approval card appears as the draft is written
   });
   const mailbox = email && { address: email.address, canWrite: email.canWrite };
+  // Every toolkit this turn has. The to-do list is always there; the mailbox only when one
+  // is connected. Each kit names its own tools, so a call is routed by name and nothing here
+  // has to know which feature it belongs to.
+  const kits = [todoKit(user.id, { agentId: agent.id, conversationId: convId }), ...(email ? [email] : [])];
+  const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
   const library = await libraryCatalog(user); // same every turn, so read it once
   await db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?)').run(convId, 'user', text, JSON.stringify(savedFiles));
@@ -183,7 +194,7 @@ export async function chat(req, res) {
         model: agent.model,
         max_tokens: 16000,
         system: systemPrompt(user, agent, team, memories, knowledge, library, mailbox),
-        tools: [webSearch(agent.model), ...(email ? email.definitions : [])],
+        tools: [webSearch(agent.model), ...kits.flatMap((k) => k.definitions)],
         messages: turn ? withCacheMark(convo) : convo,
       });
       stream.on('streamEvent', (ev) => {
@@ -197,7 +208,7 @@ export async function chat(req, res) {
         if (block.type === 'server_tool_use' && block.name === 'web_search') {
           send('status', { label: `Searching the web: “${String(block.input?.query || '').slice(0, 60)}”` });
         }
-        if (block.type === 'tool_use') send('status', { label: statusFor(block.name, block.input || {}) });
+        if (block.type === 'tool_use') send('status', { label: kitFor(block.name)?.status(block.name, block.input || {}) || 'Working on that…' });
         for (const c of block.citations || []) if (c.url && !cited.has(c.url)) cited.set(c.url, { url: c.url, title: c.title });
         if (block.type === 'web_search_tool_result' && Array.isArray(block.content)) {
           for (const r of block.content) if (r.url && !searched.has(r.url)) searched.set(r.url, { url: r.url, title: r.title });
@@ -208,7 +219,9 @@ export async function chat(req, res) {
       if (msg.stop_reason === 'tool_use') {
         convo.push({ role: 'assistant', content: msg.content });
         const calls = msg.content.filter((b) => b.type === 'tool_use');
-        convo.push({ role: 'user', content: await Promise.all(calls.map(email.run)) });
+        // An unknown name cannot happen — the model only sees tools we listed — but if it
+        // did, the first kit answers with "Unknown tool" rather than the turn dying here.
+        convo.push({ role: 'user', content: await Promise.all(calls.map((b) => (kitFor(b.name) ?? kits[0]).run(b))) });
         continue;
       }
       if (msg.stop_reason !== 'pause_turn') break;
