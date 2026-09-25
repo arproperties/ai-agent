@@ -39,7 +39,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [viewer, setViewer] = useState(null); // file open in the full-screen viewer
   const [details, setDetails] = useState(null); // file open in the details sheet
   const [chatFiles, setChatFiles] = useState(null); // list of this chat's attachments
-  const [drafts, setDrafts] = useState([]); // emails written this session, waiting on a tap
+  const [drafts, setDrafts] = useState([]); // every email written in this chat, whatever became of it
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
   const [carry, setCarry] = useState([]); // earlier chats picked for the message being written
@@ -58,7 +58,10 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         setCarrying([...new Set(m.flatMap((x) => x.carried || []))]);
         toBottom();
       });
-      api.get(`/email/drafts?conversation=${conversationId}&status=pending`).then((r) => setDrafts(r.drafts)).catch(() => {});
+      // Every status, not just the ones still waiting: a sent email that vanishes on
+      // reload leaves no answer to "did I send that?". The card says what became of it.
+      // Oldest first, because the list arrives newest first and these read as chat.
+      api.get(`/email/drafts?conversation=${conversationId}`).then((r) => setDrafts(r.drafts.slice().reverse())).catch(() => {});
     }
     api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
     return () => { abortRef.current?.abort(); stopSpeaking(); };

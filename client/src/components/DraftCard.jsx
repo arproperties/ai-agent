@@ -16,6 +16,16 @@ const STATE = {
 };
 
 const SETTLED = ['sent', 'failed', 'rejected'];
+
+// When it went. A card that only says "Sent" still leaves you wondering which time you
+// sent it; the clock is half the proof.
+const sentWhen = (ts) => {
+  const d = new Date(ts * 1000);
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? time : `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })}, ${time}`;
+};
+
 const EVERY = 2000;
 const TRIES = 15; // about half a minute, which is longer than a healthy send takes
 
@@ -60,6 +70,7 @@ export default function DraftCard({ draft, from, onChanged }) {
       <p className={`mb-2.5 flex items-center gap-1.5 text-xs font-medium ${s.dot}`}>
         <Send size={13} strokeWidth={2} />
         {draft.isReply ? 'Reply' : 'Email'} · {s.label}
+        {draft.status === 'sent' && draft.sentAt && ` · ${sentWhen(draft.sentAt)}`}
       </p>
 
       <dl className="space-y-1 text-[13px]">
