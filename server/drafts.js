@@ -4,7 +4,7 @@ import { db } from './db.js';
 // point of this module is that writing an email and sending one are two separate acts with
 // a human between them. server/outbox.js is the other half.
 
-export const MAX_RECIPIENTS = Number(process.env.EMAIL_MAX_RECIPIENTS) || 10;
+export const MAX_RECIPIENTS = Number(process.env.EMAIL_MAX_RECIPIENTS) || 50;
 
 const ADDRESS = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[a-z]{2,}$/i;
 const fail = (status, message) => Object.assign(new Error(message), { status });

@@ -21,7 +21,7 @@ Needs Node 22+ and PostgreSQL 14+. Keys live in `.env` at the project root:
 | `EMAIL_KEY` | Encrypts saved email passwords (32 random bytes, base64: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`). Changing it means reconnecting email. |
 | `EMAIL_SEND_PER_HOUR` | Sends allowed per user per hour, once they have turned sending on for a mailbox (default 20) |
 | `EMAIL_SEND_PER_DAY` | Sends allowed per user per day (default 100) |
-| `EMAIL_MAX_RECIPIENTS` | Most recipients on one email, To and Cc together (default 10) |
+| `EMAIL_MAX_RECIPIENTS` | Most recipients on one email, To and Cc together (default 50) |
 | `MS_CLIENT_ID`, `MS_CLIENT_SECRET` | Optional: lets users connect Outlook so agents can read their email (see below) |
 | `REGISTRATION_CODE` | Optional invite code people must enter to create an account. **Set it before putting the app online**, or anyone can sign up and use your API credits. |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Optional: notifications on the phone while the app is closed. Run `node scripts/vapid-keys.js --write` once and it adds them, printing no secret (leave off `--write` to paste them yourself). Free, and nothing is signed up for. Without them notifications are simply off. Replacing them later means everyone has to tap Allow again. |
