@@ -243,7 +243,8 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
   const [rec, setRec] = useState(null);   // null | 'recording' | 'transcribing'
   const [micErr, setMicErr] = useState('');
   const [tidying, setTidying] = useState(false);
-  const [before, setBefore] = useState(null); // the rough notes, until they type again or send
+  const [before, setBefore] = useState(null); // what was in the box before, until they type again or send
+  const [drafted, setDrafted] = useState(false); // the words came from an empty box, not from theirs
   const box = useRef();
   const pick = useRef();
   const lastTyping = useRef(0);
@@ -261,7 +262,7 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
 
   const change = (v) => {
     setText(v);
-    setBefore(null); // their own words now: there is nothing left to undo back to
+    setBefore(null); setDrafted(false); // their own words now: there is nothing left to undo back to
     if (v && Date.now() - lastTyping.current > 2500) {
       lastTyping.current = Date.now();
       api.post(`/messenger/chats/${chatId}/typing`).catch(() => {});
@@ -292,22 +293,24 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
     box.current?.focus();
   };
 
-  // "Help me say this": the rough notes go up, the tidied message comes back into the
-  // same box. Nothing is sent and nobody else sees it — pressing send is still a
-  // separate, deliberate tap, and Undo puts their own words back.
+  // The wand. With notes in the box it tidies them up; with the box empty it writes a
+  // first draft of a reply to the conversation, so nobody has to start at a blank line.
+  // Either way nothing is sent and nobody else sees it — pressing send is still a
+  // separate, deliberate tap, and Undo puts the box back as it was.
   const caretToEnd = () => requestAnimationFrame(() => {
     const el = box.current;
     if (el) { el.focus(); el.selectionStart = el.selectionEnd = el.value.length; }
   });
 
   const tidy = async () => {
+    if (tidying) return;
     const notes = text.trim();
-    if (!notes || tidying) return;
     setTidying(true); setMicErr('');
     try {
-      const { text: better } = await api.post(`/messenger/chats/${chatId}/polish`, { text: notes });
+      const { text: better, drafted: fresh } = await api.post(`/messenger/chats/${chatId}/polish`, { text: notes });
       setText(better);
-      setBefore(notes);
+      setBefore(notes);      // '' when the box was empty: Undo empties it again
+      setDrafted(!!fresh);
     } catch (e) {
       setMicErr(e.message);
     }
@@ -315,14 +318,14 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
     caretToEnd();
   };
 
-  const undo = () => { setText(before); setBefore(null); caretToEnd(); };
+  const undo = () => { setText(before); setBefore(null); setDrafted(false); caretToEnd(); };
 
   const send = () => {
     const body = text.trim();
     if (!body && !file) return;
     stopListening();
     onSend({ body, file });
-    setText(''); setFile(null); setBefore(null); lastTyping.current = 0;
+    setText(''); setFile(null); setBefore(null); setDrafted(false); lastTyping.current = 0;
     box.current?.focus();
   };
 
@@ -365,7 +368,9 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
       {before !== null && (
         <div className="mb-1.5 flex items-center gap-2 px-2 text-xs text-mute">
           <Wand2 size={13} className="shrink-0 text-emerald-300" />
-          <span className="min-w-0 flex-1 truncate">Jarvis tidied this up — check it before you send.</span>
+          <span className="min-w-0 flex-1 truncate">
+            {drafted ? 'Jarvis wrote this for you — read it before you send.' : 'Jarvis tidied this up — check it before you send.'}
+          </span>
           <button onClick={undo} className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium text-emerald-300 hover:bg-white/10">
             <Undo2 size={13} /> Undo
           </button>
@@ -380,14 +385,15 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
             <Smile size={22} />
           </button>
           <textarea ref={box} rows={1} value={text}
-            placeholder={rec === 'recording' ? 'Listening… pause when you are done' : rec ? 'Writing down what you said…' : tidying ? 'Tidying it up…' : 'Type a message'}
+            placeholder={rec === 'recording' ? 'Listening… pause when you are done' : rec ? 'Writing down what you said…' : tidying ? (text.trim() ? 'Tidying it up…' : 'Writing a reply…') : 'Type a message'}
             onChange={(e) => change(e.target.value)}
             onPaste={(e) => { const f = e.clipboardData?.files?.[0]; if (f) { e.preventDefault(); setFile(f); } }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
             className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 leading-snug outline-none placeholder:text-mute/70" />
-          <button onClick={tidy} disabled={!text.trim() || tidying} aria-label="Help me say this"
-            title="Help me say this — Jarvis tidies up your notes"
-            className={`grid size-11 shrink-0 place-items-center rounded-full transition hover:text-emerald-300 disabled:opacity-40 disabled:hover:text-mute ${
+          <button onClick={tidy} disabled={tidying}
+            aria-label={text.trim() ? 'Help me say this' : 'Write a reply for me'}
+            title={text.trim() ? 'Help me say this — Jarvis tidies up your notes' : 'Write a reply for me — Jarvis drafts one from the chat'}
+            className={`grid size-11 shrink-0 place-items-center rounded-full transition hover:text-emerald-300 disabled:opacity-40 ${
               tidying ? 'animate-pulse text-emerald-300' : 'text-mute'}`}>
             <Wand2 size={19} />
           </button>

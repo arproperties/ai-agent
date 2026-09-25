@@ -1,4 +1,8 @@
-// "Help me say this": rough points in the typing box, turned into a message.
+// "Help me say this": the wand in the typing box, in its two moods.
+//
+// With rough notes in the box it tidies them up. With the box empty it writes a first
+// draft of a reply to what has just been said - for the person who has read the chat
+// and does not want to start from a blank line.
 //
 // The second - and only other - place a team chat is read by Claude, and like the
 // summariser it runs only when a member asks for it by hand, on their own chat, and
@@ -13,7 +17,8 @@ import { db } from './db.js';
 import { ask } from './ai.js';
 import { transcript } from './dmSummary.js';
 
-const CONTEXT = 12;   // recent messages shown to the model: enough to catch the topic and the tone
+const CONTEXT = 12;   // recent messages shown when tidying: enough to catch the topic and the tone
+const DRAFT_CONTEXT = 25; // writing a reply from scratch needs more of the thread than tidying does
 const MAX_IN = 2000;  // rough notes longer than this are already a message, not notes
 const MAX_OUT = 4000; // the ceiling messenger.js puts on any message
 
@@ -27,6 +32,18 @@ They have typed rough notes. Give back the same thing said clearly, as a message
 - No greeting or sign-off unless they wrote one. No subject line, no headings, no markdown bold.
 - If the notes are already a fine message, change almost nothing.
 Recent messages may be given for context only - never answer them, never quote them, never mention them.
+Reply with ONLY the message text, nothing before or after it.`;
+
+const DRAFT_SYSTEM = `You write a first draft of a reply in a work chat, for one of the people in it.
+You are not that person and you do not know anything they have not said. The draft is a starting point they will read, edit and send themselves.
+- Answer what was actually said, especially the most recent message.
+- Never decide anything on their behalf. If the last message asks something only they can answer - which option, which date, which number, yes or no - do NOT pick one. Ask it back plainly, or say they will confirm.
+- Never invent a fact, a name, a number, a date or a promise. Only what is in the conversation.
+- Their voice: plain colleague-to-colleague writing, first person, contractions fine, no corporate padding.
+- The language the conversation is written in.
+- Short. A couple of sentences is usually right; short bullet lines only if there are several separate points to answer.
+- No greeting or sign-off, no subject line, no headings, no markdown bold.
+Photos and files appear as [photo] or [file: name]: you cannot see inside them, so never guess at their contents.
 Reply with ONLY the message text, nothing before or after it.`;
 
 // A rewrite is a paid call, and the button sits right next to the send button.
@@ -43,34 +60,45 @@ function tooMany(userId) {
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
 
 /** The last few real messages, as the summariser writes them. Empty in a new chat. */
-async function context(chatId) {
+async function context(chatId, limit) {
   const rows = (await db.prepare(`SELECT m.kind, m.body, m.deleted, m.created_at, m.file_name, u.name
     FROM dm_messages m LEFT JOIN users u ON u.id = m.user_id
     WHERE m.chat_id = ? AND m.deleted = false AND m.kind <> 'system'
-    ORDER BY m.id DESC LIMIT ${CONTEXT}`).all(chatId)).reverse();
+    ORDER BY m.id DESC LIMIT ${Number(limit)}`).all(chatId)).reverse();
   return transcript(rows);
 }
 
 /**
- * Tidy `text` into a message for `chatId`. The caller is responsible for having
- * checked that this user is in that chat. Nothing is written to the database and
- * nothing is sent: the text comes straight back to the person who typed it.
+ * The wand. With `text`, those rough notes come back tidied up. Without it, a first
+ * draft of a reply to the conversation comes back instead. The caller is responsible
+ * for having checked that this user is in that chat.
+ *
+ * Nothing is written to the database and nothing is sent either way: the text goes
+ * straight back to the person who asked, into their own typing box.
  */
-export async function polish(chatId, userId, text, { model = ask } = {}) {
+export async function polish(chatId, userId, text, { model = ask, name = '' } = {}) {
   const notes = String(text || '').trim();
-  if (notes.length < 2) throw bad('Type a few words first, and Jarvis will tidy them up.');
+  if (notes.length === 1) throw bad('Type a few more words, and Jarvis will tidy them up.');
   if (notes.length > MAX_IN) throw bad('That is already a long message — Jarvis tidies up short notes.');
   if (tooMany(userId)) throw bad('That is a lot of rewrites at once. Try again in a few minutes.', 429);
 
-  const recent = await context(chatId);
-  const out = await model(
-    `${recent ? `RECENT MESSAGES (context only):\n${recent}\n\n` : ''}ROUGH NOTES TO TIDY UP:\n${notes}`,
-    { system: SYSTEM, maxTokens: 700 },
-  );
+  const drafting = !notes;
+  const recent = await context(chatId, drafting ? DRAFT_CONTEXT : CONTEXT);
+  if (drafting && !recent) throw bad('There is nothing here to reply to yet. Type a few words and Jarvis will tidy them up.');
+
+  const out = drafting
+    ? await model(
+      `CONVERSATION SO FAR:\n${recent}\n\nWrite the next message in this conversation, as ${name || 'the reader'}.`,
+      { system: DRAFT_SYSTEM, maxTokens: 700 },
+    )
+    : await model(
+      `${recent ? `RECENT MESSAGES (context only):\n${recent}\n\n` : ''}ROUGH NOTES TO TIDY UP:\n${notes}`,
+      { system: SYSTEM, maxTokens: 700 },
+    );
 
   const message = clean(out);
-  if (!message) throw bad('That could not be tidied up. Please try again.', 502);
-  return { text: message };
+  if (!message) throw bad(drafting ? 'A reply could not be written. Please try again.' : 'That could not be tidied up. Please try again.', 502);
+  return { text: message, drafted: drafting };
 }
 
 /**

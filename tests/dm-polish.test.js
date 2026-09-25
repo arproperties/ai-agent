@@ -39,7 +39,7 @@ test('somebody outside the chat cannot have it read to tidy their notes', async 
   assert.equal(r.status, 404);
 });
 
-test('an empty box is refused rather than asking the model to invent a message', async () => {
+test('a single letter is not notes; an empty box in a silent chat has nothing to answer', async () => {
   await reset();
   const [sara, tom] = await people('Sara', 'Tom');
   const chat = await chatWith(sara, tom);
@@ -50,6 +50,38 @@ test('an empty box is refused rather than asking the model to invent a message',
   }
 });
 
+test('an empty box in a live chat is a draft reply, not a refusal', async () => {
+  await reset();
+  const [sara, tom] = await people('Sara', 'Tom');
+  const chat = await chatWith(sara, tom, [
+    [tom, 'Which entity are we scoping — Ainalreem or ARS?'],
+    [tom, 'And do you want the tech gaps in Friday\'s notes?'],
+  ]);
+
+  let seen = null;
+  const model = async (prompt) => { seen = prompt; return 'Let me confirm the entity and come back to you — happy for the tech gaps to go in Friday\'s notes.'; };
+  const out = await polish(chat.id, sara.id, '', { model, name: 'Sara' });
+
+  assert.equal(out.drafted, true, 'the app has to know these words are not hers');
+  assert.match(out.text, /Friday/);
+  // It is written as her, to what was actually said.
+  assert.match(seen, /as Sara/);
+  assert.match(seen, /Which entity are we scoping/);
+
+  // Still nothing posted: a draft lives in her typing box until she sends it.
+  const { n } = await db.prepare('SELECT COUNT(*)::int n FROM dm_messages WHERE chat_id = ?').get(chat.id);
+  assert.equal(n, 2);
+});
+
+test('a draft cannot be asked for by somebody outside the chat either', async () => {
+  await reset();
+  const [sara, tom, eve] = await people('Sara', 'Tom', 'Eve');
+  const chat = await chatWith(sara, tom, [[tom, 'Which entity are we scoping?']]);
+
+  const r = await call(h.polish, { user: eve, params: { id: chat.id }, body: { text: '' } });
+  assert.equal(r.status, 404, 'an empty box must not become a way to read a stranger\'s chat');
+});
+
 test('the notes are tidied and handed back, and nothing is posted to the chat', async () => {
   await reset();
   const [sara, tom] = await people('Sara', 'Tom');
@@ -58,6 +90,7 @@ test('the notes are tidied and handed back, and nothing is posted to the chat', 
   let seen = null;
   const model = async (prompt) => { seen = prompt; return 'Two things for Friday: a pricing tool for Subha, and a labour request workflow for Tajdar.'; };
   const out = await polish(chat.id, sara.id, 'pricing tool subha, labour workflow tajdar, need by friday', { model });
+  assert.equal(out.drafted, false, 'these are her own words, tidied');
 
   assert.match(out.text, /pricing tool/i);
   // The notes go up, and so do the messages already on her screen — as context, labelled.

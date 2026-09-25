@@ -388,14 +388,15 @@ export const messengerHandlers = {
   },
 
   /**
-   * { text } - rough notes from the typing box, handed back tidied up. Nothing is
-   * posted and nothing is stored: the answer goes to the person who typed it, and
-   * only a normal send puts anything in the chat. See dmPolish.js.
+   * { text } - rough notes from the typing box, handed back tidied up. With an empty
+   * box it is a draft reply to the conversation instead. Nothing is posted and nothing
+   * is stored either way: the answer goes to the person who asked for it, and only a
+   * normal send puts anything in the chat. See dmPolish.js.
    */
   async polish(req, res) {
     const chatId = Number(req.params.id);
     if (!await membership(chatId, req.user.id)) throw bad('Not found', 404);
-    res.json(await polish(chatId, req.user.id, req.body?.text));
+    res.json(await polish(chatId, req.user.id, req.body?.text, { name: req.user.name }));
   },
 
   // ---------- groups ----------
