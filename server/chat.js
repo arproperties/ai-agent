@@ -7,6 +7,7 @@ import { connectedMailbox } from './email.js';
 import { todoKit } from './todos.js';
 import { routineKit } from './routines.js';
 import { chatAgents } from './access.js';
+import { carry, noteCarried, pickedIds } from './chatRecap.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
 // files. The agent's model costs several times the filing model, and the whole turn is re-sent
@@ -23,7 +24,7 @@ const webSearch = (model) => ({
   max_uses: 5, // location hint isn't used: the API doesn't accept country AE; the system prompt keeps searches UAE-focused
 });
 
-function systemPrompt(user, agent, team, memories, knowledge, library, mailbox) {
+function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = []) {
   const others = team.filter((a) => a.id !== agent.id).map((a) => a.name);
   const parts = [
     agent.persona || `You are ${agent.name}, a helpful assistant.`,
@@ -72,6 +73,15 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox) 
   if (memories.length) context.push(`<memory>\nThings you remember about the user from earlier conversations:\n${memories.map((m) => `- ${m}`).join('\n')}\n</memory>`);
   if (library.length) context.push(`<file_library>\nThe user's saved files (newest first). Their content is searchable; relevant excerpts appear in <knowledge>. Files can be opened from the Shelf screen in the app.\n${library.join('\n')}\n</file_library>`);
   if (knowledge.length) context.push(`<knowledge>\nExcerpts from the user's files that may be relevant:\n${knowledge.join('\n---\n')}\n</knowledge>`);
+  // Chats the user deliberately brought into this one — the material for pulling several
+  // conversations together, so it sits above recalled excerpts in importance, and the
+  // reply has to say which chat each point came from or the person cannot check it.
+  if (carried.length) {
+    context.push(`<earlier_chats>\n${user.name} has brought these earlier chats of theirs into this conversation, to be used together here. ` +
+      'Each one is notes written from that chat\'s real messages. Use them as your source material and name the chat a point came from. ' +
+      'Never add a decision, name, number or date that is not in them, and say so plainly if something they are asking for is not there.\n\n' +
+      `${carried.map((c) => `<chat title="${c.title.replace(/"/g, "'")}">\n${c.body}\n</chat>`).join('\n\n')}\n</earlier_chats>`);
+  }
   return [
     { type: 'text', text: parts.join('\n\n'), cache_control: { type: 'ephemeral' } },
     { type: 'text', text: context.join('\n\n') },
@@ -191,7 +201,16 @@ export async function chat(req, res) {
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
   const library = await libraryCatalog(user); // same every turn, so read it once
-  await db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?)').run(convId, 'user', text, JSON.stringify(savedFiles));
+  // Chats brought in by this message, plus any brought in earlier: once a chat is carried
+  // into this conversation it stays for every message after it, which is what "this chat
+  // has both of those chats" has to mean.
+  const picked = pickedIds(req.body.carry);
+  if (picked.length) send('status', { label: picked.length > 1 ? 'Reading the chats you brought in…' : 'Reading the chat you brought in…' });
+  const { chats: carried, added } = await carry(user, convId, picked);
+  if (carried.length) send('carried', carried.map(({ id, title }) => ({ id, title })));
+  const { id: userMessageId } = await db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?) RETURNING id')
+    .run(convId, 'user', text, JSON.stringify(savedFiles));
+  if (added.length) await noteCarried(userMessageId, added);
 
   // 3. Stream the reply (with web search, and email tools when a mailbox is connected).
   //    A long search can pause the turn and email tools need a round trip: resume a few times.
@@ -210,7 +229,7 @@ export async function chat(req, res) {
       stream = claude.messages.stream({
         model: agent.model,
         max_tokens: 16000,
-        system: systemPrompt(user, agent, team, memories, knowledge, library, mailbox),
+        system: systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried),
         tools: [webSearch(agent.model), ...kits.flatMap((k) => k.definitions)],
         messages: turn ? withCacheMark(convo) : convo,
       });

@@ -11,6 +11,7 @@ import Composer from './Composer';
 import LiveVoice from './LiveVoice';
 import Sheet from './Sheet';
 import ShareSheet from './ShareSheet';
+import CarrySheet from './CarrySheet';
 import { Welcome, InstallHint } from './FirstRun';
 import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
 
@@ -41,6 +42,9 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [drafts, setDrafts] = useState([]); // emails written this session, waiting on a tap
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
+  const [carry, setCarry] = useState([]); // earlier chats picked for the message being written
+  const [carrying, setCarrying] = useState([]); // titles of the chats this conversation is already using
+  const [picking, setPicking] = useState(false); // the bring-in-a-chat sheet is open
   const abortRef = useRef();
   const scrollRef = useRef();
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
@@ -49,7 +53,11 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
 
   useEffect(() => {
     if (conversationId) {
-      api.get(`/conversations/${conversationId}/messages`).then((m) => { setMessages(m); toBottom(); });
+      api.get(`/conversations/${conversationId}/messages`).then((m) => {
+        setMessages(m);
+        setCarrying([...new Set(m.flatMap((x) => x.carried || []))]);
+        toBottom();
+      });
       api.get(`/email/drafts?conversation=${conversationId}&status=pending`).then((r) => setDrafts(r.drafts)).catch(() => {});
     }
     api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
@@ -88,10 +96,15 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     if (convId) form.append('conversationId', convId);
     form.append('text', text);
     files.forEach((f) => form.append('files', f));
+    // The chats picked for this message. They are cleared as it goes: once sent they are the
+    // conversation's, not the composer's, and the strip above the composer says so.
+    const brought = carry;
+    if (brought.length) form.append('carry', JSON.stringify(brought.map((c) => c.id)));
+    setCarry([]);
 
     const aid = `a${Date.now()}`;
     setMessages((m) => [...m,
-      { id: `u${aid}`, role: 'user', content: text, files: files.map((f) => ({ name: f.name, kind: f.type.startsWith('image/') ? 'image' : 'doc', preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : null })) },
+      { id: `u${aid}`, role: 'user', content: text, carried: brought.map((c) => c.title), files: files.map((f) => ({ name: f.name, kind: f.type.startsWith('image/') ? 'image' : 'doc', preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : null })) },
       { id: aid, role: 'assistant', content: '', streaming: true }]);
     const update = (patch) => setMessages((m) => m.map((x) => (x.id === aid ? { ...x, ...patch } : x)));
     toBottom();
@@ -111,6 +124,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           else if (event === 'files') { // saved attachments: link them so they can be viewed
             setMessages((m) => m.map((x) => (x.id === `u${aid}` ? { ...x, files: x.files.map((f) => ({ ...f, ...d.find((s) => s.name === f.name) })) } : x)));
           }
+          else if (event === 'carried') setCarrying(d.map((c) => c.title));
           else if (event === 'status') setStatus(d.label);
           else if (event === 'notice') flash(d.message);
           else if (event === 'error') update({ error: d.message });
@@ -269,7 +283,17 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       </div>
 
       <div className="mx-auto w-full max-w-3xl">
-        <Composer busy={busy} voiceEnabled={voiceEnabled} onSend={send} onStop={() => abortRef.current?.abort()}
+        {/* What this conversation is working from, once something has been brought in: the
+            answer to "does this chat have both of those chats in it". */}
+        {carrying.length > 0 && (
+          <div className="flex items-center gap-2 px-4 pt-1 text-xs text-mute md:px-7">
+            <Icon name="history" size={13} className="shrink-0 text-p1" />
+            <span className="truncate">Using {carrying.join(' · ')}</span>
+          </div>
+        )}
+        <Composer busy={busy} voiceEnabled={voiceEnabled} carry={carry} onPickChats={() => setPicking(true)}
+          onDropChat={(id) => setCarry((c) => c.filter((x) => x.id !== id))}
+          onSend={send} onStop={() => abortRef.current?.abort()}
           onVoiceState={(s) => { stopSpeaking(); setOrb(s); }} onError={flash} />
       </div>
 
@@ -287,6 +311,9 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       )}
       {sharing && (
         <ShareSheet dm={dm} messageId={sharing} onClose={() => setSharing(null)} onDone={flash} />
+      )}
+      {picking && (
+        <CarrySheet agents={agents} currentId={convId} picked={carry} onClose={() => setPicking(false)} onDone={setCarry} />
       )}
       {viewer && <FileViewer d={viewer} onClose={() => setViewer(null)} onInfo={(d) => { setViewer(null); setDetails(d); }} />}
       {details && <FileDetail d={details} folders={folders} me={user} onClose={() => setDetails(null)} onChanged={() => {}} />}

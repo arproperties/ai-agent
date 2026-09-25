@@ -631,3 +631,32 @@ await db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_reminded_todo    ON reminders_sent(todo_id, due_at)    WHERE todo_id IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_reminded_routine ON reminders_sent(routine_id, due_at) WHERE routine_id IS NOT NULL;
 `);
+
+// An earlier chat brought into the one open now — the bookkeeping behind server/chatRecap.js.
+//
+// A chat normally sees only its own last 20 messages, so points that live in chat A and
+// chat B cannot reach chat C. These two tables are how they get there.
+//   carried_chats: which chats were brought into which message. Its own table rather than
+//     a column on messages, because it is a list, and because the same conversation can be
+//     brought in by one message and still count for every message after it.
+//     title is copied in, not read back through source_id, so the record survives the
+//     source chat being renamed or deleted — what was brought in stays true.
+//   chat_recaps: the recap of one chat, cached. Summarising is a paid call and the recap
+//     is re-read on every later message, so it is written down and only made again when
+//     that chat has grown: through_id is the last message it was written from.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS carried_chats (
+    id SERIAL PRIMARY KEY,
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    source_id  INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_carried_message ON carried_chats(message_id);
+  CREATE TABLE IF NOT EXISTS chat_recaps (
+    conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    through_id INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+`);

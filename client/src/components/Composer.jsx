@@ -4,7 +4,7 @@ import { listenUntilSilence, finishListening, stopListening, unlockAudio } from 
 
 const ACCEPT = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
-export default function Composer({ busy, voiceEnabled, onSend, onStop, onVoiceState, onError }) {
+export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, onDropChat, onSend, onStop, onVoiceState, onError }) {
   const [text, setText] = useState('');
   const [files, setFiles] = useState([]);
   const [rec, setRec] = useState(null); // null | 'recording' | 'transcribing'
@@ -64,6 +64,20 @@ export default function Composer({ busy, voiceEnabled, onSend, onStop, onVoiceSt
 
   return (
     <form onSubmit={submit} className="px-3 pb-safe pt-2 md:px-6">
+      {/* Chats brought in stay listed until the message is sent, and each one can be taken
+          back off — the same chips as an attachment, because it is the same idea. */}
+      {carry.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {carry.map((c) => (
+            <span key={c.id} className="flex max-w-[260px] items-center gap-1.5 rounded-full border border-p1/40 bg-p1/15 py-1 pl-3 pr-1 text-xs">
+              <Icon name="history" size={12} className="shrink-0 text-p1" />
+              <span className="truncate">{c.title}</span>
+              <button type="button" onClick={() => onDropChat(c.id)} aria-label={`Leave out ${c.title}`}
+                className="grid size-6 place-items-center rounded-full hover:bg-white/10"><Icon name="x" size={13} /></button>
+            </span>
+          ))}
+        </div>
+      )}
       {files.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-1.5">
           {files.map((f, i) => (
@@ -82,6 +96,12 @@ export default function Composer({ busy, voiceEnabled, onSend, onStop, onVoiceSt
           className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
           <Icon name="clip" />
         </button>
+        {onPickChats && (
+          <button type="button" onClick={onPickChats} aria-label="Bring in another chat" title="Bring in another chat"
+            className={`grid size-10 shrink-0 place-items-center rounded-full hover:bg-white/10 hover:text-txt ${carry.length ? 'text-p1' : 'text-mute'}`}>
+            <Icon name="history" />
+          </button>
+        )}
         <textarea ref={areaRef} rows={1} value={text} onKeyDown={onKey}
           onChange={(e) => { setText(e.target.value); grow(e.target); }}
           placeholder={rec === 'recording' ? 'Listening… pause when you are done'

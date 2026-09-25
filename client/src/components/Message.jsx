@@ -49,6 +49,14 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
     return (
       <div className="rise ml-auto max-w-[85%]">
         <Attachments files={msg.files} onOpenFile={onOpenFile} />
+        {/* Which earlier chats this message brought in, so scrolling back later still says
+            where the answer's material came from. */}
+        {msg.carried?.length > 0 && (
+          <div className="mb-1.5 flex items-center justify-end gap-1.5 pr-1 text-[11px] text-mute">
+            <Icon name="history" size={12} className="shrink-0 text-p1" />
+            <span className="truncate">Brought in {msg.carried.join(' · ')}</span>
+          </div>
+        )}
         {msg.content && (
           <div className="whitespace-pre-wrap break-words rounded-3xl rounded-br-lg border border-p1/30 bg-gradient-to-br from-p1/30 to-p2/20 px-4 py-2.5">
             {msg.content}
