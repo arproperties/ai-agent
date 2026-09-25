@@ -371,7 +371,7 @@ function ChatInfo({ chat, dm, onClose, onLeft }) {
 }
 
 // ---------- the page ----------
-export default function MessengerPage({ dm, openChatId = null, onOpened, onBack }) {
+export default function MessengerPage({ dm, openChatId = null, onOpened, onBack, voiceEnabled }) {
   const [openId, setOpenId] = useState(openChatId);
   const [mode, setMode] = useState('list'); // 'list' | 'new'
   const [info, setInfo] = useState(false);
@@ -409,7 +409,7 @@ export default function MessengerPage({ dm, openChatId = null, onOpened, onBack 
       </section>
       <section className={`${openId ? 'flex' : 'hidden md:flex'} min-w-0 flex-1 flex-col`}>
         {chat ? (
-          <MessengerChat key={chat.id} chat={chat} dm={dm} onBack={() => setOpenId(null)} onInfo={() => setInfo(true)} />
+          <MessengerChat key={chat.id} chat={chat} dm={dm} voiceEnabled={voiceEnabled} onBack={() => setOpenId(null)} onInfo={() => setInfo(true)} />
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
             <div className="relative mb-2 grid size-32 place-items-center">

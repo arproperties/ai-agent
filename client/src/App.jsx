@@ -152,7 +152,7 @@ export default function App() {
         {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => { setPanel(null); loadExpiring(); }} onOpenChat={openChat} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
-        {panel === 'messages' && <MessengerPage dm={dm} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
+        {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
       </main>
 
       {editing && (

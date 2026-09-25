@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import {
   ChevronLeft, Check, CheckCheck, Clock, AlertCircle, Paperclip, SendHorizontal, Reply, Copy, Trash2,
   X, ArrowDown, FileText, Download, Users, ChevronDown, Ban, Smile, Info, Sparkles, RefreshCw,
-  Flag, ListChecks, HelpCircle, MessageSquareText,
+  Flag, ListChecks, HelpCircle, MessageSquareText, Mic, Square,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { onLive } from '../lib/live';
+import { listenUntilSilence, finishListening, stopListening } from '../lib/voice';
 import Sheet from './Sheet';
 
 // ---------- small shared helpers (also used by Messenger.jsx) ----------
@@ -235,10 +236,12 @@ const EMOJI = ['😀', '😂', '🥰', '😍', '😊', '😉', '😎', '🤔', '
   '👍', '👎', '👏', '🙏', '💪', '👌', '🤝', '🙌', '👋', '🤲', '❤️', '💚', '🔥', '🎉', '✨', '💯',
   '✅', '❌', '⭐', '📌', '📎', '📅', '⏰', '📞', '📧', '🏠', '🏢', '💼', '💰', '🚗', '✈️', '☕'];
 
-function Composer({ chatId, reply, onCancelReply, replyName, onSend }) {
+function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnabled }) {
   const [text, setText] = useState('');
   const [emoji, setEmoji] = useState(false);
   const [file, setFile] = useState(null);
+  const [rec, setRec] = useState(null);   // null | 'recording' | 'transcribing'
+  const [micErr, setMicErr] = useState('');
   const box = useRef();
   const pick = useRef();
   const lastTyping = useRef(0);
@@ -268,9 +271,28 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend }) {
     change(text.slice(0, at) + e + text.slice(end));
     requestAnimationFrame(() => { if (el) { el.focus(); el.selectionStart = el.selectionEnd = at + e.length; } });
   };
+  // Speaking fills the box rather than sending: a mis-heard word can be fixed
+  // before a real person reads it.
+  useEffect(() => () => stopListening(), []);
+
+  const toggleMic = async () => {
+    if (rec === 'recording') return finishListening(); // tapped to stop: keep what was said
+    setMicErr('');
+    setRec('recording');
+    try {
+      const said = await listenUntilSilence({ onCaptured: () => setRec('transcribing') });
+      if (said) change([text.trim(), said].filter(Boolean).join(' '));
+    } catch (e) {
+      setMicErr(e.message);
+    }
+    setRec(null);
+    box.current?.focus();
+  };
+
   const send = () => {
     const body = text.trim();
     if (!body && !file) return;
+    stopListening();
     onSend({ body, file });
     setText(''); setFile(null); lastTyping.current = 0;
     box.current?.focus();
@@ -312,6 +334,7 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend }) {
           </div>
         </>
       )}
+      {micErr && <div className="mb-1.5 px-2 text-xs text-rose-300">{micErr}</div>}
       <div className="flex items-end gap-2">
         <input ref={pick} type="file" hidden onChange={(e) => { const f = e.target.files[0]; if (f) setFile(f); e.target.value = ''; }} />
         <div className="flex min-w-0 flex-1 items-end rounded-[24px] border border-white/10 bg-white/[0.07] transition focus-within:border-emerald-400/50 focus-within:bg-white/[0.09]">
@@ -319,7 +342,8 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend }) {
             className={`grid size-11 shrink-0 place-items-center rounded-full transition hover:text-txt ${emoji ? 'text-emerald-300' : 'text-mute'}`}>
             <Smile size={22} />
           </button>
-          <textarea ref={box} rows={1} value={text} placeholder="Type a message"
+          <textarea ref={box} rows={1} value={text}
+            placeholder={rec === 'recording' ? 'Listening… pause when you are done' : rec ? 'Writing down what you said…' : 'Type a message'}
             onChange={(e) => change(e.target.value)}
             onPaste={(e) => { const f = e.clipboardData?.files?.[0]; if (f) { e.preventDefault(); setFile(f); } }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
@@ -329,6 +353,17 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend }) {
             <Paperclip size={20} />
           </button>
         </div>
+        {voiceEnabled && (
+          <button onClick={toggleMic} disabled={rec === 'transcribing'}
+            aria-label={rec === 'recording' ? 'Stop listening' : 'Speak your message'}
+            title={rec === 'recording' ? 'Stop listening' : 'Speak your message'}
+            className={`grid size-11 shrink-0 place-items-center rounded-full transition active:scale-95 disabled:opacity-45 ${
+              rec === 'recording'
+                ? 'animate-pulse bg-rose-500 text-white shadow-lg shadow-rose-500/30'
+                : 'border border-white/10 bg-white/[0.07] text-mute hover:text-txt'}`}>
+            {rec === 'recording' ? <Square size={18} /> : <Mic size={20} />}
+          </button>
+        )}
         <button onClick={send} aria-label="Send" disabled={!text.trim() && !file}
           className="grid size-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 text-white shadow-lg shadow-emerald-500/30 transition hover:brightness-110 active:scale-95 disabled:opacity-45 disabled:shadow-none">
           <SendHorizontal size={20} />
@@ -455,7 +490,7 @@ export function ChatSummary({ chat, onClose }) {
 }
 
 // ---------- the conversation ----------
-export default function MessengerChat({ chat, dm, onBack, onInfo }) {
+export default function MessengerChat({ chat, dm, onBack, onInfo, voiceEnabled }) {
   const me = dm.me;
   const [messages, setMessages] = useState(null);
   const [summary, setSummary] = useState(false);
@@ -715,7 +750,7 @@ export default function MessengerChat({ chat, dm, onBack, onInfo }) {
         </button>
       )}
 
-      <Composer chatId={chatId} reply={reply} replyName={reply && nameOf(reply.userId)} onCancelReply={() => setReply(null)} onSend={send} />
+      <Composer chatId={chatId} reply={reply} replyName={reply && nameOf(reply.userId)} onCancelReply={() => setReply(null)} onSend={send} voiceEnabled={voiceEnabled} />
 
       {menu && (
         <Menu at={menu} mine={menu.m.userId === me.id} onClose={() => setMenu(null)}
