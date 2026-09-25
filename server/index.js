@@ -22,7 +22,7 @@ import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
-import { saifsysRoutes, startSaifsys } from './saifsys.js';
+import { saifsysRoutes } from './saifsys.js';
 import { errorRoutes, recordError } from './errors.js';
 
 const app = express();
@@ -348,7 +348,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // The buzz when a to-do or a routine falls due. The badge and the first screen are
   // unchanged and keep working on their own if this timer ever stops.
   startReminders();
-  // Each morning, today's saifsys checkouts become one 11am reminder. Off until SAIFSYS_API_KEY is set.
-  startSaifsys();
+  // The saifsys morning checkout reminder (startSaifsys in server/saifsys.js) is on hold
+  // by the user's choice, 2026-09-25: they ask Jarvis instead. The tool still works.
   console.log(`Jarvis server → http://localhost:${PORT}`);
 });
