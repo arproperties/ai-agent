@@ -2,8 +2,9 @@
 //
 // Kept apart from the AI chats on purpose — its own tables (dm_*), its own routes
 // (/api/messenger), and none of it reaches Claude on its own. The single exception is
-// asked for by hand: a member tapping "Summarise" sends that one chat to the model, in
-// dmSummary.js and nowhere else.
+// asked for by hand, by a member, about their own chat: "Summarise" (dmSummary.js) and
+// "help me say this", which tidies up what one person has typed (dmPolish.js). Those
+// two files are the whole of it.
 //
 // "Live" is one Server-Sent Events stream per open app (GET /events). Sending, reading
 // and typing are ordinary POSTs; the server then pushes the result down the streams of
@@ -17,6 +18,7 @@ import { extname } from 'node:path';
 import { db, tx } from './db.js';
 import { summarise, forget } from './dmSummary.js';
 import { shareReply } from './shareReply.js';
+import { polish } from './dmPolish.js';
 import { sendPush } from './push.js';
 import { DATA_DIR } from './config.js';
 
@@ -385,6 +387,17 @@ export const messengerHandlers = {
     res.json(await summarise(chatId, req.user.id, { fresh: !!req.body?.fresh }));
   },
 
+  /**
+   * { text } - rough notes from the typing box, handed back tidied up. Nothing is
+   * posted and nothing is stored: the answer goes to the person who typed it, and
+   * only a normal send puts anything in the chat. See dmPolish.js.
+   */
+  async polish(req, res) {
+    const chatId = Number(req.params.id);
+    if (!await membership(chatId, req.user.id)) throw bad('Not found', 404);
+    res.json(await polish(chatId, req.user.id, req.body?.text));
+  },
+
   // ---------- groups ----------
   /** Any member may rename a group, as in WhatsApp's default. */
   async rename(req, res) {
@@ -481,6 +494,7 @@ messengerRoutes.post('/chats/:id/share', wrap(h.share));
 messengerRoutes.post('/chats/:id/read', wrap(h.read));
 messengerRoutes.post('/chats/:id/typing', wrap(h.typing));
 messengerRoutes.post('/chats/:id/summary', wrap(h.summarise));
+messengerRoutes.post('/chats/:id/polish', wrap(h.polish));
 messengerRoutes.post('/chats/:id/members', wrap(h.addMembers));
 messengerRoutes.delete('/chats/:id/members/:userId', wrap(h.removeMember));
 messengerRoutes.post('/chats/:id/members/:userId/admin', wrap(h.makeAdmin));

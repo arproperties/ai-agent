@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   ChevronLeft, Check, CheckCheck, Clock, AlertCircle, Paperclip, SendHorizontal, Reply, Copy, Trash2,
   X, ArrowDown, FileText, Download, Users, ChevronDown, Ban, Smile, Info, Sparkles, RefreshCw,
-  Flag, ListChecks, HelpCircle, MessageSquareText, Mic, Square,
+  Flag, ListChecks, HelpCircle, MessageSquareText, Mic, Square, Wand2, Undo2,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { onLive } from '../lib/live';
@@ -242,6 +242,8 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
   const [file, setFile] = useState(null);
   const [rec, setRec] = useState(null);   // null | 'recording' | 'transcribing'
   const [micErr, setMicErr] = useState('');
+  const [tidying, setTidying] = useState(false);
+  const [before, setBefore] = useState(null); // the rough notes, until they type again or send
   const box = useRef();
   const pick = useRef();
   const lastTyping = useRef(0);
@@ -259,6 +261,7 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
 
   const change = (v) => {
     setText(v);
+    setBefore(null); // their own words now: there is nothing left to undo back to
     if (v && Date.now() - lastTyping.current > 2500) {
       lastTyping.current = Date.now();
       api.post(`/messenger/chats/${chatId}/typing`).catch(() => {});
@@ -289,12 +292,37 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
     box.current?.focus();
   };
 
+  // "Help me say this": the rough notes go up, the tidied message comes back into the
+  // same box. Nothing is sent and nobody else sees it — pressing send is still a
+  // separate, deliberate tap, and Undo puts their own words back.
+  const caretToEnd = () => requestAnimationFrame(() => {
+    const el = box.current;
+    if (el) { el.focus(); el.selectionStart = el.selectionEnd = el.value.length; }
+  });
+
+  const tidy = async () => {
+    const notes = text.trim();
+    if (!notes || tidying) return;
+    setTidying(true); setMicErr('');
+    try {
+      const { text: better } = await api.post(`/messenger/chats/${chatId}/polish`, { text: notes });
+      setText(better);
+      setBefore(notes);
+    } catch (e) {
+      setMicErr(e.message);
+    }
+    setTidying(false);
+    caretToEnd();
+  };
+
+  const undo = () => { setText(before); setBefore(null); caretToEnd(); };
+
   const send = () => {
     const body = text.trim();
     if (!body && !file) return;
     stopListening();
     onSend({ body, file });
-    setText(''); setFile(null); lastTyping.current = 0;
+    setText(''); setFile(null); setBefore(null); lastTyping.current = 0;
     box.current?.focus();
   };
 
@@ -334,6 +362,15 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
           </div>
         </>
       )}
+      {before !== null && (
+        <div className="mb-1.5 flex items-center gap-2 px-2 text-xs text-mute">
+          <Wand2 size={13} className="shrink-0 text-emerald-300" />
+          <span className="min-w-0 flex-1 truncate">Jarvis tidied this up — check it before you send.</span>
+          <button onClick={undo} className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium text-emerald-300 hover:bg-white/10">
+            <Undo2 size={13} /> Undo
+          </button>
+        </div>
+      )}
       {micErr && <div className="mb-1.5 px-2 text-xs text-rose-300">{micErr}</div>}
       <div className="flex items-end gap-2">
         <input ref={pick} type="file" hidden onChange={(e) => { const f = e.target.files[0]; if (f) setFile(f); e.target.value = ''; }} />
@@ -343,11 +380,17 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
             <Smile size={22} />
           </button>
           <textarea ref={box} rows={1} value={text}
-            placeholder={rec === 'recording' ? 'Listening… pause when you are done' : rec ? 'Writing down what you said…' : 'Type a message'}
+            placeholder={rec === 'recording' ? 'Listening… pause when you are done' : rec ? 'Writing down what you said…' : tidying ? 'Tidying it up…' : 'Type a message'}
             onChange={(e) => change(e.target.value)}
             onPaste={(e) => { const f = e.clipboardData?.files?.[0]; if (f) { e.preventDefault(); setFile(f); } }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
             className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 leading-snug outline-none placeholder:text-mute/70" />
+          <button onClick={tidy} disabled={!text.trim() || tidying} aria-label="Help me say this"
+            title="Help me say this — Jarvis tidies up your notes"
+            className={`grid size-11 shrink-0 place-items-center rounded-full transition hover:text-emerald-300 disabled:opacity-40 disabled:hover:text-mute ${
+              tidying ? 'animate-pulse text-emerald-300' : 'text-mute'}`}>
+            <Wand2 size={19} />
+          </button>
           <button onClick={() => pick.current.click()} aria-label="Attach a photo or file" title="Attach a photo or file"
             className="grid size-11 shrink-0 place-items-center rounded-full text-mute transition hover:text-txt">
             <Paperclip size={20} />
