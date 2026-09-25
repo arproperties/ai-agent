@@ -73,6 +73,37 @@ test('an empty box in a live chat is a draft reply, not a refusal', async () => 
   assert.equal(n, 2);
 });
 
+test('the draft is written for the person who asked, from what is remembered about them', async () => {
+  await reset();
+  const [francis, rona, gillani] = await people('Francis', 'Rona', 'Gillani');
+  const chat = await chatWith(francis, rona, [[rona, 'Who is logging the GateHub requests this week?']]);
+
+  const remember = db.prepare('INSERT INTO memories (user_id, text) VALUES (?, ?)');
+  await remember.run(francis.id, 'Francis runs IT and owns the GateHub request process');
+  await remember.run(gillani.id, 'Gillani handles the quarterly VAT filing');
+
+  let seen = null;
+  const model = async (prompt) => { seen = prompt; return 'That one is mine — send them over and I will log them.'; };
+  await polish(chat.id, francis.id, '', { model, name: 'Francis' });
+
+  assert.match(seen, /ABOUT YOU/);
+  assert.match(seen, /owns the GateHub request process/, 'his own standing is what makes it his draft');
+  assert.doesNotMatch(seen, /VAT filing/, 'another person\'s memories are not his context');
+});
+
+test('a draft still comes back when there is nothing remembered about the person', async () => {
+  await reset();
+  const [francis, rona] = await people('Francis', 'Rona');
+  const chat = await chatWith(francis, rona, [[rona, 'Are we still on for Friday?']]);
+
+  let seen = null;
+  const model = async (prompt) => { seen = prompt; return 'Yes — Friday still works for me.'; };
+  const out = await polish(chat.id, francis.id, '', { model, name: 'Francis' });
+
+  assert.doesNotMatch(seen, /ABOUT YOU/, 'an empty memory is left out rather than sent as an empty heading');
+  assert.equal(out.drafted, true);
+});
+
 test('a draft cannot be asked for by somebody outside the chat either', async () => {
   await reset();
   const [sara, tom, eve] = await people('Sara', 'Tom', 'Eve');

@@ -281,14 +281,23 @@ export function retrievalScope(userId, shelves) {
   };
 }
 
+/**
+ * What this app remembers about one person. Memories are facts about a person, never
+ * about the company, so they are never shared and never scoped by shelf - which is
+ * also why this is the one part of recall that can be used on its own, away from the
+ * document shelves. `qvec` is optional: without it the ranking is keyword-only.
+ */
+export async function personalMemories(user, query, qvec, k = 12) {
+  const { n } = await db.prepare('SELECT COUNT(*)::int n FROM memories WHERE user_id = ?').get(user.id);
+  if (n <= 25) { // small memory: include it all
+    return (await db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id').all(user.id)).map((r) => r.text);
+  }
+  return search('memories', { sql: 't.user_id = ?', params: [user.id] }, query, qvec, k);
+}
+
 export async function recall(user, query) {
   const [qvec] = await embed([query]);
-  const { n: memCount } = await db.prepare('SELECT COUNT(*)::int n FROM memories WHERE user_id = ?').get(user.id);
-  // Memories are facts about a person, never about the company, so they are never
-  // shared and never scoped by shelf.
-  const memories = memCount <= 25 // small memory: include it all
-    ? (await db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id').all(user.id)).map((r) => r.text)
-    : await search('memories', { sql: 't.user_id = ?', params: [user.id] }, query, qvec, 12);
+  const memories = await personalMemories(user, query, qvec);
   const knowledge = await search('chunks', retrievalScope(user.id, await shelfIds(user)), query, qvec, 6);
   return { memories, knowledge };
 }

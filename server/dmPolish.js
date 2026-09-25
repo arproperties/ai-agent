@@ -4,6 +4,12 @@
 // draft of a reply to what has just been said - for the person who has read the chat
 // and does not want to start from a blank line.
 //
+// A draft is written for one person in particular. Whoever taps it, the model is told
+// who they are and what this app remembers about them - their job, what they look
+// after, how they work - so the reply is theirs to send rather than anybody's. Their
+// documents are deliberately left out: a shelf excerpt in the box is one careless tap
+// away from the whole group, and that is not a risk a convenience should carry.
+//
 // The second - and only other - place a team chat is read by Claude, and like the
 // summariser it runs only when a member asks for it by hand, on their own chat, and
 // stores nothing back. What is different here is the direction: nothing is posted.
@@ -14,8 +20,9 @@
 // that is actually happening rather than in a vacuum - the same messages that person
 // is already reading on screen.
 import { db } from './db.js';
-import { ask } from './ai.js';
+import { ask, embed } from './ai.js';
 import { transcript } from './dmSummary.js';
+import { personalMemories } from './knowledge.js';
 
 const CONTEXT = 12;   // recent messages shown when tidying: enough to catch the topic and the tone
 const DRAFT_CONTEXT = 25; // writing a reply from scratch needs more of the thread than tidying does
@@ -35,8 +42,10 @@ Recent messages may be given for context only - never answer them, never quote t
 Reply with ONLY the message text, nothing before or after it.`;
 
 const DRAFT_SYSTEM = `You write a first draft of a reply in a work chat, for one of the people in it.
-You are not that person and you do not know anything they have not said. The draft is a starting point they will read, edit and send themselves.
+You are not that person. The draft is a starting point they will read, edit and send themselves.
 - Answer what was actually said, especially the most recent message.
+- Write from where they actually stand: their job, what they look after, what is theirs to answer and what is somebody else's. ABOUT YOU notes, if given, are what this app remembers about them - use them to place them in the conversation, never repeat them back as if announcing themselves.
+- Match how they write earlier in this transcript: their length, their greetings or lack of them, their punctuation.
 - Never decide anything on their behalf. If the last message asks something only they can answer - which option, which date, which number, yes or no - do NOT pick one. Ask it back plainly, or say they will confirm.
 - Never invent a fact, a name, a number, a date or a promise. Only what is in the conversation.
 - Their voice: plain colleague-to-colleague writing, first person, contractions fine, no corporate padding.
@@ -86,9 +95,13 @@ export async function polish(chatId, userId, text, { model = ask, name = '' } = 
   const recent = await context(chatId, drafting ? DRAFT_CONTEXT : CONTEXT);
   if (drafting && !recent) throw bad('There is nothing here to reply to yet. Type a few words and Jarvis will tidy them up.');
 
+  const me = name || 'the reader';
   const out = drafting
     ? await model(
-      `CONVERSATION SO FAR:\n${recent}\n\nWrite the next message in this conversation, as ${name || 'the reader'}.`,
+      [`CONVERSATION SO FAR:\n${recent}`,
+        await aboutMe(userId, recent),
+        `Write the next message in this conversation, as ${me}.`,
+      ].filter(Boolean).join('\n\n'),
       { system: DRAFT_SYSTEM, maxTokens: 700 },
     )
     : await model(
@@ -99,6 +112,24 @@ export async function polish(chatId, userId, text, { model = ask, name = '' } = 
   const message = clean(out);
   if (!message) throw bad(drafting ? 'A reply could not be written. Please try again.' : 'That could not be tidied up. Please try again.', 502);
   return { text: message, drafted: drafting };
+}
+
+/**
+ * What this app remembers about the person tapping the wand, so the draft answers from
+ * where they stand. Memories only - never their shelf, and never anybody else's. A
+ * failure here is not worth losing the draft over: the reply is simply less personal.
+ */
+async function aboutMe(userId, query) {
+  try {
+    const user = await db.prepare('SELECT id, name FROM users WHERE id = ?').get(userId);
+    if (!user) return '';
+    const [qvec] = await embed([query]).catch(() => []);
+    const lines = await personalMemories(user, query, qvec, 10);
+    if (!lines.length) return '';
+    return `ABOUT YOU (what this app remembers about ${user.name}, for context only - never quote it):\n${lines.map((m) => `- ${m}`).join('\n')}`;
+  } catch {
+    return '';
+  }
 }
 
 /**
