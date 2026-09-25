@@ -660,3 +660,17 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
 `);
+
+// saifsys jobs that run once a day (server/saifsys.js). One row per job per Dubai day,
+// written the moment the job claims the day, so a restart or a second tick never makes a
+// second reminder. Its own small table so the next saifsys job just uses a new job name.
+//   found: how many rows saifsys returned — kept so "did it run, and what did it see" has an answer.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS saifsys_runs (
+    job TEXT NOT NULL,
+    day DATE NOT NULL,
+    found INTEGER NOT NULL DEFAULT 0,
+    ran_at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (job, day)
+  );
+`);

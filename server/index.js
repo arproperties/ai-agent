@@ -22,6 +22,7 @@ import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
+import { saifsysRoutes, startSaifsys } from './saifsys.js';
 import { errorRoutes, recordError } from './errors.js';
 
 const app = express();
@@ -42,6 +43,7 @@ app.use('/api/messenger', messengerRoutes); // people-to-people chat, separate f
 app.use('/api/todos', todoRoutes);
 app.use('/api/routines', routineRoutes); // things that come back, kept apart from the one-off todos
 app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
+app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -346,5 +348,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // The buzz when a to-do or a routine falls due. The badge and the first screen are
   // unchanged and keep working on their own if this timer ever stops.
   startReminders();
+  // Each morning, today's saifsys checkouts become one 11am reminder. Off until SAIFSYS_API_KEY is set.
+  startSaifsys();
   console.log(`Jarvis server → http://localhost:${PORT}`);
 });
