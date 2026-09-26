@@ -674,3 +674,60 @@ await db.exec(`
     PRIMARY KEY (job, day)
   );
 `);
+
+// Meetings (server/meetings.js): a recording, turned into who-said-what by OpenAI's speech
+// model and then summarised by Claude. Four tables of their own; nothing else reads them.
+//   voice_profiles: a short sample of one person's voice, kept as a data URL because that is
+//     exactly the form the speech API takes it in, and it is small (8 seconds, ~70 KB).
+//   meetings.speakers: the voice_profile ids picked for this meeting (JSON), at most four —
+//     the speech API names up to four known voices per request.
+//   meeting_parts: the recording arrives in ten-minute pieces as it is made, so a phone that
+//     dies at 1h50 still leaves 1h50. offset_s is where the piece starts in the meeting.
+//   meeting_lines: what was said. speaker NULL means a voice nobody taught Jarvis.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS voice_profiles (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name   TEXT NOT NULL,
+    sample TEXT NOT NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_profiles_name ON voice_profiles(user_id, lower(name));
+  CREATE TABLE IF NOT EXISTS meetings (
+    id SERIAL PRIMARY KEY,
+    user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title    TEXT NOT NULL,
+    status   TEXT NOT NULL DEFAULT 'recording',
+    speakers TEXT NOT NULL DEFAULT '[]',
+    summary  TEXT,
+    error    TEXT,
+    duration_s INTEGER NOT NULL DEFAULT 0,
+    created_at BIGINT DEFAULT ${NOW},
+    ended_at   BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings(user_id, id DESC);
+  CREATE TABLE IF NOT EXISTS meeting_parts (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    seq      INTEGER NOT NULL,
+    offset_s REAL NOT NULL DEFAULT 0,
+    path     TEXT NOT NULL,
+    mime     TEXT NOT NULL,
+    status   TEXT NOT NULL DEFAULT 'waiting',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error    TEXT,
+    created_at BIGINT DEFAULT ${NOW},
+    UNIQUE (meeting_id, seq)
+  );
+  CREATE INDEX IF NOT EXISTS idx_meeting_parts_waiting ON meeting_parts(id) WHERE status = 'waiting';
+  CREATE TABLE IF NOT EXISTS meeting_lines (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    seq     INTEGER NOT NULL,
+    start_s REAL NOT NULL,
+    end_s   REAL NOT NULL,
+    speaker TEXT,
+    text    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_meeting_lines ON meeting_lines(meeting_id, start_s);
+`);

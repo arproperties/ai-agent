@@ -35,6 +35,7 @@ const TABLES = [
   'imports', 'documents', 'chunks', 'memories', 'outlook_accounts', 'imap_accounts', 'email_drafts', 'email_action_log',
   'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
   'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs',
+  'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

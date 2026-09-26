@@ -6,6 +6,7 @@ import { saveUpload, processDocument, isImage, isVideo, fileName, libraryCatalog
 import { connectedMailbox } from './email.js';
 import { todoKit } from './todos.js';
 import { routineKit } from './routines.js';
+import { meetingKit } from './meetings.js';
 import { saifsysKit, saifsysConfigured } from './saifsys.js';
 import { chatAgents } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
@@ -50,6 +51,8 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'complete_routine and pause_routine. Use a routine the moment they say "every", "each", "daily", "weekly", "monthly" or "yearly", ' +
     'and a todo for anything done once. A todo is finished and gone; a routine comes round again. ' +
     'When you are asked what is outstanding, check both lists. Routines cannot notify them either.');
+  parts.push(`${user.name} can record meetings in the app. list_meetings and read_meeting read them back — summary, decisions, ` +
+    'action items and who said what. Use them for any question about a meeting, and name who said it.');
   if (mailbox) {
     parts.push(`You can read ${user.name}'s email (${mailbox.address}) with search_email and read_email. Use them when they ask about their emails, ` +
       'messages from someone, bills, bookings or anything likely to be in their inbox. ' +
@@ -203,7 +206,7 @@ export async function chat(req, res) {
   // has to know which feature it belongs to.
   const ctx = { agentId: agent.id, conversationId: convId };
   // saifsys is company-wide, so every agent carries it for every user once it is connected.
-  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), ...(saifsysConfigured() ? [saifsysKit()] : []), ...(email ? [email] : [])];
+  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), meetingKit(user.id), ...(saifsysConfigured() ? [saifsysKit()] : []), ...(email ? [email] : [])];
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
   const library = await libraryCatalog(user); // same every turn, so read it once

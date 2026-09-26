@@ -10,6 +10,7 @@ import EmailSheet from './components/EmailSheet';
 import AdminPage, { MyActivitySheet } from './components/Admin';
 import MessengerPage from './components/Messenger';
 import ListsPage from './components/Lists';
+import MeetingsPage from './components/Meetings';
 import { useMessenger } from './lib/useMessenger';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
@@ -32,7 +33,7 @@ export default function App() {
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings'
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
@@ -110,6 +111,7 @@ export default function App() {
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
           onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}
           expiring={expiring.length} dueTodos={due.todos.length + due.routines.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
+          meetingsOpen={panel === 'meetings'} onMeetings={() => { setPanel('meetings'); setDrawer(false); }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
@@ -150,6 +152,7 @@ export default function App() {
           </div>
         )}
         {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => { setPanel(null); loadExpiring(); }} onOpenChat={openChat} />}
+        {panel === 'meetings' && <MeetingsPage onBack={() => setPanel(null)} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
         {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}

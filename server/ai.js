@@ -10,13 +10,41 @@ const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPE
 
 export async function transcribe(buffer, mimetype) {
   if (!openai) throw new Error('Voice is not configured (OPENAI_API_KEY missing)');
-  const types = { mp4: 'mp4', m4a: 'm4a', mpeg: 'mp3', mp3: 'mp3', wav: 'wav', ogg: 'ogg' };
-  const ext = types[Object.keys(types).find((k) => mimetype.includes(k))] || 'webm';
   const res = await openai.audio.transcriptions.create({
-    file: await toFile(buffer, `audio.${ext}`, { type: mimetype }),
+    file: await toFile(buffer, `audio.${audioExt(mimetype)}`, { type: mimetype }),
     model: 'gpt-4o-mini-transcribe',
   });
   return res.text;
+}
+
+const EXT = { mp4: 'mp4', m4a: 'm4a', mpeg: 'mp3', mp3: 'mp3', wav: 'wav', ogg: 'ogg' };
+export const audioExt = (mimetype = '') => EXT[Object.keys(EXT).find((k) => mimetype.includes(k))] || 'webm';
+
+/**
+ * A stretch of a meeting, as who said what. speakers: [{ name, sample }] with sample a data
+ * URL of 2–10 seconds of that person talking; the API names at most four. Anyone else comes
+ * back as 'A', 'B'… — letters that restart with every request, so they are returned as null.
+ */
+export async function transcribeSpeakers(buffer, mimetype, speakers = []) {
+  if (!openai) throw new Error('Voice is not configured (OPENAI_API_KEY missing)');
+  const known = speakers.slice(0, 4);
+  const res = await openai.audio.transcriptions.create({
+    file: await toFile(buffer, `meeting.${audioExt(mimetype)}`, { type: mimetype }),
+    model: 'gpt-4o-transcribe-diarize',
+    response_format: 'diarized_json',
+    chunking_strategy: 'auto',
+    ...(known.length ? {
+      known_speaker_names: known.map((s) => s.name),
+      known_speaker_references: known.map((s) => s.sample),
+    } : {}),
+  });
+  const names = new Set(known.map((s) => s.name));
+  return {
+    duration: res.duration || 0,
+    segments: (res.segments || [])
+      .filter((s) => s.text?.trim())
+      .map((s) => ({ start: s.start, end: s.end, speaker: names.has(s.speaker) ? s.speaker : null, text: s.text.trim() })),
+  };
 }
 
 // Text to speech. Returns the raw response so the caller can pipe the audio out

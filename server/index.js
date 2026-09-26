@@ -23,6 +23,7 @@ import { routineRoutes } from './routines.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
 import { saifsysRoutes } from './saifsys.js';
+import { meetingRoutes, startMeetings } from './meetings.js';
 import { errorRoutes, recordError } from './errors.js';
 
 const app = express();
@@ -44,6 +45,7 @@ app.use('/api/todos', todoRoutes);
 app.use('/api/routines', routineRoutes); // things that come back, kept apart from the one-off todos
 app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
 app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
+app.use('/api/meetings', meetingRoutes); // recorded meetings: who said what, and a summary
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -348,6 +350,8 @@ app.listen(PORT, '0.0.0.0', () => {
   // The buzz when a to-do or a routine falls due. The badge and the first screen are
   // unchanged and keep working on their own if this timer ever stops.
   startReminders();
+  // meeting recordings that were still waiting to be transcribed when the server stopped
+  startMeetings().catch((e) => console.error('[meetings]', e.message));
   // The saifsys morning checkout reminder (startSaifsys in server/saifsys.js) is on hold
   // by the user's choice, 2026-09-25: they ask Jarvis instead. The tool still works.
   console.log(`Jarvis server → http://localhost:${PORT}`);

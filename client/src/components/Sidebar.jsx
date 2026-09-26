@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, X, Users, Eye, ListTodo } from 'lucide-react';
+import { Search, X, Users, Eye, ListTodo, AudioLines } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
 import Avatar from './Avatar';
@@ -32,7 +32,7 @@ const Label = ({ children, action }) => (
   </div>
 );
 
-export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
+export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
@@ -138,8 +138,8 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
       </ul>
 
       <div className="space-y-1 border-t border-stroke/60 p-3 pb-safe">
-        <div className={`grid gap-1 ${user.role === 'master' ? 'grid-cols-5' : 'grid-cols-4'}`}>
-          <button onClick={onFiles} className={`flex flex-col items-center gap-1 rounded-xl py-2 text-xs ${filesOpen ? 'bg-white/10' : 'hover:bg-white/5'}`}
+        <div className={`grid gap-0.5 ${user.role === 'master' ? 'grid-cols-6' : 'grid-cols-5'}`}>
+          <button onClick={onFiles} className={`flex flex-col items-center gap-1 rounded-xl py-2 text-[11px] tracking-tight ${filesOpen ? 'bg-white/10' : 'hover:bg-white/5'}`}
             aria-label={expiring ? `Shelf (${expiring} expiring)` : 'Shelf'}>
             <span className="relative grid size-8 place-items-center rounded-full bg-sky-400/20 text-sky-300">
               <Icon name="folder" size={17} />
@@ -149,7 +149,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
               )}
             </span> Shelf
           </button>
-          <button onClick={onTodos} className={`flex flex-col items-center gap-1 rounded-xl py-2 text-xs ${todosOpen ? 'bg-white/10' : 'hover:bg-white/5'}`}
+          <button onClick={onTodos} className={`flex flex-col items-center gap-1 rounded-xl py-2 text-[11px] tracking-tight ${todosOpen ? 'bg-white/10' : 'hover:bg-white/5'}`}
             aria-label={dueTodos ? `To-do (${dueTodos} due)` : 'To-do'}>
             <span className="relative grid size-8 place-items-center rounded-full bg-p1/20 text-p1">
               <ListTodo size={17} strokeWidth={1.75} />
@@ -159,14 +159,17 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
               )}
             </span> To-do
           </button>
-          <button onClick={onMemory} className="flex flex-col items-center gap-1 rounded-xl py-2 text-xs hover:bg-white/5">
+          <button onClick={onMeetings} className={`flex flex-col items-center gap-1 rounded-xl py-2 text-[11px] tracking-tight ${meetingsOpen ? 'bg-white/10' : 'hover:bg-white/5'}`}>
+            <span className="grid size-8 place-items-center rounded-full bg-rose-400/20 text-rose-300"><AudioLines size={17} strokeWidth={1.75} /></span> Meetings
+          </button>
+          <button onClick={onMemory} className="flex flex-col items-center gap-1 rounded-xl py-2 text-[11px] tracking-tight hover:bg-white/5">
             <span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><Icon name="brain" size={17} /></span> Memory
           </button>
-          <button onClick={onEmail} className="flex flex-col items-center gap-1 rounded-xl py-2 text-xs hover:bg-white/5">
+          <button onClick={onEmail} className="flex flex-col items-center gap-1 rounded-xl py-2 text-[11px] tracking-tight hover:bg-white/5">
             <span className="grid size-8 place-items-center rounded-full bg-cyan-400/20 text-cyan-300"><Icon name="mail" size={17} /></span> Email
           </button>
           {user.role === 'master' && (
-            <button onClick={onPeople} className="flex flex-col items-center gap-1 rounded-xl py-2 text-xs hover:bg-white/5">
+            <button onClick={onPeople} className="flex flex-col items-center gap-1 rounded-xl py-2 text-[11px] tracking-tight hover:bg-white/5">
               <span className="grid size-8 place-items-center rounded-full bg-emerald-400/20 text-emerald-300"><Users size={17} /></span> People
             </button>
           )}
