@@ -28,51 +28,45 @@
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior: none;
   }
-  /* ---------- Night sky: one nebula and one star field ----------
+  /* ---------- One glow and one drifting grid ----------
+     The shape is borrowed from Business Lens (admin/src/styles/tokens.css);
+     the colour is Jarvis's own violet, not that app's mint.
      Two fixed layers. The body wears them, so they sit behind the chat. Any
      full-screen panel that covers the chat (Files, People, Team chat, Live
      voice) needs its own copy, because it has to hide the chat underneath --
      that is what the .sky class below is for. Both get the same layers here so
-     the sky never changes from screen to screen.
-     Only transform and opacity animate, which the phone's graphics chip handles
-     on its own without redrawing anything. */
+     the background never changes from screen to screen. */
   body::before, .sky::before {
-    content: ""; position: fixed; inset: -25%; pointer-events: none;
-    filter: blur(55px); will-change: transform;
-    background:
-      radial-gradient(58% 54% at 74% 18%, rgb(167 139 250 / 0.26), rgb(167 139 250 / 0.09) 44%, transparent 76%),
-      radial-gradient(54% 50% at 14% 88%, rgb(56 189 248 / 0.15), rgb(56 189 248 / 0.05) 44%, transparent 76%);
-    animation: nebula 36s ease-in-out infinite alternate;
+    content: ""; pointer-events: none;
+    position: fixed; top: -25vh; left: 50%; transform: translateX(-50%);
+    width: 130vw; height: 90vh;
+    background: radial-gradient(ellipse at center, rgb(167 139 250 / 0.14), transparent 62%);
   }
-  /* A 220x200 tile of dots, repeated across the screen. The stars shimmer every few
-     seconds and the whole sky slides a little over three minutes, so it is never still
-     but never distracting either. The layer is oversized so drifting shows no edge. */
+  /* A 46px lattice, masked so it fades out well before the bottom of the screen
+     and never boxes the content in. Only background-position animates, which the
+     phone's graphics chip handles on its own; the star field this replaced blurred
+     a full-screen layer instead, which was the expensive part. */
   body::after, .sky::after {
-    content: ""; position: fixed; inset: -12%; pointer-events: none;
-    will-change: transform, opacity; background-size: 220px 200px;
+    content: ""; position: fixed; inset: 0; pointer-events: none; opacity: 0.9;
+    background-size: 46px 46px;
     background-image:
-      radial-gradient(1.3px 1.3px at 26px 34px, #fff, transparent),
-      radial-gradient(1px 1px at 98px 72px, rgb(255 255 255 / 0.75), transparent),
-      radial-gradient(1.4px 1.4px at 162px 22px, rgb(255 255 255 / 0.6), transparent),
-      radial-gradient(1px 1px at 54px 142px, rgb(255 255 255 / 0.7), transparent),
-      radial-gradient(1.2px 1.2px at 192px 158px, rgb(255 255 255 / 0.5), transparent),
-      radial-gradient(1px 1px at 128px 108px, rgb(255 255 255 / 0.45), transparent);
-    animation: twinkle 4.5s ease-in-out infinite, sky 70s ease-in-out infinite alternate;
+      linear-gradient(rgb(167 139 250 / 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(167 139 250 / 0.06) 1px, transparent 1px);
+    -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000, transparent 78%);
+            mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000, transparent 78%);
+    animation: gridDrift 22s linear infinite;
   }
   /* behind the app, which App.jsx puts at z-10 */
   body::before, body::after { z-index: 0; }
-  @keyframes nebula {
-    from { transform: translate3d(-4%, -2%, 0) scale(1); }
-    to { transform: translate3d(5%, 4%, 0) scale(1.16); }
+  /* Exactly one tile, so the restart is invisible. Business Lens drifts 48px against
+     a 46px tile, which snaps 2px every time the loop comes round. */
+  @keyframes gridDrift {
+    from { background-position: 0 0, 0 0; }
+    to { background-position: 46px 46px, 46px 46px; }
   }
-  @keyframes twinkle { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
-  @keyframes sky {
-    from { transform: translate3d(0, 0, 0); }
-    to { transform: translate3d(-8%, 5%, 0); }
-  }
-  /* a still sky for anyone who has asked their phone to stop animations */
+  /* a still background for anyone who has asked their phone to stop animations */
   @media (prefers-reduced-motion: reduce) {
-    body::before, body::after, .sky::before, .sky::after { animation: none; }
+    body::after, .sky::after { animation: none; }
   }
   /* 16px inputs stop iOS from zooming in on focus */
   input, textarea, select { font-size: 16px; }
@@ -90,6 +84,14 @@
      out past the panel and painted a second sky over the sidebar. Absolute keeps it
      inside, and overflow above trims the oversized edges the drift needs. */
   .sky::before, .sky::after { position: absolute; z-index: -1; }
+
+  /* The particle canvas (ParticleField), mounted beside the app in main.jsx.
+     z-index 1, not the -1 Business Lens uses: their #root sits at z-1, ours at
+     z-10, so 1 is what lands between the app and the glow and grid at z-0. */
+  .fx-canvas {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    display: block; pointer-events: none; z-index: 1;
+  }
 }
 
 @utility glass {
@@ -97,6 +99,26 @@
   border: 1px solid var(--color-stroke);
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
+}
+/* A heavier, lit version of `glass` for the side nav — that one is flat frost and is
+   worn by 26 small surfaces, so it stays as it is rather than growing this weight.
+   Three things separate glass from frosted plastic: the saturate(), which pulls colour
+   out of the glow, grid and particles passing behind; the gradient, so the surface
+   falls off instead of sitting at one flat tint; and the inset highlights, which catch
+   light along the top and right edges the way a real pane does. */
+@utility liquid-glass {
+  background: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.10),
+    rgb(255 255 255 / 0.04) 40%,
+    rgb(255 255 255 / 0.06)
+  );
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.16),
+    inset -1px 0 0 rgb(255 255 255 / 0.06),
+    0 8px 40px -8px rgb(0 0 0 / 0.55);
 }
 @utility pt-safe { padding-top: max(env(safe-area-inset-top), 12px); }
 @utility pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 12px); }
