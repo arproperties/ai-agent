@@ -1,20 +1,26 @@
 import { useEffect, useRef } from 'react';
 
 /**
- * Drifting dots that link with faint lines when they pass near each other, on a
- * fixed full-screen canvas behind the app. Ported from Business Lens
+ * Drifting dots that link with faint lines when they pass near each other, on a canvas
+ * behind whatever it is mounted in. Ported from Business Lens
  * (admin/src/components/ParticleField.tsx) in Jarvis's violet rather than its mint.
  *
- * Mounted beside <App/> in main.jsx, not inside it, so the login screen gets it too.
- * It sits at z-index 1 (see .fx-canvas): above the glow and grid the body wears at
- * z-0, below the app at z-10. The full-screen panels paint solid over it, so this
- * shows on the chat and login screens and not on Files, People, Team chat or Live voice.
+ * It is mounted in two places. Once beside <App/> in main.jsx, where `.fx-canvas` makes
+ * it a fixed full-screen layer at z-index 1 (above the glow and grid the body wears at
+ * z-0, below the app at z-10) -- this is the one you see on the chat and login screens.
+ * And once inside each full-screen panel (Files, People, Team chat, Live voice, To-do,
+ * Meetings), where `.fx-canvas-panel` makes it absolute at z-index -1. Those panels have
+ * to paint solid, because the chat is still mounted underneath them, so they cannot let
+ * the first canvas show through and carry their own instead.
+ *
+ * It measures the box CSS gives it rather than the window, which is what lets the same
+ * component fill the viewport in one case and a panel in the other.
  *
  * Two things keep it from costing anything it does not have to: it never starts for
  * someone who has asked their phone to stop animations, and it stops entirely while
  * the tab is hidden rather than drawing frames nobody is looking at.
  */
-export function ParticleField() {
+export function ParticleField({ className = 'fx-canvas' }) {
   const ref = useRef(null);
 
   useEffect(() => {
@@ -28,15 +34,19 @@ export function ParticleField() {
     let raf = 0;
 
     // Capped at 2: a phone reporting 3x would triple the pixels drawn every frame
-    // for a difference nobody can see on dots this small. The count follows screen
-    // area so a laptop is not sparse and a phone is not crowded.
+    // for a difference nobody can see on dots this small. The count follows the area
+    // of this canvas so a laptop is not sparse and a phone is not crowded.
     function size() {
+      const r = cv.getBoundingClientRect();
+      // Before the panel has been laid out there is nothing to measure; the observer
+      // below calls back the moment there is.
+      if (!r.width || !r.height) return;
       dpr = Math.min(window.devicePixelRatio || 1, 2);
-      w = cv.width = window.innerWidth * dpr;
-      h = cv.height = window.innerHeight * dpr;
-      cv.style.width = `${window.innerWidth}px`;
-      cv.style.height = `${window.innerHeight}px`;
-      const target = Math.min(120, Math.floor((window.innerWidth * window.innerHeight) / 13000));
+      // Only the backing store is set. The box itself is sized by CSS, so the same
+      // component can be a fixed full-screen layer or fill a panel.
+      w = cv.width = Math.round(r.width * dpr);
+      h = cv.height = Math.round(r.height * dpr);
+      const target = Math.min(120, Math.floor((r.width * r.height) / 13000));
       pts = Array.from({ length: target }, () => ({
         x: Math.random() * w,
         y: Math.random() * h,
@@ -75,25 +85,28 @@ export function ParticleField() {
       raf = requestAnimationFrame(step);
     }
 
-    // Resizing rebuilds every point, so it waits for the drag to settle.
+    // Resizing rebuilds every point, so it waits for the drag to settle. Watching the
+    // canvas rather than the window catches a panel changing shape when the sidebar
+    // opens, which a window resize event never fires for.
     let t;
     const onResize = () => { clearTimeout(t); t = setTimeout(size, 200); };
+    const ro = new ResizeObserver(onResize);
+    ro.observe(cv);
     const onVis = () => {
       cancelAnimationFrame(raf); // always cancel first: showing twice must not leave two loops running
       if (!document.hidden) step();
     };
-    window.addEventListener('resize', onResize);
     document.addEventListener('visibilitychange', onVis);
     size();
     step();
 
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener('resize', onResize);
+      ro.disconnect();
       document.removeEventListener('visibilitychange', onVis);
       clearTimeout(t);
     };
   }, []);
 
-  return <canvas ref={ref} className="fx-canvas" aria-hidden="true" />;
+  return <canvas ref={ref} className={className} aria-hidden="true" />;
 }

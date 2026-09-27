@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import Sheet from './Sheet';
 import MessengerChat, { PersonAvatar, Ticks, listTime, preview, lastSeenText } from './MessengerChat';
 import { NotifyBanner } from './Notifications';
+import { ParticleField } from './ParticleField';
 
 const SearchBox = ({ value, onChange, placeholder }) => (
   <div className="mx-3 mb-2 flex items-center gap-2 rounded-full border border-stroke bg-white/[0.04] px-3 focus-within:border-emerald-400/60">
@@ -402,6 +403,8 @@ export default function MessengerPage({ dm, openChatId = null, onOpened, onBack,
 
   return (
     <div className="sky absolute inset-0 z-20 flex">
+      {/* The panel paints solid over the chat, so it carries its own field. */}
+      <ParticleField className="fx-canvas-panel" />
       <section className={`${openId ? 'hidden md:flex' : 'flex'} relative w-full min-w-0 flex-col border-white/[0.06] md:w-80 md:border-r lg:w-96`}>
         {mode === 'new'
           ? <NewChat dm={dm} onClose={() => setMode('list')} onOpened={(id) => { setMode('list'); setOpenId(id); }} />

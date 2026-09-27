@@ -60,6 +60,19 @@
      out past the panel and painted a second sky over the sidebar. Absolute keeps it
      inside, and overflow above trims the oversized edges. */
   .sky::before { position: absolute; z-index: -1; }
+  /* Being absolute, though, the glow centres on the panel rather than on the screen,
+     and a panel inside <main> begins where the sidebar ends -- so it sat half a sidebar
+     to the right of the body's and the background stepped sideways when a panel opened.
+     Pulling it back by the sidebar's width (md:w-72 = 18rem) lands it exactly where the
+     fixed one is. Below md the sidebar is a drawer and the panel is already the full
+     width of the screen, so there is nothing to correct. */
+  @media (width >= 48rem) {
+    .sky::before { left: calc(50vw - 18rem); }
+  }
+  /* Live voice is fixed over the whole screen, sidebar included, so its own left edge
+     is the screen's and the correction above would push it off instead. Last rule wins
+     at equal specificity, which is why this sits below the media query. */
+  .sky-full::before { left: 50%; }
 
   /* The particle canvas (ParticleField), mounted beside the app in main.jsx.
      z-index 1, not the -1 Business Lens uses: their #root sits at z-1, ours at
@@ -67,6 +80,15 @@
   .fx-canvas {
     position: fixed; inset: 0; width: 100%; height: 100%;
     display: block; pointer-events: none; z-index: 1;
+  }
+  /* The same field inside a full-screen panel. Absolute, so it stays within the panel
+     rather than painting over the sidebar, and z-index -1 so it lands between the
+     panel's own background and its content. The panel's solid background-color paints
+     below negative-z children, so the order is: solid ground, glow, particles, content
+     -- the same stack the body wears, which is the point. */
+  .fx-canvas-panel {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    display: block; pointer-events: none; z-index: -1;
   }
 }
 

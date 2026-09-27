@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
 import Orb from './Orb';
 import { listenUntilSilence, stopListening, stopSpeaking, speakAndWait, speakAsItArrives, unlockAudio } from '../lib/voice';
+import { ParticleField } from './ParticleField';
 
 // Hands-free mode: listen → answer out loud → listen again, until it is ended.
 // Every turn costs a reply, a transcription and speech, so the loop stops itself
@@ -113,7 +114,9 @@ export default function LiveVoice({ onAsk, onClose, onError }) {
   const ring = state === 'listening' ? Math.min(1, level * 14) : 0;
 
   return (
-    <div className="sky fixed inset-0 z-50 flex flex-col pt-safe pb-safe">
+    <div className="sky sky-full fixed inset-0 z-50 flex flex-col pt-safe pb-safe">
+      {/* The panel paints solid over the chat, so it carries its own field. */}
+      <ParticleField className="fx-canvas-panel" />
       <header className="flex items-center justify-between px-4 py-3">
         <span className="text-sm font-medium text-mute">Live voice</span>
         <span className="text-xs text-mute">{turns}/{MAX_TURNS} questions</span>

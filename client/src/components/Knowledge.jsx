@@ -10,6 +10,7 @@ import { startImport, importState, onImport, clearImportError } from '../lib/imp
 import { describeIgnored } from '../lib/zip';
 import Icon from './Icon';
 import Sheet from './Sheet';
+import { ParticleField } from './ParticleField';
 
 export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
@@ -739,6 +740,8 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
   return (
     <div className="sky absolute inset-0 z-20 flex flex-col"
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)} onDrop={drop}>
+      {/* The panel paints solid over the chat, so it carries its own field. */}
+      <ParticleField className="fx-canvas-panel" />
       <input ref={ref} type="file" multiple hidden accept={FILE_TYPES} onChange={(e) => { upload(e.target.files); e.target.value = ''; }} />
       <input ref={zipRef} type="file" hidden accept=".zip,application/zip"
         onChange={(e) => { const f = e.target.files[0]; if (f) startImport(f, f.name.replace(/\.zip$/i, '')); e.target.value = ''; }} />
