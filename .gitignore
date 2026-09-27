@@ -4,3 +4,4 @@ data/
 client/dist
 .DS_Store
 .superpowers
+dev.log

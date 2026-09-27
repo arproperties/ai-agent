@@ -106,7 +106,7 @@ export default function App() {
   return (
     <div className="relative z-10 flex h-dvh">
       {drawer && <div className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden" onClick={() => setDrawer(false)} />}
-      <aside className={`liquid-glass fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`max-md:liquid-glass fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'}`}>
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'memory' && panel !== 'email' && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
           onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}

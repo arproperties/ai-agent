@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import Icon from './Icon';
 import Sheet from './Sheet';
 import DraftCard from './DraftCard';
+import PasswordField from './PasswordField';
 
 const Notice = ({ ok, children }) => (
   <p className={`mb-3 flex items-start gap-2 rounded-2xl px-3.5 py-2.5 text-sm ${ok ? 'bg-ok/10 text-ok' : 'bg-bad/10 text-bad'}`}>
@@ -129,7 +130,7 @@ function ImapCard({ account, onChange }) {
       {!account && (
         <form onSubmit={connect} className="mt-3.5 space-y-2.5">
           <input type="email" required autoComplete="username" placeholder="you@company.com" value={form.email} onChange={set('email')} onBlur={suggest} className={field} />
-          <input type="password" required autoComplete="current-password" placeholder="Email password" value={form.password} onChange={set('password')} className={field} />
+          <PasswordField required autoComplete="current-password" placeholder="Email password" value={form.password} onChange={set('password')} className={field} />
           {advanced ? (
             <div className="space-y-2">
               <p className="text-xs text-mute">Incoming (IMAP)</p>

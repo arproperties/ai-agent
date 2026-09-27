@@ -28,13 +28,13 @@
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior: none;
   }
-  /* ---------- One glow and one drifting grid ----------
+  /* ---------- One glow ----------
      The shape is borrowed from Business Lens (admin/src/styles/tokens.css);
      the colour is Jarvis's own violet, not that app's mint.
-     Two fixed layers. The body wears them, so they sit behind the chat. Any
+     One fixed layer. The body wears it, so it sits behind the chat. Any
      full-screen panel that covers the chat (Files, People, Team chat, Live
      voice) needs its own copy, because it has to hide the chat underneath --
-     that is what the .sky class below is for. Both get the same layers here so
+     that is what the .sky class below is for. Both get the same layer here so
      the background never changes from screen to screen. */
   body::before, .sky::before {
     content: ""; pointer-events: none;
@@ -42,32 +42,8 @@
     width: 130vw; height: 90vh;
     background: radial-gradient(ellipse at center, rgb(167 139 250 / 0.14), transparent 62%);
   }
-  /* A 46px lattice, masked so it fades out well before the bottom of the screen
-     and never boxes the content in. Only background-position animates, which the
-     phone's graphics chip handles on its own; the star field this replaced blurred
-     a full-screen layer instead, which was the expensive part. */
-  body::after, .sky::after {
-    content: ""; position: fixed; inset: 0; pointer-events: none; opacity: 0.9;
-    background-size: 46px 46px;
-    background-image:
-      linear-gradient(rgb(167 139 250 / 0.06) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(167 139 250 / 0.06) 1px, transparent 1px);
-    -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000, transparent 78%);
-            mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000, transparent 78%);
-    animation: gridDrift 22s linear infinite;
-  }
   /* behind the app, which App.jsx puts at z-10 */
-  body::before, body::after { z-index: 0; }
-  /* Exactly one tile, so the restart is invisible. Business Lens drifts 48px against
-     a 46px tile, which snaps 2px every time the loop comes round. */
-  @keyframes gridDrift {
-    from { background-position: 0 0, 0 0; }
-    to { background-position: 46px 46px, 46px 46px; }
-  }
-  /* a still background for anyone who has asked their phone to stop animations */
-  @media (prefers-reduced-motion: reduce) {
-    body::after, .sky::after { animation: none; }
-  }
+  body::before { z-index: 0; }
   /* 16px inputs stop iOS from zooming in on focus */
   input, textarea, select { font-size: 16px; }
   button { cursor: pointer; }
@@ -82,12 +58,12 @@
   .sky { isolation: isolate; overflow: hidden; background-color: var(--color-bg); }
   /* Absolute, not fixed: a fixed layer is measured against the window, so it spilled
      out past the panel and painted a second sky over the sidebar. Absolute keeps it
-     inside, and overflow above trims the oversized edges the drift needs. */
-  .sky::before, .sky::after { position: absolute; z-index: -1; }
+     inside, and overflow above trims the oversized edges. */
+  .sky::before { position: absolute; z-index: -1; }
 
   /* The particle canvas (ParticleField), mounted beside the app in main.jsx.
      z-index 1, not the -1 Business Lens uses: their #root sits at z-1, ours at
-     z-10, so 1 is what lands between the app and the glow and grid at z-0. */
+     z-10, so 1 is what lands between the app and the glow at z-0. */
   .fx-canvas {
     position: fixed; inset: 0; width: 100%; height: 100%;
     display: block; pointer-events: none; z-index: 1;

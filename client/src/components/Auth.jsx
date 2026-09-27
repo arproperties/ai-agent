@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import Orb from './Orb';
+import PasswordField from './PasswordField';
 
 const field = 'glass w-full rounded-2xl px-4 py-3 outline-none placeholder:text-mute/70 focus:border-p1/70';
 
@@ -59,11 +60,11 @@ export default function Auth({ onAuthed }) {
           <div className="w-full space-y-3">
             {mode !== 'reset' && <input type="email" value={f.email} onChange={set('email')} placeholder="Email" autoComplete="email" required className={field} />}
             {mode !== 'forgot' && (
-              <input type="password" value={f.password} onChange={set('password')}
+              <PasswordField value={f.password} onChange={set('password')}
                 placeholder={mode === 'login' ? 'Password' : 'New password (8+ characters)'}
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={mode === 'login' ? undefined : 8} required className={field} />
             )}
-            {mode === 'reset' && <input type="password" value={f.confirm} onChange={set('confirm')} placeholder="Repeat new password" autoComplete="new-password" required className={field} />}
+            {mode === 'reset' && <PasswordField value={f.confirm} onChange={set('confirm')} placeholder="Repeat new password" autoComplete="new-password" required className={field} />}
             {mode === 'login' && (
               <button type="button" onClick={() => go('forgot')} className="block w-full pt-1 text-right text-sm text-mute hover:text-txt">Forgot password?</button>
             )}
