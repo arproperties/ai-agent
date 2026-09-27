@@ -34,7 +34,10 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, filesOp
   const waiting = expiring + dueTodos;
 
   return (
-    <div ref={wrap} className="relative">
+    // Not `relative`: the menu is positioned against the footer instead, so it spans
+    // the sidebar rather than hanging off the gear. It stays a DOM child here, which is
+    // what keeps the outside-click check below working.
+    <div ref={wrap}>
       <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
         aria-label={waiting ? `Settings, ${waiting} need attention` : 'Settings'} title="Settings"
         className={`relative grid size-8 place-items-center rounded-full transition ${open ? 'bg-white/10 text-txt' : 'text-mute hover:bg-white/10 hover:text-txt'}`}>
@@ -44,7 +47,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, filesOp
 
       {open && (
         <div role="menu" aria-label="Settings"
-          className="liquid-glass absolute bottom-full right-0 z-50 mb-2 w-56 space-y-0.5 rounded-xl border border-stroke p-1.5 shadow-xl">
+          className="menu-glass absolute bottom-full left-2 right-2 z-50 mb-1 space-y-0.5 rounded-xl p-1.5">
           <Row role="menuitem" icon={<Icon name="folder" size={17} />} label="Shelf" active={filesOpen} onClick={go(onFiles)}
             aria-label={expiring ? `Shelf (${expiring} expiring)` : 'Shelf'} badge={<Count n={expiring} />} />
           <Row role="menuitem" icon={<ListTodo size={17} strokeWidth={1.75} />} label="To-do" active={todosOpen} onClick={go(onTodos)}

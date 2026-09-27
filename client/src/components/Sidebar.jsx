@@ -172,7 +172,8 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
         )}
       </div>
 
-      <div className="border-t border-stroke/60 p-2 pb-safe">
+      {/* relative: the settings menu opens against this, so it spans the sidebar. */}
+      <div className="relative border-t border-stroke/60 p-2 pb-safe">
         <div className="flex items-center gap-2.5 rounded-lg px-2.5 py-2">
           <span className="grid size-8 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-medium">{user.name[0]?.toUpperCase()}</span>
           <span className="min-w-0 flex-1">
