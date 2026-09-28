@@ -104,18 +104,17 @@
    out of the glow, grid and particles passing behind; the gradient, so the surface
    falls off instead of sitting at one flat tint; and the inset highlights, which catch
    light along the top and right edges the way a real pane does. */
-/* The menu is glass, not a panel: the sidebar behind it has no background of its own,
-   so the glow and the drifting particles carry straight through the menu as well and
-   the whole left side stays one surface. The tint is only deep enough to keep labels
-   legible over a bright patch of glow; the blur is light on purpose, so the particles
-   still read as particles rather than as a smear. The hairline and the lifted shadow
-   are what separate it from the sidebar, since the background no longer can. */
+/* The menu opens over the chat list, so it has to hide what is behind it: a see-through
+   tint left the chat titles reading straight through the menu labels, and Safari does
+   not always apply the blur. So the fill is near-solid and does the work on its own;
+   the blur only softens the glow at the edges. The hairline and the lifted shadow
+   separate it from the sidebar. */
 @utility menu-glass {
   background:
     linear-gradient(to bottom, rgb(255 255 255 / 0.06), rgb(255 255 255 / 0.02)),
-    rgb(17 14 38 / 0.30);
-  backdrop-filter: blur(12px) saturate(160%);
-  -webkit-backdrop-filter: blur(12px) saturate(160%);
+    rgb(17 14 38 / 0.96);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid rgb(255 255 255 / 0.12);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.12),
