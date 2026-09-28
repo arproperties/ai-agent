@@ -42,6 +42,11 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
       'Prefer official sources (u.ae, mohre.gov.ae, tax.gov.ae, dubailand.gov.ae, rera and other .gov.ae sites, DIFC/ADGM) and say when the official source differs from what you expected. ' +
       "Don't search for things answered by the user's files, memory, or stable general knowledge.",
   ];
+  // The app offers a PDF of what is between the markers; the chat around it stays out.
+  parts.push('When you write a document meant to be kept, printed or sent - a packet, letter, notice, report, checklist, form, policy or contract - ' +
+    'put a line <!--doc--> directly before it and a line <!--/doc--> directly after it, and start it with a # title. ' +
+    'Anything you say to the user about it (an intro, a note, a question, an offer) goes outside those lines. ' +
+    'The app turns what is inside into a PDF. Never mention the markers. Ordinary answers do not get them.');
   parts.push(`You keep ${user.name}'s to-do list: add_todo writes something down, list_todos reads it back, ` +
     'complete_todo ticks one off and reschedule_todo moves or drops a reminder. ' +
     'Add a todo whenever they ask you to remember something, ask to be reminded, or say they must do something later — and say you have. ' +

@@ -213,6 +213,13 @@
 .md th { text-align: left; color: var(--color-mute); font-weight: 500; border-bottom: 1px solid var(--color-stroke); padding: 6px 12px 6px 0; }
 .md td { border-bottom: 1px solid rgb(255 255 255 / 0.05); padding: 7px 12px 7px 0; }
 .md hr { border-color: var(--color-stroke); }
+/* The same Markdown on white paper: the PDF preview */
+.paper.md strong { color: inherit; }
+.paper.md h1, .paper.md h2 { color: #4d3fc4; }
+.paper.md code, .paper.md pre { background: #f1f0f8; border-color: #dcdbe6; }
+.paper.md blockquote, .paper.md th { color: #6b6980; }
+.paper.md th { border-color: #cfcddb; } .paper.md td { border-color: #ebeaf1; } .paper.md hr { border-color: #dcdbe6; }
+.paper.md input[type="checkbox"] { margin-right: 0.4em; }
 
 /* keyboard focus only — no rings when tapping or clicking */
 :focus { outline: none; }

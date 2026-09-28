@@ -4,6 +4,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Icon from './Icon';
 import Avatar from './Avatar';
+import { documentPart, hideMarkers } from '../lib/replyDoc';
 
 const isImg = (f) => f.kind === 'image' || /\.(png|jpe?g|gif|webp|heic)$/i.test(f.name);
 const isVid = (f) => f.kind === 'video' || /\.(mp4|mov|webm|m4v|3gp)$/i.test(f.name);
@@ -42,7 +43,7 @@ const VOICE = {
   paused: { icon: 'play', label: 'Paused', hint: 'Resume' },
 };
 
-export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile, onShare }) {
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile, onShare, onPdf }) {
   const [copied, setCopied] = useState(false);
 
   if (msg.role === 'user') {
@@ -67,7 +68,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
   }
 
   const copy = async () => {
-    await navigator.clipboard?.writeText(msg.content);
+    await navigator.clipboard?.writeText(hideMarkers(msg.content).trim());
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -84,7 +85,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
       {msg.error ? (
         <div className="rounded-2xl border border-bad/30 bg-bad/10 px-4 py-3 text-sm">{msg.error}</div>
       ) : msg.content ? (
-        <div className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown></div>
+        <div className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]}>{hideMarkers(msg.content)}</Markdown></div>
       ) : (
         <div className="flex gap-1.5 py-2">{[0, 1, 2].map((i) => (
           <span key={i} className="size-2 animate-bounce rounded-full bg-p1" style={{ animationDelay: `${i * 0.15}s` }} />
@@ -133,6 +134,13 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
             <button onClick={onShare} aria-label="Share with the team" title="Share with the team"
               className="grid size-8 place-items-center rounded-full hover:bg-white/10">
               <Icon name="share" size={16} />
+            </button>
+          )}
+          {/* Only on a saved reply that holds a document: the PDF is built from the saved words. */}
+          {onPdf && documentPart(msg.content) && (
+            <button onClick={onPdf} aria-label="Make a PDF" title="Make a PDF"
+              className="flex h-8 items-center gap-1.5 rounded-full px-2.5 hover:bg-white/10 hover:text-txt">
+              <Icon name="pdf" size={16} /><span className="text-xs">PDF</span>
             </button>
           )}
         </div>

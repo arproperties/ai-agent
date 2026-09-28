@@ -21,6 +21,7 @@ const pending = new Map(); // key -> { userId, text, voice, tone, at }
 
 // Markdown reads badly out loud: drop code blocks, bullets, emphasis and link URLs.
 export const spoken = (raw) => String(raw || '')
+  .replace(/<!--[\s\S]*?-->/g, '')
   .replace(/```[\s\S]*?```/g, ' (code omitted) ')
   .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
   .replace(/[*_#>`|]/g, '')

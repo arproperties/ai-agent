@@ -30,7 +30,7 @@ export async function shareReply({ chatId, userId, messageId }) {
     WHERE m.id = ? AND c.user_id = ? AND m.role = 'assistant'`).get(Number(messageId) || 0, userId);
   if (!m) throw bad('That reply was not found', 404);
 
-  const body = (m.content || '').trim().slice(0, MAX);
+  const body = (m.content || '').replace(/<!--[\s\S]*?-->/g, '').trim().slice(0, MAX); // no PDF markers
   if (!body) throw bad('There is nothing in that reply to share');
 
   return tx(async () => {

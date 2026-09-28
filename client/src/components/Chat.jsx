@@ -12,6 +12,7 @@ import LiveVoice from './LiveVoice';
 import Sheet from './Sheet';
 import ShareSheet from './ShareSheet';
 import CarrySheet from './CarrySheet';
+import PdfSheet from './PdfSheet';
 import { Welcome, InstallHint } from './FirstRun';
 import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
 
@@ -42,6 +43,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [drafts, setDrafts] = useState([]); // every email written in this chat, whatever became of it
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
+  const [pdfOf, setPdfOf] = useState(null); // { id, content } of the reply being made into a PDF
   const [carry, setCarry] = useState([]); // earlier chats picked for the message being written
   const [carrying, setCarrying] = useState([]); // titles of the chats this conversation is already using
   const [picking, setPicking] = useState(false); // the bring-in-a-chat sheet is open
@@ -275,7 +277,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
               <Message key={m.id} msg={m} agent={byId[m.agent_id]} voiceEnabled={voiceEnabled} onOpenFile={openFile}
                 voice={voice.id === m.id ? voice.state : 'idle'} onStopSpeak={stopSpeaking}
                 onSpeak={() => say(m.content, m.id, m.agent_id)}
-                onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined} />
+                onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined}
+                onPdf={shareIdOf(m) ? () => setPdfOf({ id: shareIdOf(m), content: m.content }) : undefined} />
             ))}
             {drafts.map((d) => (
               <DraftCard key={d.id} draft={d} from={mailbox}
@@ -314,6 +317,9 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       )}
       {sharing && (
         <ShareSheet dm={dm} messageId={sharing} onClose={() => setSharing(null)} onDone={flash} />
+      )}
+      {pdfOf && (
+        <PdfSheet messageId={pdfOf.id} content={pdfOf.content} onOpenFile={openFile} onClose={() => setPdfOf(null)} />
       )}
       {picking && (
         <CarrySheet agents={agents} currentId={convId} picked={carry} onClose={() => setPicking(false)} onDone={setCarry} />

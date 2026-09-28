@@ -25,6 +25,7 @@ import { startReminders } from './reminders.js';
 import { saifsysRoutes } from './saifsys.js';
 import { meetingRoutes, startMeetings } from './meetings.js';
 import { errorRoutes, recordError } from './errors.js';
+import { replyPdfRoutes } from './replyPdf.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -46,6 +47,7 @@ app.use('/api/routines', routineRoutes); // things that come back, kept apart fr
 app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
 app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
 app.use('/api/meetings', meetingRoutes); // recorded meetings: who said what, and a summary
+app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
