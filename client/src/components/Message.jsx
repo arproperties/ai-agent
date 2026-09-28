@@ -4,7 +4,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Icon from './Icon';
 import Avatar from './Avatar';
-import { documentPart, hideMarkers } from '../lib/replyDoc';
+import { hideMarkers } from '../lib/replyDoc';
 
 const isImg = (f) => f.kind === 'image' || /\.(png|jpe?g|gif|webp|heic)$/i.test(f.name);
 const isVid = (f) => f.kind === 'video' || /\.(mp4|mov|webm|m4v|3gp)$/i.test(f.name);
@@ -61,6 +61,15 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
         {msg.content && (
           <div className="whitespace-pre-wrap break-words rounded-3xl rounded-br-lg border border-p1/30 bg-gradient-to-br from-p1/30 to-p2/20 px-4 py-2.5">
             {msg.content}
+          </div>
+        )}
+        {/* Their own text as a PDF: word for word, no model involved. */}
+        {onPdf && (
+          <div className="mt-1 flex justify-end text-mute">
+            <button onClick={onPdf} aria-label="Make a PDF" title="Make a PDF"
+              className="grid size-8 place-items-center rounded-full hover:bg-white/10">
+              <Icon name="pdf" size={16} />
+            </button>
           </div>
         )}
       </div>
@@ -137,7 +146,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
             </button>
           )}
           {/* Only on a saved reply: the PDF is built from the saved words. */}
-          {onPdf && documentPart(msg.content) && (
+          {onPdf && (
             <button onClick={onPdf} aria-label="Make a PDF" title="Make a PDF"
               className="grid size-8 place-items-center rounded-full hover:bg-white/10">
               <Icon name="pdf" size={16} />

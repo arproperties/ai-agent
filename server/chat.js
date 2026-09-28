@@ -46,7 +46,10 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   parts.push('When you write a document meant to be kept, printed or sent - a packet, letter, notice, report, checklist, form, policy or contract - ' +
     'put a line <!--doc--> directly before it and a line <!--/doc--> directly after it, and start it with a # title. ' +
     'Anything you say to the user about it (an intro, a note, a question, an offer) goes outside those lines. ' +
-    'The app turns what is inside into a PDF. Never mention the markers. Ordinary answers do not get them.');
+    'The app turns what is inside into a PDF. Never mention the markers. Ordinary answers do not get them. ' +
+    `When ${user.name} gives you text and asks for it as a PDF ("convert into pdf"), put their text inside the markers word for word: ` +
+    'only add Markdown structure (a # title, headings, lists, tables), never change, add or leave out words, and leave out the request itself. ' +
+    'Outside the markers write one short line only, such as "Here it is as a PDF."');
   parts.push(`You keep ${user.name}'s to-do list: add_todo writes something down, list_todos reads it back, ` +
     'complete_todo ticks one off and reschedule_todo moves or drops a reminder. ' +
     'Add a todo whenever they ask you to remember something, ask to be reminded, or say they must do something later — and say you have. ' +
@@ -294,7 +297,7 @@ export async function chat(req, res) {
       .run(convId, agent.id, 'assistant', reply.trim(), JSON.stringify(sources)));
   }
   await db.prepare('UPDATE conversations SET updated_at = extract(epoch from now()) WHERE id = ?').run(convId);
-  if (!res.writableEnded) { send('done', { messageId }); res.end(); }
+  if (!res.writableEnded) { send('done', { messageId, userMessageId }); res.end(); }
 
   // 4. Learn from this turn (background, never blocks the reply)
   if (reply && text) learn(user, text, reply, { agentId: agent.id, conversationId: convId }).catch((e) => console.error('[learn]', e.message));

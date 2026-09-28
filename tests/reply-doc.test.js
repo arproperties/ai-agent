@@ -38,6 +38,18 @@ test('a reply with no heading goes in whole, titled by its first sentence', () =
 
 test('the app and the server agree on the document', () => {
   assert.deepEqual(clientPart(marked), documentPart(marked));
+  const typed = 'Packet\nName: ____\n\nconvert into pdf';
+  assert.deepEqual(clientPart(typed, { own: true }), documentPart(typed, { own: true }));
+});
+
+test('their own text: the request is dropped and every line stays a line', () => {
+  const part = documentPart('Please make this a PDF:\nInterview packet\nName: ______\nRole: AC technician\n\nconvert into pdf', { own: true });
+  assert.equal(part.title, 'Interview packet');
+  assert.ok(!/pdf/i.test(part.markdown));
+  assert.deepEqual(parseBlocks(part.markdown).map((b) => b.type), ['para']);
+  assert.equal(parseBlocks(part.markdown)[0].text.split('\n').length, 3);
+  // markers in typed text are the person's own words, not an instruction to cut
+  assert.ok(documentPart('a\n<!--doc-->\nb', { own: true }).markdown.startsWith('a'));
 });
 
 test('markers are hidden from the reader, even half-streamed', () => {

@@ -19,7 +19,8 @@ import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
 // Which reply can be shared: one the server has written down. A reply still streaming
 // has only a made-up id here, and the share is sent by id so the team gets the words
 // Jarvis actually said, not whatever the browser is holding.
-const shareIdOf = (m) => (m.role === 'assistant' && !m.error ? m.saved ?? (typeof m.id === 'number' ? m.id : null) : null);
+const savedIdOf = (m) => (m.error ? null : m.saved ?? (typeof m.id === 'number' ? m.id : null));
+const shareIdOf = (m) => (m.role === 'assistant' ? savedIdOf(m) : null);
 
 const IconBtn = ({ icon, label, onClick, className = '' }) => (
   <button onClick={onClick} aria-label={label} title={label}
@@ -43,7 +44,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [drafts, setDrafts] = useState([]); // every email written in this chat, whatever became of it
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
-  const [pdfOf, setPdfOf] = useState(null); // { id, content } of the reply being made into a PDF
+  const [pdfOf, setPdfOf] = useState(null); // { id, content, own } of the message being made into a PDF
   const [carry, setCarry] = useState([]); // earlier chats picked for the message being written
   const [carrying, setCarrying] = useState([]); // titles of the chats this conversation is already using
   const [picking, setPicking] = useState(false); // the bring-in-a-chat sheet is open
@@ -134,7 +135,11 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           else if (event === 'notice') flash(d.message);
           else if (event === 'error') update({ error: d.message });
           else if (event === 'sources') update({ sources: d });
-          else if (event === 'done') savedId = d.messageId;
+          else if (event === 'done') {
+            savedId = d.messageId;
+            // their own message gets its saved id too, so it can be made into a PDF
+            if (d.userMessageId) setMessages((m) => m.map((x) => (x.id === `u${aid}` ? { ...x, saved: d.userMessageId } : x)));
+          }
           else if (event === 'draft') { setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'delta') {
             if (!reply) setOrb('speaking');
@@ -149,6 +154,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       if (e.name !== 'AbortError') update({ error: e.message });
     }
     update({ streaming: false, saved: savedId });
+    // "…convert into pdf": the reply is the PDF's content, so open it straight away.
+    if (!voice && savedId && /\bpdf\b/i.test(text) && /<!--\s*doc\s*-->/i.test(reply)) setPdfOf({ id: savedId, content: reply });
     setBusy(false); setOrb('idle'); setStatus('');
     onConversation(null);
     if (voice && reply) say(reply, aid, agentId);
@@ -278,7 +285,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 voice={voice.id === m.id ? voice.state : 'idle'} onStopSpeak={stopSpeaking}
                 onSpeak={() => say(m.content, m.id, m.agent_id)}
                 onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined}
-                onPdf={shareIdOf(m) ? () => setPdfOf({ id: shareIdOf(m), content: m.content }) : undefined} />
+                onPdf={savedIdOf(m) && m.content ? () => setPdfOf({ id: savedIdOf(m), content: m.content, own: m.role === 'user' }) : undefined} />
             ))}
             {drafts.map((d) => (
               <DraftCard key={d.id} draft={d} from={mailbox}
@@ -319,7 +326,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         <ShareSheet dm={dm} messageId={sharing} onClose={() => setSharing(null)} onDone={flash} />
       )}
       {pdfOf && (
-        <PdfSheet messageId={pdfOf.id} content={pdfOf.content} onOpenFile={openFile} onClose={() => setPdfOf(null)} />
+        <PdfSheet messageId={pdfOf.id} content={pdfOf.content} own={pdfOf.own} onOpenFile={openFile} onClose={() => setPdfOf(null)} />
       )}
       {picking && (
         <CarrySheet agents={agents} currentId={convId} picked={carry} onClose={() => setPicking(false)} onDone={setCarry} />

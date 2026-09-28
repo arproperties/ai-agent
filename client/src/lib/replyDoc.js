@@ -14,12 +14,25 @@ function isOffer(para) {
 
 const clean = (s) => String(s).replace(/[*_`#]/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\s+/g, ' ').trim();
 
+// Text the person typed: the request for a PDF ("convert into pdf") is not part of it, and
+// each line they typed stays its own line rather than running on into a paragraph.
+const ASK = /^\s*(?:please\s+)?(?:(?:convert|make|turn|export|save|change|create|put|give)\b.{0,40}\bpdf|pdf(?:\s+please)?)\W*$/i;
+function ownText(text) {
+  const lines = text.split('\n');
+  const edge = (l) => !l.trim() || ASK.test(l);
+  while (lines.length && edge(lines[0])) lines.shift();
+  while (lines.length && edge(lines.at(-1))) lines.pop();
+  return lines.map((l) => (l.trim() && !l.trim().startsWith('|') ? `${l.trimEnd()}  ` : l)).join('\n');
+}
+
 /** { title, markdown } of what goes in a reply's PDF, or null for an empty reply. */
-export function documentPart(content) {
+export function documentPart(content, { own = false } = {}) {
   const text = String(content || '').replace(/\r\n/g, '\n');
   let body;
-  const open = OPEN.exec(text);
-  if (open) {
+  const open = !own && OPEN.exec(text);
+  if (own) {
+    body = ownText(text);
+  } else if (open) {
     const rest = text.slice(open.index + open[0].length);
     const close = CLOSE.exec(rest);
     body = close ? rest.slice(0, close.index) : rest;

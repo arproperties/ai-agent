@@ -6,10 +6,11 @@ import { documentPart } from '../lib/replyDoc';
 import Icon from './Icon';
 import Sheet from './Sheet';
 
-// A reply's document as a PDF. The preview is what goes in - only the document, not the
-// chat around it - and the PDF itself is laid out by the server from the saved reply.
-export default function PdfSheet({ messageId, content, onClose, onOpenFile }) {
-  const part = useMemo(() => documentPart(content), [content]);
+// A message as a PDF: a reply's document, or text the person typed themselves. The preview
+// is what goes in - only the document, not the chat around it - and the PDF itself is laid
+// out by the server from the saved message.
+export default function PdfSheet({ messageId, content, own = false, onClose, onOpenFile }) {
+  const part = useMemo(() => documentPart(content, { own }), [content, own]);
   const [busy, setBusy] = useState(''); // 'download' | 'shelf'
   const [saved, setSaved] = useState(null); // { id, duplicate }
   const [error, setError] = useState('');
@@ -45,7 +46,9 @@ export default function PdfSheet({ messageId, content, onClose, onOpenFile }) {
   return (
     <Sheet title={part?.title || 'PDF'} onClose={onClose}
       icon={<span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><Icon name="pdf" size={16} /></span>}>
-      <p className="mb-3 text-sm text-mute">Only the document goes in the PDF. The chat around it stays here.</p>
+      <p className="mb-3 text-sm text-mute">
+        {own ? 'Your text, word for word.' : 'Only the document goes in the PDF. The chat around it stays here.'}
+      </p>
 
       <div className="paper md mb-4 max-h-[46dvh] overflow-y-auto rounded-2xl bg-white px-5 py-4 text-[13px] text-[#1c1a2e] shadow-inner">
         {part ? <Markdown remarkPlugins={[remarkGfm]}>{part.markdown}</Markdown> : <p>There is no document in this reply.</p>}

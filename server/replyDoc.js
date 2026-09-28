@@ -20,15 +20,28 @@ const CLOSE = /^[ \t]*<!--\s*\/doc\s*-->[ \t]*$/im;
 // A closing line that talks to the reader rather than belonging to the document.
 const OFFER = /^(want me|would you|shall i|should i|do you want|let me know|if you (?:want|need|'d like|would like)|i can also|happy to|need (?:me|any)|tell me)/i;
 
+// Text the person typed: the request for a PDF ("convert into pdf") is not part of it, and
+// each line they typed stays its own line rather than running on into a paragraph.
+const ASK = /^\s*(?:please\s+)?(?:(?:convert|make|turn|export|save|change|create|put|give)\b.{0,40}\bpdf|pdf(?:\s+please)?)\W*$/i;
+function ownText(text) {
+  const lines = text.split('\n');
+  const edge = (l) => !l.trim() || ASK.test(l);
+  while (lines.length && edge(lines[0])) lines.shift();
+  while (lines.length && edge(lines.at(-1))) lines.pop();
+  return lines.map((l) => (l.trim() && !l.trim().startsWith('|') ? `${l.trimEnd()}  ` : l)).join('\n');
+}
+
 /**
  * The part of a reply that goes in its PDF, or null for an empty reply.
  * Returns { title, markdown }. Kept in step with client/src/lib/replyDoc.js.
  */
-export function documentPart(content) {
+export function documentPart(content, { own = false } = {}) {
   const text = String(content || '').replace(/\r\n/g, '\n');
-  let body = null;
-  const open = OPEN.exec(text);
-  if (open) {
+  let body;
+  const open = !own && OPEN.exec(text);
+  if (own) {
+    body = ownText(text);
+  } else if (open) {
     const rest = text.slice(open.index + open[0].length);
     const close = CLOSE.exec(rest);
     body = close ? rest.slice(0, close.index) : rest;

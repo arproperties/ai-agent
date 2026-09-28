@@ -1,5 +1,6 @@
-// A reply's PDF: download it, or keep it on the Shelf. What goes in and how it is laid
-// out is replyDoc.js; this is who may have it and where it goes.
+// A message's PDF - a reply, or text the person typed themselves: download it, or keep it
+// on the Shelf. What goes in and how it is laid out is replyDoc.js; this is who may have
+// it and where it goes.
 import { Router } from 'express';
 import { db } from './db.js';
 import { canUseAgent, chatAgents } from './access.js';
@@ -9,14 +10,14 @@ import { documentPart, renderPdf, unsupportedScript, pdfName } from './replyDoc.
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-/** The reply `messageId`, its document part and the PDF of it - for the owner only. */
+/** Message `messageId` - a reply, or the person's own text - with its PDF. For the owner only. */
 async function build(userId, messageId) {
-  const m = await db.prepare(`SELECT m.id, m.content, m.agent_id, m.conversation_id, m.created_at FROM messages m
+  const m = await db.prepare(`SELECT m.id, m.role, m.content, m.agent_id, m.conversation_id, m.created_at FROM messages m
     JOIN conversations c ON c.id = m.conversation_id
-    WHERE m.id = ? AND c.user_id = ? AND m.role = 'assistant'`).get(Number(messageId) || 0, userId);
-  if (!m) throw bad('That reply was not found', 404);
-  const part = documentPart(m.content);
-  if (!part) throw bad('There is no document in that reply');
+    WHERE m.id = ? AND c.user_id = ?`).get(Number(messageId) || 0, userId);
+  if (!m) throw bad('That message was not found', 404);
+  const part = documentPart(m.content, { own: m.role === 'user' });
+  if (!part) throw bad('There is nothing in that message to put in a PDF');
   if (unsupportedScript(part.markdown)) throw bad('PDFs can only be made from English text for now');
   const bytes = await renderPdf({ ...part, date: new Date(Number(m.created_at) * 1000) });
   return { m, part, bytes: Buffer.from(bytes) };
