@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
-import { pickShelf, pickCompany, saveUpload } from '../server/files.js';
+import { pickShelf, pickCompany, saveUpload, processDocument } from '../server/files.js';
 
 test.after(() => closeDb());
 
@@ -96,4 +96,12 @@ test('different bytes are still separate files', async () => {
   assert.equal(other.duplicate, false);
   const { n } = await db.prepare('SELECT COUNT(*)::int n FROM documents WHERE user_id = ?').get(user);
   assert.equal(n, 2);
+});
+
+// chat.js starts processing without awaiting it, and an unhandled rejection takes the
+// whole server down. So processDocument must never reject, even when writing down its
+// own failure is what fails - the database being unreachable is a plausible cause of both.
+test('processing never rejects, even when recording the failure fails', async () => {
+  const unwritable = { id: 'not-a-row', name: 'blank.txt', user_id: 0 }; // the error-status UPDATE throws on this id
+  await assert.doesNotReject(processDocument(unwritable, { mimetype: 'text/plain' }, ''));
 });

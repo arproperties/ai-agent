@@ -199,7 +199,11 @@ export async function processDocument(doc, f, text, agents = []) {
     await db.prepare("UPDATE documents SET status = 'ready', error = NULL WHERE id = ?").run(doc.id);
   } catch (e) {
     console.error('[files]', doc.name, e.message);
-    await db.prepare("UPDATE documents SET status = 'error', error = ? WHERE id = ?").run(e.message, doc.id);
+    // Callers run this in the background without awaiting it, so a rejection here would be
+    // unhandled and take the server down. The database is a plausible cause of the failure
+    // being recorded, so this write has to be allowed to fail quietly.
+    await db.prepare("UPDATE documents SET status = 'error', error = ? WHERE id = ?").run(e.message, doc.id)
+      .catch((e2) => console.error('[files] could not record failure:', doc.name, e2.message));
   }
 }
 
