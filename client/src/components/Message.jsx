@@ -139,8 +139,8 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
           {/* Only on a saved reply: the PDF is built from the saved words. */}
           {onPdf && documentPart(msg.content) && (
             <button onClick={onPdf} aria-label="Make a PDF" title="Make a PDF"
-              className="flex h-8 items-center gap-1.5 rounded-full px-2.5 hover:bg-white/10 hover:text-txt">
-              <Icon name="pdf" size={16} /><span className="text-xs">PDF</span>
+              className="grid size-8 place-items-center rounded-full hover:bg-white/10">
+              <Icon name="pdf" size={16} />
             </button>
           )}
         </div>
