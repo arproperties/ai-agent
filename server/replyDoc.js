@@ -3,8 +3,8 @@
 // When an agent writes something meant to be kept - an interview packet, a letter, a
 // checklist - it wraps the document itself in <!--doc--> ... <!--/doc-->, and the chat
 // around it ("Here is your packet", "Want me to add more?") stays outside. Only what is
-// inside goes into the PDF. Replies written before the markers existed fall back to
-// "from the first heading on, minus a closing offer".
+// inside goes into the PDF. A reply without markers goes in from its first heading on,
+// or whole when it has none, minus a closing offer either way.
 //
 // The PDF is laid out here with pdf-lib: no browser, no outside service, no model call.
 // Same reply in, same bytes out (the dates in it are the reply's own), so saving it to
@@ -21,7 +21,7 @@ const CLOSE = /^[ \t]*<!--\s*\/doc\s*-->[ \t]*$/im;
 const OFFER = /^(want me|would you|shall i|should i|do you want|let me know|if you (?:want|need|'d like|would like)|i can also|happy to|need (?:me|any)|tell me)/i;
 
 /**
- * The part of a reply that is the document, or null when the reply is ordinary chat.
+ * The part of a reply that goes in its PDF, or null for an empty reply.
  * Returns { title, markdown }. Kept in step with client/src/lib/replyDoc.js.
  */
 export function documentPart(content) {
@@ -33,10 +33,9 @@ export function documentPart(content) {
     const close = CLOSE.exec(rest);
     body = close ? rest.slice(0, close.index) : rest;
   } else {
-    // Older replies: a long answer with headings is a document from its first heading on.
+    // No markers: from the first heading on when there is one, otherwise the whole reply.
     const first = /^#{1,3}[ \t]+\S/m.exec(text);
-    if (!first || text.length < 600) return null;
-    body = text.slice(first.index);
+    body = first ? text.slice(first.index) : text;
     const paras = body.trimEnd().split(/\n{2,}/);
     while (paras.length > 1 && isOffer(paras.at(-1))) paras.pop();
     body = paras.join('\n\n');
@@ -44,7 +43,7 @@ export function documentPart(content) {
   body = body.replace(/<!--[\s\S]*?-->/g, '').trim();
   if (!body) return null;
   const h = /^#{1,3}[ \t]+(.+)$/m.exec(body);
-  const title = clean(h ? h[1] : body.split('\n')[0]).slice(0, 100) || 'Document';
+  const title = clean(h ? h[1] : body.split('\n')[0].split(/(?<=[.!?])\s/)[0]).slice(0, 100) || 'Document';
   return { title, markdown: body };
 }
 

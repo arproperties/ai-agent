@@ -28,9 +28,12 @@ test('an older reply without markers: from the first heading, minus the closing 
   assert.ok(!part.markdown.includes('Arabic?'));
 });
 
-test('an ordinary answer has no document', () => {
-  assert.equal(documentPart('The service charge is due on 1 October.'), null);
-  assert.equal(documentPart(`# Short\n\nToo short to be a document.`), null);
+test('a reply with no heading goes in whole, titled by its first sentence', () => {
+  const part = documentPart('Record the interview first. Then ask me to score it.\n\n- Step one\n- Step two\n\nWant me to set a reminder?');
+  assert.equal(part.title, 'Record the interview first.');
+  assert.ok(part.markdown.startsWith('Record the interview first.'));
+  assert.ok(!part.markdown.includes('reminder'));
+  assert.equal(documentPart('  <!--doc-->  '), null);
 });
 
 test('the app and the server agree on the document', () => {
