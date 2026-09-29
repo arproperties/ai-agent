@@ -34,18 +34,24 @@ self.addEventListener('push', (event) => {
   // A browser will show its own blunt "This site has been updated in the background" if
   // we receive a push and show nothing, so there is always a notification, even if the
   // payload arrived empty.
-  event.waitUntil(self.registration.showNotification(data.title || 'Jarvis', {
+  // Closing the one already showing before putting up the next matters on a Mac: there,
+  // Chrome swaps the text of a same-tag notification in silence, so every message after
+  // the first in a chat arrived with no banner at all. Closed and shown fresh, it pops up.
+  const tag = data.tag || 'jarvis';
+  event.waitUntil(self.registration.getNotifications({ tag })
+    .then((open) => open.forEach((n) => n.close()), () => {})
+    .then(() => self.registration.showNotification(data.title || 'Jarvis', {
     body: data.body || 'You have a new message',
     // The tag is the chat. A second message from the same chat replaces the first rather
     // than stacking up ten notices while someone is typing a paragraph one line at a time.
-    tag: data.tag || 'jarvis',
+    tag,
     renotify: true,
     icon: '/icons/icon-192.png',
     // Android paints the status-bar badge as one flat colour from the image's see-through
     // parts, so the full square app icon came out as a white box. This is the outline alone.
     badge: '/icons/badge-96.png',
     data: { url: data.url || '/' },
-  }));
+  })));
 });
 
 // Tapping it. If Jarvis is already open somewhere, that window is brought forward and
