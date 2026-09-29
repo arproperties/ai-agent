@@ -135,9 +135,9 @@ async function call(handler, { user, params = {}, query = {}, body = {}, file } 
 }
 
 /** Open the app for someone, so they count as online and get the live stream instead. */
-function connect(user) {
+function connect(user, { sid = 'a', watching = true } = {}) {
   let onClose;
-  h.events({ user, on: (e, fn) => { if (e === 'close') onClose = fn; } }, { set() {}, flushHeaders() {}, write() {} });
+  h.events({ user, query: { sid, watching: watching ? '1' : '0' }, on: (e, fn) => { if (e === 'close') onClose = fn; } }, { set() {}, flushHeaders() {}, write() {} });
   return () => onClose();
 }
 
@@ -161,6 +161,34 @@ test('a message wakes the people who are away, and nobody who is here', async ()
   assert.equal(posted[0].body, 'Concrete arrives at seven');
   assert.equal(posted[0].url, `/?chat=${chat.id}`);
   watching();
+});
+
+test('an app that is open but not on screen still gets the notice', async () => {
+  await reset();
+  fresh();
+  const sara = { id: await makeUser('Sara'), name: 'Sara' };
+  const tom = { id: await makeUser('Tom'), name: 'Tom' };
+  await saveSubscription(tom.id, device(tom.name), 'Laptop');
+  const chat = await call(h.create, { user: sara, body: { userId: tom.id } });
+
+  // Tom's laptop has Jarvis in a background tab: connected, but not looking.
+  const closeTab = connect(tom, { sid: 'tab', watching: false });
+  await call(h.send, { user: sara, params: { id: chat.id }, body: { body: 'One' } });
+  await tick();
+  assert.equal(posted.length, 1);
+
+  // He brings the tab to the front: now the live stream is enough.
+  await call(h.watching, { user: tom, body: { sid: 'tab', watching: true } });
+  await call(h.send, { user: sara, params: { id: chat.id }, body: { body: 'Two' } });
+  await tick();
+  assert.equal(posted.length, 1);
+
+  // And away again.
+  await call(h.watching, { user: tom, body: { sid: 'tab', watching: false } });
+  await call(h.send, { user: sara, params: { id: chat.id }, body: { body: 'Three' } });
+  await tick();
+  assert.equal(posted.length, 2);
+  closeTab();
 });
 
 test('a one-to-one notice is just the sender\'s name, and a file says what it is', async () => {

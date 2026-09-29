@@ -14,6 +14,7 @@ import MeetingsPage from './components/Meetings';
 import TranscribePage from './components/Transcribe';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
+import { NotifyPrompt } from './components/Notifications';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
@@ -176,6 +177,7 @@ export default function App() {
       {panel === 'memory' && <MemorySheet onClose={() => setPanel(null)} />}
       {panel === 'email' && <EmailSheet returned={outlookReturn} onClose={() => setPanel(null)} />}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
+      <NotifyPrompt />
     </div>
   );
 }

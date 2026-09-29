@@ -34,6 +34,13 @@ const streams = new Map(); // userId -> Set<res>
 
 export const isOnline = (userId) => streams.has(userId);
 
+// Open is not the same as looking. A laptop keeps Jarvis in a background tab all day and
+// a phone keeps the stream alive for a while after the app is swiped away, and skipping
+// the buzz for either meant messages arrived in silence. Each app says whether it is on
+// screen (?sid=…&watching=1 on connect, then POST /watching as that changes), and only
+// an app that is actually being looked at stands in for a notification.
+export const isWatching = (userId) => [...(streams.get(userId) || [])].some((res) => res.watching);
+
 /** Push one event to every open app of these users. */
 export function emit(userIds, event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -163,7 +170,7 @@ const previewText = (m) => (m.body || '').trim()
  * morning must never turn a sent message into a failed request.
  */
 function notifyOffline(mine, sender, members, msg) {
-  const away = members.filter((u) => u !== sender.id && !isOnline(u));
+  const away = members.filter((u) => u !== sender.id && !isWatching(u));
   if (!away.length) return;
   sendPush(away, {
     // A group says which group; a one-to-one needs only the name, as WhatsApp does it.
@@ -184,6 +191,8 @@ export const messengerHandlers = {
     res.flushHeaders();
     res.write('retry: 3000\n\n');
 
+    res.sid = String(req.query?.sid || '').slice(0, 40);
+    res.watching = req.query?.watching === '1';
     const first = !streams.has(userId);
     if (first) streams.set(userId, new Set());
     streams.get(userId).add(res);
@@ -204,6 +213,13 @@ export const messengerHandlers = {
         emit(everyone(), 'presence', { userId, online: false, lastSeen: seen });
       }
     });
+  },
+
+  /** { sid, watching } - this app has come on screen or gone off it. */
+  watching(req, res) {
+    const sid = String(req.body?.sid || '');
+    for (const r of streams.get(req.user.id) || []) if (sid && r.sid === sid) r.watching = !!req.body.watching;
+    res.json({ ok: true });
   },
 
   /** Everyone who can be messaged. It is a team app: every active account. */
@@ -484,6 +500,7 @@ const h = messengerHandlers;
 
 export const messengerRoutes = Router();
 messengerRoutes.get('/events', h.events);
+messengerRoutes.post('/watching', h.watching);
 messengerRoutes.get('/people', wrap(h.people));
 messengerRoutes.get('/chats', wrap(h.list));
 messengerRoutes.post('/chats', wrap(h.create));

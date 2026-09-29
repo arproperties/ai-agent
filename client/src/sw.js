@@ -41,7 +41,9 @@ self.addEventListener('push', (event) => {
     tag: data.tag || 'jarvis',
     renotify: true,
     icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
+    // Android paints the status-bar badge as one flat colour from the image's see-through
+    // parts, so the full square app icon came out as a white box. This is the outline alone.
+    badge: '/icons/badge-96.png',
     data: { url: data.url || '/' },
   }));
 });

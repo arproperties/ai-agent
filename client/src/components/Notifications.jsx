@@ -136,3 +136,71 @@ export function NotifyBanner() {
     </div>
   );
 }
+
+const SNOOZED = 'jarvis:notify-prompt-snoozed';
+const SNOOZE_FOR = 3 * 24 * 3600 * 1000;
+
+/**
+ * The card that greets anyone whose device is not set up yet, right after they open
+ * Jarvis. The Team chat banner alone was too easy to miss: most of the team never turned
+ * notifications on, and a chat app that never buzzes is a chat app nobody opens.
+ *
+ * "Not now" puts it away for a few days on this device, not for good. An iPhone in Safari
+ * cannot be switched on at all, so it gets the Home Screen steps instead of a button.
+ */
+export function NotifyPrompt() {
+  const { state, busy, toggle } = usePush();
+  const [hidden, setHidden] = useState(() => {
+    try { return Date.now() < Number(localStorage.getItem(SNOOZED) || 0); } catch { return false; }
+  });
+  const [problem, setProblem] = useState('');
+  const [done, setDone] = useState(false);
+
+  const iPhoneInSafari = /iPad|iPhone|iPod/.test(navigator.userAgent) && !navigator.standalone;
+  const blocked = state === 'off' && typeof Notification !== 'undefined' && Notification.permission === 'denied';
+  const needsHomeScreen = state === 'unavailable' && iPhoneInSafari;
+  if (hidden || state === null || (state === 'on' && !done) || (state === 'unavailable' && !needsHomeScreen)) return null;
+
+  const later = () => {
+    setHidden(true);
+    try { localStorage.setItem(SNOOZED, String(Date.now() + SNOOZE_FOR)); } catch { /* asked again next time */ }
+  };
+  const turnOn = async () => {
+    setProblem('');
+    const r = await toggle();
+    if (!r.ok) return setProblem(r.reason || 'That did not work.');
+    setDone(true);
+    testPush().catch(() => {});
+    setTimeout(() => setHidden(true), 2500);
+  };
+
+  const title = done ? 'Notifications are on' : needsHomeScreen ? 'Add Jarvis to your Home Screen' : blocked ? 'Notifications are blocked' : 'Turn on notifications';
+  const text = done ? 'We just sent you one so you can see what it looks like.'
+    : needsHomeScreen ? 'iPhone only allows notifications from the Home Screen app. Tap the Share button, then “Add to Home Screen”, and open Jarvis from there.'
+    : blocked ? 'This device is set to block Jarvis. Allow notifications for this site in your browser or phone settings, then come back.'
+    : 'So you know the moment a colleague messages you — even when Jarvis is closed.';
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm sm:items-center">
+      <div className="rise w-full max-w-sm rounded-3xl border border-stroke bg-[#141225] p-6 text-center shadow-2xl">
+        <span className="mx-auto grid size-12 place-items-center rounded-full bg-emerald-400/15 text-emerald-300"><Bell size={22} /></span>
+        <p className="mt-4 text-lg font-medium">{title}</p>
+        <p className="mt-1.5 text-sm text-mute">{text}</p>
+        {problem && <p className="mt-2 text-xs text-warn">{problem}</p>}
+        {!done && (
+          <div className="mt-5 flex flex-col gap-2">
+            {!needsHomeScreen && !blocked && (
+              <button onClick={turnOn} disabled={busy}
+                className="rounded-full bg-emerald-500 py-2.5 text-sm font-medium text-white active:scale-[0.98] disabled:opacity-60">
+                {busy ? 'Just a moment…' : 'Turn on'}
+              </button>
+            )}
+            <button onClick={later} className="rounded-full py-2 text-sm text-mute hover:text-txt">
+              {needsHomeScreen || blocked ? 'OK' : 'Not now'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
