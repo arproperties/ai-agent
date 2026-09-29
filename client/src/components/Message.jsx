@@ -36,6 +36,20 @@ function Attachments({ files, onOpenFile }) {
 // What the read-aloud button shows in each state. Tapping always does the
 // obvious thing: start, pause, resume — or, while it is still being generated,
 // give up waiting.
+// When a message was sent: just the time today, "Yesterday 14:32", then the date.
+function sentAt(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const day = new Date(); day.setHours(0, 0, 0, 0);
+  if (d >= day) return time;
+  if (d >= day - 86400000) return `Yesterday ${time}`;
+  const date = d.toLocaleDateString([], { day: 'numeric', month: 'short', ...(d.getFullYear() !== day.getFullYear() && { year: 'numeric' }) });
+  return `${date} ${time}`;
+}
+
+const Time = ({ ts }) => (ts ? <span className="px-1 text-[11px] text-mute/70">{sentAt(ts)}</span> : null);
+
 const VOICE = {
   idle: { icon: 'speaker', label: 'Read aloud' },
   loading: { icon: 'spinner', label: 'Preparing…', hint: 'Preparing audio — tap to cancel', spin: true },
@@ -64,12 +78,15 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
           </div>
         )}
         {/* Their own text as a PDF: word for word, no model involved. */}
-        {onPdf && (
-          <div className="mt-1 flex justify-end text-mute">
-            <button onClick={onPdf} aria-label="Make a PDF" title="Make a PDF"
-              className="grid size-8 place-items-center rounded-full hover:bg-white/10">
-              <Icon name="pdf" size={16} />
-            </button>
+        {(onPdf || msg.created_at) && (
+          <div className="mt-1 flex min-h-8 items-center justify-end text-mute">
+            <Time ts={msg.created_at} />
+            {onPdf && (
+              <button onClick={onPdf} aria-label="Make a PDF" title="Make a PDF"
+                className="grid size-8 place-items-center rounded-full hover:bg-white/10">
+                <Icon name="pdf" size={16} />
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -115,7 +132,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
         </div>
       )}
       {msg.content && !msg.streaming && (
-        <div className="mt-2 flex gap-1 text-mute">
+        <div className="mt-2 flex items-center gap-1 text-mute">
           {voiceEnabled && (() => {
             const v = VOICE[voice] || VOICE.idle;
             const active = voice !== 'idle';
@@ -152,6 +169,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
               <Icon name="pdf" size={16} />
             </button>
           )}
+          <Time ts={msg.created_at} />
         </div>
       )}
     </div>

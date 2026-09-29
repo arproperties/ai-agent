@@ -149,7 +149,7 @@ app.get('/api/conversations/search', wrap(async (req, res) => {
 app.get('/api/conversations/:id/messages', wrap(async (req, res) => {
   if (!await own('conversations', req.params.id, req.user.id)) return notFound(res);
   // carried: earlier chats this message brought in, titled as they were at the time
-  const rows = await db.prepare(`SELECT m.id, m.agent_id, m.role, m.content, m.files, m.sources,
+  const rows = await db.prepare(`SELECT m.id, m.agent_id, m.role, m.content, m.files, m.sources, m.created_at,
       (SELECT json_agg(cc.title ORDER BY cc.id) FROM carried_chats cc WHERE cc.message_id = m.id) carried
     FROM messages m WHERE m.conversation_id = ? ORDER BY m.id`).all(Number(req.params.id));
   res.json(rows.map((m) => ({ ...m, files: JSON.parse(m.files), sources: JSON.parse(m.sources || '[]'), carried: m.carried || [] })));

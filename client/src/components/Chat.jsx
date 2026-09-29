@@ -109,9 +109,10 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     setCarry([]);
 
     const aid = `a${Date.now()}`;
+    const now = Math.floor(Date.now() / 1000);
     setMessages((m) => [...m,
-      { id: `u${aid}`, role: 'user', content: text, carried: brought.map((c) => c.title), files: files.map((f) => ({ name: f.name, kind: f.type.startsWith('image/') ? 'image' : 'doc', preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : null })) },
-      { id: aid, role: 'assistant', content: '', streaming: true }]);
+      { id: `u${aid}`, role: 'user', content: text, created_at: now, carried: brought.map((c) => c.title), files: files.map((f) => ({ name: f.name, kind: f.type.startsWith('image/') ? 'image' : 'doc', preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : null })) },
+      { id: aid, role: 'assistant', content: '', streaming: true, created_at: now }]);
     const update = (patch) => setMessages((m) => m.map((x) => (x.id === aid ? { ...x, ...patch } : x)));
     toBottom();
 
