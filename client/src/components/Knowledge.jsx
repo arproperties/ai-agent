@@ -10,6 +10,7 @@ import { startImport, importState, onImport, clearImportError } from '../lib/imp
 import { describeIgnored } from '../lib/zip';
 import Icon from './Icon';
 import Sheet from './Sheet';
+import Orb from './Orb';
 import { ParticleField } from './ParticleField';
 
 export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
@@ -791,7 +792,12 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
-        {docs?.length === 0 ? (
+        {!docs ? (
+          <div className="rise flex h-full flex-col items-center justify-center gap-5 text-center">
+            <Orb className="w-28" state="thinking" />
+            <p className="animate-pulse text-sm font-light tracking-wide text-mute">Opening your shelf…</p>
+          </div>
+        ) : docs.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
             <span className="grid size-20 place-items-center rounded-3xl bg-gradient-to-br from-sky-500/25 to-p1/10 text-sky-300"><FolderOpen size={36} strokeWidth={1.4} /></span>
             <div>
