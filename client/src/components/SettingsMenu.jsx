@@ -1,20 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions } from 'lucide-react';
 import Icon from './Icon';
 import { Row, Count } from './NavRow';
 
 /**
  * The gear in the sidebar footer, and the menu it opens above itself.
  *
- * These six are places rather than preferences, but they are places you visit
- * occasionally, so they live behind one button instead of taking six permanent rows
+ * These are places rather than preferences, but they are places you visit
+ * occasionally, so they live behind one button instead of taking a permanent row each
  * away from the chat list.
  *
  * Two of them can be waiting on you -- a licence about to lapse, a to-do that is due --
  * and a number nobody can see is a number that stops working. So the counts stay on the
  * items inside, and a single dot on the gear says "something in here wants you".
  */
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, filesOpen, todosOpen, meetingsOpen, onFiles, onTodos, onMeetings, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, filesOpen, todosOpen, meetingsOpen, transcribeOpen, onFiles, onTodos, onMeetings, onTranscribe, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef(null);
 
@@ -53,6 +53,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, filesOp
           <Row role="menuitem" icon={<ListTodo size={17} strokeWidth={1.75} />} label="To-do" active={todosOpen} onClick={go(onTodos)}
             aria-label={dueTodos ? `To-do (${dueTodos} due)` : 'To-do'} badge={<Count n={dueTodos} />} />
           <Row role="menuitem" icon={<AudioLines size={17} strokeWidth={1.75} />} label="Meetings" active={meetingsOpen} onClick={go(onMeetings)} />
+          <Row role="menuitem" icon={<Captions size={17} strokeWidth={1.75} />} label="Transcribe" active={transcribeOpen} onClick={go(onTranscribe)} />
           <Row role="menuitem" icon={<Icon name="brain" size={17} />} label="Memory" onClick={go(onMemory)} />
           <Row role="menuitem" icon={<Icon name="mail" size={17} />} label="Email" onClick={go(onEmail)} />
           {/* Only the master manages people; the server refuses anyone else. */}

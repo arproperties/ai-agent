@@ -24,6 +24,7 @@ import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
 import { saifsysRoutes } from './saifsys.js';
 import { meetingRoutes, startMeetings } from './meetings.js';
+import { transcriptRoutes, startTranscripts } from './transcripts.js';
 import { errorRoutes, recordError } from './errors.js';
 import { replyPdfRoutes } from './replyPdf.js';
 
@@ -47,6 +48,7 @@ app.use('/api/routines', routineRoutes); // things that come back, kept apart fr
 app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
 app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
 app.use('/api/meetings', meetingRoutes); // recorded meetings: who said what, and a summary
+app.use('/api/transcripts', transcriptRoutes); // any audio file or recording, as plain text
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
@@ -354,6 +356,7 @@ app.listen(PORT, '0.0.0.0', () => {
   startReminders();
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
+  startTranscripts().catch((e) => console.error('[transcripts]', e.message));
   // The saifsys morning checkout reminder (startSaifsys in server/saifsys.js) is on hold
   // by the user's choice, 2026-09-25: they ask Jarvis instead. The tool still works.
   console.log(`Jarvis server → http://localhost:${PORT}`);

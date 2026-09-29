@@ -731,3 +731,22 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_meeting_lines ON meeting_lines(meeting_id, start_s);
 `);
+
+// Transcribe (server/transcripts.js): any audio file or quick recording, turned into plain
+// text. Apart from meetings on purpose: no speakers, no summary. path is the uploaded file,
+// kept only until it has been read.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS transcripts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title  TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'upload',
+    status TEXT NOT NULL DEFAULT 'processing',
+    text   TEXT NOT NULL DEFAULT '',
+    error  TEXT,
+    path   TEXT NOT NULL DEFAULT '',
+    duration_s INTEGER NOT NULL DEFAULT 0,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_transcripts_user ON transcripts(user_id, id DESC);
+`);

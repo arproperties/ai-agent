@@ -41,7 +41,7 @@ const Label = ({ children, action }) => (
   </div>
 );
 
-export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
+export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
   const [q, setQ] = useState('');
   const [searching, setSearching] = useState(false);
@@ -187,8 +187,8 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
             </button>
           )}
           <SettingsMenu user={user} expiring={expiring} dueTodos={dueTodos}
-            filesOpen={filesOpen} todosOpen={todosOpen} meetingsOpen={meetingsOpen}
-            onFiles={onFiles} onTodos={onTodos} onMeetings={onMeetings}
+            filesOpen={filesOpen} todosOpen={todosOpen} meetingsOpen={meetingsOpen} transcribeOpen={transcribeOpen}
+            onFiles={onFiles} onTodos={onTodos} onMeetings={onMeetings} onTranscribe={onTranscribe}
             onMemory={onMemory} onEmail={onEmail} onPeople={onPeople} />
           <NotifyBell />
           <button onClick={onLogout} aria-label="Sign out" title="Sign out" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
