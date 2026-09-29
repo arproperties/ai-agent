@@ -84,7 +84,7 @@ const SWAP = {
   ' ': ' ', ' ': ' ', '​': '', '‎': '', '‏': '', '️': '',
 };
 
-function sanitize(s) {
+export function sanitize(s) {
   let out = '';
   for (const c of String(s).normalize('NFC')) {
     const r = SWAP[c] ?? c;

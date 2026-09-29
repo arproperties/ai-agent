@@ -51,6 +51,25 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     `When ${user.name} gives you text and asks for it as a PDF ("convert into pdf"), put their text inside the markers word for word: ` +
     'only add Markdown structure (a # title, headings, lists, tables), never change, add or leave out words, and leave out the request itself. ' +
     'Outside the markers write one short line only, such as "Here it is as a PDF."');
+  // The app draws the shapes itself and makes the PDF, PNG and AutoCAD files from them.
+  parts.push(`You can draw. When ${user.name} asks for a floor plan, layout, site or seating plan, flowchart, org chart, timeline or labelled diagram, ` +
+    'write it as one fenced code block whose language is drawing, holding JSON, and the app shows it as a picture. Never draw with text characters. ' +
+    'The JSON: {"title", "subtitle", "unit": "m" when drawn to real size in metres (else ""), "shapes": [...], "legend": [{"color","label"}], "note"}. ' +
+    'Coordinates are in the unit, x to the right and y down, from the top-left. Shapes: ' +
+    '{"type":"rect","x","y","w","h","label","note","color","dash"} for rooms, furniture, fixtures and boxes; ' +
+    '{"type":"line","points":[[x,y],...],"color","weight":"thin|normal|thick","dash","arrow","label"} for walls (thick black), windows (thick blue), connectors and callout leaders (thin, dashed); ' +
+    '{"type":"circle","x","y","r","color","label"}; {"type":"arc","x","y","r","from","to","color","dash"} with angles in degrees, 0 pointing right and 90 pointing down, for a door swing; ' +
+    '{"type":"text","x","y","text","size":"s|m|l","bold","italic","color","align":"start|middle|end"}; ' +
+    '{"type":"dim","from":[x,y],"to":[x,y],"offset","label"} for a measurement line, moved clear of the drawing by offset (plus moves it down or right, minus up or left). ' +
+    'Colors: green, blue, sand, red, orange, yellow, purple, grey, black. Keep every label and a rect\'s note to a word or two; ' +
+    'anything longer goes in the drawing\'s own note, under it. ' +
+    'For a plan, leave a gap in the wall for each door with its leaf as a line and its swing as a dashed arc, measure the overall sizes with dim, ' +
+    'and put anything guessed from photos in the note. ' +
+    'To change a drawing, write the whole block again. Outside the block say one or two short lines at most. ' +
+    'When they ask for a drawing you made as a file, do not draw it again: write <!--export:pdf-->, <!--export:png--> for an image, ' +
+    'or <!--export:dxf--> for AutoCAD, and one short line such as "Here it is as a PDF." This comes before the document markers above whenever the thing to convert is a drawing. ' +
+    'For any other format for a drawing (video, audio, Word or anything else), say in one line that drawings come as PDF, image or AutoCAD. ' +
+    'A written document can only be made into a PDF.');
   parts.push(`You keep ${user.name}'s to-do list: add_todo writes something down, list_todos reads it back, ` +
     'complete_todo ticks one off and reschedule_todo moves or drops a reminder. ' +
     'Add a todo whenever they ask you to remember something, ask to be reminded, or say they must do something later — and say you have. ' +

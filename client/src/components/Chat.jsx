@@ -13,6 +13,7 @@ import Sheet from './Sheet';
 import ShareSheet from './ShareSheet';
 import CarrySheet from './CarrySheet';
 import PdfSheet from './PdfSheet';
+import { lastDrawing, exportAsked } from '../lib/drawing';
 import { Welcome, InstallHint } from './FirstRun';
 import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
 
@@ -21,6 +22,14 @@ import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
 // Jarvis actually said, not whatever the browser is holding.
 const savedIdOf = (m) => (m.error ? null : m.saved ?? (typeof m.id === 'number' ? m.id : null));
 const shareIdOf = (m) => (m.role === 'assistant' ? savedIdOf(m) : null);
+// The latest saved drawing at or before message i: what "convert into pdf" hands over.
+function drawingUpTo(messages, i) {
+  for (let j = i; j >= 0; j--) {
+    const drawing = shareIdOf(messages[j]) && lastDrawing(messages[j].content);
+    if (drawing) return { drawing, messageId: shareIdOf(messages[j]) };
+  }
+  return undefined;
+}
 
 const IconBtn = ({ icon, label, onClick, className = '' }) => (
   <button onClick={onClick} aria-label={label} title={label}
@@ -281,12 +290,13 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 md:px-6">
-            {messages.map((m) => (
+            {messages.map((m, i) => (
               <Message key={m.id} msg={m} agent={byId[m.agent_id]} voiceEnabled={voiceEnabled} onOpenFile={openFile}
+                savedId={shareIdOf(m)} drawingFrom={exportAsked(m.content) ? drawingUpTo(messages, i) : undefined}
                 voice={voice.id === m.id ? voice.state : 'idle'} onStopSpeak={stopSpeaking}
                 onSpeak={() => say(m.content, m.id, m.agent_id)}
                 onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined}
-                onPdf={savedIdOf(m) && m.content ? () => setPdfOf({ id: savedIdOf(m), content: m.content, own: m.role === 'user' }) : undefined} />
+                onPdf={savedIdOf(m) && m.content && !(m.role === 'assistant' && lastDrawing(m.content)) ? () => setPdfOf({ id: savedIdOf(m), content: m.content, own: m.role === 'user' }) : undefined} />
             ))}
             {drafts.map((d) => (
               <DraftCard key={d.id} draft={d} from={mailbox}

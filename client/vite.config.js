@@ -40,6 +40,8 @@ export default defineConfig({
     }),
   ],
   server: {
+    // Drawings are drawn by server/drawingCore.js, shared with the server: let the dev server read it.
+    fs: { allow: ['..'] },
     proxy: { '/api': { target: 'http://localhost:3001', changeOrigin: true } },
   },
 });

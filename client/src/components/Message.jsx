@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm';
 import Icon from './Icon';
 import Avatar from './Avatar';
 import { hideMarkers } from '../lib/replyDoc';
+import { splitDrawings, withoutDrawings, exportAsked } from '../lib/drawing';
+import { DrawingCard, DrawingPending, DrawingFile } from './Drawing';
 
 const isImg = (f) => f.kind === 'image' || /\.(png|jpe?g|gif|webp|heic)$/i.test(f.name);
 const isVid = (f) => f.kind === 'video' || /\.(mp4|mov|webm|m4v|3gp)$/i.test(f.name);
@@ -76,7 +78,17 @@ const VOICE = {
   paused: { icon: 'play', label: 'Paused', hint: 'Resume' },
 };
 
-export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile, onShare, onPdf }) {
+// A reply as it reads: its words, with any drawing shown as a picture where it was written.
+function Reply({ content, savedId }) {
+  const parts = splitDrawings(content);
+  return parts.map((p, i) => (p.text !== undefined ? (
+    <div key={i} className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]}>{hideMarkers(p.text)}</Markdown></div>
+  ) : p.pending ? <DrawingPending key={i} /> : <DrawingCard key={i} drawing={p.drawing} messageId={savedId} />));
+}
+
+// savedId: the reply's row, which the PDF and AutoCAD files are made from. drawingFrom: the
+// latest drawing up to this reply, for a reply that hands it over as a file.
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile, onShare, onPdf, savedId, drawingFrom }) {
   const [copied, setCopied] = useState(false);
 
   if (msg.role === 'user') {
@@ -113,7 +125,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
   }
 
   const copy = async () => {
-    await navigator.clipboard?.writeText(hideMarkers(msg.content).trim());
+    await navigator.clipboard?.writeText(hideMarkers(withoutDrawings(msg.content)).trim());
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -130,11 +142,14 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
       {msg.error ? (
         <div className="rounded-2xl border border-bad/30 bg-bad/10 px-4 py-3 text-sm">{msg.error}</div>
       ) : msg.content ? (
-        <div className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]}>{hideMarkers(msg.content)}</Markdown></div>
+        <Reply content={msg.content} savedId={savedId} />
       ) : (
         <div className="flex gap-1.5 py-2">{[0, 1, 2].map((i) => (
           <span key={i} className="size-2 animate-bounce rounded-full bg-p1" style={{ animationDelay: `${i * 0.15}s` }} />
         ))}</div>
+      )}
+      {!msg.streaming && exportAsked(msg.content) && drawingFrom && (
+        <DrawingFile format={exportAsked(msg.content)} drawing={drawingFrom.drawing} messageId={drawingFrom.messageId} />
       )}
       {msg.sources?.length > 0 && (
         <div className="mt-3">

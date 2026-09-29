@@ -27,6 +27,7 @@ import { meetingRoutes, startMeetings } from './meetings.js';
 import { transcriptRoutes, startTranscripts } from './transcripts.js';
 import { errorRoutes, recordError } from './errors.js';
 import { replyPdfRoutes } from './replyPdf.js';
+import { drawingRoutes } from './drawing.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -50,6 +51,7 @@ app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
 app.use('/api/meetings', meetingRoutes); // recorded meetings: who said what, and a summary
 app.use('/api/transcripts', transcriptRoutes); // any audio file or recording, as plain text
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
+app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
