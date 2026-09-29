@@ -1,6 +1,7 @@
 import { db } from './db.js';
 import { sendPush } from './push.js';
 import { dueRoutines } from './routines.js';
+import { deliverDue as deliverTeamReminders } from './teamReminders.js';
 
 // The reminder that actually reaches you.
 //
@@ -84,6 +85,8 @@ function notify(userId, items) {
 }
 
 async function tick() {
+  // Reminders people send each other ride the same minute, but keep their own books.
+  await deliverTeamReminders().catch((e) => console.error('[team-reminders]', e.message));
   const at = now();
   const items = [...await todosDue(at), ...await routinesDue(at)];
   if (!items.length) return;

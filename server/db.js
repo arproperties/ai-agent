@@ -750,3 +750,38 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_transcripts_user ON transcripts(user_id, id DESC);
 `);
+
+// A reminder one person sends to others — the tables behind server/teamReminders.js.
+//
+// Apart from todos on purpose: a todo is one person's own list, this is a message with a
+// sender, several people on the end of it, and each of them ticking it off on their own.
+//   status: pending until the sender taps Send on the card in chat (Jarvis only ever
+//     proposes), then scheduled, then delivered once the phones have been told. cancelled
+//     for one the sender thought better of. Nothing reaches anyone while it is pending.
+//   remind_at: NULL means "as soon as they tap Send".
+//   everyone: remembered so the card can say "Everyone" rather than a list of twenty names.
+//   team_reminder_people: one row per person it went to, and each person's own tick.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS team_reminders (
+    id SERIAL PRIMARY KEY,
+    sender_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    text      TEXT NOT NULL,
+    remind_at BIGINT,
+    everyone  BOOLEAN NOT NULL DEFAULT false,
+    status    TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'scheduled', 'delivered', 'cancelled')),
+    delivered_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS team_reminder_people (
+    id SERIAL PRIMARY KEY,
+    reminder_id INTEGER NOT NULL REFERENCES team_reminders(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    done    BOOLEAN NOT NULL DEFAULT false,
+    done_at BIGINT,
+    UNIQUE (reminder_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_team_rem_sender ON team_reminders(sender_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_team_rem_waiting ON team_reminders(remind_at) WHERE status = 'scheduled';
+  CREATE INDEX IF NOT EXISTS idx_team_rem_people ON team_reminder_people(user_id, done);
+`);

@@ -5,6 +5,7 @@ import { extractText, readVideo, recall, learn } from './knowledge.js';
 import { saveUpload, processDocument, isImage, isVideo, fileName, libraryCatalog } from './files.js';
 import { connectedMailbox } from './email.js';
 import { todoKit } from './todos.js';
+import { teamReminderKit } from './teamReminders.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
 import { isAudio, readAudio } from './transcripts.js';
@@ -247,8 +248,10 @@ export async function chat(req, res) {
   // is connected. Each kit names its own tools, so a call is routed by name and nothing here
   // has to know which feature it belongs to.
   const ctx = { agentId: agent.id, conversationId: convId };
+  // Reminders for other people: proposed here, sent only from the card the user taps.
+  const sendKit = await teamReminderKit(user.id, { conversationId: convId, onCard: (r) => send('teamReminder', r) });
   // saifsys is company-wide, so every agent carries it for every user once it is connected.
-  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), meetingKit(user.id), ...(saifsysConfigured() ? [saifsysKit()] : []), ...(email ? [email] : [])];
+  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), ...(saifsysConfigured() ? [saifsysKit()] : []), ...(email ? [email] : [])];
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
   const library = await libraryCatalog(user); // same every turn, so read it once

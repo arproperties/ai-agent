@@ -30,7 +30,7 @@ export default function App() {
   const [convs, setConvs] = useState([]);
   const [convsLoaded, setConvsLoaded] = useState(false); // an empty list means nothing until it has arrived
   const [expiring, setExpiring] = useState([]); // paperwork running out inside a month
-  const [due, setDue] = useState({ todos: [], routines: [] }); // reminders that have come round, and routines asking to be done
+  const [due, setDue] = useState({ todos: [], routines: [], fromOthers: [] }); // reminders that have come round, and routines asking to be done
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
@@ -58,7 +58,8 @@ export default function App() {
   const loadDue = useCallback(() => Promise.all([
     api.get('/todos/due').catch(() => []),
     api.get('/routines/due').catch(() => []),
-  ]).then(([todos, routines]) => setDue({ todos, routines })), []);
+    api.get('/team-reminders/inbox').catch(() => []), // what other people have asked of them
+  ]).then(([todos, routines, fromOthers]) => setDue({ todos, routines, fromOthers })), []);
 
   // A notification tapped while Jarvis was already open somewhere: the service worker
   // brings that window forward rather than starting a second one, and says what the
@@ -69,6 +70,8 @@ export default function App() {
       if (e.data?.type !== 'notification') return;
       const where = new URL(e.data.url, window.location.origin).searchParams;
       if (where.get('todos') === '1') { setPanel('todos'); loadDue(); return; }
+      // A reminder from someone else waits on the first screen of a new chat.
+      if (where.get('reminders') === '1') { setChat({ key: Date.now(), id: null }); setPanel(null); loadDue(); return; }
       const id = Number(where.get('chat')) || null;
       if (!id) return;
       setPanel('messages');
@@ -123,7 +126,7 @@ export default function App() {
         {agents.length > 0 ? (
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice}
             firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
-            due={due} onOpenLists={() => setPanel('todos')}
+            due={due} onDueChanged={loadDue} onOpenLists={() => setPanel('todos')}
             onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —

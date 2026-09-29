@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ListTodo } from 'lucide-react';
+import { ListTodo, BellRing, Check } from 'lucide-react';
 import { api, streamChat } from '../lib/api';
 import { speakText, stopSpeaking, togglePause } from '../lib/voice';
 import Icon from './Icon';
@@ -7,6 +7,7 @@ import Orb from './Orb';
 import Avatar from './Avatar';
 import Message from './Message';
 import DraftCard from './DraftCard';
+import TeamReminderCard from './TeamReminderCard';
 import Composer from './Composer';
 import LiveVoice from './LiveVoice';
 import Sheet from './Sheet';
@@ -38,7 +39,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0 }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [], fromOthers: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0 }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -52,6 +53,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [chatFiles, setChatFiles] = useState(null); // list of this chat's attachments
   const [drafts, setDrafts] = useState([]); // every email written in this chat, whatever became of it
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
+  const [reminders, setReminders] = useState([]); // reminders for other people got ready in this chat
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
   const [pdfOf, setPdfOf] = useState(null); // { id, content, own } of the message being made into a PDF
   const [carry, setCarry] = useState([]); // earlier chats picked for the message being written
@@ -74,6 +76,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       // reload leaves no answer to "did I send that?". The card says what became of it.
       // Oldest first, because the list arrives newest first and these read as chat.
       api.get(`/email/drafts?conversation=${conversationId}`).then((r) => setDrafts(r.drafts.slice().reverse())).catch(() => {});
+      api.get(`/team-reminders?conversation=${conversationId}`).then(setReminders).catch(() => {});
     }
     api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
     return () => { abortRef.current?.abort(); stopSpeaking(); };
@@ -150,6 +153,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             // their own message gets its saved id too, so it can be made into a PDF
             if (d.userMessageId) setMessages((m) => m.map((x) => (x.id === `u${aid}` ? { ...x, saved: d.userMessageId } : x)));
           }
+          else if (event === 'teamReminder') { setReminders((rs) => [...rs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'draft') { setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'delta') {
             if (!reply) setOrb('speaking');
@@ -244,6 +248,22 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             {/* A reminder that has come round is the closest thing this app has to being
                 tapped on the shoulder, so it sits above the paperwork warning. Both lists
                 are counted here: separate screens, one answer to "what needs me now". */}
+            {/* Sent by someone else: each one on its own, with its own Done, because the
+                sender is waiting to see that tick and there is no other screen for it. */}
+            {(due.fromOthers || []).map((r) => (
+              <div key={`from${r.id}`}
+                className="flex w-full max-w-md items-center gap-3 rounded-2xl border border-p2/40 bg-p2/[0.09] px-3.5 py-3 text-left">
+                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-p2/20 text-p2"><BellRing size={16} /></span>
+                <span className="min-w-0 flex-1">
+                  <b className="block text-sm font-medium">{r.text}</b>
+                  <span className="block truncate text-xs text-mute">From {r.sender_name}</span>
+                </span>
+                <button onClick={() => api.post(`/team-reminders/inbox/${r.id}/done`).then(onDueChanged).catch((e) => flash(e.message))}
+                  className="flex shrink-0 items-center gap-1 rounded-full border border-stroke px-3 py-1.5 text-xs hover:border-ok/60 hover:text-ok">
+                  <Check size={13} /> Done
+                </button>
+              </div>
+            ))}
             {dueNow.count > 0 && onOpenLists && (
               <button onClick={onOpenLists}
                 className="flex w-full max-w-md items-center gap-3 rounded-2xl border border-p1/40 bg-p1/[0.09] px-3.5 py-3 text-left transition hover:bg-white/[0.07]">
@@ -301,6 +321,10 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             {drafts.map((d) => (
               <DraftCard key={d.id} draft={d} from={mailbox}
                 onChanged={(u) => setDrafts((ds) => ds.map((x) => (x.id === u.id ? u : x)))} />
+            ))}
+            {reminders.map((r) => (
+              <TeamReminderCard key={r.id} reminder={r}
+                onChanged={(u) => setReminders((rs) => rs.map((x) => (x.id === u.id ? u : x)))} />
             ))}
           </div>
         )}

@@ -121,7 +121,8 @@ export const TODO_TOOLS = [
     name: 'add_todo',
     description: "Write something down on the user's to-do list. Use this whenever they ask you to remember to do something, " +
       'ask to be reminded, or say they need to do something later. Tell them in your reply that you have added it. ' +
-      'The reminder is optional — leave remind_at out unless a time was actually meant.',
+      'The reminder is optional — leave remind_at out unless a time was actually meant. ' +
+      'This is only for the user themselves: to remind someone else, use remind_people.',
     input_schema: {
       type: 'object',
       properties: {
