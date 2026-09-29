@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ListTodo, BellRing, Check } from 'lucide-react';
+import { ListTodo, BellRing, Check, Lightbulb, X, Bell } from 'lucide-react';
 import { api, streamChat } from '../lib/api';
 import { speakText, stopSpeaking, togglePause } from '../lib/voice';
 import Icon from './Icon';
@@ -8,6 +8,8 @@ import Avatar from './Avatar';
 import Message from './Message';
 import DraftCard from './DraftCard';
 import TeamReminderCard from './TeamReminderCard';
+import { usePush } from './Notifications';
+import { permission } from '../lib/push';
 import Composer from './Composer';
 import LiveVoice from './LiveVoice';
 import Sheet from './Sheet';
@@ -54,6 +56,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [drafts, setDrafts] = useState([]); // every email written in this chat, whatever became of it
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
   const [reminders, setReminders] = useState([]); // reminders for other people got ready in this chat
+  const [suggested, setSuggested] = useState([]); // reminders Jarvis spotted, waiting for a yes or no
+  const push = usePush();
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
   const [pdfOf, setPdfOf] = useState(null); // { id, content, own } of the message being made into a PDF
   const [carry, setCarry] = useState([]); // earlier chats picked for the message being written
@@ -79,6 +83,9 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       api.get(`/team-reminders?conversation=${conversationId}`).then(setReminders).catch(() => {});
     }
     api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
+    // Only on the first screen, where they are shown. The server decides whether it is
+    // time for a real look; most of the time this just returns what is already waiting.
+    if (!conversationId) api.post('/suggestions/scan').then(setSuggested).catch(() => {});
     return () => { abortRef.current?.abort(); stopSpeaking(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -264,6 +271,42 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 </button>
               </div>
             ))}
+            {/* Spotted by Jarvis in new email and chat. A suggestion, never a reminder until
+                "Remind me" is tapped — then it is an ordinary todo on their own list. */}
+            {suggested.map((sg) => (
+              <div key={`sg${sg.id}`}
+                className="flex w-full max-w-md items-center gap-3 rounded-2xl border border-stroke bg-white/[0.04] px-3.5 py-3 text-left">
+                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-warn/15 text-warn"><Lightbulb size={16} /></span>
+                <span className="min-w-0 flex-1">
+                  <b className="block text-sm font-medium">{sg.text}</b>
+                  <span className="block truncate text-xs text-mute">
+                    {sg.remind_at ? `${new Date(sg.remind_at * 1000).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · ` : ''}
+                    {sg.why || (sg.source === 'email' ? 'From your email' : 'From your chats')}
+                  </span>
+                </span>
+                <button onClick={() => api.post(`/suggestions/${sg.id}/accept`).then(() => { setSuggested((x) => x.filter((y) => y.id !== sg.id)); onDueChanged?.(); flash('Added to your list'); }).catch((e) => flash(e.message))}
+                  className="shrink-0 rounded-full border border-stroke px-3 py-1.5 text-xs hover:border-p1/60 hover:text-p1">
+                  Remind me
+                </button>
+                <button onClick={() => api.post(`/suggestions/${sg.id}/dismiss`).then(() => setSuggested((x) => x.filter((y) => y.id !== sg.id))).catch((e) => flash(e.message))}
+                  aria-label="Not needed" title="Not needed" className="-mr-1 shrink-0 text-mute hover:text-txt">
+                  <X size={16} />
+                </button>
+              </div>
+            ))}
+            {/* Reminders only reach a phone that has said yes. It cannot be switched on for
+                them, so this stays until they tap it — unless they have blocked it outright. */}
+            {push.state === 'off' && permission() !== 'denied' && (
+              <button onClick={() => push.toggle().then((r) => (r.ok ? flash('Notifications are on') : flash(r.reason)))} disabled={push.busy}
+                className="flex w-full max-w-md items-center gap-3 rounded-2xl border border-p1/40 bg-p1/[0.09] px-3.5 py-3 text-left transition hover:bg-white/[0.07] disabled:opacity-60">
+                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-p1/20 text-p1"><Bell size={16} /></span>
+                <span className="min-w-0 flex-1">
+                  <b className="block text-sm font-medium">Turn on notifications</b>
+                  <span className="block truncate text-xs text-mute">So reminders reach your phone</span>
+                </span>
+                <Icon name="chevron" size={16} className="shrink-0 text-mute" />
+              </button>
+            )}
             {dueNow.count > 0 && onOpenLists && (
               <button onClick={onOpenLists}
                 className="flex w-full max-w-md items-center gap-3 rounded-2xl border border-p1/40 bg-p1/[0.09] px-3.5 py-3 text-left transition hover:bg-white/[0.07]">

@@ -234,6 +234,31 @@ async function readEmail(userId, { id }) {
 
 export const imapTools = { search_email: searchEmail, read_email: readEmail };
 
+/**
+ * The newest inbox mail since a moment, as plain records rather than a tool's text — for
+ * server/suggestions.js, which reads it to spot deadlines. Read-only like everything above.
+ * No mailbox connected is an empty list, not an error.
+ */
+export async function recentInbox(userId, { since, limit = 20 } = {}) {
+  const acc = await imapAccount(userId);
+  if (!acc) return [];
+  return withMailbox(acc, async (c) => {
+    const lock = await c.getMailboxLock('INBOX', { readOnly: true });
+    try {
+      const uids = ((await c.search({ since }, { uid: true })) || []).slice(-limit);
+      const out = [];
+      if (!uids.length) return out;
+      for await (const m of c.fetch(uids, { uid: true, envelope: true, internalDate: true, source: { maxLength: 20000 } }, { uid: true })) {
+        const at = new Date(m.envelope?.date || m.internalDate || 0);
+        if (at < since) continue; // IMAP "since" is by day; the hours are ours to check
+        const text = await simpleParser(m.source).then((p) => p.text || '').catch(() => '');
+        out.push({ id: `INBOX:${m.uid}`, from: person(m.envelope?.from), subject: m.envelope?.subject || '(no subject)', at, text: text.replace(/\s+/g, ' ').slice(0, 600) });
+      }
+      return out;
+    } finally { lock.release(); }
+  });
+}
+
 // ---------- acting on the mailbox ----------
 // Everything below opens a writable lock, unlike the read tools above. All of it is
 // reversible and all of it stays inside the mailbox: nothing here sends, and nothing here

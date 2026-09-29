@@ -785,3 +785,36 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_team_rem_waiting ON team_reminders(remind_at) WHERE status = 'scheduled';
   CREATE INDEX IF NOT EXISTS idx_team_rem_people ON team_reminder_people(user_id, done);
 `);
+
+// Reminders Jarvis thinks someone might want — the tables behind server/suggestions.js.
+//
+// Only ever suggested: nothing becomes a todo until the person taps "Remind me". So this
+// is its own table, not todos with a flag — a suggestion that was waved away still has to
+// be remembered, or the same email would be suggested again at the next look.
+//   source / ref: where it came from — 'email' + "INBOX:uid", or 'chat' + a message id.
+//     Unique per person, so reading the same email twice cannot suggest it twice.
+//   status: pending on the first screen, accepted (todo_id says which todo it became),
+//     or dismissed.
+//   suggestion_scans: when this person was last looked at, and the last chat message read,
+//     so each look only reads what is new and runs at most every few hours.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS reminder_suggestions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source  TEXT NOT NULL CHECK (source IN ('email', 'chat')),
+    ref     TEXT NOT NULL,
+    text    TEXT NOT NULL,
+    why     TEXT,
+    remind_at BIGINT,
+    status  TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'dismissed')),
+    todo_id INTEGER REFERENCES todos(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    UNIQUE (user_id, source, ref)
+  );
+  CREATE INDEX IF NOT EXISTS idx_suggestions_open ON reminder_suggestions(user_id) WHERE status = 'pending';
+  CREATE TABLE IF NOT EXISTS suggestion_scans (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    scanned_at BIGINT NOT NULL,
+    last_message_id INTEGER NOT NULL DEFAULT 0
+  );
+`);

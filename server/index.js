@@ -21,6 +21,7 @@ import { messengerRoutes } from './messenger.js';
 import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
 import { teamReminderRoutes } from './teamReminders.js';
+import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
 import { saifsysRoutes } from './saifsys.js';
@@ -47,6 +48,7 @@ app.use('/api/imports', importRoutes);
 app.use('/api/messenger', messengerRoutes); // people-to-people chat, separate from the AI chats
 app.use('/api/todos', todoRoutes);
 app.use('/api/team-reminders', teamReminderRoutes); // reminders sent to other people, proposed in chat
+app.use('/api/suggestions', suggestionRoutes); // reminders Jarvis spots in new email and chat, one tap to keep
 app.use('/api/routines', routineRoutes); // things that come back, kept apart from the one-off todos
 app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
 app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
