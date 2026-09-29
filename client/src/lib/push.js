@@ -71,5 +71,28 @@ export async function disablePush() {
   await sub.unsubscribe();
 }
 
+/**
+ * Whoever is signed in owns this device's notifications. The browser keeps its
+ * subscription across sign-outs, so without this a phone switched on as one person kept
+ * buzzing for them after someone else signed in — and the bell, which reads the browser,
+ * showed "on" for the new person all the same. Re-sending it moves the row to them.
+ */
+export async function claimPush() {
+  if (!(await isSubscribed().catch(() => false))) return;
+  const sub = await (await ready()).pushManager.getSubscription();
+  await api.post('/push/subscribe', { subscription: sub.toJSON(), device: navigator.userAgent }).catch(() => {});
+}
+
+/**
+ * Signing out: stop this device buzzing for the person leaving. Server side only, and
+ * before the session goes — the browser keeps its permission, so the next person to sign
+ * in here picks it up through claimPush without being asked again.
+ */
+export async function releasePush() {
+  if (!canPush()) return;
+  const sub = await (await ready()).pushManager.getSubscription().catch(() => null);
+  if (sub) await api.del(`/push/subscribe?endpoint=${encodeURIComponent(sub.endpoint)}`).catch(() => {});
+}
+
 /** Sends one to this device, so it can be seen working without asking a colleague. */
 export const testPush = () => api.post('/push/test');

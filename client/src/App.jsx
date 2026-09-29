@@ -13,6 +13,7 @@ import ListsPage from './components/Lists';
 import MeetingsPage from './components/Meetings';
 import TranscribePage from './components/Transcribe';
 import { useMessenger } from './lib/useMessenger';
+import { claimPush, releasePush } from './lib/push';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
@@ -46,6 +47,9 @@ export default function App() {
     window.addEventListener('jarvis:signedout', out);
     return () => window.removeEventListener('jarvis:signedout', out);
   }, []);
+
+  // This device's notifications follow whoever is signed in (see claimPush).
+  useEffect(() => { if (me?.id) claimPush(); }, [me?.id]);
 
   const loadAgents = useCallback(() => api.get('/agents').then(setAgents), []);
   const loadConvs = useCallback(() => api.get('/conversations').then((c) => { setConvs(c); setConvsLoaded(true); }), []);
@@ -99,6 +103,7 @@ export default function App() {
     loadConvs();
   };
   const logout = async () => {
+    await releasePush();
     await api.post('/auth/logout').catch(() => {});
     setMe(null); setAgents([]); setConvs([]); setChat({ key: Date.now(), id: null }); setDrawer(false);
   };
