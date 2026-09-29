@@ -41,6 +41,9 @@ export function useMessenger(me) {
   const [online, setOnline] = useState(() => new Set());
   const [lastSeen, setLastSeen] = useState({});
   const [typing, setTyping] = useState({}); // chatId -> { userId: until }
+  const [toast, setToast] = useState(null); // { key, chatId, title, body } - a message landing elsewhere while Jarvis is open
+  const peopleRef = useRef([]);
+  peopleRef.current = people;
   const active = useRef(null); // the chat on screen, whose messages count as read
   const known = useRef(null); // the list as of the last render, readable from the live handler
   known.current = chats;
@@ -80,7 +83,18 @@ export function useMessenger(me) {
             unread: isNew && !seen && !d.deleted ? x.unread + 1 : x.unread,
           } : x)));
         });
-        if (!mine && !d.deleted && d.kind !== 'system' && !seen) blip();
+        if (!mine && !d.deleted && d.kind !== 'system' && !seen) {
+          blip();
+          // With the app on screen the server sends no notification, and a Mac would hide
+          // one from the front app anyway — so a message for another chat shows up here.
+          // With the app hidden this stays quiet: the phone or laptop notification has it.
+          if (document.visibilityState === 'visible') {
+            const c = known.current?.find((x) => x.id === d.chatId);
+            const who = c?.members.find((m) => m.id === d.userId)?.name || peopleRef.current.find((p) => p.id === d.userId)?.name || 'New message';
+            const words = d.body?.trim() || (d.file ? `📎 ${d.file.name}` : '');
+            setToast({ key: d.id, chatId: d.chatId, title: c?.kind === 'group' ? `${who} · ${c.name}` : who, body: d.sharedFrom ? `${d.sharedFrom}: ${words}` : words });
+          }
+        }
         if (!mine) setTyping((t) => { const c = { ...(t[d.chatId] || {}) }; delete c[d.userId]; return { ...t, [d.chatId]: c }; });
       } else if (event === 'receipt') {
         setChats((l) => l && l.map((c) => (c.id !== d.chatId ? c : {
@@ -131,7 +145,11 @@ export function useMessenger(me) {
     api.post(`/messenger/chats/${chatId}/read`, { upTo: id }).catch(() => {});
   }, [meId]);
 
-  const setActive = useCallback((id) => { active.current = id; }, []);
+  const setActive = useCallback((id) => {
+    active.current = id;
+    setToast((t) => (t && t.chatId === id ? null : t)); // opening the chat answers its pop-up
+  }, []);
+  const dismissToast = useCallback(() => setToast(null), []);
 
-  return { me, chats, people, online, lastSeen, typing, unread, loadChats, loadPeople, upsert, refreshChat, markRead, setActive };
+  return { me, chats, people, online, lastSeen, typing, unread, toast, dismissToast, loadChats, loadPeople, upsert, refreshChat, markRead, setActive };
 }

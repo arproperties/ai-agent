@@ -15,6 +15,7 @@ import TranscribePage from './components/Transcribe';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { NotifyPrompt } from './components/Notifications';
+import MessageToast from './components/MessageToast';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
@@ -178,6 +179,8 @@ export default function App() {
       {panel === 'email' && <EmailSheet returned={outlookReturn} onClose={() => setPanel(null)} />}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
       <NotifyPrompt />
+      <MessageToast toast={dm.toast} onClose={dm.dismissToast}
+        onOpen={(id) => { dm.dismissToast(); setJumpToChat(id); setPanel('messages'); setDrawer(false); }} />
     </div>
   );
 }
