@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reset, makeUser, closeDb } from './helpers/db.js';
 import {
-  engine, createTranscript, listTranscripts, getTranscript, renameTranscript, deleteTranscript, settled,
+  engine, createTranscript, listTranscripts, getTranscript, renameTranscript, deleteTranscript, settled, isAudio, readAudio,
 } from '../server/transcripts.js';
 
 test.after(() => closeDb());
@@ -125,4 +125,34 @@ test('each person only sees, renames and deletes their own', { skip: !hasFfmpeg 
   assert.equal(row.preview, 'Piece 1');
   assert.equal(await deleteTranscript(sara, t.id), true);
   assert.equal((await listTranscripts(sara)).length, 0);
+});
+
+// ---------- audio attached in a chat ----------
+
+test('a voice note is recognised even when the phone sends no audio type', () => {
+  assert.equal(isAudio({ mimetype: 'audio/ogg', originalname: 'x' }), true);
+  assert.equal(isAudio({ mimetype: 'application/octet-stream', originalname: 'PTT-20260929-WA0003.opus' }), true);
+  assert.equal(isAudio({ mimetype: '', originalname: 'memo.M4A' }), true);
+  assert.equal(isAudio({ mimetype: 'application/pdf', originalname: 'lease.pdf' }), false);
+  assert.equal(isAudio({ mimetype: 'image/jpeg', originalname: 'photo.jpg' }), false);
+});
+
+test('audio sent in a chat is read straight away and kept on the Transcribe page', { skip: !hasFfmpeg }, async () => {
+  await reset();
+  fake(() => 'This is about the AILA building loan repayment.');
+  const user = await makeUser('Sara');
+  const r = await readAudio(user, sound('chat.opus', 2, ['-c:a', 'libopus']), 'Boss – AILA.opus');
+  assert.equal(r.text, 'This is about the AILA building loan repayment.');
+  const [row] = await listTranscripts(user);
+  assert.equal(row.title, 'Boss – AILA');
+  assert.equal(row.source, 'chat');
+  assert.equal(row.status, 'ready');
+});
+
+test('audio in a chat that will not open says so plainly', { skip: !hasFfmpeg }, async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  await assert.rejects(() => readAudio(user, Buffer.from('nope'), 'broken.opus'), /could not read this file as audio/);
+  assert.equal((await listTranscripts(user)).length, 0);
 });

@@ -11,7 +11,8 @@ import { DATA_DIR } from './config.js';
 import { transcribe } from './ai.js';
 
 // Transcribe: any audio in, plain text out. A WhatsApp voice note, a phone recording,
-// or something said straight into Jarvis.
+// or something said straight into Jarvis. Audio attached in a chat comes through here
+// too (readAudio), and is listed on the Transcribe page like any other.
 //
 // A feature of its own, apart from Meetings: no names, no summary, just the words. The
 // file is kept on disk only until it has been read, then thrown away.
@@ -31,6 +32,12 @@ const bad = (message, status = 400) => Object.assign(new Error(message), { statu
 export const engine = { transcribe: (buffer) => transcribe(buffer, 'audio/mpeg') };
 
 const out = ({ user_id, path, ...t }) => t;
+
+// Phones are loose about audio types (WhatsApp's .opus often arrives as
+// application/octet-stream), so the extension gets a say too.
+export const AUDIO_EXT = ['opus', 'ogg', 'oga', 'm4a', 'aac', 'amr', 'caf', 'mp3', 'wav', 'flac', 'weba'];
+export const isAudio = (f) => /^audio\//.test(f.mimetype || '')
+  || AUDIO_EXT.includes(String(f.originalname || '').split('.').pop().toLowerCase());
 
 // ---------- the rows ----------
 
@@ -91,22 +98,51 @@ export const settled = () => Promise.all([...jobs.values()]);
 async function work(id) {
   const t = await db.prepare('SELECT id, path FROM transcripts WHERE id = ?').get(id);
   if (!t) return;
+  try {
+    const { text, seconds } = await audioToText(t.path);
+    await db.prepare(`UPDATE transcripts SET status = 'ready', text = ?, error = ?, duration_s = ? WHERE id = ?`)
+      .run(text, text ? null : NO_SPEECH, seconds, id);
+  } catch (e) {
+    console.warn('[transcripts]', id, e.message);
+    await db.prepare(`UPDATE transcripts SET status = 'failed', error = ? WHERE id = ?`).run(e.message, id);
+  } finally {
+    rmSync(t.path, { force: true });
+  }
+}
+
+const NO_SPEECH = 'No speech was heard in this recording.';
+
+/** The words in an audio file on disk, as { text, seconds }. Errors come out in plain words. */
+async function audioToText(path) {
   const dir = mkdtempSync(join(tmpdir(), 'jarvis-transcribe-'));
   try {
-    const pieces = await toPieces(t.path, dir);
+    const pieces = await toPieces(path, dir);
     let seconds = 0;
     for (const p of pieces) seconds += await secondsOf(p);
     if (seconds > MAX_MINUTES * 60) throw bad(`This recording is ${Math.round(seconds / 60)} minutes long; the limit is ${MAX_MINUTES}`);
     // The pieces are independent: send them together rather than one after another.
     const texts = await Promise.all(pieces.map(async (p) => (await engine.transcribe(await readFile(p))).trim()));
-    const text = texts.filter(Boolean).join('\n\n');
-    await db.prepare(`UPDATE transcripts SET status = 'ready', text = ?, error = ?, duration_s = ? WHERE id = ?`)
-      .run(text, text ? null : 'No speech was heard in this recording.', Math.round(seconds), id);
-    rmSync(t.path, { force: true });
+    return { text: texts.filter(Boolean).join('\n\n'), seconds: Math.round(seconds) };
   } catch (e) {
-    console.warn('[transcripts]', id, e.message);
-    await db.prepare(`UPDATE transcripts SET status = 'failed', error = ? WHERE id = ?`).run(e.status ? e.message : friendly(e), id);
-    rmSync(t.path, { force: true });
+    throw e.status ? e : bad(friendly(e));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Audio attached in a chat: read now, while the chat waits, and kept on the Transcribe
+ * page as well so it can be found again. name is the real (already decoded) filename.
+ */
+export async function readAudio(userId, buffer, name) {
+  const dir = mkdtempSync(join(tmpdir(), 'jarvis-chat-audio-'));
+  try {
+    const path = join(dir, `in.${(name.match(/\.([a-z0-9]{1,5})$/i)?.[1] || 'bin').toLowerCase()}`);
+    await writeFile(path, buffer);
+    const { text, seconds } = await audioToText(path);
+    await db.prepare(`INSERT INTO transcripts (user_id, title, source, status, text, error, duration_s) VALUES (?, ?, 'chat', 'ready', ?, ?, ?)`)
+      .run(userId, name.replace(/\.[^.]+$/, '').trim().slice(0, 120), text, text ? null : NO_SPEECH, seconds);
+    return { text, seconds };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -7,6 +7,7 @@ import { connectedMailbox } from './email.js';
 import { todoKit } from './todos.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
+import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysConfigured } from './saifsys.js';
 import { chatAgents } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
@@ -125,9 +126,16 @@ async function recentMessages(conversationId) {
   return rows;
 }
 
+// A voice note has no file in the library to look back at, so its words travel with the
+// message: later turns can still answer "what did he say about Friday?".
+const voiceNote = (name, text) => `<voice_note name="${name}">\n${text || '(no speech was heard)'}\n</voice_note>`;
+
 const toClaude = (rows) => rows.map((r) => {
-  const names = JSON.parse(r.files).map((f) => f.name);
-  return { role: r.role, content: names.length ? `${r.content}\n\n[Attached: ${names.join(', ')}]` : r.content };
+  const files = JSON.parse(r.files);
+  const names = files.map((f) => f.name);
+  const notes = files.filter((f) => f.kind === 'audio').map((f) => voiceNote(f.name, f.transcript));
+  const content = [r.content, names.length && `[Attached: ${names.join(', ')}]`, ...notes].filter(Boolean).join('\n\n');
+  return { role: r.role, content };
 });
 
 // Attachments are read in full for this turn, stored in the user's library, and organised in the background
@@ -154,6 +162,13 @@ async function readAttachments(user, convId, files, send, team) {
         meta.push({ name, kind: 'video', docId: doc.id, snippet: content.slice(0, 600) });
         const inline = content.length > share ? `${content.slice(0, share)}\n…(truncated: the full reading is in the knowledge base)` : content;
         blocks.push({ type: 'text', text: `<video name="${name}">\n${inline}\n</video>` });
+      } else if (isAudio(f)) {
+        // Not filed on the Shelf: a voice note is words, and they are kept on the Transcribe page.
+        send('status', { label: `Listening to ${name}…` });
+        const { text: said } = await readAudio(user.id, f.buffer, name);
+        const transcript = said.slice(0, 20_000);
+        meta.push({ name, kind: 'audio', transcript, snippet: said.slice(0, 600) || '(no speech)' });
+        blocks.push({ type: 'text', text: voiceNote(name, transcript) });
       } else {
         send('status', { label: `Reading ${name}…` });
         const content = await extractText({ ...f, originalname: name }); // read first, so unreadable files are never stored

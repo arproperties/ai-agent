@@ -8,13 +8,32 @@ import { hideMarkers } from '../lib/replyDoc';
 
 const isImg = (f) => f.kind === 'image' || /\.(png|jpe?g|gif|webp|heic)$/i.test(f.name);
 const isVid = (f) => f.kind === 'video' || /\.(mp4|mov|webm|m4v|3gp)$/i.test(f.name);
+const isAud = (f) => f.kind === 'audio' || /\.(opus|ogg|oga|m4a|aac|amr|caf|mp3|wav|flac|weba)$/i.test(f.name);
+
+// A voice note has no file to open; tapping it shows what was said instead.
+function VoiceNote({ f }) {
+  const [open, setOpen] = useState(false);
+  const ready = f.transcript !== undefined;
+  return (
+    <div className="glass max-w-[320px] rounded-2xl py-2 pl-2 pr-3.5">
+      <button onClick={() => ready && setOpen((o) => !o)} className="flex w-full items-center gap-2.5 text-left">
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-p1/20 text-p1"><Icon name="mic" size={17} /></span>
+        <span className="min-w-0">
+          <span className="block truncate text-[13px]">{f.name}</span>
+          <span className="text-[11px] text-mute">{!ready ? 'Listening…' : open ? 'Tap to hide' : 'Voice note · tap to read'}</span>
+        </span>
+      </button>
+      {open && <p dir="auto" className="mt-2 whitespace-pre-wrap px-1 text-[13px] leading-relaxed">{f.transcript || 'No speech was heard.'}</p>}
+    </div>
+  );
+}
 
 function Attachments({ files, onOpenFile }) {
   if (!files?.length) return null;
   const open = (f) => f.docId && onOpenFile(f.docId);
   return (
     <div className="mb-1.5 flex flex-wrap justify-end gap-1.5">
-      {files.map((f, i) => (isImg(f) && (f.preview || f.docId) ? (
+      {files.map((f, i) => (isAud(f) && !f.docId ? <VoiceNote key={i} f={f} /> : isImg(f) && (f.preview || f.docId) ? (
         <button key={i} onClick={() => open(f)} aria-label={`View ${f.name}`}
           className="overflow-hidden rounded-2xl border border-stroke transition hover:border-white/30 active:scale-[0.98]">
           <img src={f.preview || `/api/documents/${f.docId}/file`} alt={f.name} className="h-36 max-w-[240px] object-cover" />
