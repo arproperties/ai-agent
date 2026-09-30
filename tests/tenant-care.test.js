@@ -58,9 +58,9 @@ test('newsletters, alerts and out-of-office replies are left alone', () => {
 });
 
 test('the reply asks only for what is missing', () => {
-  assert.match(replyText('both', dir), /building name and unit number \(for example: Ayla Residence, unit 507\)/);
-  assert.match(replyText('unit', dir), /your unit number\./);
-  assert.doesNotMatch(replyText('unit', dir), /building/);
+  assert.match(replyText('both'), /Thank you for reaching out\.[\s\S]*- Building name:\n- Unit \/ flat number:/);
+  assert.match(replyText('unit'), /- Unit \/ flat number:/);
+  assert.doesNotMatch(replyText('unit'), /Building/);
 });
 
 async function connected() {

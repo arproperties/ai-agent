@@ -109,18 +109,13 @@ export function isAutomatic(from, headers) {
 
 // ---------- the reply ----------
 
-function example(dir) {
-  const b = dir?.buildings.find((x) => x.units.length);
-  return b ? ` (for example: ${b.name}, unit ${b.units[0]})` : '';
-}
-
-export function replyText(missing, dir) {
-  const ask = {
-    both: `please reply with your building name and unit number${example(dir)}`,
-    building: 'please reply with your building name',
-    unit: 'please reply with your unit number',
-  }[missing];
-  return `Dear Tenant,\n\nThank you for your email.\n\nSo we can pass it to the right team, ${ask}.\n\nKind regards,\nTenant Care Team`;
+export function replyText(missing) {
+  const fields = { both: ['Building name:', 'Unit / flat number:'], building: ['Building name:'], unit: ['Unit / flat number:'] }[missing];
+  return ['Dear Tenant,', '', 'Thank you for reaching out.', '',
+    'To make sure your request reaches the right team, please reply to this email with:', '',
+    ...fields.map((f) => `- ${f}`), '',
+    'Once we have these details, our team will get back to you as soon as possible.', '',
+    'Kind regards,', 'Tenant Care Team'].join('\n');
 }
 
 // ---------- the inbox ----------
@@ -167,7 +162,7 @@ export async function look({ read = readNew, dir: given, send, file } = {}) {
     const r = await db.prepare(`INSERT INTO tenant_asks (ref, message_id, refs, from_addr, from_name, subject, preview, received_at, missing, reply)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ref) DO NOTHING RETURNING id`)
       .run(`${uidValidity}:${m.uid}`, m.messageId, m.refs, from, m.name || null, String(m.subject || '').slice(0, 300),
-        ownWords(m.text).replace(/\s+/g, ' ').trim().slice(0, 400), m.at, missing, replyText(missing, dir));
+        ownWords(m.text).replace(/\s+/g, ' ').trim().slice(0, 400), m.at, missing, replyText(missing));
     if (r.id) made.push({ id: r.id, from: m.name || from, subject: m.subject });
   }
   await db.prepare(`UPDATE tenant_inbox SET last_uid = ?, uid_validity = ?, checked_at = ${NOW}, error = NULL WHERE id = 1`).run(lastUid, uidValidity);
