@@ -36,6 +36,7 @@ const TABLES = [
   'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
   'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs', 'saifsys_access', 'saifsys_action_access', 'ars_booking_requests',
   'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'team_reminders', 'team_reminder_people', 'reminder_suggestions', 'suggestion_scans',
+  'tenant_inbox', 'tenant_inbox_members', 'tenant_asks',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

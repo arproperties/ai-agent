@@ -871,3 +871,56 @@ await db.exec(`
     last_message_id INTEGER NOT NULL DEFAULT 0
   );
 `);
+
+// Tenant care — one shared inbox tenants write to (server/tenantCare.js). When a new email
+// does not say which building and unit it is about, Jarvis writes a reply asking, and the
+// people looking after the inbox tap Send. Its own tables, not imap_accounts: that mailbox
+// belongs to one person, this one to a team.
+//   tenant_inbox: at most one row (id = 1). last_uid is the newest email already looked
+//     at; a new connection starts from the top of the inbox, so old mail is never asked about.
+//     uid_validity: when the mail server renumbers the inbox, last_uid starts again.
+//   tenant_inbox_members: who sees the replies and may send them (the master always may).
+//   tenant_asks: one row per email that needs asking. ref = "<uid_validity>:<uid>", unique,
+//     so looking at the same email twice cannot ask twice. missing: building, unit or both.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS tenant_inbox (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    email TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 993,
+    username TEXT NOT NULL,
+    password_enc TEXT NOT NULL,
+    smtp_host TEXT NOT NULL,
+    smtp_port INTEGER NOT NULL,
+    smtp_secure BOOLEAN NOT NULL DEFAULT true,
+    last_uid BIGINT,
+    uid_validity BIGINT,
+    checked_at BIGINT,
+    error TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS tenant_inbox_members (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS tenant_asks (
+    id SERIAL PRIMARY KEY,
+    ref TEXT NOT NULL UNIQUE,
+    message_id TEXT,
+    refs TEXT,
+    from_addr TEXT NOT NULL,
+    from_name TEXT,
+    subject TEXT,
+    preview TEXT,
+    received_at BIGINT,
+    missing TEXT NOT NULL CHECK (missing IN ('building', 'unit', 'both')),
+    reply TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sending', 'sent', 'skipped', 'failed')),
+    error TEXT,
+    decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_tenant_asks_open ON tenant_asks(id DESC) WHERE status IN ('pending', 'failed');
+  CREATE INDEX IF NOT EXISTS idx_tenant_asks_from ON tenant_asks(from_addr, created_at DESC);
+`);

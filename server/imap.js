@@ -22,7 +22,7 @@ const KNOWN = [ // mail server (MX) of the domain -> its IMAP server
   [/icloud\.com$/, 'imap.mail.me.com'],
   [/secureserver\.net$/, 'imap.secureserver.net'],
 ];
-async function detectHost(email) {
+export async function detectHost(email) {
   const domain = email.split('@')[1]?.toLowerCase();
   if (!domain) throw new Error('Please enter a valid email address');
   const mx = await resolveMx(domain).catch(() => []);
@@ -33,13 +33,13 @@ async function detectHost(email) {
   return `imap.${domain}`;
 }
 
-function client({ host, port, username, password }) {
+export function client({ host, port, username, password }) {
   return new ImapFlow({
     host, port, secure: port === 993, auth: { user: username, pass: password },
     logger: false, connectionTimeout: 15000, greetingTimeout: 15000, socketTimeout: 60000,
   });
 }
-function friendly(e, host) {
+export function friendly(e, host) {
   if (e.authenticationFailed) return 'Wrong email or password, or IMAP access is turned off in your email settings.';
   if (/ENOTFOUND|EAI_AGAIN/.test(e.code || e.message)) return `Couldn't find the mail server ${host}. Check the server under Advanced.`;
   if (/ETIMEDOUT|ECONNREFUSED|timeout/i.test(e.code || e.message)) return `Couldn't reach ${host}. Check the server and port under Advanced.`;
@@ -47,7 +47,7 @@ function friendly(e, host) {
 }
 
 // connect, run fn, always log out
-async function withMailbox(acc, fn) {
+export async function withMailbox(acc, fn) {
   const c = client({ host: acc.host, port: acc.port, username: acc.username, password: decrypt(acc.password_enc) });
   c.on('error', () => {}); // socket errors after logout must not crash the server
   try {
@@ -288,7 +288,7 @@ export function buildRefs(existing, messageId) {
   return ids.length ? ids.join(' ') : null;
 }
 
-const sentPath = async (c) => {
+export const sentPath = async (c) => {
   const boxes = await c.list();
   return boxes.find((f) => f.specialUse === '\\Sent')?.path || boxes.find((f) => /^sent/i.test(f.name))?.path || null;
 };

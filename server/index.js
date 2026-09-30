@@ -30,6 +30,7 @@ import { transcriptRoutes, startTranscripts } from './transcripts.js';
 import { errorRoutes, recordError } from './errors.js';
 import { replyPdfRoutes } from './replyPdf.js';
 import { drawingRoutes } from './drawing.js';
+import { tenantCareRoutes, startTenantCare } from './tenantCare.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -56,6 +57,7 @@ app.use('/api/meetings', meetingRoutes); // recorded meetings: who said what, an
 app.use('/api/transcripts', transcriptRoutes); // any audio file or recording, as plain text
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
+app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -360,6 +362,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // The buzz when a to-do or a routine falls due. The badge and the first screen are
   // unchanged and keep working on their own if this timer ever stops.
   startReminders();
+  startTenantCare(); // does nothing until the Tenant care inbox is connected
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));

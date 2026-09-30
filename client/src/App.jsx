@@ -12,6 +12,7 @@ import MessengerPage from './components/Messenger';
 import ListsPage from './components/Lists';
 import MeetingsPage from './components/Meetings';
 import TranscribePage from './components/Transcribe';
+import TenantCarePage from './components/TenantCare';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { NotifyPrompt } from './components/Notifications';
@@ -24,7 +25,8 @@ const outlookReturn = params.get('outlook') && { status: params.get('outlook'), 
 // /?todos=1 opens the list of what is due
 const notifiedChat = Number(params.get('chat')) || null;
 const notifiedTodos = params.get('todos') === '1';
-if (outlookReturn || notifiedChat || notifiedTodos) window.history.replaceState(null, '', '/');
+const notifiedTenantCare = params.get('tenantcare') === '1'; // a tenant email is waiting for a reply
+if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare) window.history.replaceState(null, '', '/');
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -34,10 +36,11 @@ export default function App() {
   const [convsLoaded, setConvsLoaded] = useState(false); // an empty list means nothing until it has arrived
   const [expiring, setExpiring] = useState([]); // paperwork running out inside a month
   const [due, setDue] = useState({ todos: [], routines: [], fromOthers: [] }); // reminders that have come round, and routines asking to be done
+  const [tenantCare, setTenantCare] = useState({ member: false, waiting: 0 }); // the shared tenant inbox, for those who look after it
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'tenantcare'
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
@@ -67,6 +70,8 @@ export default function App() {
     api.get('/team-reminders/inbox').catch(() => []), // what other people have asked of them
   ]).then(([todos, routines, fromOthers]) => setDue({ todos, routines, fromOthers })), []);
 
+  const loadTenantCare = useCallback(() => api.get('/tenant-care/me').then(setTenantCare).catch(() => {}), []);
+
   // A notification tapped while Jarvis was already open somewhere: the service worker
   // brings that window forward rather than starting a second one, and says what the
   // notice was about — a team chat, or the list of what has just fallen due.
@@ -76,6 +81,7 @@ export default function App() {
       if (e.data?.type !== 'notification') return;
       const where = new URL(e.data.url, window.location.origin).searchParams;
       if (where.get('todos') === '1') { setPanel('todos'); loadDue(); return; }
+      if (where.get('tenantcare') === '1') { setPanel('tenantcare'); loadTenantCare(); return; }
       // A reminder from someone else waits on the first screen of a new chat.
       if (where.get('reminders') === '1') { setChat({ key: Date.now(), id: null }); setPanel(null); loadDue(); return; }
       const id = Number(where.get('chat')) || null;
@@ -85,7 +91,7 @@ export default function App() {
     };
     navigator.serviceWorker.addEventListener('message', tapped);
     return () => navigator.serviceWorker.removeEventListener('message', tapped);
-  }, [loadDue]);
+  }, [loadDue, loadTenantCare]);
 
   useEffect(() => {
     if (!me) return;
@@ -94,7 +100,8 @@ export default function App() {
     loadConvs();
     loadExpiring();
     loadDue();
-  }, [me, loadAgents, loadConvs, loadExpiring, loadDue]);
+    loadTenantCare();
+  }, [me, loadAgents, loadConvs, loadExpiring, loadDue, loadTenantCare]);
 
   const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setPanel(null); };
   const onConversation = (id) => { if (id) setChat((c) => ({ ...c, id })); loadConvs(); };
@@ -124,6 +131,7 @@ export default function App() {
           expiring={expiring.length} dueTodos={due.todos.length + due.routines.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
           meetingsOpen={panel === 'meetings'} onMeetings={() => { setPanel('meetings'); setDrawer(false); }}
           transcribeOpen={panel === 'transcribe'} onTranscribe={() => { setPanel('transcribe'); setDrawer(false); }}
+          tenantCare={tenantCare} tenantCareOpen={panel === 'tenantcare'} onTenantCare={() => { setPanel('tenantcare'); setDrawer(false); }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
@@ -166,6 +174,7 @@ export default function App() {
         {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => { setPanel(null); loadExpiring(); }} onOpenChat={openChat} />}
         {panel === 'meetings' && <MeetingsPage onBack={() => setPanel(null)} />}
         {panel === 'transcribe' && <TranscribePage onBack={() => setPanel(null)} />}
+        {panel === 'tenantcare' && <TenantCarePage me={me} onBack={() => setPanel(null)} onChanged={loadTenantCare} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
         {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
