@@ -34,6 +34,20 @@ export function reminder(t) {
   return { at, due, soon: at - now < 86400000, label: due ? `Due ${day}, ${time}` : `${day}, ${time}` };
 }
 
+/** "Today, 2:10 PM", "Yesterday, 9:00 AM" or "28 Sep, 2:10 PM" — for when a todo was added or ticked. */
+function stamp(secs) {
+  if (!secs) return '';
+  const at = new Date(secs * 1000);
+  const now = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(now.getDate() - 1);
+  const time = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const day = sameDay(at, now) ? 'Today'
+    : sameDay(at, yesterday) ? 'Yesterday'
+    : at.toLocaleDateString([], { day: 'numeric', month: 'short', ...(at.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
+  return `${day}, ${time}`;
+}
+
 // A relative day at a round hour, for the one-tap chips. "Tonight" after six in the
 // evening would be a reminder in the past, so it rolls to the next one.
 const roundTo = (days, hour) => {
@@ -146,7 +160,9 @@ function Row({ t, onToggle, onOpen }) {
         <span className={`block text-[15px] leading-snug ${t.done ? 'text-mute line-through' : ''}`}>{t.text}</span>
         {t.notes && <span className="mt-0.5 block line-clamp-2 text-xs leading-snug text-mute">{t.notes}</span>}
         <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
+          {t.done && t.done_at && <span className="text-mute">Done {stamp(t.done_at)}</span>}
           {r && <span className={`flex items-center gap-1 ${tone}`}><Bell size={11} /> {r.label}</span>}
+          {!t.done && !r && t.created_at && <span className="text-mute">Added {stamp(t.created_at)}</span>}
           {(t.doc_title || t.doc_name) && <span className="flex items-center gap-1 text-mute"><Icon name="file" size={11} /> {t.doc_title || t.doc_name}</span>}
           {t.agent_name && <span className="text-mute">from {t.agent_name}</span>}
         </span>
