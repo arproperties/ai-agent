@@ -71,10 +71,13 @@ export function buildingNames(name) {
 // "unit 507", "flat no. 12", "apt #A-304", "office 3" — a unit however saifsys spells it.
 const UNIT_WORDS = /\b(unit|flat|apt|apartment|office|shop|villa|room|studio)\s*(no\.?|number|num|#)?\s*[a-z]?-?\d{1,5}[a-z]?\b/i;
 
-/** Only what the tenant wrote: quoted replies and the old message underneath are cut off. */
+// "+971 56 243 6573", "050-123 4567": a phone number in a signature is not a unit number.
+const PHONE = /\+?\d[\d\s().-]{6,}\d/g;
+
+/** Only what the tenant wrote: quoted replies and the old message underneath are cut off, phone numbers taken out. */
 export function ownWords(text) {
   const cut = String(text || '').split(/\n\s*(On .{0,200}wrote:|-{2,}\s*Original Message|From: .*\n(Sent|Date): )/i)[0];
-  return cut.split('\n').filter((l) => !/^\s*>/.test(l)).join('\n');
+  return cut.split('\n').filter((l) => !/^\s*>/.test(l)).join('\n').replace(PHONE, ' ');
 }
 
 /**

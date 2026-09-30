@@ -39,6 +39,12 @@ test('what is left out is what gets asked for', () => {
   assert.equal(ask('Leak', 'Apartment no. 44 has a leak'), 'building', 'a unit written as "apartment 44" counts even if saifsys has no 44');
 });
 
+test('a phone number in a signature is not a unit', () => {
+  assert.equal(ask('AC not working', 'Please help.\n\nManagement\n+971 56 243 6573\nAin Al Reem Properties LLC'), 'both');
+  assert.equal(ask('AC not working', 'Call me on 050-101 5070'), 'both');
+  assert.equal(ask('Ayla 507', 'call 0501234567'), null);
+});
+
 test('a tenant saifsys knows is never asked', () => {
   assert.equal(ask('AC not working', '', 'Known@Tenant.com'), null);
 });
