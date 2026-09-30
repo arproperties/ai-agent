@@ -675,6 +675,23 @@ await db.exec(`
   );
 `);
 
+// Which saifsys modules each person may use (server/saifsys/index.js). The master has
+// them all and is never listed here. When the table first appears, everyone who is not
+// a master gets ARS — before modules, every user could look up checkouts, and nobody
+// should lose that just because the list got split.
+{
+  const fresh = !(await db.prepare(`SELECT to_regclass('saifsys_access') AS t`).get()).t;
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS saifsys_access (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      module TEXT NOT NULL,
+      PRIMARY KEY (user_id, module)
+    );
+  `);
+  if (fresh) await db.exec(`INSERT INTO saifsys_access (user_id, module)
+    SELECT id, 'ars' FROM users WHERE role IS DISTINCT FROM 'master' ON CONFLICT DO NOTHING`);
+}
+
 // Meetings (server/meetings.js): a recording, turned into who-said-what by OpenAI's speech
 // model and then summarised by Claude. Four tables of their own; nothing else reads them.
 //   voice_profiles: a short sample of one person's voice, kept as a data URL because that is

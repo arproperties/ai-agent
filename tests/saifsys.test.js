@@ -13,6 +13,7 @@ const fake = createServer((req, res) => {
   const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
   if (down) return send(500, { ok: false, error: { message: 'boom' } });
   if (req.headers['x-jarvis-key'] !== 'test-key') return send(401, { ok: false, error: { message: 'Not authorised.' } });
+  if (url.searchParams.get('module') !== 'ars') return send(404, { ok: false, error: { message: 'Unknown module.' } });
   const date = url.searchParams.get('date');
   const list = bookings.filter((b) => b.check_out === date);
   send(200, { ok: true, date, count: list.length, checkouts: list });
@@ -20,7 +21,9 @@ const fake = createServer((req, res) => {
 await new Promise((r) => fake.listen(0, '127.0.0.1', r));
 process.env.SAIFSYS_URL = `http://127.0.0.1:${fake.address().port}`;
 process.env.SAIFSYS_API_KEY = 'test-key';
-const { checkouts, runCheckoutJob, saifsysKit, dubaiDate } = await import('../server/saifsys.js');
+const { checkouts, runCheckoutJob } = await import('../server/saifsys/ars.js');
+const { dubaiDate } = await import('../server/saifsys/client.js');
+const { saifsysKit, listAccess, setAccess, userModules } = await import('../server/saifsys/index.js');
 
 test.after(() => { fake.close(); return closeDb(); });
 
@@ -102,18 +105,49 @@ test('saifsys down: nothing is written, so the next tick tries again', async () 
   assert.equal((await todosOf(boss)).length, 1);
 });
 
+const kitFor = async (id) => saifsysKit(await db.prepare('SELECT * FROM users WHERE id = ?').get(id));
+
 test('the agent tool reads the list back in words', async () => {
+  await reset();
   bookings = [stay('101')];
-  const out = await saifsysKit().run({ id: 't1', name: 'saifsys_checkouts', input: { date: '2026-09-25' } });
+  const kit = await kitFor(await master('Boss'));
+  const out = await kit.run({ id: 't1', name: 'ars_checkouts', input: { date: '2026-09-25' } });
   assert.ok(!out.is_error);
-  assert.match(out.content, /1 checkout in saifsys on 2026-09-25/);
+  assert.match(out.content, /1 checkout in saifsys ARS on 2026-09-25/);
   assert.match(out.content, /Marina Tower unit 101 — Ali Hassan/);
 });
 
 test('a wrong key is an error the agent can see, not a crash', async () => {
+  const kit = await kitFor(await master('Boss2'));
   process.env.SAIFSYS_API_KEY = 'wrong';
-  const out = await saifsysKit().run({ id: 't2', name: 'saifsys_checkouts', input: {} });
+  const out = await kit.run({ id: 't2', name: 'ars_checkouts', input: {} });
   process.env.SAIFSYS_API_KEY = 'test-key';
   assert.equal(out.is_error, true);
   assert.match(out.content, /Not authorised/);
+});
+
+test('a master has every module; anyone else only what is ticked', async () => {
+  await reset();
+  const boss = await master('Boss');
+  const francis = await makeUser('Francis');
+  const user = (id) => db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+
+  assert.ok((await userModules(await user(boss))).includes('finance'));
+  assert.deepEqual(await userModules(await user(francis)), []);
+  assert.equal(await kitFor(francis), null); // no module, no saifsys tools at all
+
+  await setAccess(francis, ['ars', 'hr']);
+  assert.deepEqual(await userModules(await user(francis)), ['ars', 'hr']);
+  const kit = await kitFor(francis);
+  assert.deepEqual(kit.definitions.map((d) => d.name), ['ars_checkouts']);
+
+  const screen = await listAccess(francis);
+  assert.equal(screen.master, false);
+  assert.deepEqual(screen.modules.filter((m) => m.on).map((m) => m.key), ['ars', 'hr']);
+  assert.equal(screen.modules.find((m) => m.key === 'ars').connected, true);
+  assert.equal(screen.modules.find((m) => m.key === 'finance').connected, false);
+
+  await setAccess(francis, ['hr']); // replaces, does not add
+  assert.equal(await kitFor(francis), null); // HR has nothing connected yet
+  await assert.rejects(setAccess(francis, ['nope']), /Unknown module/);
 });

@@ -215,7 +215,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   // "AI chats" and "Team chat" sit next to each other, so neither may be called just
   // "Chats": the whole point of the pair is which side of the app a message came from.
   const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
-    ['messages', 'Team chat'], ['memory', 'Memory']];
+    ['messages', 'Team chat'], ['memory', 'Memory'], ['saifsys', 'saifsys']];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -270,6 +270,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
         <div className="@container mx-auto w-full max-w-4xl space-y-4">
 
         {tab === 'memory' && <Memories person={person} />}
+        {tab === 'saifsys' && <SaifsysModules person={person} />}
         {(tab === 'documents' || tab === 'conversations' || tab === 'messages') && <Browse person={person} kind={tab} />}
 
         {tab === 'agents' && (!loaded ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
@@ -344,6 +345,60 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The saifsys workspaces this person's agents can look into, in the launcher's order.
+ * A tap saves straight away - it is one switch per module, with nothing to review first.
+ * Modules with nothing connected yet can still be ticked, so access is ready the day
+ * they are.
+ */
+function SaifsysModules({ person }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get(`/admin/users/${person.id}/saifsys`).then(setData).catch((e) => { setError(e.message); setData({ modules: [] }); });
+  }, [person.id]);
+
+  const toggle = async (key) => {
+    const modules = data.modules.map((m) => (m.key === key ? { ...m, on: !m.on } : m));
+    setData({ ...data, modules });
+    setError('');
+    try {
+      await api.put(`/admin/users/${person.id}/saifsys`, { modules: modules.filter((m) => m.on).map((m) => m.key) });
+    } catch (e) {
+      setError(e.message);
+      setData(data); // put the switch back
+    }
+  };
+
+  if (!data) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
+  return (
+    <>
+      <p className="text-sm leading-relaxed text-mute">
+        {data.master
+          ? 'The master sees every saifsys module.'
+          : `Tick the saifsys modules ${person.name} can ask Jarvis about. Anything not ticked, their agents cannot look up.`}
+      </p>
+      <div className="grid gap-2 @md:grid-cols-2">
+        {data.modules.map((m) => (
+          <button key={m.key} onClick={() => !data.master && toggle(m.key)} disabled={data.master} aria-pressed={m.on}
+            className={`flex items-center gap-3 rounded-[1.25rem] border p-3 text-left transition ${
+              m.on ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent' : 'border-stroke bg-white/[0.035] hover:bg-white/[0.07]'}`}>
+            <span className="min-w-0 flex-1">
+              <span className={`block truncate text-sm font-medium ${m.on ? 'text-txt' : 'text-mute'}`}>{m.label}</span>
+              <span className="block truncate text-xs text-mute">{m.connected ? 'Connected' : 'Nothing connected yet'}</span>
+            </span>
+            <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
+              m.on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
+              {m.on && <Check size={11} strokeWidth={3.5} />}
+            </span>
+          </button>
+        ))}
+      </div>
+      {error && <p className="text-sm text-bad">{error}</p>}
+    </>
   );
 }
 

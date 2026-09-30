@@ -24,7 +24,7 @@ import { teamReminderRoutes } from './teamReminders.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
-import { saifsysRoutes } from './saifsys.js';
+import { saifsysRoutes } from './saifsys/index.js';
 import { meetingRoutes, startMeetings } from './meetings.js';
 import { transcriptRoutes, startTranscripts } from './transcripts.js';
 import { errorRoutes, recordError } from './errors.js';
@@ -363,7 +363,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));
-  // The saifsys morning checkout reminder (startSaifsys in server/saifsys.js) is on hold
+  // The saifsys morning checkout reminder (startArs in server/saifsys/ars.js) is on hold
   // by the user's choice, 2026-09-25: they ask Jarvis instead. The tool still works.
   console.log(`Jarvis server → http://localhost:${PORT}`);
 });

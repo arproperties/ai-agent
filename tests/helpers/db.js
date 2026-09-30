@@ -34,7 +34,7 @@ const TABLES = [
   'users', 'sessions', 'password_resets', 'agents', 'agent_assignments', 'conversations', 'messages',
   'imports', 'documents', 'chunks', 'memories', 'outlook_accounts', 'imap_accounts', 'email_drafts', 'email_action_log',
   'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
-  'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs',
+  'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs', 'saifsys_access',
   'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'team_reminders', 'team_reminder_people', 'reminder_suggestions', 'suggestion_scans',
 ];
 

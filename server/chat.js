@@ -9,7 +9,7 @@ import { teamReminderKit } from './teamReminders.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
 import { isAudio, readAudio } from './transcripts.js';
-import { saifsysKit, saifsysConfigured } from './saifsys.js';
+import { saifsysKit } from './saifsys/index.js';
 import { chatAgents } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
 
@@ -250,8 +250,9 @@ export async function chat(req, res) {
   const ctx = { agentId: agent.id, conversationId: convId };
   // Reminders for other people: proposed here, sent only from the card the user taps.
   const sendKit = await teamReminderKit(user.id, { conversationId: convId, onCard: (r) => send('teamReminder', r) });
-  // saifsys is company-wide, so every agent carries it for every user once it is connected.
-  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), ...(saifsysConfigured() ? [saifsysKit()] : []), ...(email ? [email] : [])];
+  // saifsys: only the tools of the modules this user has been given.
+  const saifsys = await saifsysKit(user);
+  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), ...(saifsys ? [saifsys] : []), ...(email ? [email] : [])];
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
   const library = await libraryCatalog(user); // same every turn, so read it once
