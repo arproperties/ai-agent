@@ -14,6 +14,8 @@ const fake = createServer((req, res) => {
   if (down) return send(500, { ok: false, error: { message: 'boom' } });
   if (req.headers['x-jarvis-key'] !== 'test-key') return send(401, { ok: false, error: { message: 'Not authorised.' } });
   if (url.searchParams.get('module') !== 'ars') return send(404, { ok: false, error: { message: 'Unknown module.' } });
+  const action = url.searchParams.get('action');
+  if (action !== 'checkouts') return send(200, { ok: true, action, params: Object.fromEntries(url.searchParams) });
   const date = url.searchParams.get('date');
   const list = bookings.filter((b) => b.check_out === date);
   send(200, { ok: true, date, count: list.length, checkouts: list });
@@ -139,7 +141,7 @@ test('a master has every module; anyone else only what is ticked', async () => {
   await setAccess(francis, ['ars', 'hr']);
   assert.deepEqual(await userModules(await user(francis)), ['ars', 'hr']);
   const kit = await kitFor(francis);
-  assert.deepEqual(kit.definitions.map((d) => d.name), ['ars_checkouts']);
+  assert.ok(kit.definitions.every((d) => d.name.startsWith('ars_'))); // HR has no tools yet
 
   const screen = await listAccess(francis);
   assert.equal(screen.master, false);
@@ -150,4 +152,20 @@ test('a master has every module; anyone else only what is ticked', async () => {
   await setAccess(francis, ['hr']); // replaces, does not add
   assert.equal(await kitFor(francis), null); // HR has nothing connected yet
   await assert.rejects(setAccess(francis, ['nope']), /Unknown module/);
+});
+
+test('every ARS lookup is a tool, and it asks saifsys for its own action with the agent\'s input', async () => {
+  await reset();
+  const kit = await kitFor(await master('Boss'));
+  const names = kit.definitions.map((d) => d.name);
+  assert.equal(names.length, 15);
+  assert.ok(names.every((n) => n.startsWith('ars_')));
+  assert.equal(new Set(names).size, 15);
+
+  const out = await kit.run({ id: 't3', name: 'ars_bookings', input: { from: '2026-10-01', to: '2026-10-07', status: 'cancelled' } });
+  assert.ok(!out.is_error);
+  const body = JSON.parse(out.content);
+  assert.equal(body.action, 'bookings');
+  assert.deepEqual(body.params, { module: 'ars', action: 'bookings', from: '2026-10-01', to: '2026-10-07', status: 'cancelled' });
+  assert.equal(kit.status('ars_balances'), 'Checking balances due…');
 });
