@@ -52,8 +52,9 @@ const tool = (name, description, properties = {}, required = []) => ({
 
 const LOOKUPS = [
   { action: 'summary', status: 'Reading the ARS dashboard…', tool: tool('ars_summary',
-    'Today at ARS Home Rentals in numbers, the same as its Command Center, counting direct and Airbnb bookings together: arrivals, departures, in-house, occupancy, ' +
+    'Today at ARS Home Rentals in numbers, the same as its Command Center: arrivals, departures, in-house, occupancy, ' +
     'balances due (count and total), open housekeeping and maintenance, pending deposits, new bookings in 24h, money received this month. ' +
+    'Arrivals, departures, in-house and balances come as a total with the direct / Airbnb split: show both, e.g. "32 staying (27 direct, 5 Airbnb)". ' +
     'Use for "how are we doing today", "give me the ARS summary".') },
   { action: 'arrivals', status: 'Checking ARS arrivals…', tool: tool('ars_arrivals',
     'Who is due to check in on a day (pending, confirmed or already checked in), with unit, guest, phone, total, paid and balance due.' + SAY_SOURCE,
