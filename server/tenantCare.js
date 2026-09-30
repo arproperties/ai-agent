@@ -41,7 +41,10 @@ export async function directory({ fresh = false } = {}) {
   if (!fresh && cached.dir && Date.now() - cached.at < DIRECTORY_FOR) return cached.dir;
   const body = await askSaifsys('realestate', 'directory');
   const dir = {
-    buildings: (body.buildings || []).map((b) => ({ name: String(b.name || ''), units: (b.units || []).map(String) })).filter((b) => b.name),
+    // saifsys has made-up buildings for trying things out ("TEST BUILDING"); left in, any
+    // email with the word "test" in it would count as naming a building.
+    buildings: (body.buildings || []).map((b) => ({ name: String(b.name || ''), units: (b.units || []).map(String) }))
+      .filter((b) => b.name && !/\btest\b/i.test(b.name)),
     tenants: new Set((body.tenants || []).map((t) => String(t.email || '').trim().toLowerCase()).filter(Boolean)),
   };
   cached = { at: Date.now(), dir };
