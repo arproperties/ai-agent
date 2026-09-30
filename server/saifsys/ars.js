@@ -12,10 +12,13 @@ import { askSaifsys, saifsysConfigured, dubaiDate, dubaiHour, bad } from './clie
 
 const CHECKOUT_HOUR = 11; // the time guests leave, and when the reminder buzzes
 
-/** The stays checking out on a date (YYYY-MM-DD, default today in Dubai). */
-export async function checkouts(date) {
+/**
+ * The stays checking out on a date (YYYY-MM-DD, default today in Dubai). source is
+ * direct (saifsys's default), airbnb or all.
+ */
+export async function checkouts(date, source) {
   if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw bad('date must be YYYY-MM-DD');
-  const body = await askSaifsys('ars', 'checkouts', { date: date || dubaiDate() });
+  const body = await askSaifsys('ars', 'checkouts', { date: date || dubaiDate(), source });
   return { date: body.date, checkouts: body.checkouts || [] };
 }
 
@@ -24,7 +27,8 @@ const place = (c) => [c.building, c.unit && `unit ${c.unit}`].filter(Boolean).jo
 function describe({ date, checkouts: list }) {
   if (!list.length) return `No checkouts in saifsys ARS on ${date}.`;
   const lines = list.map((c) => {
-    const bits = [`- ${place(c)}`, c.guest && `— ${c.guest}`, c.guest_phone && `(${c.guest_phone})`, `· ${c.booking_number}`, `· ${c.status}`];
+    const bits = [`- ${place(c)}`, c.guest && `— ${c.guest}`, c.guest_phone && `(${c.guest_phone})`, `· ${c.booking_number}`, `· ${c.status}`,
+      c.source && `· ${c.source === 'airbnb' ? 'Airbnb' : 'direct'} booking`];
     if (c.balance_due > 0) bits.push(`· balance due AED ${c.balance_due.toFixed(2)}`);
     return bits.filter(Boolean).join(' ');
   });
@@ -37,37 +41,45 @@ function describe({ date, checkouts: list }) {
 // the answer goes back to the agent as the JSON saifsys sent, which Claude reads well
 // and which keeps every figure exactly as saifsys worked it out.
 const DATE = { type: 'string', description: 'YYYY-MM-DD. Work it out from the current date given to you.' };
+// Lists are direct bookings unless the user names Airbnb (or asks for both), and every
+// booking in a reply says which it is — the user's rule.
+const SOURCE = { type: 'string', enum: ['direct', 'airbnb', 'all'],
+  description: 'direct (default) unless the user asks for Airbnb bookings (airbnb) or for both / every source (all).' };
+const SAY_SOURCE = ' Direct bookings only unless the user asks for Airbnb. In the reply, say for every booking whether it is a direct booking or an Airbnb booking.';
 const tool = (name, description, properties = {}, required = []) => ({
   name, description, input_schema: { type: 'object', properties, ...(required.length ? { required } : {}) },
 });
 
 const LOOKUPS = [
   { action: 'summary', status: 'Reading the ARS dashboard…', tool: tool('ars_summary',
-    'Today at ARS Home Rentals in numbers, the same as its Command Center: arrivals, departures, in-house, occupancy, ' +
+    'Today at ARS Home Rentals in numbers, the same as its Command Center, counting direct and Airbnb bookings together: arrivals, departures, in-house, occupancy, ' +
     'balances due (count and total), open housekeeping and maintenance, pending deposits, new bookings in 24h, money received this month. ' +
     'Use for "how are we doing today", "give me the ARS summary".') },
   { action: 'arrivals', status: 'Checking ARS arrivals…', tool: tool('ars_arrivals',
-    'Who is due to check in on a day (pending, confirmed or already checked in), with unit, guest, phone, total, paid and balance due.',
-    { date: { ...DATE, description: 'The day. Omit for today.' } }) },
+    'Who is due to check in on a day (pending, confirmed or already checked in), with unit, guest, phone, total, paid and balance due.' + SAY_SOURCE,
+    { date: { ...DATE, description: 'The day. Omit for today.' }, source: SOURCE }) },
   { action: 'in_house', status: 'Checking who is staying…', tool: tool('ars_in_house',
-    'Every guest checked in right now, with unit, checkout date, total, paid and balance due.') },
+    'Every guest checked in right now, with unit, checkout date, total, paid and balance due.' + SAY_SOURCE,
+    { source: SOURCE }) },
   { action: 'booking', status: 'Finding the booking…', tool: tool('ars_booking',
     'One booking in full: dates, nights, rate, total, paid, live balance, every payment, invoices, extensions, deposit, notes, ' +
     'Airbnb source, cancellation. Search by booking number, guest name, phone or unit number. Several matches come back as a list to pick from.',
     { q: { type: 'string', description: 'Booking number, guest name, phone, or unit number.' } }, ['q']) },
   { action: 'bookings', status: 'Listing ARS bookings…', tool: tool('ars_bookings',
-    'A list of bookings between two dates, optionally by status. Use for "next week\'s bookings", "cancelled this month", "bookings made today". ' +
-    'Up to 200 rows.',
+    'A list of ARS bookings. For a plain "show me bookings", give no dates: that returns the current bookings — guests in-house ' +
+    'and every confirmed booking still to come. For a period ("September bookings", "last month", "bookings made today") give from and to. ' +
+    'At most 3 months per question: for longer, tell the user to ask one quarter at a time (Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec) and do not split it yourself.' + SAY_SOURCE,
     {
-      from: { ...DATE, description: 'Start of the range. Omit for today.' },
-      to: { ...DATE, description: 'End of the range. Omit for 30 days after from.' },
-      by: { type: 'string', enum: ['stay', 'check_in', 'check_out', 'created'], description: 'Which date falls in the range: stay (any night overlaps, default), check_in, check_out, or created (when the booking was made).' },
+      from: { ...DATE, description: 'Start of the period. Omit (with to) for the current bookings.' },
+      to: { ...DATE, description: 'End of the period, at most 3 months after from. For a month, its last day.' },
+      by: { type: 'string', enum: ['stay', 'check_in', 'check_out', 'created'], description: 'With dates: which date falls in the period — stay (any night overlaps, default), check_in, check_out, or created (when the booking was made).' },
       status: { type: 'string', enum: ['pending', 'confirmed', 'checked_in', 'checked_out', 'completed', 'cancelled', 'expired'] },
+      source: SOURCE,
     }) },
   { action: 'balances', status: 'Checking balances due…', tool: tool('ars_balances',
     'Everyone who still owes money, biggest first, with the total. Balances are live (the booking page\'s figure). ' +
-    'scope active = confirmed and in-house stays (default, like the ARS payment follow-up); all = also guests who already left, last 12 months.',
-    { scope: { type: 'string', enum: ['active', 'all'] } }) },
+    'scope active = confirmed and in-house stays (default, like the ARS payment follow-up); all = also guests who already left, last 12 months.' + SAY_SOURCE,
+    { scope: { type: 'string', enum: ['active', 'all'] }, source: SOURCE }) },
   { action: 'guest', status: 'Finding the guest…', tool: tool('ars_guest',
     'A guest\'s contact details and every stay they have had, with what they paid and still owe. Search by name, phone or email.',
     { q: { type: 'string', description: 'Guest name, phone, or email.' } }, ['q']) },
@@ -105,13 +117,13 @@ export const tools = [
   tool('ars_checkouts',
     'Look up which short-stay guests check out on a given day, live from the ARS Home Rentals module of saifsys (the company system). ' +
     'Use it whenever anyone asks about checkouts, departures, who is leaving, or which units need cleaning after a stay. ' +
-    'Returns building, unit, guest, phone, booking number, status and any balance still due.',
-    { date: { ...DATE, description: 'The day. Omit for today.' } }),
+    'Returns building, unit, guest, phone, booking number, status and any balance still due.' + SAY_SOURCE,
+    { date: { ...DATE, description: 'The day. Omit for today.' }, source: SOURCE }),
   ...LOOKUPS.map((l) => l.tool),
 ];
 
 export const handlers = {
-  ars_checkouts: async (input) => describe(await checkouts(input.date)),
+  ars_checkouts: async (input) => describe(await checkouts(input.date, input.source)),
   ...Object.fromEntries(LOOKUPS.map((l) => [l.tool.name, async (input) => JSON.stringify(await lookup(l.action, input))])),
 };
 
@@ -144,7 +156,7 @@ export async function runCheckoutJob({ at = Date.now(), force = false } = {}) {
   if (!force && (hour < WINDOW.from || hour >= WINDOW.to)) return { skipped: 'outside the morning window' };
   if (await db.prepare('SELECT 1 FROM saifsys_runs WHERE job = ? AND day = ?').get(JOB, day)) return { skipped: 'already done today' };
 
-  const result = await checkouts(day); // throws on a failed fetch: nothing is written, the next tick retries
+  const result = await checkouts(day, 'all'); // throws on a failed fetch: nothing is written, the next tick retries
   const list = result.checkouts;
   // Claimed before the todos are written, so two ticks can never both make one.
   const claimed = await db.prepare(`INSERT INTO saifsys_runs (job, day, found) VALUES (?, ?, ?)

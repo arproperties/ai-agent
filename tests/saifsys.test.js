@@ -33,7 +33,7 @@ test.after(() => { fake.close(); return closeDb(); });
 const MORNING = Date.parse('2026-09-25T08:00:00+04:00');
 const stay = (unit, extra = {}) => ({
   booking_number: `B-${unit}`, status: 'checked_in', check_out: '2026-09-25', unit, building: 'Marina Tower',
-  guest: 'Ali Hassan', guest_phone: '+971500000000', balance_due: 0, ...extra,
+  guest: 'Ali Hassan', guest_phone: '+971500000000', balance_due: 0, source: 'direct', ...extra,
 });
 const master = async (name) => {
   const id = await makeUser(name);
@@ -117,6 +117,7 @@ test('the agent tool reads the list back in words', async () => {
   assert.ok(!out.is_error);
   assert.match(out.content, /1 checkout in saifsys ARS on 2026-09-25/);
   assert.match(out.content, /Marina Tower unit 101 — Ali Hassan/);
+  assert.match(out.content, /direct booking/);
 });
 
 test('a wrong key is an error the agent can see, not a crash', async () => {
@@ -168,4 +169,16 @@ test('every ARS lookup is a tool, and it asks saifsys for its own action with th
   assert.equal(body.action, 'bookings');
   assert.deepEqual(body.params, { module: 'ars', action: 'bookings', from: '2026-10-01', to: '2026-10-07', status: 'cancelled' });
   assert.equal(kit.status('ars_balances'), 'Checking balances due…');
+});
+
+test('the morning reminder counts every checkout, Airbnb too', async () => {
+  await reset();
+  bookings = [stay('101')];
+  let asked = null;
+  const seen = (req) => { asked = new URL(req.url, 'http://x').searchParams.get('source'); };
+  fake.on('request', seen);
+  await master('Boss');
+  await runCheckoutJob({ at: MORNING });
+  assert.equal(asked, 'all');
+  fake.off('request', seen);
 });
