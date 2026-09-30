@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronLeft, Loader2, Send, X, AlertTriangle, Check } from 'lucide-react';
+import { ChevronLeft, Loader2, Send, X, AlertTriangle, Check, Search, CheckCircle2, XCircle } from 'lucide-react';
 import { api } from '../lib/api';
 import { ParticleField } from './ParticleField';
 
@@ -53,11 +53,18 @@ function Ask({ a, onDone }) {
   );
 }
 
+const Status = ({ ok, text }) => (
+  <p className={`flex items-start gap-1.5 ${ok ? 'text-emerald-400' : 'text-bad'}`}>
+    {ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <XCircle size={16} className="mt-0.5 shrink-0" />} {text}
+  </p>
+);
+
 function Setup({ data, onChanged }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [find, setFind] = useState('');
   const connect = async (e) => {
     e.preventDefault();
     setBusy(true); setError('');
@@ -79,10 +86,14 @@ function Setup({ data, onChanged }) {
     <div className="space-y-4 rounded-3xl border border-stroke bg-white/[0.03] p-4">
       <h2 className="font-medium">Settings</h2>
       {data.inbox ? (
-        <div className="space-y-1 text-sm">
-          <p>Inbox: <span className="font-medium">{data.inbox.email}</span></p>
-          <p className="text-mute">{data.inbox.checkedAt ? `Last checked ${dated(data.inbox.checkedAt)}` : 'Not checked yet'}</p>
-          {data.inbox.error && <p className="text-bad">Problem: {data.inbox.error}</p>}
+        <div className="space-y-2 text-sm">
+          <Status ok={!data.inbox.error} text={data.inbox.error ? `Email problem: ${data.inbox.error}` : `Email connected: ${data.inbox.email}`} />
+          {data.directory && (
+            <Status ok={!data.directory.error} text={data.directory.error
+              ? `saifsys problem: ${data.directory.error}`
+              : `saifsys connected: ${data.directory.buildings} buildings, ${data.directory.units} units, ${data.directory.tenants} tenant emails`} />
+          )}
+          <p className="text-mute">{data.inbox.checkedAt ? `Last checked ${dated(data.inbox.checkedAt)} · every 3 minutes` : 'Not checked yet'}</p>
           <button onClick={disconnect} className="text-sm text-mute underline hover:text-txt">Disconnect</button>
         </div>
       ) : (
@@ -101,8 +112,16 @@ function Setup({ data, onChanged }) {
       {!data.saifsys && <p className="text-sm text-bad">saifsys is not connected, so Jarvis cannot tell buildings apart yet.</p>}
       <div>
         <p className="mb-2 text-sm text-mute">Who to tell if a reply can't be sent:</p>
+        <label className="mb-2 flex items-center gap-2 rounded-2xl border border-stroke bg-black/20 px-3 py-2 focus-within:border-p1/60">
+          <Search size={15} className="shrink-0 text-mute" />
+          <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Search staff"
+            className="w-full bg-transparent text-sm outline-none" />
+        </label>
         <div className="flex flex-wrap gap-2">
-          {data.people.map((p) => (
+          {/* Ticked people first, and always shown, so a search never hides who is already on. */}
+          {[...data.people].sort((a, b) => b.member - a.member)
+            .filter((p) => p.member || !find.trim() || `${p.name} ${p.email}`.toLowerCase().includes(find.trim().toLowerCase()))
+            .map((p) => (
             <button key={p.id} onClick={() => toggle(p.id)}
               className={`flex items-center gap-1 rounded-full border px-3 py-1.5 text-sm ${p.member ? 'border-p1/60 bg-p1/20 text-txt' : 'border-stroke text-mute hover:text-txt'}`}>
               {p.member && <Check size={13} />} {p.name}

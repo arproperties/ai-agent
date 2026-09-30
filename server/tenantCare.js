@@ -302,6 +302,9 @@ tenantCareRoutes.get('/', guard, wrap(async (req, res) => {
     WHERE a.status IN ('sent', 'skipped') ORDER BY a.decided_at DESC NULLS LAST LIMIT 20`).all();
   const out = { inbox: inboxOut(await inbox()), saifsys: saifsysConfigured(), open: open.map(askOut), done: done.map((a) => ({ ...askOut(a), by: a.by_name })) };
   if (isMaster(req.user)) {
+    // Whether saifsys's list is there, so the master can see both halves are working.
+    out.directory = await directory().then((d) => ({ buildings: d.buildings.length, units: d.buildings.reduce((n, b) => n + b.units.length, 0), tenants: d.tenants.size }))
+      .catch((e) => ({ error: e.message }));
     const have = new Set(await members());
     out.people = (await db.prepare(`SELECT id, name, email FROM users WHERE NOT disabled AND role IS DISTINCT FROM 'master' ORDER BY lower(name)`).all())
       .map((u) => ({ ...u, member: have.has(u.id) }));
