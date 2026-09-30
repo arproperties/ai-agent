@@ -692,6 +692,42 @@ await db.exec(`
     SELECT id, 'ars' FROM users WHERE role IS DISTINCT FROM 'master' ON CONFLICT DO NOTHING`);
 }
 
+// Things Jarvis may DO in saifsys, per person (server/saifsys/booking.js). Separate from
+// saifsys_access, which is only what they may look at. The master may do all of it and
+// is never listed. One row per person per action; today the only action is
+// 'ars_create_booking'.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS saifsys_action_access (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    PRIMARY KEY (user_id, action)
+  );
+`);
+
+// An ARS booking Jarvis has got ready in chat, waiting for the person to tap Create.
+//   status: pending (the card is showing), creating (Create was tapped; the lock that
+//     stops a double tap making two bookings), created, cancelled, failed.
+//   input: what goes to saifsys, with unit and guest already resolved to ids.
+//   quote: saifsys's price for it, which is what the card shows and what saifsys must
+//     still charge when Create is tapped (expected_total), or nothing is made.
+//   result: saifsys's answer once created — the booking number above all.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS ars_booking_requests (
+    id SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'creating', 'created', 'cancelled', 'failed')),
+    input  JSONB NOT NULL,
+    quote  JSONB NOT NULL,
+    result JSONB,
+    error  TEXT,
+    note   TEXT,
+    created_at BIGINT DEFAULT ${NOW},
+    decided_at BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_ars_booking_requests_conv ON ars_booking_requests(conversation_id);
+`);
+
 // Meetings (server/meetings.js): a recording, turned into who-said-what by OpenAI's speech
 // model and then summarised by Claude. Four tables of their own; nothing else reads them.
 //   voice_profiles: a short sample of one person's voice, kept as a data URL because that is

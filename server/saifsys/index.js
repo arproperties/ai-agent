@@ -3,6 +3,7 @@ import { db, tx } from '../db.js';
 import { isMaster } from '../access.js';
 import { saifsysConfigured } from './client.js';
 import * as ars from './ars.js';
+import { ACTIONS, actionKeys, setActions, bookingKit, bookingRoutes } from './booking.js';
 
 // saifsys, module by module — the same workspaces as its launcher. Each module that has
 // something connected is a file in this folder (tools, handlers, status) matching a file
@@ -45,10 +46,21 @@ export async function listAccess(userId) {
   const target = await db.prepare('SELECT id, role FROM users WHERE id = ?').get(Number(userId));
   if (!target) throw Object.assign(new Error('User not found'), { status: 404 });
   const have = new Set(await userModules(target));
+  const may = new Set(isMaster(target) ? ACTIONS.map((a) => a.key) : await actionKeys(target.id));
   return {
     master: isMaster(target),
     modules: MODULES.map((m) => ({ key: m.key, label: m.label, connected: connected(m), on: have.has(m.key) })),
+    // What they may DO, apart from what they may see. An action only works with its module ticked too.
+    actions: ACTIONS.map((a) => ({ key: a.key, module: a.module, label: a.label, on: may.has(a.key) })),
   };
+}
+
+/** Replaces the person's set of saifsys actions. */
+export async function setActionAccess(userId, wanted) {
+  const target = await db.prepare('SELECT id FROM users WHERE id = ?').get(Number(userId));
+  if (!target) throw Object.assign(new Error('User not found'), { status: 404 });
+  await setActions(target.id, wanted);
+  return (await actionKeys(target.id)).length;
 }
 
 /** Replaces the person's whole set, so the caller sends the end state. */
@@ -94,6 +106,16 @@ export async function saifsysKit(user) {
   };
 }
 
+/**
+ * The tools that DO things in saifsys, for chat.js — kept apart from saifsysKit, which
+ * only reads. Creating a booking needs the ARS module (its lookups find the unit and the
+ * guest) as well as the action itself.
+ */
+export async function saifsysActionKit(user, ctx) {
+  if (!(await userModules(user)).includes('ars')) return null;
+  return bookingKit(user, ctx);
+}
+
 // ---------- routes ----------
 
 // The same live answers the agents see, for anyone who has that module.
@@ -103,6 +125,10 @@ const needs = (key) => wrap(async (req, res, next) => {
   if (!(await userModules(req.user)).includes(key)) return res.status(403).json({ error: 'You do not have this saifsys module' });
   next();
 });
+
+// Booking cards: each is the person's own, so the ARS module is not checked to read or
+// cancel one; creating checks everything again in decideBooking.
+saifsysRoutes.use('/ars/bookings', bookingRoutes);
 
 saifsysRoutes.get('/ars/checkouts', needs('ars'), wrap(async (req, res) => {
   res.json(await ars.checkouts(req.query.date ? String(req.query.date) : undefined));

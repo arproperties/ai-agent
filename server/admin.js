@@ -4,7 +4,7 @@ import { hashPassword, requireMaster, sessionHash } from './auth.js';
 import { inlineType } from './files.js';
 import { recentErrors, errorCount } from './errors.js';
 import { MSG_SELECT, messageOut } from './messenger.js';
-import { listAccess, setAccess } from './saifsys/index.js';
+import { listAccess, setAccess, setActionAccess } from './saifsys/index.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
 // as an "OR is_master" widening of the ordinary queries. Every cross-user guard in the
@@ -346,6 +346,10 @@ adminRoutes.get('/users/:id/saifsys', wrap(async (req, res) => {
 
 adminRoutes.put('/users/:id/saifsys', wrap(async (req, res) => {
   res.json({ ok: true, modules: await setAccess(req.params.id, req.body.modules) });
+}));
+
+adminRoutes.put('/users/:id/saifsys-actions', wrap(async (req, res) => {
+  res.json({ ok: true, actions: await setActionAccess(req.params.id, req.body.actions) });
 }));
 
 // Disabling keeps the data and revokes every session. Deleting a user cascades away

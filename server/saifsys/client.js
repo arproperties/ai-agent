@@ -33,3 +33,41 @@ export async function askSaifsys(module, action, params = {}) {
   if (!res.ok || !body?.ok) throw bad(`saifsys said: ${body?.error?.message || `HTTP ${res.status}`}`, res.status === 400 ? 400 : 502);
   return body;
 }
+
+// ---------- the door for actions ----------
+
+// Doing things in saifsys goes through a second door, api/jarvis/v1/act.php, with its own
+// key (SAIFSYS_ACTION_KEY here, JARVIS_ACTION_KEY there): the read key alone can never
+// change anything. Every call names who is acting by their verified company email.
+const ACTION_KEY = () => process.env.SAIFSYS_ACTION_KEY || '';
+export const saifsysActionsConfigured = () => !!ACTION_KEY();
+const ACT_TIMEOUT = 30_000;
+
+/**
+ * One action. A saifsys refusal comes back as an Error carrying its code (and, for a
+ * changed price, the new quote), so the caller can tell "no" from "did not answer".
+ */
+export async function actSaifsys(module, action, body) {
+  if (!saifsysActionsConfigured()) throw bad('Creating in saifsys is not switched on yet: SAIFSYS_ACTION_KEY is missing from .env.', 503);
+  const url = new URL(`${BASE()}/api/jarvis/v1/act.php`);
+  url.searchParams.set('module', module);
+  url.searchParams.set('action', action);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-Jarvis-Action-Key': ACTION_KEY(), 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(ACT_TIMEOUT),
+    });
+  } catch (e) {
+    throw Object.assign(bad(`saifsys did not answer (${e.name}: ${e.message}).`, 502), { code: 'no_answer' });
+  }
+  const answer = await res.json().catch(() => null);
+  if (!res.ok || !answer?.ok) {
+    const err = answer?.error || {};
+    throw Object.assign(bad(err.message || `saifsys said HTTP ${res.status}`, res.status >= 500 ? 502 : 400),
+      { code: err.code || (answer ? 'refused' : 'no_answer'), quote: err.quote });
+  }
+  return answer;
+}

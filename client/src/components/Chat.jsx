@@ -8,6 +8,7 @@ import Avatar from './Avatar';
 import Message from './Message';
 import DraftCard from './DraftCard';
 import TeamReminderCard from './TeamReminderCard';
+import BookingCard from './BookingCard';
 import { usePush } from './Notifications';
 import { permission } from '../lib/push';
 import Composer from './Composer';
@@ -56,6 +57,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [drafts, setDrafts] = useState([]); // every email written in this chat, whatever became of it
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
   const [reminders, setReminders] = useState([]); // reminders for other people got ready in this chat
+  const [bookings, setBookings] = useState([]); // ARS bookings got ready in this chat, waiting for Create
   const [suggested, setSuggested] = useState([]); // reminders Jarvis spotted, waiting for a yes or no
   const push = usePush();
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
@@ -81,6 +83,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       // Oldest first, because the list arrives newest first and these read as chat.
       api.get(`/email/drafts?conversation=${conversationId}`).then((r) => setDrafts(r.drafts.slice().reverse())).catch(() => {});
       api.get(`/team-reminders?conversation=${conversationId}`).then(setReminders).catch(() => {});
+      api.get(`/saifsys/ars/bookings?conversation=${conversationId}`).then(setBookings).catch(() => {});
     }
     api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
     // Only on the first screen, where they are shown. The server decides whether it is
@@ -161,6 +164,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             if (d.userMessageId) setMessages((m) => m.map((x) => (x.id === `u${aid}` ? { ...x, saved: d.userMessageId } : x)));
           }
           else if (event === 'teamReminder') { setReminders((rs) => [...rs.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'arsBooking') { setBookings((bs) => [...bs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'draft') { setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'delta') {
             if (!reply) setOrb('speaking');
@@ -368,6 +372,10 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             {reminders.map((r) => (
               <TeamReminderCard key={r.id} reminder={r}
                 onChanged={(u) => setReminders((rs) => rs.map((x) => (x.id === u.id ? u : x)))} />
+            ))}
+            {bookings.map((b) => (
+              <BookingCard key={b.id} booking={b}
+                onChanged={(u) => setBookings((bs) => bs.map((x) => (x.id === u.id ? u : x)))} />
             ))}
           </div>
         )}

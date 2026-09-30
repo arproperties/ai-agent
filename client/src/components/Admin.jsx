@@ -373,6 +373,18 @@ function SaifsysModules({ person }) {
     }
   };
 
+  const toggleAction = async (key) => {
+    const actions = data.actions.map((a) => (a.key === key ? { ...a, on: !a.on } : a));
+    setData({ ...data, actions });
+    setError('');
+    try {
+      await api.put(`/admin/users/${person.id}/saifsys-actions`, { actions: actions.filter((a) => a.on).map((a) => a.key) });
+    } catch (e) {
+      setError(e.message);
+      setData(data);
+    }
+  };
+
   if (!data) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
   return (
     <>
@@ -397,6 +409,33 @@ function SaifsysModules({ person }) {
           </button>
         ))}
       </div>
+      {data.actions?.length > 0 && (
+        <>
+          <p className="pt-2 text-sm leading-relaxed text-mute">
+            {data.master
+              ? 'The master can do all of these.'
+              : `What ${person.name} can ask Jarvis to do in saifsys. Each one also needs its module ticked above, and their company email connected in Jarvis.`}
+          </p>
+          <div className="grid gap-2 @md:grid-cols-2">
+            {data.actions.map((a) => (
+              <button key={a.key} onClick={() => !data.master && toggleAction(a.key)} disabled={data.master} aria-pressed={a.on}
+                className={`flex items-center gap-3 rounded-[1.25rem] border p-3 text-left transition ${
+                  a.on ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent' : 'border-stroke bg-white/[0.035] hover:bg-white/[0.07]'}`}>
+                <span className="min-w-0 flex-1">
+                  <span className={`block truncate text-sm font-medium ${a.on ? 'text-txt' : 'text-mute'}`}>{a.label}</span>
+                  <span className="block truncate text-xs text-mute">
+                    {data.modules.find((m) => m.key === a.module)?.on ? 'Asks for approval before every booking' : 'Needs the module ticked above'}
+                  </span>
+                </span>
+                <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
+                  a.on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
+                  {a.on && <Check size={11} strokeWidth={3.5} />}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       {error && <p className="text-sm text-bad">{error}</p>}
     </>
   );
