@@ -180,7 +180,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
             <span className="block truncate text-sm">{user.name}</span>
             <span className="block truncate text-xs text-mute">{user.email}</span>
           </span>
-          {watched > 0 && (
+          {false && watched > 0 && ( /* hidden for everyone for now */
             <button onClick={onActivity} aria-label="Who has looked at your workspace" title="Who has looked at your workspace"
               className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
               <Eye size={16} />
