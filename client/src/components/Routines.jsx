@@ -217,7 +217,7 @@ function RoutineSheet({ r, onClose, onSaved }) {
             className="w-full rounded-xl border border-stroke bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-p1/60 [color-scheme:dark]" />
           <span className="block text-[11px] leading-snug text-mute">
             Every turn is worked out from this, so it fixes the time of day — and the weekday, or the day of the month.
-            It shows on your list when it comes round; Jarvis can't reach you outside the app.
+            It shows on your list when it comes round; Reem can't reach you outside the app.
           </span>
         </label>
         {error && <p className="text-sm text-bad">{error}</p>}

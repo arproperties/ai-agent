@@ -56,7 +56,7 @@ export default function CarrySheet({ agents, currentId, picked, onClose, onDone 
   return (
     <Sheet title="Bring in a chat" icon={<Icon name="history" className="text-p1" />} onClose={onClose}>
       <p className="mb-3 text-sm text-mute">
-        Pick the chats whose points you need here. Jarvis reads each one and keeps it for the rest of this conversation,
+        Pick the chats whose points you need here. Reem reads each one and keeps it for the rest of this conversation,
         so you can ask it to pull them together.
       </p>
 

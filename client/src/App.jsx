@@ -21,7 +21,7 @@ import MessageToast from './components/MessageToast';
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
 const outlookReturn = params.get('outlook') && { status: params.get('outlook'), message: params.get('message') };
-// a notification tapped while Jarvis was closed: /?chat=12 opens that team chat,
+// a notification tapped while Reem was closed: /?chat=12 opens that team chat,
 // /?todos=1 opens the list of what is due
 const notifiedChat = Number(params.get('chat')) || null;
 const notifiedTodos = params.get('todos') === '1';
@@ -72,7 +72,7 @@ export default function App() {
 
   const loadTenantCare = useCallback(() => api.get('/tenant-care/me').then(setTenantCare).catch(() => {}), []);
 
-  // A notification tapped while Jarvis was already open somewhere: the service worker
+  // A notification tapped while Reem was already open somewhere: the service worker
   // brings that window forward rather than starting a second one, and says what the
   // notice was about — a team chat, or the list of what has just fallen due.
   useEffect(() => {

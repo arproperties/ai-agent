@@ -87,13 +87,13 @@ async function context(chatId, limit) {
  */
 export async function polish(chatId, userId, text, { model = ask, name = '' } = {}) {
   const notes = String(text || '').trim();
-  if (notes.length === 1) throw bad('Type a few more words, and Jarvis will tidy them up.');
-  if (notes.length > MAX_IN) throw bad('That is already a long message — Jarvis tidies up short notes.');
+  if (notes.length === 1) throw bad('Type a few more words, and Reem will tidy them up.');
+  if (notes.length > MAX_IN) throw bad('That is already a long message — Reem tidies up short notes.');
   if (tooMany(userId)) throw bad('That is a lot of rewrites at once. Try again in a few minutes.', 429);
 
   const drafting = !notes;
   const recent = await context(chatId, drafting ? DRAFT_CONTEXT : CONTEXT);
-  if (drafting && !recent) throw bad('There is nothing here to reply to yet. Type a few words and Jarvis will tidy them up.');
+  if (drafting && !recent) throw bad('There is nothing here to reply to yet. Type a few words and Reem will tidy them up.');
 
   const me = name || 'the reader';
   const out = drafting

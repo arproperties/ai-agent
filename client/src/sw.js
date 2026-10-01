@@ -3,7 +3,7 @@ import { precacheAndRoute, cleanupOutdatedCaches, createHandlerBoundToURL } from
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { clientsClaim } from 'workbox-core';
 
-// The service worker: the small piece of Jarvis that keeps running when Jarvis is closed.
+// The service worker: the small piece of Reem that keeps running when Reem is closed.
 //
 // It does two jobs. The first is the one it always did — hold the app's files so the
 // screen appears instantly and works on a bad connection. Vite used to write this file
@@ -40,7 +40,7 @@ self.addEventListener('push', (event) => {
   const tag = data.tag || 'jarvis';
   event.waitUntil(self.registration.getNotifications({ tag })
     .then((open) => open.forEach((n) => n.close()), () => {})
-    .then(() => self.registration.showNotification(data.title || 'Jarvis', {
+    .then(() => self.registration.showNotification(data.title || 'Reem', {
     body: data.body || 'You have a new message',
     // The tag is the chat. A second message from the same chat replaces the first rather
     // than stacking up ten notices while someone is typing a paragraph one line at a time.
@@ -54,7 +54,7 @@ self.addEventListener('push', (event) => {
   })));
 });
 
-// Tapping it. If Jarvis is already open somewhere, that window is brought forward and
+// Tapping it. If Reem is already open somewhere, that window is brought forward and
 // told which chat to show; opening a second copy of the app instead would lose whatever
 // the person was in the middle of.
 self.addEventListener('notificationclick', (event) => {

@@ -30,7 +30,7 @@
   }
   /* ---------- One glow ----------
      The shape is borrowed from Business Lens (admin/src/styles/tokens.css);
-     the colour is Jarvis's own violet, not that app's mint.
+     the colour is Reem's own violet, not that app's mint.
      One fixed layer. The body wears it, so it sits behind the chat. Any
      full-screen panel that covers the chat (Files, People, Team chat, Live
      voice) needs its own copy, because it has to hide the chat underneath --

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
-// The pop-up for a team-chat message that lands while Jarvis is open but somewhere else —
+// The pop-up for a team-chat message that lands while Reem is open but somewhere else —
 // another chat, an AI chat, the Files screen. Like WhatsApp on the desktop: name and words
 // at the top, gone by itself after a few seconds, tap to open that chat.
 export default function MessageToast({ toast, onOpen, onClose }) {

@@ -5,10 +5,10 @@ const UAE_RULES = 'Base answers on UAE law and practice, say which emirate or au
 
 export const DEFAULT_AGENTS = [
   {
-    name: 'Jarvis',
+    name: 'Reem',
     icon: 'bot',
     color: 'violet',
-    persona: 'You are Jarvis, a calm, sharp and friendly general assistant based in the UAE. You handle everyday questions, planning, research, travel, and anything the specialist agents do not cover. Answer clearly and briefly, use lists or tables when they help, and ask a short follow-up when a request is ambiguous.',
+    persona: 'You are Reem, a calm, sharp and friendly general assistant based in the UAE. You handle everyday questions, planning, research, travel, and anything the specialist agents do not cover. Answer clearly and briefly, use lists or tables when they help, and ask a short follow-up when a request is ambiguous.',
     starters: ['What can you do?', 'Plan my week', 'What do you remember about me?'],
   },
   {

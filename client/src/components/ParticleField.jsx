@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 /**
  * Drifting dots that link with faint lines when they pass near each other, on a canvas
  * behind whatever it is mounted in. Ported from Business Lens
- * (admin/src/components/ParticleField.tsx) in Jarvis's violet rather than its mint.
+ * (admin/src/components/ParticleField.tsx) in Reem's violet rather than its mint.
  *
  * It is mounted in two places. Once beside <App/> in main.jsx, where `.fx-canvas` makes
  * it a fixed full-screen layer at z-index 1 (above the glow and grid the body wears at

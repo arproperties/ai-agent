@@ -21,7 +21,7 @@ export async function sendPasswordReset(user, link) {
   await transport.sendMail({
     from: MAIL_FROM || SMTP_USER,
     to: user.email,
-    subject: 'Reset your Jarvis password',
+    subject: 'Reset your Reem password',
     text: `Hi ${user.name},\n\nUse this link to set a new password (valid for 1 hour):\n${link}\n\nIf you didn't ask for this, you can ignore this email.`,
     html: `<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:480px;margin:auto;padding:24px;color:#1d1b2e">
       <h2 style="font-weight:500">Reset your password</h2>

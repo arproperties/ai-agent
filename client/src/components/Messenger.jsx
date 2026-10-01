@@ -31,7 +31,7 @@ function ChatList({ dm, activeId, onOpen, onNew, onBack }) {
   return (
     <>
       <header className="flex items-center gap-1 px-2 pb-2 pt-safe md:px-3">
-        <button onClick={onBack} aria-label="Back to Jarvis" title="Back to Jarvis"
+        <button onClick={onBack} aria-label="Back to Reem" title="Back to Reem"
           className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
           <ChevronLeft size={24} />
         </button>

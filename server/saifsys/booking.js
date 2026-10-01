@@ -7,8 +7,8 @@ import { askSaifsys, actSaifsys, saifsysActionsConfigured, bad } from './client.
 
 // Creating an ARS booking from chat. Matches api/jarvis/v1/modules/ars_booking.php.
 //
-// Jarvis only ever PROPOSES a booking, like an email draft or a reminder for others:
-//   1. ars_quote_booking asks saifsys what it would charge. Jarvis tells the person the
+// Reem only ever PROPOSES a booking, like an email draft or a reminder for others:
+//   1. ars_quote_booking asks saifsys what it would charge. Reem tells the person the
 //      price and asks whether they want a different price, and VAT or no VAT.
 //   2. ars_propose_booking, once they have answered, gets saifsys's price again and puts
 //      a card in the chat with Create and Cancel. Nothing exists in saifsys yet.
@@ -65,7 +65,7 @@ export async function verifiedEmail(userId) {
   return EMAIL.test(address) ? address : null;
 }
 
-const NO_EMAIL = 'To create bookings, connect your company email in Jarvis first: open the Workspace menu → Email. ' +
+const NO_EMAIL = 'To create bookings, connect your company email in Reem first: open the Workspace menu → Email. ' +
   'It has to be the same email that is on your saifsys profile.';
 
 async function actingEmail(userId) {
@@ -87,7 +87,7 @@ function explain(e, email) {
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
-/** "204", "Ayla 204" → the unit's id, through the read door. Ambiguity is an error, so Jarvis asks. */
+/** "204", "Ayla 204" → the unit's id, through the read door. Ambiguity is an error, so Reem asks. */
 async function findUnit(input) {
   if (input.unit_id) return Number(input.unit_id);
   const q = String(input.unit || '').trim();

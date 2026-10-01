@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { ParticleField } from './ParticleField';
 
 // Transcribe: any audio in, the words out. Upload a file (a WhatsApp voice note, a phone
-// memo) or record straight into Jarvis. The work happens on the server
+// memo) or record straight into Reem. The work happens on the server
 // (server/transcripts.js); this page sends the audio and shows the text.
 
 // Anything a phone might hand over. iOS greys out files that match nothing here, and it
@@ -61,7 +61,7 @@ function Recording({ recorder, elapsed, onDone, onCancel }) {
         <span className="relative grid size-28 place-items-center rounded-full bg-bad/30 text-bad"><Mic size={42} /></span>
       </div>
       <p className="font-mono text-5xl font-light tabular-nums">{clock(elapsed)}</p>
-      <p className="max-w-xs text-sm text-mute">Speak normally. Keep Jarvis open until you tap Stop.</p>
+      <p className="max-w-xs text-sm text-mute">Speak normally. Keep Reem open until you tap Stop.</p>
       <div className="flex gap-3">
         <button onClick={onCancel} disabled={sending}
           className="flex items-center gap-2 rounded-full border border-stroke px-6 py-3.5 text-mute hover:text-txt disabled:opacity-40">

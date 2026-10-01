@@ -1,4 +1,4 @@
-// A drawing from a Jarvis reply as a file: an A4 PDF, or a DXF that AutoCAD opens. (The
+// A drawing from a Reem reply as a file: an A4 PDF, or a DXF that AutoCAD opens. (The
 // PNG is made in the app, from the same picture it shows.) What a drawing is, and how it is
 // laid out, is drawingCore.js; this is the files and who may have them.
 //
@@ -50,8 +50,8 @@ export function fitPage(d, w, h) {
 export async function drawingPdf(d, { date = new Date() } = {}) {
   const pdf = await PDFDocument.create();
   pdf.setTitle(sanitize(d.title));
-  pdf.setCreator('Jarvis');
-  pdf.setProducer('Jarvis');
+  pdf.setCreator('Reem');
+  pdf.setProducer('Reem');
   pdf.setCreationDate(date);
   pdf.setModificationDate(date);
   const F = {

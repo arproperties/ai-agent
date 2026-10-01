@@ -75,8 +75,8 @@ export function InstallHint() {
       </span>
       <span className="min-w-0 flex-1 text-xs leading-relaxed text-mute">
         {prompt
-          ? <>Keep Jarvis one tap away instead of hunting for the page.</>
-          : <>Keep Jarvis one tap away: tap <b className="font-medium text-txt">Share</b>, then <b className="font-medium text-txt">Add to Home Screen</b>.</>}
+          ? <>Keep Reem one tap away instead of hunting for the page.</>
+          : <>Keep Reem one tap away: tap <b className="font-medium text-txt">Share</b>, then <b className="font-medium text-txt">Add to Home Screen</b>.</>}
       </span>
       {prompt && (
         <button onClick={install} className="shrink-0 rounded-full bg-gradient-to-br from-p1 to-p2 px-3.5 py-1.5 text-xs font-medium text-white">

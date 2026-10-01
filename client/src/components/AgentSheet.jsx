@@ -179,7 +179,7 @@ export default function AgentSheet({ agent, config, me, onClose, onSaved }) {
           ? <PersonaTab agent={agent} config={config} onSaved={onSaved} />
           : <PersonaReadOnly agent={agent} />
       ) : (
-        <FilesPanel agentId={agent.id} folders={config.folders || []} me={me} shelfName={agent.name} hint={`Only ${agent.name} uses these files. They also help Jarvis know when to pick ${agent.name}.`} />
+        <FilesPanel agentId={agent.id} folders={config.folders || []} me={me} shelfName={agent.name} hint={`Only ${agent.name} uses these files. They also help Reem know when to pick ${agent.name}.`} />
       )}
     </Sheet>
   );

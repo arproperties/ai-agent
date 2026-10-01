@@ -4,7 +4,7 @@ import { api } from './api';
 //
 // Three separate things have to be true before a phone can buzz, and they fail in
 // different ways, so they are checked one at a time and each gets its own honest answer:
-//   1. the browser can do it at all (an iPhone only can once Jarvis is on the Home
+//   1. the browser can do it at all (an iPhone only can once Reem is on the Home
 //      Screen, and only on iOS 16.4 or newer),
 //   2. the person has tapped Allow — which the browser will only ask in response to a
 //      real tap, never on our own,
@@ -40,7 +40,7 @@ export async function enablePush() {
   if (!canPush()) {
     // Nearly always an iPhone in Safari rather than on the Home Screen.
     const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    return { ok: false, reason: iOS ? 'Add Jarvis to your Home Screen first — tap Share, then “Add to Home Screen”, and open it from there.' : 'This browser cannot show notifications.' };
+    return { ok: false, reason: iOS ? 'Add Reem to your Home Screen first — tap Share, then “Add to Home Screen”, and open it from there.' : 'This browser cannot show notifications.' };
   }
   const { enabled, key } = await api.get('/push/key');
   if (!enabled) return { ok: false, reason: 'Notifications are not switched on for this server yet.' };
@@ -48,7 +48,7 @@ export async function enablePush() {
   const answer = await Notification.requestPermission();
   if (answer !== 'granted') {
     return { ok: false, reason: answer === 'denied'
-      ? 'Notifications are blocked for Jarvis. You can turn them back on in your phone’s settings, under Jarvis.'
+      ? 'Notifications are blocked for Reem. You can turn them back on in your phone’s settings, under Reem.'
       : 'No answer given, so nothing changed. Tap again when you are ready.' };
   }
 

@@ -1,4 +1,4 @@
-// A drawing inside a Jarvis reply: a floor plan, a layout, a flowchart, an org chart.
+// A drawing inside a Reem reply: a floor plan, a layout, a flowchart, an org chart.
 //
 // The agent never draws a picture. It writes the drawing as a list of shapes, in JSON, in a
 // ```drawing block, with real sizes when it has them ("unit": "m"). Everything else is made

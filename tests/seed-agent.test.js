@@ -20,7 +20,7 @@ async function fixture() {
   await reset();
   const masterId = await makeUser('Master');
   await db.prepare("UPDATE users SET role = 'master' WHERE id = ?").run(masterId);
-  const jarvis = await makeAgent(masterId, 'Jarvis');
+  const jarvis = await makeAgent(masterId, 'Reem');
 
   // A normal account set up the way the People screen leaves one: a single agent they
   // talk to, everything else lending a shelf.
@@ -40,8 +40,8 @@ test('a seeded agent reaches other accounts as a shelf, never as a second sideba
 
   const rows = await assignments(userId);
   assert.deepEqual(rows, [
-    { name: 'Jarvis', mode: 'chat', is_primary: true },
     { name: 'Operations Manager', mode: 'knowledge', is_primary: false },
+    { name: 'Reem', mode: 'chat', is_primary: true },
   ], 'their chat agent is untouched and the new one only lends its shelf');
 });
 

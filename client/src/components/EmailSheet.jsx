@@ -236,7 +236,7 @@ export default function EmailPage({ returned, onBack }) {
         Turn on <b className="font-medium text-txt">Allow sending and actions</b> and they can also write drafts and replies,
         mark emails read or unread, and file them in folders — but they can never send anything themselves:
         every email waits here, and in the chat, until you tap Approve. They cannot delete email.
-        Emails are fetched only when needed, not copied into Jarvis. Your password is stored encrypted.
+        Emails are fetched only when needed, not copied into Reem. Your password is stored encrypted.
       </p>
     </Page>
   );

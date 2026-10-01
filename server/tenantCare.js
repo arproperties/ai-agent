@@ -10,9 +10,9 @@ import { askSaifsys, saifsysConfigured } from './saifsys/client.js';
 
 // Tenant care: the one inbox tenants write to, looked after by a few people together.
 //
-// Every few minutes Jarvis reads the new emails in it. When one does not say which
+// Every few minutes Reem reads the new emails in it. When one does not say which
 // building and unit it is about — and the sender is not a tenant saifsys already knows —
-// Jarvis replies straight away asking for them, from the inbox itself, and files the reply in
+// Reem replies straight away asking for them, from the inbox itself, and files the reply in
 // its Sent folder. That is the whole job: the tenant's next email is for the staff, who
 // answer it from the shared email as they always have.
 //
@@ -239,7 +239,7 @@ export function startTenantCare() {
 
 /**
  * Send one ask's reply from the Tenant care inbox, threaded onto the tenant's email, and
- * file it in Sent. user is null when Jarvis sends it by itself, a person when they tapped Send.
+ * file it in Sent. user is null when Reem sends it by itself, a person when they tapped Send.
  */
 export async function sendAsk(user, id, body, { send = sendRaw, file = fileInSent } = {}) {
   const text = String(body ?? '').trim();

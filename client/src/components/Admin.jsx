@@ -391,7 +391,7 @@ function SaifsysModules({ person }) {
       <p className="text-sm leading-relaxed text-mute">
         {data.master
           ? 'The master sees every saifsys module.'
-          : `Tick the saifsys modules ${person.name} can ask Jarvis about. Anything not ticked, their agents cannot look up.`}
+          : `Tick the saifsys modules ${person.name} can ask Reem about. Anything not ticked, their agents cannot look up.`}
       </p>
       <div className="grid gap-2 @md:grid-cols-2">
         {data.modules.map((m) => (
@@ -414,7 +414,7 @@ function SaifsysModules({ person }) {
           <p className="pt-2 text-sm leading-relaxed text-mute">
             {data.master
               ? 'The master can do all of these.'
-              : `What ${person.name} can ask Jarvis to do in saifsys. Each one also needs its module ticked above, and their company email connected in Jarvis.`}
+              : `What ${person.name} can ask Reem to do in saifsys. Each one also needs its module ticked above, and their company email connected in Reem.`}
           </p>
           <div className="grid gap-2 @md:grid-cols-2">
             {data.actions.map((a) => (

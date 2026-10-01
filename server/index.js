@@ -49,7 +49,7 @@ app.use('/api/imports', importRoutes);
 app.use('/api/messenger', messengerRoutes); // people-to-people chat, separate from the AI chats
 app.use('/api/todos', todoRoutes);
 app.use('/api/team-reminders', teamReminderRoutes); // reminders sent to other people, proposed in chat
-app.use('/api/suggestions', suggestionRoutes); // reminders Jarvis spots in new email and chat, one tap to keep
+app.use('/api/suggestions', suggestionRoutes); // reminders Reem spots in new email and chat, one tap to keep
 app.use('/api/routines', routineRoutes); // things that come back, kept apart from the one-off todos
 app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
 app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
@@ -367,6 +367,6 @@ app.listen(PORT, '0.0.0.0', () => {
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));
   // The saifsys morning checkout reminder (startArs in server/saifsys/ars.js) is on hold
-  // by the user's choice, 2026-09-25: they ask Jarvis instead. The tool still works.
-  console.log(`Jarvis server → http://localhost:${PORT}`);
+  // by the user's choice, 2026-09-25: they ask Reem instead. The tool still works.
+  console.log(`Reem server → http://localhost:${PORT}`);
 });

@@ -6,7 +6,7 @@ import { saveUpload, processDocument } from './files.js';
 import { chatAgents } from './access.js';
 
 // Importing a whole folder or ZIP (a WhatsApp export, say: thousands of files). The browser
-// unpacks it, leaves out what Jarvis does not read, and sends the rest ten at a time. Each
+// unpacks it, leaves out what Reem does not read, and sends the rest ten at a time. Each
 // file is stored straight away as 'queued' and filed from here in the background, a couple
 // at a time, so the upload never waits on Claude and a restart picks up where it stopped.
 

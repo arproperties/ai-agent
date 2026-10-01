@@ -498,11 +498,11 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_dm_messages_chat ON dm_messages(chat_id, id);
 `);
 
-// A Jarvis reply, carried into a team chat by the person who asked for it.
+// A Reem reply, carried into a team chat by the person who asked for it.
 //
 // Its own table on purpose. What lands in the chat is an ordinary dm_message and stays
 // one - it replies, deletes and reads like every other message. This row is only the
-// label saying where the words came from, so nobody mistakes Jarvis for the sender.
+// label saying where the words came from, so nobody mistakes Reem for the sender.
 //   agent_name is copied, not looked up: the agent may be renamed or removed later, and
 //     the message must keep saying who actually wrote it at the time.
 //   source_message_id detaches rather than cascades - the sender clearing his own chat
@@ -692,7 +692,7 @@ await db.exec(`
     SELECT id, 'ars' FROM users WHERE role IS DISTINCT FROM 'master' ON CONFLICT DO NOTHING`);
 }
 
-// Things Jarvis may DO in saifsys, per person (server/saifsys/booking.js). Separate from
+// Things Reem may DO in saifsys, per person (server/saifsys/booking.js). Separate from
 // saifsys_access, which is only what they may look at. The master may do all of it and
 // is never listed. One row per person per action; today the only action is
 // 'ars_create_booking'.
@@ -704,7 +704,7 @@ await db.exec(`
   );
 `);
 
-// An ARS booking Jarvis has got ready in chat, waiting for the person to tap Create.
+// An ARS booking Reem has got ready in chat, waiting for the person to tap Create.
 //   status: pending (the card is showing), creating (Create was tapped; the lock that
 //     stops a double tap making two bookings), created, cancelled, failed.
 //   input: what goes to saifsys, with unit and guest already resolved to ids.
@@ -736,7 +736,7 @@ await db.exec(`
 //     the speech API names up to four known voices per request.
 //   meeting_parts: the recording arrives in ten-minute pieces as it is made, so a phone that
 //     dies at 1h50 still leaves 1h50. offset_s is where the piece starts in the meeting.
-//   meeting_lines: what was said. speaker NULL means a voice nobody taught Jarvis.
+//   meeting_lines: what was said. speaker NULL means a voice nobody taught Reem.
 await db.exec(`
   CREATE TABLE IF NOT EXISTS voice_profiles (
     id SERIAL PRIMARY KEY,
@@ -808,7 +808,7 @@ await db.exec(`
 //
 // Apart from todos on purpose: a todo is one person's own list, this is a message with a
 // sender, several people on the end of it, and each of them ticking it off on their own.
-//   status: pending until the sender taps Send on the card in chat (Jarvis only ever
+//   status: pending until the sender taps Send on the card in chat (Reem only ever
 //     proposes), then scheduled, then delivered once the phones have been told. cancelled
 //     for one the sender thought better of. Nothing reaches anyone while it is pending.
 //   remind_at: NULL means "as soon as they tap Send".
@@ -839,7 +839,7 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_team_rem_people ON team_reminder_people(user_id, done);
 `);
 
-// Reminders Jarvis thinks someone might want — the tables behind server/suggestions.js.
+// Reminders Reem thinks someone might want — the tables behind server/suggestions.js.
 //
 // Only ever suggested: nothing becomes a todo until the person taps "Remind me". So this
 // is its own table, not todos with a flag — a suggestion that was waved away still has to
@@ -873,7 +873,7 @@ await db.exec(`
 `);
 
 // Tenant care — one shared inbox tenants write to (server/tenantCare.js). When a new email
-// does not say which building and unit it is about, Jarvis writes a reply asking, and the
+// does not say which building and unit it is about, Reem writes a reply asking, and the
 // people looking after the inbox tap Send. Its own tables, not imap_accounts: that mailbox
 // belongs to one person, this one to a team.
 //   tenant_inbox: at most one row (id = 1). last_uid is the newest email already looked
@@ -923,4 +923,9 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_tenant_asks_open ON tenant_asks(id DESC) WHERE status IN ('pending', 'failed');
   CREATE INDEX IF NOT EXISTS idx_tenant_asks_from ON tenant_asks(from_addr, created_at DESC);
+
+  -- The app was renamed from Jarvis to Reem (2026-10-01). The general assistant every
+  -- account started with keeps its chats; only its name and the name in its persona change.
+  UPDATE agents SET name = 'Reem', persona = replace(persona, 'You are Jarvis', 'You are Reem')
+   WHERE name = 'Jarvis';
 `);

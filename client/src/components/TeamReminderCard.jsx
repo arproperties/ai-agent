@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Loader2, Check, X, BellRing, RefreshCw } from 'lucide-react';
 import { api } from '../lib/api';
 
-// A reminder for other people that Jarvis has got ready, waiting for the person sending it.
+// A reminder for other people that Reem has got ready, waiting for the person sending it.
 // Nothing goes to anyone until Send is tapped here. Once sent, the card becomes the answer
 // to "has everyone done it?" — a tick beside each name.
 

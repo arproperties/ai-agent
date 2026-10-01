@@ -5,7 +5,7 @@
 // iPhone suspends a home-screen app in the background and the stream can die without
 // an error, so coming back to the front always checks it and reopens it if needed.
 //
-// It also tells the server whether Jarvis is actually on screen — visible and, on a
+// It also tells the server whether Reem is actually on screen — visible and, on a
 // laptop, the window in front. A stream that is merely open (a background tab, an app
 // just swiped away) does not count, so those people still get the notification.
 import { api } from './api';

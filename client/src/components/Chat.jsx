@@ -23,7 +23,7 @@ import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
 
 // Which reply can be shared: one the server has written down. A reply still streaming
 // has only a made-up id here, and the share is sent by id so the team gets the words
-// Jarvis actually said, not whatever the browser is holding.
+// Reem actually said, not whatever the browser is holding.
 const savedIdOf = (m) => (m.error ? null : m.saved ?? (typeof m.id === 'number' ? m.id : null));
 const shareIdOf = (m) => (m.role === 'assistant' ? savedIdOf(m) : null);
 // The latest saved drawing at or before message i: what "convert into pdf" hands over.
@@ -58,7 +58,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
   const [reminders, setReminders] = useState([]); // reminders for other people got ready in this chat
   const [bookings, setBookings] = useState([]); // ARS bookings got ready in this chat, waiting for Create
-  const [suggested, setSuggested] = useState([]); // reminders Jarvis spotted, waiting for a yes or no
+  const [suggested, setSuggested] = useState([]); // reminders Reem spotted, waiting for a yes or no
   const push = usePush();
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
   const [pdfOf, setPdfOf] = useState(null); // { id, content, own } of the message being made into a PDF
@@ -235,7 +235,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             <span className="absolute right-1 top-1 grid min-w-4 place-items-center rounded-full bg-p1 px-1 text-[10px] font-semibold leading-4 text-white">{docIds.length}</span>
           </button>
         )}
-        <IconBtn icon="edit" label="New Jarvis chat" onClick={onNewChat} />
+        <IconBtn icon="edit" label="New Reem chat" onClick={onNewChat} />
       </header>
 
       {/* messages */}
@@ -275,7 +275,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 </button>
               </div>
             ))}
-            {/* Spotted by Jarvis in new email and chat. A suggestion, never a reminder until
+            {/* Spotted by Reem in new email and chat. A suggestion, never a reminder until
                 "Remind me" is tapped — then it is an ordinary todo on their own list. */}
             {suggested.map((sg) => (
               <div key={`sg${sg.id}`}

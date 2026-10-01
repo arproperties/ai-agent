@@ -369,7 +369,7 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
         <div className="mb-1.5 flex items-center gap-2 px-2 text-xs text-mute">
           <Wand2 size={13} className="shrink-0 text-emerald-300" />
           <span className="min-w-0 flex-1 truncate">
-            {drafted ? 'Jarvis wrote this for you — read it before you send.' : 'Jarvis tidied this up — check it before you send.'}
+            {drafted ? 'Reem wrote this for you — read it before you send.' : 'Reem tidied this up — check it before you send.'}
           </span>
           <button onClick={undo} className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium text-emerald-300 hover:bg-white/10">
             <Undo2 size={13} /> Undo
@@ -392,7 +392,7 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
             className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 leading-snug outline-none placeholder:text-mute/70" />
           <button onClick={tidy} disabled={tidying}
             aria-label={text.trim() ? 'Help me say this' : 'Write a reply for me'}
-            title={text.trim() ? 'Help me say this — Jarvis tidies up your notes' : 'Write a reply for me — Jarvis drafts one from the chat'}
+            title={text.trim() ? 'Help me say this — Reem tidies up your notes' : 'Write a reply for me — Reem drafts one from the chat'}
             className={`grid size-11 shrink-0 place-items-center rounded-full transition hover:text-emerald-300 disabled:opacity-40 ${
               tidying ? 'animate-pulse text-emerald-300' : 'text-mute'}`}>
             <Wand2 size={19} />

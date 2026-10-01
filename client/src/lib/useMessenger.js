@@ -41,7 +41,7 @@ export function useMessenger(me) {
   const [online, setOnline] = useState(() => new Set());
   const [lastSeen, setLastSeen] = useState({});
   const [typing, setTyping] = useState({}); // chatId -> { userId: until }
-  const [toast, setToast] = useState(null); // { key, chatId, title, body } - a message landing elsewhere while Jarvis is open
+  const [toast, setToast] = useState(null); // { key, chatId, title, body } - a message landing elsewhere while Reem is open
   const peopleRef = useRef([]);
   peopleRef.current = people;
   const active = useRef(null); // the chat on screen, whose messages count as read
@@ -134,9 +134,9 @@ export function useMessenger(me) {
 
   const unread = useMemo(() => (chats || []).reduce((n, c) => n + (c.unread ? 1 : 0), 0), [chats]);
 
-  // "(2) Jarvis" in the browser tab, like WhatsApp Web
+  // "(2) Reem" in the browser tab, like WhatsApp Web
   useEffect(() => {
-    document.title = unread ? `(${unread}) Jarvis` : 'Jarvis';
+    document.title = unread ? `(${unread}) Reem` : 'Reem';
   }, [unread]);
 
   /** The screen has shown everything up to `id`: clear the badge and send the blue ticks. */

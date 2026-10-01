@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { ParticleField } from './ParticleField';
 
 // Tenant care: the shared tenant inbox. When a tenant's email does not say which building
-// and unit it is about, Jarvis replies by itself asking (server/tenantCare.js). Only a reply
+// and unit it is about, Reem replies by itself asking (server/tenantCare.js). Only a reply
 // that could not go out waits here, for whoever looks after the inbox to send or skip.
 // The master connects the inbox and picks who looks after it, at the bottom.
 
@@ -72,7 +72,7 @@ function Setup({ data, onChanged }) {
     setBusy(false);
   };
   const disconnect = async () => {
-    if (!confirm('Disconnect the Tenant care inbox? Jarvis will stop checking it.')) return;
+    if (!confirm('Disconnect the Tenant care inbox? Reem will stop checking it.')) return;
     await api.del('/tenant-care/inbox');
     onChanged();
   };
@@ -98,7 +98,7 @@ function Setup({ data, onChanged }) {
         </div>
       ) : (
         <form onSubmit={connect} className="space-y-2">
-          <p className="text-sm text-mute">Connect the tenant email. Every 3 minutes Jarvis checks for new emails and replies to any that don't give a building and unit.</p>
+          <p className="text-sm text-mute">Connect the tenant email. Every 3 minutes Reem checks for new emails and replies to any that don't give a building and unit.</p>
           <input type="email" required placeholder="tenantcare@…" value={email} onChange={(e) => setEmail(e.target.value)}
             className="w-full rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm outline-none focus:border-p1/60" />
           <input type="password" required placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)}
@@ -109,7 +109,7 @@ function Setup({ data, onChanged }) {
           </button>
         </form>
       )}
-      {!data.saifsys && <p className="text-sm text-bad">saifsys is not connected, so Jarvis cannot tell buildings apart yet.</p>}
+      {!data.saifsys && <p className="text-sm text-bad">saifsys is not connected, so Reem cannot tell buildings apart yet.</p>}
       <div>
         <p className="mb-2 text-sm text-mute">Who to tell if a reply can't be sent:</p>
         <label className="mb-2 flex items-center gap-2 rounded-2xl border border-stroke bg-black/20 px-3 py-2 focus-within:border-p1/60">
@@ -162,7 +162,7 @@ export default function TenantCarePage({ me, onBack, onChanged }) {
             <>
               {!data.inbox && me.role !== 'master' && <p className="text-mute">The Tenant care inbox is not connected yet.</p>}
               {data.inbox && data.open.length === 0 && (
-                <p className="py-6 text-center text-mute">Nothing waiting. Jarvis replies to tenants who don't give their building or unit by itself. A reply only shows up here if it couldn't be sent.</p>
+                <p className="py-6 text-center text-mute">Nothing waiting. Reem replies to tenants who don't give their building or unit by itself. A reply only shows up here if it couldn't be sent.</p>
               )}
               {data.open.map((a) => <Ask key={`${a.id}-${a.status}`} a={a} onDone={load} />)}
               {data.done.length > 0 && (
@@ -170,7 +170,7 @@ export default function TenantCarePage({ me, onBack, onChanged }) {
                   <p className="text-sm text-mute">Recently replied</p>
                   {data.done.map((a) => (
                     <p key={a.id} className="truncate text-sm text-mute">
-                      {a.status === 'sent' ? '✓ Sent' : '– Skipped'} · {a.name || a.from} · {a.subject || '(no subject)'} · {a.by || 'Jarvis'}
+                      {a.status === 'sent' ? '✓ Sent' : '– Skipped'} · {a.name || a.from} · {a.subject || '(no subject)'} · {a.by || 'Reem'}
                     </p>
                   ))}
                 </div>

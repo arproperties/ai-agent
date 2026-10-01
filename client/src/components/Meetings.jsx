@@ -41,7 +41,7 @@ function Status({ m }) {
   return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${tone}`}>{label}</span>;
 }
 
-// ---------- teaching Jarvis a voice ----------
+// ---------- teaching Reem a voice ----------
 function VoiceSheet({ onClose, onSaved }) {
   const [name, setName] = useState('');
   const [left, setLeft] = useState(0);
@@ -69,7 +69,7 @@ function VoiceSheet({ onClose, onSaved }) {
           className="w-full rounded-2xl border border-stroke bg-white/[0.04] px-4 py-3 outline-none focus:border-p1/60" />
         <div className="rounded-2xl bg-white/[0.04] p-4 text-sm">
           <p className="mb-2 text-mute">When you tap record, the person reads this out in their normal voice:</p>
-          <p className="italic">“Hello, this is {name.trim() || 'me'}. I’m recording a short sample so Jarvis can recognise my voice in our meetings.”</p>
+          <p className="italic">“Hello, this is {name.trim() || 'me'}. I’m recording a short sample so Reem can recognise my voice in our meetings.”</p>
         </div>
         {left > 0 ? (
           <div className="flex items-center justify-center gap-3 rounded-full bg-bad/15 py-3 text-bad">
@@ -116,7 +116,7 @@ function StartSheet({ voices, onClose, onStart, onAddVoice }) {
   return (
     <Sheet title="New meeting" icon={<Mic size={20} className="text-p1" />} onClose={onClose}>
       <div className="space-y-4">
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (optional — Jarvis names it otherwise)" maxLength={120}
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (optional — Reem names it otherwise)" maxLength={120}
           className="w-full rounded-2xl border border-stroke bg-white/[0.04] px-4 py-3 outline-none focus:border-p1/60" />
         <div>
           <p className="mb-2 text-sm text-mute">Who is in the meeting? Up to {MAX_PEOPLE} people can be named. Anyone else shows as “{UNKNOWN}”.</p>
@@ -137,7 +137,7 @@ function StartSheet({ voices, onClose, onStart, onAddVoice }) {
         </div>
         <ul className="space-y-1.5 rounded-2xl bg-white/[0.04] p-4 text-sm text-mute">
           <li>• Put the phone in the middle of the table.</li>
-          <li>• Keep Jarvis open with the screen on until you tap Stop.</li>
+          <li>• Keep Reem open with the screen on until you tap Stop.</li>
           <li>• Let everyone know the meeting is being recorded.</li>
         </ul>
         {error && <p className="text-sm text-bad">{error}</p>}
@@ -174,9 +174,9 @@ function Recording({ meeting, recorder, state, onStopped }) {
         {meeting.speaker_names?.length > 0 && <p className="text-sm text-mute">Listening for {meeting.speaker_names.join(', ')}</p>}
       </div>
       <p className="max-w-xs text-xs text-mute">
-        {stopping ? (state.waiting ? `Sending the last ${state.waiting > 1 ? `${state.waiting} pieces` : 'piece'}… keep Jarvis open.` : 'Finishing…')
+        {stopping ? (state.waiting ? `Sending the last ${state.waiting > 1 ? `${state.waiting} pieces` : 'piece'}… keep Reem open.` : 'Finishing…')
           : state.waiting ? `${state.waiting} piece(s) waiting for the internet — they will send on their own.`
-          : 'Keep Jarvis open and the screen on. It is saved every 10 minutes as you go.'}
+          : 'Keep Reem open and the screen on. It is saved every 10 minutes as you go.'}
         {state.failed > 0 && <span className="block text-bad">{state.failed} piece(s) could not be sent.</span>}
       </p>
       <button onClick={stop} disabled={stopping}
@@ -238,7 +238,7 @@ function Detail({ id, onDeleted }) {
 
         {m.status === 'recording' && (
           <div className="rounded-2xl bg-warn/10 p-4 text-sm">
-            <p>This recording never finished — maybe the phone went off. Whatever reached Jarvis can still be written up.</p>
+            <p>This recording never finished — maybe the phone went off. Whatever reached Reem can still be written up.</p>
             <button onClick={finish} className="mt-3 rounded-full bg-warn/20 px-4 py-1.5 text-warn">Write up what was saved</button>
           </div>
         )}
@@ -391,7 +391,7 @@ export default function MeetingsPage({ onBack }) {
             </button>
 
             <section>
-              <h2 className="px-1 pb-2 text-[11px] font-medium tracking-[0.14em] text-mute">VOICES JARVIS KNOWS · {voices.length}</h2>
+              <h2 className="px-1 pb-2 text-[11px] font-medium tracking-[0.14em] text-mute">VOICES REEM KNOWS · {voices.length}</h2>
               <div className="flex flex-wrap gap-2">
                 {voices.map((v) => (
                   <span key={v.id} className="flex items-center gap-1 rounded-full border border-stroke bg-white/[0.04] py-1 pl-3 pr-1 text-sm">
