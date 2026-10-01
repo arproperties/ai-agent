@@ -193,10 +193,10 @@ const chatMembers = (chatIds) =>
   db.prepare(`SELECT mb.chat_id, u.id, u.name FROM dm_members mb JOIN users u ON u.id = mb.user_id
     WHERE mb.chat_id = ANY(?::int[]) ORDER BY mb.joined_at, u.name`).all(chatIds);
 
-/** Name a chat the way the app does: a group by its name, a one-to-one by the other person. */
+/** Name a chat the way the app does: a topic as "Group › Topic", a one-to-one by the other person. */
 const chatTitle = (chat, members, userId) =>
   chat.kind === 'group'
-    ? chat.name || 'Group'
+    ? [chat.group_name, chat.name || 'Group'].filter(Boolean).join(' › ')
     : members.find((m) => m.id !== userId)?.name || 'Deleted user';
 
 /** One line of preview for the list, so a transcript need not be opened to place it. */
@@ -214,9 +214,10 @@ const preview = (m) => {
  */
 export async function userChats(userId) {
   const id = Number(userId);
-  const rows = await db.prepare(`SELECT c.id, c.kind, c.name, l.created_at updated_at,
+  const rows = await db.prepare(`SELECT c.id, c.kind, c.name, g.name group_name, l.created_at updated_at,
       l.body, l.kind last_kind, l.deleted, l.file_name
     FROM dm_chats c
+    LEFT JOIN dm_groups g ON g.id = c.group_id
     JOIN dm_members mb ON mb.chat_id = c.id AND mb.user_id = ?
     JOIN LATERAL (SELECT created_at, body, kind, deleted, file_name
                   FROM dm_messages WHERE chat_id = c.id ORDER BY id DESC LIMIT 1) l ON true
@@ -240,7 +241,8 @@ export async function userChats(userId) {
 /** The transcript: the last CHAT_PAGE messages, in the order they were sent. */
 export async function userChat(userId, chatId) {
   const id = Number(userId);
-  const chat = await db.prepare(`SELECT c.id, c.kind, c.name FROM dm_chats c
+  const chat = await db.prepare(`SELECT c.id, c.kind, c.name, g.name group_name FROM dm_chats c
+    LEFT JOIN dm_groups g ON g.id = c.group_id
     JOIN dm_members mb ON mb.chat_id = c.id AND mb.user_id = ? WHERE c.id = ?`).get(id, Number(chatId));
   if (!chat) return null;
 

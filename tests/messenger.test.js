@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { db, reset, makeUser, closeDb } from './helpers/db.js';
+import { db, reset, makeUser, makeGroup, closeDb } from './helpers/db.js';
 import { messengerHandlers as h } from '../server/messenger.js';
 
 test.after(() => closeDb());
@@ -217,28 +217,28 @@ test('a group starts with its creator as admin and tells the members', async () 
   const [sara, tom, ali] = await people('Sara', 'Tom', 'Ali');
   const t = connect(tom);
 
-  const g = (await call(h.create, { user: sara, body: { name: 'Office', members: [tom.id, ali.id] } })).body;
+  const g = (await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Office', members: [tom.id, ali.id] } })).body;
 
   assert.equal(g.kind, 'group');
   assert.equal(g.name, 'Office');
   assert.equal(g.members.length, 3);
   assert.equal(g.members.find((m) => m.id === sara.id).role, 'admin');
   assert.ok(t.of('chat').some((c) => c.id === g.id));
-  assert.match(g.last.body, /Sara created the group/);
+  assert.match(g.last.body, /Sara created the topic/);
   t.close();
 });
 
 test('a group needs a name and at least one other person', async () => {
   await reset();
   const [sara, tom] = await people('Sara', 'Tom');
-  assert.equal((await call(h.create, { user: sara, body: { name: '', members: [tom.id] } })).status, 400);
-  assert.equal((await call(h.create, { user: sara, body: { name: 'Solo', members: [] } })).status, 400);
+  assert.equal((await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: '', members: [tom.id] } })).status, 400);
+  assert.equal((await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Solo', members: [] } })).status, 400);
 });
 
 test('a group message reaches every member', async () => {
   await reset();
   const [sara, tom, ali] = await people('Sara', 'Tom', 'Ali');
-  const g = (await call(h.create, { user: sara, body: { name: 'Office', members: [tom.id, ali.id] } })).body;
+  const g = (await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Office', members: [tom.id, ali.id] } })).body;
   const t = connect(tom); const a = connect(ali);
 
   await call(h.send, { user: sara, params: { id: g.id }, body: { body: 'meeting at 3' } });
@@ -251,7 +251,7 @@ test('a group message reaches every member', async () => {
 test('only admins add or remove people, but anyone can leave', async () => {
   await reset();
   const [sara, tom, ali, zed] = await people('Sara', 'Tom', 'Ali', 'Zed');
-  const g = (await call(h.create, { user: sara, body: { name: 'Office', members: [tom.id, ali.id] } })).body;
+  const g = (await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Office', members: [tom.id, ali.id] } })).body;
 
   assert.equal((await call(h.addMembers, { user: tom, params: { id: g.id }, body: { userIds: [zed.id] } })).status, 403);
   assert.equal((await call(h.removeMember, { user: tom, params: { id: g.id, userId: ali.id } })).status, 403);
@@ -272,7 +272,7 @@ test('only admins add or remove people, but anyone can leave', async () => {
 test('someone added later does not inherit a pile of unread messages', async () => {
   await reset();
   const [sara, tom, zed] = await people('Sara', 'Tom', 'Zed');
-  const g = (await call(h.create, { user: sara, body: { name: 'Office', members: [tom.id] } })).body;
+  const g = (await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Office', members: [tom.id] } })).body;
   for (let i = 0; i < 5; i++) await call(h.send, { user: sara, params: { id: g.id }, body: { body: `old ${i}` } });
 
   await call(h.addMembers, { user: sara, params: { id: g.id }, body: { userIds: [zed.id] } });
@@ -283,7 +283,7 @@ test('someone added later does not inherit a pile of unread messages', async () 
 test('when the last admin leaves, someone else becomes admin', async () => {
   await reset();
   const [sara, tom, ali] = await people('Sara', 'Tom', 'Ali');
-  const g = (await call(h.create, { user: sara, body: { name: 'Office', members: [tom.id, ali.id] } })).body;
+  const g = (await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Office', members: [tom.id, ali.id] } })).body;
 
   await call(h.removeMember, { user: sara, params: { id: g.id, userId: sara.id } });
 
@@ -294,7 +294,7 @@ test('when the last admin leaves, someone else becomes admin', async () => {
 test('when the last person leaves, the group is gone', async () => {
   await reset();
   const [sara, tom] = await people('Sara', 'Tom');
-  const g = (await call(h.create, { user: sara, body: { name: 'Pair', members: [tom.id] } })).body;
+  const g = (await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Pair', members: [tom.id] } })).body;
 
   await call(h.removeMember, { user: sara, params: { id: g.id, userId: sara.id } });
   await call(h.removeMember, { user: tom, params: { id: g.id, userId: tom.id } });
@@ -305,15 +305,100 @@ test('when the last person leaves, the group is gone', async () => {
 test('any member can rename a group, and everyone sees it', async () => {
   await reset();
   const [sara, tom] = await people('Sara', 'Tom');
-  const g = (await call(h.create, { user: sara, body: { name: 'Office', members: [tom.id] } })).body;
+  const g = (await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Office', members: [tom.id] } })).body;
   const s = connect(sara);
 
   const r = await call(h.rename, { user: tom, params: { id: g.id }, body: { name: 'Head office' } });
 
   assert.equal(r.body.name, 'Head office');
   assert.ok(s.of('chat').some((c) => c.id === g.id));
-  assert.match(s.of('message').at(-1).body, /Tom renamed the group to "Head office"/);
+  assert.match(s.of('message').at(-1).body, /Tom renamed the topic to "Head office"/);
   s.close();
+});
+
+// ---------- groups of topics ----------
+test('only the master creates a group, and it starts with nobody in it', async () => {
+  await reset();
+  const [boss, tom] = await people('Boss', 'Tom');
+  await db.prepare(`UPDATE users SET role = 'master' WHERE id = ?`).run(boss.id);
+  boss.role = 'master';
+
+  assert.equal((await call(h.createGroup, { user: tom, body: { name: 'Sales' } })).status, 403);
+  const g = (await call(h.createGroup, { user: boss, body: { name: 'Sales' } })).body;
+  assert.equal(g.name, 'Sales');
+  assert.deepEqual((await call(h.groups, { user: boss })).body.map((x) => x.name), ['Sales']);
+  assert.deepEqual((await call(h.groups, { user: tom })).body, [], 'nobody else sees an empty group');
+});
+
+test('anyone in a group can add a topic, the master is always in it, and nobody else sees it', async () => {
+  await reset();
+  const [boss, tom, ali, zed] = await people('Boss', 'Tom', 'Ali', 'Zed');
+  const groupId = await makeGroup(boss, 'Sales');
+  const leads = (await call(h.create, { user: boss, body: { groupId, name: 'Leads', members: [tom.id] } })).body;
+  assert.equal(leads.groupId, groupId);
+  assert.equal(leads.groupName, 'Sales');
+
+  // Zed has no topic in Sales, so it is not his to add to.
+  assert.equal((await call(h.create, { user: zed, body: { groupId, name: 'Mine', members: [ali.id] } })).status, 404);
+
+  // Tom is in Sales through Leads, so he may start another topic, with anyone.
+  const deals = (await call(h.create, { user: tom, body: { groupId, name: 'Deals', members: [ali.id] } })).body;
+  assert.deepEqual(deals.members.map((m) => m.id).sort(), [boss.id, tom.id, ali.id].sort(), 'the master was put in too');
+
+  const aliSees = (await call(h.list, { user: ali })).body.map((c) => c.name);
+  assert.deepEqual(aliSees, ['Deals'], 'Ali sees only the topic he is in');
+  assert.equal((await call(h.messages, { user: ali, params: { id: leads.id } })).status, 404);
+  assert.deepEqual((await call(h.groups, { user: ali })).body.map((x) => x.name), ['Sales']);
+  assert.deepEqual((await call(h.list, { user: boss })).body.map((c) => c.name).sort(), ['Deals', 'Leads']);
+});
+
+test('a topic must go in a group', async () => {
+  await reset();
+  const [sara, tom] = await people('Sara', 'Tom');
+  assert.equal((await call(h.create, { user: sara, body: { name: 'Loose', members: [tom.id] } })).status, 400);
+});
+
+test('nobody can take the master out of a topic but the master', async () => {
+  await reset();
+  const [boss, tom, ali] = await people('Boss', 'Tom', 'Ali');
+  const groupId = await makeGroup(boss);
+  const lead = (await call(h.create, { user: boss, body: { groupId, name: 'Leads', members: [tom.id] } })).body;
+  const t = (await call(h.create, { user: tom, body: { groupId, name: 'Deals', members: [ali.id] } })).body;
+
+  assert.equal((await call(h.removeMember, { user: tom, params: { id: t.id, userId: boss.id } })).status, 403);
+  assert.equal((await call(h.removeMember, { user: boss, params: { id: lead.id, userId: boss.id } })).status, 200);
+});
+
+test('the master reads every topic of a group as one timeline', async () => {
+  await reset();
+  const [boss, tom, ali] = await people('Boss', 'Tom', 'Ali');
+  const groupId = await makeGroup(boss);
+  const a = (await call(h.create, { user: boss, body: { groupId, name: 'Leads', members: [tom.id] } })).body;
+  const b = (await call(h.create, { user: boss, body: { groupId, name: 'Deals', members: [ali.id] } })).body;
+  await call(h.send, { user: tom, params: { id: a.id }, body: { body: 'new lead' } });
+  await call(h.send, { user: ali, params: { id: b.id }, body: { body: 'deal closed' } });
+
+  const feed = (await call(h.groupMessages, { user: boss, params: { id: groupId } })).body.messages.filter((m) => m.kind !== 'system');
+  assert.deepEqual(feed.map((m) => [m.body, m.chatId]), [['new lead', a.id], ['deal closed', b.id]]);
+  assert.equal((await call(h.groupMessages, { user: tom, params: { id: groupId } })).status, 404, 'the one box is the master\'s');
+});
+
+test('one topic needs no guessing; with several, the answer is only ever one of the master\'s topics', async () => {
+  await reset();
+  const { pickTopic } = await import('../server/dmRoute.js');
+  const [boss, tom, ali] = await people('Boss', 'Tom', 'Ali');
+  const groupId = await makeGroup(boss);
+  const a = (await call(h.create, { user: boss, body: { groupId, name: 'Leads', members: [tom.id] } })).body;
+  const never = async () => { throw new Error('no call should be made'); };
+  assert.deepEqual(await pickTopic(groupId, boss.id, 'hello', { model: never }), { chatId: a.id });
+
+  const b = (await call(h.create, { user: boss, body: { groupId, name: 'Deals', members: [ali.id] } })).body;
+  let shown = '';
+  const model = async (prompt) => { shown = prompt; return '2'; };
+  assert.deepEqual(await pickTopic(groupId, boss.id, 'Ali, close it', { model }), { chatId: b.id });
+  assert.match(shown, /TOPIC 2: Deals\nMembers: .*Ali/);
+  assert.deepEqual(await pickTopic(groupId, boss.id, 'hmm', { model: async () => '0' }), { chatId: null });
+  assert.deepEqual(await pickTopic(groupId, boss.id, 'hmm', { model: async () => '7' }), { chatId: null });
 });
 
 // ---------- presence ----------

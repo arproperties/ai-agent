@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
+import { db, reset, makeUser, makeAgent, makeGroup, closeDb } from './helpers/db.js';
 import { messengerHandlers as h } from '../server/messenger.js';
 
 test.after(() => closeDb());
@@ -55,7 +55,7 @@ test('a reply shared into a group arrives as a message, labelled with the agent 
   const agent = await makeAgent(boss.id, 'Planner');
   const points = await reply(boss, agent, '1. Budget\n2. Hiring');
 
-  const chat = (await call(h.create, { user: boss, body: { name: 'Team', members: [tom.id] } })).body;
+  const chat = (await call(h.create, { user: boss, body: { groupId: await makeGroup(boss), name: 'Team', members: [tom.id] } })).body;
   const tomApp = connect(tom);
 
   const shared = await call(h.share, { user: boss, params: { id: chat.id }, body: { messageId: points.id } });
@@ -82,7 +82,7 @@ test('only the reply travels: the question that produced it is not sent', async 
   await db.prepare(`INSERT INTO messages (conversation_id, role, content) VALUES (?, 'user', ?)`)
     .run(convId, 'something private I asked');
 
-  const chat = (await call(h.create, { user: boss, body: { name: 'Team', members: [tom.id] } })).body;
+  const chat = (await call(h.create, { user: boss, body: { groupId: await makeGroup(boss), name: 'Team', members: [tom.id] } })).body;
   await call(h.share, { user: boss, params: { id: chat.id }, body: { messageId } });
 
   const list = (await call(h.messages, { user: tom, params: { id: chat.id } })).body.messages;
@@ -98,7 +98,7 @@ test('you can only share your own reply, and only into a chat you are in', async
   const eve = await person('Eve');
   const agent = await makeAgent(boss.id, 'Planner');
   const points = await reply(boss, agent, 'The points');
-  const chat = (await call(h.create, { user: boss, body: { name: 'Team', members: [tom.id] } })).body;
+  const chat = (await call(h.create, { user: boss, body: { groupId: await makeGroup(boss), name: 'Team', members: [tom.id] } })).body;
 
   assert.equal((await call(h.share, { user: eve, params: { id: chat.id }, body: { messageId: points.id } })).status, 404,
     'an outsider cannot share into the chat');
@@ -113,7 +113,7 @@ test('what was shared stays put when the agent is deleted or the sender clears t
   const tom = await person('Tom');
   const agent = await makeAgent(boss.id, 'Planner');
   const points = await reply(boss, agent, 'The points');
-  const chat = (await call(h.create, { user: boss, body: { name: 'Team', members: [tom.id] } })).body;
+  const chat = (await call(h.create, { user: boss, body: { groupId: await makeGroup(boss), name: 'Team', members: [tom.id] } })).body;
   await call(h.share, { user: boss, params: { id: chat.id }, body: { messageId: points.id } });
 
   await db.prepare('DELETE FROM agents WHERE id = ?').run(agent);

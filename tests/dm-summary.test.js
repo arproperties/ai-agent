@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { db, reset, makeUser, closeDb } from './helpers/db.js';
+import { db, reset, makeUser, makeGroup, closeDb } from './helpers/db.js';
 import { messengerHandlers as h } from '../server/messenger.js';
 import { transcript, parse, summarise } from '../server/dmSummary.js';
 
@@ -72,7 +72,7 @@ test('a chat with nothing in it is refused, rather than asking the model about s
 test('system lines alone are not a conversation', async () => {
   await reset();
   const [sara, tom] = await people('Sara', 'Tom');
-  const group = (await call(h.create, { user: sara, body: { name: 'Leasing', members: [tom.id] } })).body;
+  const group = (await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Leasing', members: [tom.id] } })).body;
   await assert.rejects(() => summarise(group.id, sara.id), /not enough/i);
 });
 
@@ -108,7 +108,7 @@ test('the summary covers only the chat it was asked about', async () => {
   await reset();
   const [sara, tom] = await people('Sara', 'Tom');
   const a = (await call(h.create, { user: sara, body: { userId: tom.id } })).body;
-  const b = (await call(h.create, { user: sara, body: { name: 'Leasing', members: [tom.id] } })).body;
+  const b = (await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Leasing', members: [tom.id] } })).body;
   await call(h.send, { user: sara, params: { id: a.id }, body: { body: 'PRIVATE ONE TO ONE' } });
   await call(h.send, { user: tom, params: { id: a.id }, body: { body: 'noted' } });
   await call(h.send, { user: sara, params: { id: b.id }, body: { body: 'group talk' } });

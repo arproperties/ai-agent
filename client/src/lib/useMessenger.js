@@ -37,6 +37,7 @@ const sortChats = (list) => [...list].sort((a, b) => lastAt(b) - lastAt(a) || b.
  */
 export function useMessenger(me) {
   const [chats, setChats] = useState(null); // null until the first load
+  const [groups, setGroups] = useState(null); // groups of topics this person can see; null until loaded
   const [people, setPeople] = useState([]);
   const [online, setOnline] = useState(() => new Set());
   const [lastSeen, setLastSeen] = useState({});
@@ -44,12 +45,13 @@ export function useMessenger(me) {
   const [toast, setToast] = useState(null); // { key, chatId, title, body } - a message landing elsewhere while Reem is open
   const peopleRef = useRef([]);
   peopleRef.current = people;
-  const active = useRef(null); // the chat on screen, whose messages count as read
+  const active = useRef([]); // the chats on screen (one, or every topic on the master's group page), whose messages count as read
   const known = useRef(null); // the list as of the last render, readable from the live handler
   known.current = chats;
   const meId = me?.id;
 
   const loadChats = useCallback(() => api.get('/messenger/chats').then((l) => setChats(sortChats(l))).catch(() => {}), []);
+  const loadGroups = useCallback(() => api.get('/messenger/groups').then(setGroups).catch(() => {}), []);
   const loadPeople = useCallback(() => api.get('/messenger/people').then((ps) => {
     setPeople(ps);
     setLastSeen((s) => ({ ...Object.fromEntries(ps.map((p) => [p.id, p.lastSeen])), ...s }));
@@ -64,14 +66,16 @@ export function useMessenger(me) {
     if (!meId) return undefined;
     startLive();
     loadChats(); // straight away, not only once the live line is up
+    loadGroups();
     loadPeople();
     const off = onLive((event, d) => {
       if (event === 'ready') {
         setOnline(new Set(d.online));
         loadChats(); // after a reconnect: whatever arrived while the line was down
+        loadGroups();
       } else if (event === 'message') {
         const mine = d.userId === meId;
-        const seen = mine || d.kind === 'system' || (active.current === d.chatId && document.visibilityState === 'visible');
+        const seen = mine || d.kind === 'system' || (active.current.includes(d.chatId) && document.visibilityState === 'visible');
         if (!known.current?.some((c) => c.id === d.chatId)) refreshChat(d.chatId); // a chat new to this app
         setChats((l) => {
           const c = (l || []).find((x) => x.id === d.chatId);
@@ -92,7 +96,7 @@ export function useMessenger(me) {
             const c = known.current?.find((x) => x.id === d.chatId);
             const who = c?.members.find((m) => m.id === d.userId)?.name || peopleRef.current.find((p) => p.id === d.userId)?.name || 'New message';
             const words = d.body?.trim() || (d.file ? `📎 ${d.file.name}` : '');
-            setToast({ key: d.id, chatId: d.chatId, title: c?.kind === 'group' ? `${who} · ${c.name}` : who, body: d.sharedFrom ? `${d.sharedFrom}: ${words}` : words });
+            setToast({ key: d.id, chatId: d.chatId, title: c?.kind === 'group' ? `${who} · ${c.groupName ? `${c.groupName} › ` : ''}${c.name}` : who, body: d.sharedFrom ? `${d.sharedFrom}: ${words}` : words });
           }
         }
         if (!mine) setTyping((t) => { const c = { ...(t[d.chatId] || {}) }; delete c[d.userId]; return { ...t, [d.chatId]: c }; });
@@ -109,12 +113,16 @@ export function useMessenger(me) {
         if (d.lastSeen) setLastSeen((s) => ({ ...s, [d.userId]: d.lastSeen }));
       } else if (event === 'chat') {
         refreshChat(d.id);
+        loadGroups(); // a new topic can be the first one somebody has in a group
+      } else if (event === 'group') {
+        loadGroups();
       } else if (event === 'removed') {
         setChats((l) => (l || []).filter((c) => c.id !== d.chatId));
+        loadGroups();
       }
     });
-    return () => { off(); stopLive(); setChats(null); };
-  }, [meId, loadChats, loadPeople, refreshChat]);
+    return () => { off(); stopLive(); setChats(null); setGroups(null); };
+  }, [meId, loadChats, loadGroups, loadPeople, refreshChat]);
 
   // "typing…" fades on its own if the next keystroke never comes
   useEffect(() => {
@@ -145,11 +153,12 @@ export function useMessenger(me) {
     api.post(`/messenger/chats/${chatId}/read`, { upTo: id }).catch(() => {});
   }, [meId]);
 
+  /** `id` is one chat, a list of them (the master's group page), or null. */
   const setActive = useCallback((id) => {
-    active.current = id;
-    setToast((t) => (t && t.chatId === id ? null : t)); // opening the chat answers its pop-up
+    active.current = [].concat(id ?? []);
+    setToast((t) => (t && active.current.includes(t.chatId) ? null : t)); // opening the chat answers its pop-up
   }, []);
   const dismissToast = useCallback(() => setToast(null), []);
 
-  return { me, chats, people, online, lastSeen, typing, unread, toast, dismissToast, loadChats, loadPeople, upsert, refreshChat, markRead, setActive };
+  return { me, chats, groups, setGroups, loadGroups, people, online, lastSeen, typing, unread, toast, dismissToast, loadChats, loadPeople, upsert, refreshChat, markRead, setActive };
 }

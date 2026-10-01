@@ -33,7 +33,7 @@ export { db, tx, closeDb };
 const TABLES = [
   'users', 'sessions', 'password_resets', 'agents', 'agent_assignments', 'conversations', 'messages',
   'imports', 'documents', 'chunks', 'memories', 'outlook_accounts', 'imap_accounts', 'email_drafts', 'email_action_log',
-  'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
+  'dm_groups', 'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
   'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs', 'saifsys_access', 'saifsys_action_access', 'ars_booking_requests',
   'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'team_reminders', 'team_reminder_people', 'reminder_suggestions', 'suggestion_scans',
   'tenant_inbox', 'tenant_inbox_members', 'tenant_asks',
@@ -65,5 +65,16 @@ export async function makeDoc(userId, agentId, name) {
     .prepare(`INSERT INTO documents (user_id, agent_id, name, title, status)
               VALUES (?, ?, ?, ?, 'ready') RETURNING id`)
     .run(userId, agentId, name, name);
+  return id;
+}
+
+/**
+ * A team-chat group to put topics in. Only the master makes groups, so `user` becomes
+ * the master - in the database and on the object the handlers are given.
+ */
+export async function makeGroup(user, name = 'Office') {
+  await db.prepare(`UPDATE users SET role = 'master' WHERE id = ?`).run(user.id);
+  user.role = 'master';
+  const { id } = await db.prepare('INSERT INTO dm_groups (name, created_by) VALUES (?, ?) RETURNING id').run(name, user.id);
   return id;
 }

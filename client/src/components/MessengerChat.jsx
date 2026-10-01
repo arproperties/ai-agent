@@ -13,7 +13,7 @@ import Sheet from './Sheet';
 // ---------- small shared helpers (also used by Messenger.jsx) ----------
 const SHADES = ['from-emerald-400 to-teal-600', 'from-sky-400 to-indigo-500', 'from-amber-300 to-orange-500',
   'from-rose-400 to-pink-600', 'from-violet-400 to-fuchsia-500', 'from-lime-400 to-green-600', 'from-cyan-400 to-blue-600'];
-const NAME_COLORS = ['text-emerald-300', 'text-sky-300', 'text-amber-300', 'text-rose-300', 'text-violet-300', 'text-lime-300', 'text-cyan-300', 'text-pink-300'];
+export const NAME_COLORS = ['text-emerald-300', 'text-sky-300', 'text-amber-300', 'text-rose-300', 'text-violet-300', 'text-lime-300', 'text-cyan-300', 'text-pink-300'];
 
 export const initials = (name = '?') => name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 
@@ -43,7 +43,7 @@ export function listTime(ts) {
   if (now - d < 6 * 86400000) return d.toLocaleDateString([], { weekday: 'short' });
   return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
-function dayLabel(ts) {
+export function dayLabel(ts) {
   const d = new Date(ts * 1000);
   const now = new Date();
   if (sameDay(d, now)) return 'Today';
@@ -98,7 +98,7 @@ const MINE = '#005c4b';
 const THEIRS = '#252140';
 
 // ---------- one message ----------
-function Bubble({ m, mine, showName, sender, nameColor, others, first, onMenu, onReply, onRetry, onView, onJump }) {
+export function Bubble({ m, mine, showName, sender, nameColor, others, first, tag, onMenu, onReply, onRetry, onView, onJump }) {
   const [dx, setDx] = useState(0);
   const touch = useRef(null);
   const press = useRef(null);
@@ -152,6 +152,8 @@ function Bubble({ m, mine, showName, sender, nameColor, others, first, onMenu, o
             <ChevronDown size={16} className="text-white/70" />
           </button>
         )}
+        {/* on the master's group page: which topic this was said in */}
+        {tag && <div className="mb-0.5 text-[11px] font-medium text-white/60"># {tag}</div>}
         {showName && <div className={`mb-0.5 text-[13px] font-medium ${nameColor}`}>{sender}</div>}
 
         {m.replyTo && (
@@ -208,7 +210,7 @@ function Bubble({ m, mine, showName, sender, nameColor, others, first, onMenu, o
 }
 
 // ---------- the long-press / right-click menu ----------
-function Menu({ at, mine, onClose, onReply, onCopy, onDelete }) {
+export function Menu({ at, mine, onClose, onReply, onCopy, onDelete }) {
   useEffect(() => {
     const key = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', key);
@@ -236,8 +238,13 @@ const EMOJI = ['😀', '😂', '🥰', '😍', '😊', '😉', '😎', '🤔', '
   '👍', '👎', '👏', '🙏', '💪', '👌', '🤝', '🙌', '👋', '🤲', '❤️', '💚', '🔥', '🎉', '✨', '💯',
   '✅', '❌', '⭐', '📌', '📎', '📅', '⏰', '📞', '📧', '🏠', '🏢', '💼', '💰', '🚗', '✈️', '☕'];
 
-function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnabled }) {
-  const [text, setText] = useState('');
+/**
+ * `chatId` null is the master's box on a group page: no single chat to say "typing…"
+ * in or to draft a reply from, so neither happens there. `initial` puts words back in
+ * the box, when a routed message is called back.
+ */
+export function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnabled, initial = '', placeholder = 'Type a message' }) {
+  const [text, setText] = useState(initial);
   const [emoji, setEmoji] = useState(false);
   const [file, setFile] = useState(null);
   const [rec, setRec] = useState(null);   // null | 'recording' | 'transcribing'
@@ -263,7 +270,7 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
   const change = (v) => {
     setText(v);
     setBefore(null); setDrafted(false); // their own words now: there is nothing left to undo back to
-    if (v && Date.now() - lastTyping.current > 2500) {
+    if (chatId && v && Date.now() - lastTyping.current > 2500) {
       lastTyping.current = Date.now();
       api.post(`/messenger/chats/${chatId}/typing`).catch(() => {});
     }
@@ -385,18 +392,18 @@ function Composer({ chatId, reply, onCancelReply, replyName, onSend, voiceEnable
             <Smile size={22} />
           </button>
           <textarea ref={box} rows={1} value={text}
-            placeholder={rec === 'recording' ? 'Listening… pause when you are done' : rec ? 'Writing down what you said…' : tidying ? (text.trim() ? 'Tidying it up…' : 'Writing a reply…') : 'Type a message'}
+            placeholder={rec === 'recording' ? 'Listening… pause when you are done' : rec ? 'Writing down what you said…' : tidying ? (text.trim() ? 'Tidying it up…' : 'Writing a reply…') : placeholder}
             onChange={(e) => change(e.target.value)}
             onPaste={(e) => { const f = e.clipboardData?.files?.[0]; if (f) { e.preventDefault(); setFile(f); } }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
             className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 leading-snug outline-none placeholder:text-mute/70" />
-          <button onClick={tidy} disabled={tidying}
+          {chatId && <button onClick={tidy} disabled={tidying}
             aria-label={text.trim() ? 'Help me say this' : 'Write a reply for me'}
             title={text.trim() ? 'Help me say this — Reem tidies up your notes' : 'Write a reply for me — Reem drafts one from the chat'}
             className={`grid size-11 shrink-0 place-items-center rounded-full transition hover:text-emerald-300 disabled:opacity-40 ${
               tidying ? 'animate-pulse text-emerald-300' : 'text-mute'}`}>
             <Wand2 size={19} />
-          </button>
+          </button>}
           <button onClick={() => pick.current.click()} aria-label="Attach a photo or file" title="Attach a photo or file"
             className="grid size-11 shrink-0 place-items-center rounded-full text-mute transition hover:text-txt">
             <Paperclip size={20} />
@@ -735,7 +742,9 @@ export default function MessengerChat({ chat, dm, onBack, onInfo, voiceEnabled }
           <PersonAvatar id={chat.kind === 'group' ? chat.id : chat.peerId} name={chat.name} size={42} group={chat.kind === 'group'}
             online={chat.kind === 'direct' && dm.online.has(chat.peerId)} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[16px] font-medium">{chat.name}</span>
+            <span className="block truncate text-[16px] font-medium">
+              {chat.groupName && <span className="font-normal text-mute">{chat.groupName} › </span>}{chat.name}
+            </span>
             <span className="block truncate text-xs text-mute">{status || ' '}</span>
           </span>
         </button>
@@ -743,7 +752,7 @@ export default function MessengerChat({ chat, dm, onBack, onInfo, voiceEnabled }
           className="grid size-10 shrink-0 place-items-center rounded-full text-mute transition hover:bg-white/10 hover:text-emerald-300">
           <Sparkles size={19} />
         </button>
-        <button onClick={onInfo} aria-label={chat.kind === 'group' ? 'Group info' : 'Contact info'} title={chat.kind === 'group' ? 'Group info' : 'Contact info'}
+        <button onClick={onInfo} aria-label={chat.kind === 'group' ? 'Topic info' : 'Contact info'} title={chat.kind === 'group' ? 'Topic info' : 'Contact info'}
           className="grid size-10 shrink-0 place-items-center rounded-full text-mute transition hover:bg-white/10 hover:text-txt">
           <Info size={20} />
         </button>
@@ -756,7 +765,7 @@ export default function MessengerChat({ chat, dm, onBack, onInfo, voiceEnabled }
         {messages?.length === 0 && (
           <div className="mx-auto mt-16 flex max-w-xs flex-col items-center gap-3 rounded-3xl border border-white/[0.06] bg-[#1b1834]/80 px-6 py-6 text-center shadow-xl backdrop-blur">
             <PersonAvatar id={chat.kind === 'group' ? chat.id : chat.peerId} name={chat.name} size={64} group={chat.kind === 'group'} />
-            <p className="text-sm text-mute">Say hello to {chat.kind === 'group' ? 'the group' : chat.name.split(' ')[0]}</p>
+            <p className="text-sm text-mute">Say hello to {chat.kind === 'group' ? 'the topic' : chat.name.split(' ')[0]}</p>
             <span className="text-4xl">👋</span>
           </div>
         )}

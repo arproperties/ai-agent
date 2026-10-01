@@ -498,6 +498,42 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_dm_messages_chat ON dm_messages(chat_id, id);
 `);
 
+// Groups hold topics. A group is only a name: nobody is a member of the group itself.
+// Each topic is an ordinary group chat (dm_chats kind 'group') pointing at its group,
+// with its own members, messages and ticks - so everything a chat does, a topic does.
+//   Who sees a group: anyone in at least one of its topics, and the master (who is put
+//   in every topic). Only the master makes groups; anyone in a group can add a topic.
+//   group_id NULL on a 'group' chat only survives until the step below has run once.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS dm_groups (
+    id SERIAL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  ALTER TABLE dm_chats ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES dm_groups(id) ON DELETE CASCADE;
+  CREATE INDEX IF NOT EXISTS idx_dm_chats_group ON dm_chats(group_id);
+`);
+
+// Group chats from before topics existed: each becomes a group of the same name, with
+// itself as that group's "General" topic. Members, messages and ticks stay exactly as
+// they were. The master joins it, caught up, so the new history is not a pile of unread.
+// Runs once per chat: afterwards group_id is set and the WHERE finds nothing.
+await db.exec(`
+  DO $$
+  DECLARE c RECORD; gid INTEGER; top INTEGER;
+  BEGIN
+    FOR c IN SELECT * FROM dm_chats WHERE kind = 'group' AND group_id IS NULL LOOP
+      INSERT INTO dm_groups (name, created_by, created_at) VALUES (COALESCE(c.name, 'Group'), c.created_by, c.created_at) RETURNING id INTO gid;
+      UPDATE dm_chats SET group_id = gid, name = 'General' WHERE id = c.id;
+      SELECT COALESCE(MAX(id), 0) INTO top FROM dm_messages WHERE chat_id = c.id;
+      INSERT INTO dm_members (chat_id, user_id, role, last_read_id, last_delivered_id)
+        SELECT c.id, u.id, 'admin', top, top FROM users u WHERE u.role = 'master' AND NOT u.disabled
+        ON CONFLICT (chat_id, user_id) DO NOTHING;
+    END LOOP;
+  END $$;
+`);
+
 // A Reem reply, carried into a team chat by the person who asked for it.
 //
 // Its own table on purpose. What lands in the chat is an ordinary dm_message and stays

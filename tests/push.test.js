@@ -2,7 +2,7 @@ import './helpers/push-env.js'; // before helpers/db.js: push.js reads the keys 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import webpush from 'web-push';
-import { db, reset, makeUser, closeDb } from './helpers/db.js';
+import { db, reset, makeUser, makeGroup, closeDb } from './helpers/db.js';
 import { saveSubscription, removeSubscription, subscriptionsFor, sendPush, pushReady } from '../server/push.js';
 import { messengerHandlers as h } from '../server/messenger.js';
 
@@ -149,7 +149,7 @@ test('a message wakes the people who are away, and nobody who is here', async ()
   const ann = { id: await makeUser('Ann'), name: 'Ann' };
   for (const u of [sara, tom, ann]) await saveSubscription(u.id, device(u.name), u.name);
 
-  const chat = await call(h.create, { user: sara, body: { name: 'Site works', members: [tom.id, ann.id] } });
+  const chat = await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Site works', members: [tom.id, ann.id] } });
   const watching = connect(ann); // Ann has the app open; Tom does not
 
   await call(h.send, { user: sara, params: { id: chat.id }, body: { body: 'Concrete arrives at seven' } });
@@ -157,7 +157,7 @@ test('a message wakes the people who are away, and nobody who is here', async ()
 
   // Not Sara: she sent it. Not Ann: she is watching it arrive live.
   assert.deepEqual(posted.map((p) => p.endpoint), [`https://push.example.com/${tom.name}`]);
-  assert.equal(posted[0].title, 'Sara · Site works');
+  assert.equal(posted[0].title, 'Sara · Office › Site works');
   assert.equal(posted[0].body, 'Concrete arrives at seven');
   assert.equal(posted[0].url, `/?chat=${chat.id}`);
   watching();

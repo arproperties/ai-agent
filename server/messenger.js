@@ -3,8 +3,9 @@
 // Kept apart from the AI chats on purpose — its own tables (dm_*), its own routes
 // (/api/messenger), and none of it reaches Claude on its own. The single exception is
 // asked for by hand, by a member, about their own chat: "Summarise" (dmSummary.js) and
-// "help me say this", which tidies up what one person has typed (dmPolish.js). Those
-// two files are the whole of it.
+// "help me say this", which tidies up what one person has typed (dmPolish.js), and the
+// master's one box on a group page, which suggests the topic a message goes in
+// (dmRoute.js). Those three files are the whole of it.
 //
 // "Live" is one Server-Sent Events stream per open app (GET /events). Sending, reading
 // and typing are ordinary POSTs; the server then pushes the result down the streams of
@@ -19,6 +20,8 @@ import { db, tx } from './db.js';
 import { summarise, forget } from './dmSummary.js';
 import { shareReply } from './shareReply.js';
 import { polish } from './dmPolish.js';
+import { pickTopic } from './dmRoute.js';
+import { isMaster } from './access.js';
 import { sendPush } from './push.js';
 import { DATA_DIR } from './config.js';
 
@@ -89,12 +92,13 @@ const getMessage = async (id) => {
 /** One chat as `userId` sees it: a direct chat is named after the other person. */
 async function chatsFor(userId, chatId = null) {
   const rows = await db.prepare(`
-    SELECT c.*, me.last_read_id my_read,
+    SELECT c.*, g.name group_name, me.last_read_id my_read,
       (SELECT COUNT(*) FROM dm_messages m WHERE m.chat_id = c.id AND m.id > me.last_read_id
          AND m.user_id IS DISTINCT FROM me.user_id AND m.kind <> 'system')::int unread,
       l.id last_id
     FROM dm_chats c
     JOIN dm_members me ON me.chat_id = c.id AND me.user_id = ?
+    LEFT JOIN dm_groups g ON g.id = c.group_id
     LEFT JOIN LATERAL (SELECT id, created_at FROM dm_messages WHERE chat_id = c.id ORDER BY id DESC LIMIT 1) l ON true
     -- In the list, an empty one-to-one chat only shows for whoever opened it, as in
     -- WhatsApp. Asked for by id it is always there: the other person may be opening it too.
@@ -103,7 +107,7 @@ async function chatsFor(userId, chatId = null) {
   if (!rows.length) return [];
 
   const ids = rows.map((r) => r.id);
-  const members = await db.prepare(`SELECT mb.chat_id, mb.user_id, mb.role, mb.last_read_id, mb.last_delivered_id, u.name
+  const members = await db.prepare(`SELECT mb.chat_id, mb.user_id, mb.role, mb.last_read_id, mb.last_delivered_id, u.name, u.role user_role
     FROM dm_members mb JOIN users u ON u.id = mb.user_id WHERE mb.chat_id = ANY(?::int[]) ORDER BY mb.joined_at, u.name`).all(ids);
   const lastIds = rows.map((r) => r.last_id).filter(Boolean);
   const lasts = lastIds.length ? await db.prepare(`${MSG_SELECT} WHERE m.id = ANY(?::int[])`).all(lastIds) : [];
@@ -112,6 +116,7 @@ async function chatsFor(userId, chatId = null) {
   return rows.map((c) => {
     const ms = members.filter((m) => m.chat_id === c.id).map((m) => ({
       id: m.user_id, name: m.name, role: m.role, read: m.last_read_id, delivered: m.last_delivered_id,
+      master: m.user_role === 'master',
     }));
     const peer = c.kind === 'direct' ? ms.find((m) => m.id !== userId) : null;
     return {
@@ -119,6 +124,8 @@ async function chatsFor(userId, chatId = null) {
       kind: c.kind,
       name: c.kind === 'direct' ? peer?.name || 'Deleted user' : c.name,
       peerId: peer?.id ?? null,
+      groupId: c.group_id ?? null,
+      groupName: c.group_name ?? null,
       createdBy: c.created_by,
       members: ms,
       unread: c.unread,
@@ -129,8 +136,27 @@ async function chatsFor(userId, chatId = null) {
 }
 export const chatFor = async (userId, chatId) => (await chatsFor(userId, chatId))[0] || null;
 
-const membership = (chatId, userId) => db.prepare(`SELECT mb.*, c.kind, c.name FROM dm_members mb JOIN dm_chats c ON c.id = mb.chat_id
+const membership = (chatId, userId) => db.prepare(`SELECT mb.*, c.kind, c.name, c.group_id, g.name group_name
+  FROM dm_members mb JOIN dm_chats c ON c.id = mb.chat_id LEFT JOIN dm_groups g ON g.id = c.group_id
   WHERE mb.chat_id = ? AND mb.user_id = ?`).get(Number(chatId), userId);
+
+/** The master is in every topic, so they can see all of them; these are who that is. */
+const masterIds = async () =>
+  (await db.prepare(`SELECT id FROM users WHERE role = 'master' AND NOT disabled`).all()).map((r) => r.id);
+
+/** Groups `user` can see: the master sees all, anyone else those they have a topic in. */
+async function groupsFor(user, groupId = null) {
+  return (await db.prepare(`SELECT g.id, g.name, g.created_by, g.created_at FROM dm_groups g
+    WHERE (?::int IS NULL OR g.id = ?)
+      AND (?::boolean OR EXISTS (SELECT 1 FROM dm_chats c JOIN dm_members mb ON mb.chat_id = c.id
+                                  WHERE c.group_id = g.id AND mb.user_id = ?))
+    ORDER BY lower(g.name), g.id`).all(groupId, groupId, isMaster(user), user.id))
+    .map((g) => ({ id: g.id, name: g.name, createdBy: g.created_by, createdAt: g.created_at }));
+}
+
+/** Everyone in any topic of a group: who hears about the group itself changing. */
+const groupPeople = async (groupId) => (await db.prepare(`SELECT DISTINCT mb.user_id FROM dm_members mb
+  JOIN dm_chats c ON c.id = mb.chat_id WHERE c.group_id = ?`).all(groupId)).map((r) => r.user_id);
 
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
 
@@ -173,8 +199,8 @@ function notifyOffline(mine, sender, members, msg) {
   const away = members.filter((u) => u !== sender.id && !isWatching(u));
   if (!away.length) return;
   sendPush(away, {
-    // A group says which group; a one-to-one needs only the name, as WhatsApp does it.
-    title: mine.kind === 'group' ? `${sender.name} · ${mine.name}` : sender.name,
+    // A topic says which group and topic; a one-to-one needs only the name, as WhatsApp does it.
+    title: mine.kind === 'group' ? `${sender.name} · ${mine.group_name ? `${mine.group_name} › ` : ''}${mine.name}` : sender.name,
     // A shared agent reply is not the sender's own words, and the notice says so too.
     body: msg.sharedFrom ? `${msg.sharedFrom}: ${previewText(msg)}` : previewText(msg),
     url: `/?chat=${msg.chatId}`,
@@ -238,7 +264,11 @@ export const messengerHandlers = {
     res.json(chat);
   },
 
-  /** { userId } opens (or reuses) a one-to-one chat; { name, members } starts a group. */
+  /**
+   * { userId } opens (or reuses) a one-to-one chat; { groupId, name, members } starts a
+   * topic in a group. Anyone already in the group may add one, with anyone in it, and
+   * the master is always put in too.
+   */
   async create(req, res) {
     const me = req.user.id;
     if (req.body.userId) {
@@ -258,21 +288,25 @@ export const messengerHandlers = {
       return res.json(await chatFor(me, id));
     }
 
+    const groupId = Number(req.body.groupId) || null;
+    if (!groupId || !(await groupsFor(req.user, groupId)).length) throw bad('Pick the group this topic goes in', groupId ? 404 : 400);
     const name = String(req.body.name || '').trim().slice(0, 60);
-    if (!name) throw bad('Give the group a name');
+    if (!name) throw bad('Give the topic a name');
     const wanted = [...new Set((Array.isArray(req.body.members) ? req.body.members : []).map(Number).filter((id) => id && id !== me))].slice(0, 255);
     const valid = wanted.length
       ? (await db.prepare('SELECT id FROM users WHERE id = ANY(?::int[]) AND NOT disabled').all(wanted)).map((r) => r.id)
       : [];
-    if (!valid.length) throw bad('Add at least one person to the group');
+    if (!valid.length) throw bad('Add at least one person to the topic');
+    const masters = (await masterIds()).filter((u) => u !== me);
     const id = await tx(async () => {
-      const { id } = await db.prepare(`INSERT INTO dm_chats (kind, name, created_by) VALUES ('group', ?, ?) RETURNING id`).run(name, me);
+      const { id } = await db.prepare(`INSERT INTO dm_chats (kind, name, created_by, group_id) VALUES ('group', ?, ?, ?) RETURNING id`).run(name, me, groupId);
       await db.prepare(`INSERT INTO dm_members (chat_id, user_id, role) VALUES (?, ?, 'admin')`).run(id, me);
-      for (const u of valid) await db.prepare('INSERT INTO dm_members (chat_id, user_id) VALUES (?, ?)').run(id, u);
+      for (const u of masters) await db.prepare(`INSERT INTO dm_members (chat_id, user_id, role) VALUES (?, ?, 'admin') ON CONFLICT DO NOTHING`).run(id, u);
+      for (const u of valid) await db.prepare('INSERT INTO dm_members (chat_id, user_id) VALUES (?, ?) ON CONFLICT DO NOTHING').run(id, u);
       return id;
     });
-    await postSystem(id, `${req.user.name} created the group "${name}"`);
-    emit(valid, 'chat', { id });
+    await postSystem(id, `${req.user.name} created the topic "${name}"`);
+    emit([...valid, ...masters], 'chat', { id });
     res.json(await chatFor(me, id));
   },
 
@@ -422,10 +456,11 @@ export const messengerHandlers = {
     if (!mine) throw bad('Not found', 404);
     if (mine.kind !== 'group') throw bad('Only groups have a name');
     const name = String(req.body.name || '').trim().slice(0, 60);
-    if (!name) throw bad('Give the group a name');
+    const what = mine.group_id ? 'topic' : 'group';
+    if (!name) throw bad(`Give the ${what} a name`);
     if (name !== mine.name) {
       await db.prepare('UPDATE dm_chats SET name = ? WHERE id = ?').run(name, mine.chat_id);
-      await postSystem(mine.chat_id, `${req.user.name} renamed the group to "${name}"`);
+      await postSystem(mine.chat_id, `${req.user.name} renamed the ${what} to "${name}"`);
       emit(await memberIds(mine.chat_id), 'chat', { id: mine.chat_id });
     }
     res.json(await chatFor(req.user.id, mine.chat_id));
@@ -461,6 +496,8 @@ export const messengerHandlers = {
     const target = Number(req.params.userId);
     const leaving = target === req.user.id;
     if (!leaving && mine.role !== 'admin') throw bad('Only group admins can remove people', 403);
+    // the master sees every topic; only they can take themselves out of one
+    if (!leaving && isMaster(await db.prepare('SELECT role FROM users WHERE id = ?').get(target))) throw bad('The workspace owner cannot be removed from a topic', 403);
     const gone = await db.prepare(`DELETE FROM dm_members mb USING users u WHERE u.id = mb.user_id AND mb.chat_id = ? AND mb.user_id = ?
       RETURNING u.name, mb.role`).get(chatId, target);
     if (!gone) throw bad('Not found', 404);
@@ -492,6 +529,57 @@ export const messengerHandlers = {
     emit(await memberIds(mine.chat_id), 'chat', { id: mine.chat_id });
     res.json(await chatFor(req.user.id, mine.chat_id));
   },
+
+  // ---------- groups of topics ----------
+  async groups(req, res) {
+    res.json(await groupsFor(req.user));
+  },
+
+  /** { name } - only the master makes groups. A group starts empty: people come with topics. */
+  async createGroup(req, res) {
+    if (!isMaster(req.user)) throw bad('Only the workspace owner can create a group', 403);
+    const name = String(req.body.name || '').trim().slice(0, 60);
+    if (!name) throw bad('Give the group a name');
+    const { id } = await db.prepare('INSERT INTO dm_groups (name, created_by) VALUES (?, ?) RETURNING id').run(name, req.user.id);
+    emit((await masterIds()).filter((u) => u !== req.user.id), 'group', { id });
+    res.json((await groupsFor(req.user, id))[0]);
+  },
+
+  async renameGroup(req, res) {
+    if (!isMaster(req.user)) throw bad('Only the workspace owner can rename a group', 403);
+    const id = Number(req.params.id);
+    const name = String(req.body.name || '').trim().slice(0, 60);
+    if (!name) throw bad('Give the group a name');
+    const r = await db.prepare('UPDATE dm_groups SET name = ? WHERE id = ?').run(name, id);
+    if (!r.changes) throw bad('Not found', 404);
+    emit([...await groupPeople(id), ...await masterIds()], 'group', { id });
+    res.json((await groupsFor(req.user, id))[0]);
+  },
+
+  /**
+   * The master's page for a whole group: every topic they are in, as one timeline,
+   * newest last. ?before=<id> scrolls back, ?after=<id> catches up after a reconnect.
+   */
+  async groupMessages(req, res) {
+    if (!isMaster(req.user)) throw bad('Not found', 404);
+    const groupId = Number(req.params.id);
+    const before = Number(req.query.before) || null;
+    const after = Number(req.query.after) || null;
+    const mineIn = `m.chat_id IN (SELECT c.id FROM dm_chats c JOIN dm_members mb ON mb.chat_id = c.id AND mb.user_id = ? WHERE c.group_id = ?)`;
+    const rows = after
+      ? await db.prepare(`${MSG_SELECT} WHERE ${mineIn} AND m.id > ? ORDER BY m.id LIMIT 500`).all(req.user.id, groupId, after)
+      : (await db.prepare(`${MSG_SELECT} WHERE ${mineIn} AND (?::int IS NULL OR m.id < ?) ORDER BY m.id DESC LIMIT ${PAGE}`)
+        .all(req.user.id, groupId, before, before)).reverse();
+    res.json({ messages: rows.map(messageOut), more: !after && rows.length === PAGE });
+  },
+
+  /** { text } - which topic the master's message goes in. A suggestion only; see dmRoute.js. */
+  async route(req, res) {
+    if (!isMaster(req.user)) throw bad('Not found', 404);
+    const groupId = Number(req.params.id);
+    if (!(await groupsFor(req.user, groupId)).length) throw bad('Not found', 404);
+    res.json(await pickTopic(groupId, req.user.id, req.body?.text));
+  },
 };
 
 // ---------- routes: mounted at /api/messenger, after requireUser ----------
@@ -516,5 +604,10 @@ messengerRoutes.post('/chats/:id/polish', wrap(h.polish));
 messengerRoutes.post('/chats/:id/members', wrap(h.addMembers));
 messengerRoutes.delete('/chats/:id/members/:userId', wrap(h.removeMember));
 messengerRoutes.post('/chats/:id/members/:userId/admin', wrap(h.makeAdmin));
+messengerRoutes.get('/groups', wrap(h.groups));
+messengerRoutes.post('/groups', wrap(h.createGroup));
+messengerRoutes.patch('/groups/:id', wrap(h.renameGroup));
+messengerRoutes.get('/groups/:id/messages', wrap(h.groupMessages));
+messengerRoutes.post('/groups/:id/route', wrap(h.route));
 messengerRoutes.delete('/messages/:id', wrap(h.remove));
 messengerRoutes.get('/files/:id', wrap(h.file));

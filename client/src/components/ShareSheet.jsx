@@ -23,7 +23,7 @@ export default function ShareSheet({ dm, messageId, onClose, onDone }) {
 
   const rows = useMemo(() => {
     const chats = (dm.chats || []).map((c) => ({
-      key: `c${c.id}`, chatId: c.id, name: c.name, group: c.kind === 'group',
+      key: `c${c.id}`, chatId: c.id, name: c.groupName ? `${c.groupName} › ${c.name}` : c.name, group: c.kind === 'group',
       avatarId: c.kind === 'group' ? c.id : c.peerId,
       sub: c.kind === 'group' ? `${c.members.length} people` : 'Chat',
       peerId: c.peerId,
