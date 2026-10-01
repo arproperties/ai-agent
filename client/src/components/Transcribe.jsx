@@ -111,7 +111,7 @@ function Detail({ id, onDeleted }) {
 
   return (
     <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
-      <div className="mx-auto max-w-3xl space-y-4 pb-8">
+      <div className="mx-auto w-full space-y-4 pb-8">
         <div>
           <button onClick={rename} className="group flex items-start gap-2 text-left">
             <h2 className="text-xl font-light">{titleOf(t)}</h2>
@@ -200,7 +200,7 @@ export default function TranscribePage({ onBack }) {
     <div className="sky absolute inset-0 z-20 flex flex-col">
       <ParticleField className="fx-canvas-panel" />
       <header className="px-4 pb-3 pt-safe md:px-8">
-        <div className="mx-auto flex w-full max-w-3xl items-center gap-2 pt-1">
+        <div className="mx-auto flex w-full items-center gap-2 pt-1">
           <button onClick={back} disabled={!!recorder} aria-label="Back" className="-ml-2 grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt disabled:opacity-30">
             <ChevronLeft size={22} />
           </button>
@@ -214,7 +214,7 @@ export default function TranscribePage({ onBack }) {
         <Detail id={open} onDeleted={() => { setOpen(null); load(); }} />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
-          <div className="mx-auto max-w-3xl space-y-6 pb-8">
+          <div className="mx-auto w-full space-y-6 pb-8">
             <div className="grid grid-cols-2 gap-3">
               <button onClick={() => fileRef.current?.click()} disabled={busy}
                 className="flex flex-col items-center gap-2 rounded-3xl border border-stroke bg-white/[0.04] px-3 py-6 transition hover:bg-white/[0.07] active:scale-[0.98] disabled:opacity-50">

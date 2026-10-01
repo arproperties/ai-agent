@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2, CheckCircle2, AlertCircle, AtSign } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
-import Sheet from './Sheet';
+import Page from './Page';
 import DraftCard from './DraftCard';
 import PasswordField from './PasswordField';
 
@@ -184,7 +184,7 @@ function OutlookCard({ state, onChange }) {
 }
 
 // `returned` is set when coming back from the Microsoft sign-in page
-export default function EmailSheet({ returned, onClose }) {
+export default function EmailPage({ returned, onBack }) {
   const [imap, setImap] = useState(null);
   const [outlook, setOutlook] = useState(null);
   const [drafts, setDrafts] = useState([]);
@@ -205,8 +205,7 @@ export default function EmailSheet({ returned, onClose }) {
   const waiting = drafts.filter((d) => d.status === 'pending').length;
 
   return (
-    <Sheet title="Email" onClose={onClose}
-      icon={<span className="grid size-8 place-items-center rounded-full bg-cyan-400/20 text-cyan-300"><Icon name="mail" size={17} /></span>}>
+    <Page title="Email" onBack={onBack}>
       {done && (imap?.account || outlook?.account) && <Notice ok>Email connected. Try asking “Any important emails today?”</Notice>}
       {error && <Notice>{error}</Notice>}
 
@@ -239,6 +238,6 @@ export default function EmailSheet({ returned, onClose }) {
         every email waits here, and in the chat, until you tap Approve. They cannot delete email.
         Emails are fetched only when needed, not copied into Jarvis. Your password is stored encrypted.
       </p>
-    </Sheet>
+    </Page>
   );
 }

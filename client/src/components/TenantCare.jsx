@@ -147,7 +147,7 @@ export default function TenantCarePage({ me, onBack, onChanged }) {
     <div className="sky absolute inset-0 z-20 flex flex-col">
       <ParticleField className="fx-canvas-panel" />
       <header className="px-4 pb-3 pt-safe md:px-8">
-        <div className="mx-auto flex w-full max-w-3xl items-center gap-2 pt-1">
+        <div className="mx-auto flex w-full items-center gap-2 pt-1">
           <button onClick={onBack} aria-label="Back" className="-ml-2 grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
             <ChevronLeft size={22} />
           </button>
@@ -155,7 +155,7 @@ export default function TenantCarePage({ me, onBack, onChanged }) {
         </div>
       </header>
       <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
-        <div className="mx-auto max-w-3xl space-y-4 pb-8">
+        <div className="mx-auto w-full space-y-4 pb-8">
           {error && <p className="text-bad">{error}</p>}
           {!data && !error && <div className="grid place-items-center py-10"><Loader2 className="animate-spin text-mute" /></div>}
           {data && (

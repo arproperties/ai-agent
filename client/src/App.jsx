@@ -5,8 +5,8 @@ import Sidebar from './components/Sidebar';
 import Icon from './components/Icon';
 import Chat from './components/Chat';
 import AgentSheet from './components/AgentSheet';
-import { FilesPage, MemorySheet } from './components/Knowledge';
-import EmailSheet from './components/EmailSheet';
+import { FilesPage, MemoryPage } from './components/Knowledge';
+import EmailPage from './components/EmailSheet';
 import AdminPage, { MyActivitySheet } from './components/Admin';
 import MessengerPage from './components/Messenger';
 import ListsPage from './components/Lists';
@@ -125,7 +125,7 @@ export default function App() {
     <div className="relative z-10 flex h-dvh">
       {drawer && <div className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden" onClick={() => setDrawer(false)} />}
       <aside className={`max-md:liquid-glass fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'}`}>
-        <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'memory' && panel !== 'email' && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
+        <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
           onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}
           expiring={expiring.length} dueTodos={due.todos.length + due.routines.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
@@ -176,6 +176,8 @@ export default function App() {
         {panel === 'transcribe' && <TranscribePage onBack={() => setPanel(null)} />}
         {panel === 'tenantcare' && <TenantCarePage me={me} onBack={() => setPanel(null)} onChanged={loadTenantCare} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
+        {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
+        {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
         {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
       </main>
@@ -184,8 +186,6 @@ export default function App() {
         <AgentSheet agent={editing} config={config} me={me} onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); loadAgents(); }} />
       )}
-      {panel === 'memory' && <MemorySheet onClose={() => setPanel(null)} />}
-      {panel === 'email' && <EmailSheet returned={outlookReturn} onClose={() => setPanel(null)} />}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
       <NotifyPrompt />
       <MessageToast toast={dm.toast} onClose={dm.dismissToast}

@@ -261,10 +261,10 @@ export default function RoutinePanel({ onChanged, onDue }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="border-b border-stroke/60 px-4 pb-4 md:px-8">
-        <div className="mx-auto w-full max-w-3xl"><AddRoutine onAdded={load} /></div>
+        <div className="mx-auto w-full"><AddRoutine onAdded={load} /></div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
-        <div className="mx-auto max-w-3xl pb-6">
+        <div className="mx-auto w-full pb-6">
           {rows?.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
               <span className="grid size-20 place-items-center rounded-3xl bg-gradient-to-br from-p1/25 to-p2/10 text-p1"><Repeat size={34} strokeWidth={1.4} /></span>

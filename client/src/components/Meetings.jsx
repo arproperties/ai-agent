@@ -227,7 +227,7 @@ function Detail({ id, onDeleted }) {
 
   return (
     <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
-      <div className="mx-auto max-w-3xl space-y-4 pb-8">
+      <div className="mx-auto w-full space-y-4 pb-8">
         <div>
           <button onClick={rename} className="group flex items-start gap-2 text-left">
             <h2 className="text-xl font-light">{titleOf(m)}</h2>
@@ -369,7 +369,7 @@ export default function MeetingsPage({ onBack }) {
       {/* The panel paints solid over the chat, so it carries its own field. */}
       <ParticleField className="fx-canvas-panel" />
       <header className="px-4 pb-3 pt-safe md:px-8">
-        <div className="mx-auto flex w-full max-w-3xl items-center gap-2 pt-1">
+        <div className="mx-auto flex w-full items-center gap-2 pt-1">
           <button onClick={back} disabled={!!live} aria-label="Back" className="-ml-2 grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt disabled:opacity-30">
             <ChevronLeft size={22} />
           </button>
@@ -384,7 +384,7 @@ export default function MeetingsPage({ onBack }) {
         <Detail id={open} onDeleted={() => { setOpen(null); load(); }} />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
-          <div className="mx-auto max-w-3xl space-y-6 pb-8">
+          <div className="mx-auto w-full space-y-6 pb-8">
             <button onClick={() => setSheet('start')}
               className="flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 py-3.5 font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98]">
               <Mic size={18} /> Record a meeting

@@ -356,7 +356,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             <InstallHint />
           </div>
         ) : (
-          <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 md:px-6">
+          <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 md:px-6">
             {messages.map((m, i) => (
               <Message key={m.id} msg={m} agent={byId[m.agent_id]} voiceEnabled={voiceEnabled} onOpenFile={openFile}
                 savedId={shareIdOf(m)} drawingFrom={exportAsked(m.content) ? drawingUpTo(messages, i) : undefined}
@@ -381,7 +381,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         )}
       </div>
 
-      <div className="mx-auto w-full max-w-3xl">
+      <div className="mx-auto w-full max-w-6xl">
         {/* What this conversation is working from, once something has been brought in: the
             answer to "does this chat have both of those chats in it". */}
         {carrying.length > 0 && (

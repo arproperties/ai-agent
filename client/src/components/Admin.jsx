@@ -223,7 +223,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
           panel is over a thousand pixels across, and a row of controls stretched to
           that width reads as a stripe rather than as a card. */}
       <div className="border-b border-stroke/60 px-4 pb-3 pt-4 md:px-6">
-        <div className="mx-auto w-full max-w-4xl">
+        <div className="mx-auto w-full">
         <div className="flex items-center gap-3">
           <button onClick={onBack} aria-label="Back to everyone" className="-ml-2 grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
             <ChevronLeft size={20} />
@@ -267,7 +267,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-safe md:px-6">
-        <div className="@container mx-auto w-full max-w-4xl space-y-4">
+        <div className="@container mx-auto w-full space-y-4">
 
         {tab === 'memory' && <Memories person={person} />}
         {tab === 'saifsys' && <SaifsysModules person={person} />}

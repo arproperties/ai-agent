@@ -10,6 +10,7 @@ import { startImport, importState, onImport, clearImportError } from '../lib/imp
 import { describeIgnored } from '../lib/zip';
 import Icon from './Icon';
 import Sheet from './Sheet';
+import Page from './Page';
 import Orb from './Orb';
 import { ParticleField } from './ParticleField';
 
@@ -806,7 +807,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
             </div>
           </div>
         ) : docs && (
-          <div className="mx-auto max-w-6xl space-y-5 py-5">
+          <div className="mx-auto w-full space-y-5 py-5">
             {!q && group && (
               <button onClick={() => (inCompany ? go('companies') : go(null))}
                 className="-ml-1 flex items-center gap-1 text-sm text-mute transition hover:text-txt">
@@ -948,11 +949,10 @@ export function MemoryPanel() {
   );
 }
 
-export function MemorySheet({ onClose }) {
+export function MemoryPage({ onBack }) {
   return (
-    <Sheet title="Memory" onClose={onClose}
-      icon={<span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><Icon name="brain" size={17} /></span>}>
+    <Page title="Memory" onBack={onBack}>
       <MemoryPanel />
-    </Sheet>
+    </Page>
   );
 }
