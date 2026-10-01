@@ -3,6 +3,7 @@ import { db, tx } from '../db.js';
 import { isMaster } from '../access.js';
 import { saifsysConfigured } from './client.js';
 import * as ars from './ars.js';
+import * as hr from './hr.js';
 import { ACTIONS, actionKeys, setActions, bookingKit, bookingRoutes } from './booking.js';
 
 // saifsys, module by module — the same workspaces as its launcher. Each module that has
@@ -25,7 +26,7 @@ export const MODULES = [
   { key: 'ars', label: 'ARS Home Rentals', ...ars },
   { key: 'grocery', label: 'Grocery' },
   { key: 'barber', label: 'Barber shop' },
-  { key: 'hr', label: 'HR' },
+  { key: 'hr', label: 'HR', ...hr },
   { key: 'finance', label: 'Finance' },
 ];
 const KEYS = MODULES.map((m) => m.key);
