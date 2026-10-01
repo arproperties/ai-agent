@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Check, X, Send, AlertCircle } from 'lucide-react';
+import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown } from 'lucide-react';
 import { api } from '../lib/api';
 
 // An email an agent wrote, waiting for the person whose name it would go out under.
@@ -29,7 +29,7 @@ const sentWhen = (ts) => {
 const EVERY = 2000;
 const TRIES = 15; // about half a minute, which is longer than a healthy send takes
 
-export default function DraftCard({ draft, from, onChanged }) {
+export default function DraftCard({ draft, from, onChanged, onRemoved }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const watch = useRef(null);
@@ -65,13 +65,60 @@ export default function DraftCard({ draft, from, onChanged }) {
     setBusy(null);
   };
 
+  // Once it is settled the card has done its job. Nothing folds it away on its own: the
+  // person chooses to hide it (one line, tap to open again) or delete it.
+  const settled = SETTLED.includes(draft.status);
+  const tidy = async (what) => {
+    if (what === 'delete' && !window.confirm('Delete this email card? The email itself is not affected.')) return;
+    setBusy(what);
+    setError(null);
+    try {
+      if (what === 'delete') { await api.del(`/email/drafts/${draft.id}`); onRemoved?.(draft.id); }
+      else onChanged((await api.post(`/email/drafts/${draft.id}/hide`, { hidden: what === 'hide' })).draft);
+    } catch (e) {
+      setError(e.message);
+    }
+    setBusy(null);
+  };
+
+  const status = (
+    <>
+      <Send size={13} strokeWidth={2} className="shrink-0" />
+      <span className="shrink-0">{draft.isReply ? 'Reply' : 'Email'} · {s.label}
+        {draft.status === 'sent' && draft.sentAt && ` · ${sentWhen(draft.sentAt)}`}</span>
+    </>
+  );
+
+  if (settled && draft.hidden) {
+    return (
+      <button onClick={() => tidy('show')} disabled={!!busy} title="Show the whole email"
+        className={`flex w-full items-center gap-1.5 rounded-full border px-3.5 py-2 text-left text-xs ${s.tone} ${s.dot} hover:brightness-125`}>
+        {status}
+        <span className="min-w-0 flex-1 truncate text-mute">· {draft.subject || '(no subject)'}</span>
+        {busy ? <Loader2 size={14} className="shrink-0 animate-spin" /> : <ChevronDown size={14} className="shrink-0" />}
+      </button>
+    );
+  }
+
   return (
     <div className={`rounded-2xl border p-3.5 text-sm ${s.tone}`}>
-      <p className={`mb-2.5 flex items-center gap-1.5 text-xs font-medium ${s.dot}`}>
-        <Send size={13} strokeWidth={2} />
-        {draft.isReply ? 'Reply' : 'Email'} · {s.label}
-        {draft.status === 'sent' && draft.sentAt && ` · ${sentWhen(draft.sentAt)}`}
-      </p>
+      <div className={`mb-2.5 flex items-center gap-1.5 text-xs font-medium ${s.dot}`}>
+        {status}
+        {settled && (
+          <span className="ml-auto flex shrink-0 gap-1">
+            <button onClick={() => tidy('hide')} disabled={!!busy}
+              className="flex items-center gap-1 rounded-full border border-stroke px-2.5 py-1 text-mute hover:text-txt disabled:opacity-60">
+              {busy === 'hide' ? <Loader2 size={12} className="animate-spin" /> : <EyeOff size={12} />} Hide
+            </button>
+            {onRemoved && (
+              <button onClick={() => tidy('delete')} disabled={!!busy}
+                className="flex items-center gap-1 rounded-full border border-stroke px-2.5 py-1 text-mute hover:border-bad/60 hover:text-bad disabled:opacity-60">
+                {busy === 'delete' ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />} Delete
+              </button>
+            )}
+          </span>
+        )}
+      </div>
 
       <dl className="space-y-1 text-[13px]">
         {from && (

@@ -409,6 +409,10 @@ await db.exec(`
     CHECK (status IN ('pending', 'approved', 'sending', 'sent', 'rejected', 'failed'));
 `);
 
+// A settled email card can be folded down to one line in the chat, so an old one stops
+// filling the screen without being thrown away.
+await db.exec(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false`);
+
 // Databases created before this treated agents.id as the OWNER of a document, so
 // deleting a shared agent destroyed every assigned user's files. agent_id is a shelf
 // label; the owner is user_id. Swap the two foreign keys over to SET NULL so a deleted

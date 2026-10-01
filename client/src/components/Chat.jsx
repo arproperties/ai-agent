@@ -367,7 +367,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             ))}
             {drafts.map((d) => (
               <DraftCard key={d.id} draft={d} from={mailbox}
-                onChanged={(u) => setDrafts((ds) => ds.map((x) => (x.id === u.id ? u : x)))} />
+                onChanged={(u) => setDrafts((ds) => ds.map((x) => (x.id === u.id ? u : x)))}
+                onRemoved={(id) => setDrafts((ds) => ds.filter((x) => x.id !== id))} />
             ))}
             {reminders.map((r) => (
               <TeamReminderCard key={r.id} reminder={r}

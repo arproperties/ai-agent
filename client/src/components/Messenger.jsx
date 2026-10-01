@@ -54,7 +54,7 @@ function ChatRow({ row: c, dm, active, onClick }) {
   return (
     <li>
       <button onClick={onClick}
-        className={`flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition ${active ? 'bg-gradient-to-r from-emerald-400/[0.14] to-white/[0.04] ring-1 ring-emerald-400/20' : 'hover:bg-white/[0.05]'}`}>
+        className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition ${active ? 'bg-gradient-to-r from-emerald-400/[0.14] to-white/[0.04] ring-1 ring-emerald-400/10' : 'hover:bg-white/[0.05]'}`}>
         {c.kind === 'group' && !c.isGroup
           ? <span className="grid size-12 shrink-0 place-items-center rounded-full bg-white/[0.07] text-emerald-300"><Hash size={22} /></span>
           : <PersonAvatar id={grouped ? c.id : c.peerId} name={c.name} size={48} group={grouped}
@@ -127,7 +127,7 @@ function ChatList({ dm, activeId, activeGroupId, onOpen, onOpenGroup, onNew, onB
         </>
       )}
 
-      <ul className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-safe">
+      <ul className="min-h-0 flex-1 overflow-y-auto px-3 pb-safe">
         {dm.chats === null && <li className="px-4 py-6 text-sm text-mute">Loading…</li>}
         {dm.chats !== null && rows.length === 0 && (
           <li className="flex flex-col items-center gap-3 px-8 py-14 text-center">
@@ -195,11 +195,11 @@ function GroupPanel({ group, topics, dm, activeId, feedOpen, onBack, onOpen, onO
       </header>
       {error && <p className="px-4 pb-2 text-sm text-bad">{error}</p>}
 
-      <ul className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-safe">
+      <ul className="min-h-0 flex-1 overflow-y-auto px-3 pb-safe">
         {master && topics.length > 0 && (
           <li>
             <button onClick={onOpenFeed}
-              className={`flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition ${feedOpen ? 'bg-gradient-to-r from-emerald-400/[0.14] to-white/[0.04] ring-1 ring-emerald-400/20' : 'hover:bg-white/[0.05]'}`}>
+              className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition ${feedOpen ? 'bg-gradient-to-r from-emerald-400/[0.14] to-white/[0.04] ring-1 ring-emerald-400/10' : 'hover:bg-white/[0.05]'}`}>
               <span className="grid size-12 shrink-0 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 text-white"><Layers size={22} /></span>
               <span className="min-w-0 flex-1">
                 <span className="block font-medium">All topics</span>
@@ -217,7 +217,7 @@ function GroupPanel({ group, topics, dm, activeId, feedOpen, onBack, onOpen, onO
         )}
         {topics.map((t) => <ChatRow key={t.id} row={t} dm={dm} active={t.id === activeId} onClick={() => onOpen(t.id)} />)}
         <li>
-          <button onClick={onNewTopic} className="flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left text-emerald-300 hover:bg-white/5">
+          <button onClick={onNewTopic} className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-emerald-300 hover:bg-white/5">
             <span className="grid size-12 place-items-center rounded-full border border-dashed border-emerald-400/50"><Plus size={22} /></span>
             <span className="font-medium">New topic</span>
           </button>
@@ -347,7 +347,7 @@ function NewChat({ dm, group = null, onClose, onOpened, onOpenedGroup }) {
           <ul className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-safe">
             {step === 'person' && master && (
               <li>
-                <button onClick={() => { setName(''); setStep('group'); }} className="flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left hover:bg-white/5">
+                <button onClick={() => { setName(''); setStep('group'); }} className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left hover:bg-white/5">
                   <span className="grid size-11 place-items-center rounded-full bg-emerald-500 text-white"><Users size={21} /></span>
                   <span className="font-medium">New group</span>
                 </button>

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listDrafts, getDraft, decideDraft, draftOut, logAction, actionLog, sendQuota } from './drafts.js';
+import { listDrafts, getDraft, decideDraft, hideDraft, deleteDraft, draftOut, logAction, actionLog, sendQuota } from './drafts.js';
 import { kick } from './outbox.js';
 
 // Approving and rejecting. This is the only thing in the app that moves a draft out of
@@ -40,6 +40,14 @@ export const emailHandlers = {
   approve: decide('approve', true),
   reject: decide('reject', false),
 
+  hide: async (req, res) => {
+    res.json({ draft: draftOut(await hideDraft(req.user.id, req.params.id, req.body?.hidden !== false)) });
+  },
+  remove: async (req, res) => {
+    await deleteDraft(req.user.id, req.params.id);
+    res.json({ ok: true });
+  },
+
   activity: async (req, res) => {
     res.json({ quota: await sendQuota(req.user.id), actions: await actionLog(req.user.id, 50) });
   },
@@ -52,4 +60,6 @@ emailRoutes.get('/drafts', wrap(emailHandlers.listDrafts));
 emailRoutes.get('/drafts/:id', wrap(emailHandlers.getDraft)); // after /drafts, so it cannot shadow it
 emailRoutes.post('/drafts/:id/approve', wrap(emailHandlers.approve));
 emailRoutes.post('/drafts/:id/reject', wrap(emailHandlers.reject));
+emailRoutes.post('/drafts/:id/hide', wrap(emailHandlers.hide));
+emailRoutes.delete('/drafts/:id', wrap(emailHandlers.remove));
 emailRoutes.get('/activity', wrap(emailHandlers.activity));

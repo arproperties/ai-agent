@@ -67,6 +67,25 @@ export async function decideDraft(userId, id, approved) {
   return getDraft(userId, id);
 }
 
+// Only a settled draft can be hidden or deleted: one still waiting needs a decision, and
+// one approved or sending is in the outbox's hands.
+const SETTLED = ['sent', 'failed', 'rejected'];
+
+export async function hideDraft(userId, id, hidden) {
+  const d = await getDraft(userId, id);
+  if (!d) throw fail(404, 'Draft not found');
+  if (!SETTLED.includes(d.status)) throw fail(409, 'Approve or reject this email first');
+  await db.prepare('UPDATE email_drafts SET hidden = ? WHERE id = ?').run(!!hidden, d.id);
+  return getDraft(userId, id);
+}
+
+export async function deleteDraft(userId, id) {
+  const d = await getDraft(userId, id);
+  if (!d) throw fail(404, 'Draft not found');
+  if (!SETTLED.includes(d.status)) throw fail(409, 'Approve or reject this email first');
+  await db.prepare('DELETE FROM email_drafts WHERE id = ?').run(d.id);
+}
+
 export const draftOut = (d) => d && {
   id: d.id,
   agentId: d.agent_id,
@@ -81,6 +100,7 @@ export const draftOut = (d) => d && {
   isReply: !!d.in_reply_to,
   createdAt: d.created_at,
   sentAt: d.sent_at,
+  hidden: !!d.hidden,
 };
 
 // ---------- the record, and the limit ----------
