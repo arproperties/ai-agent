@@ -221,7 +221,7 @@ export default function EmailPage({ returned, onBack }) {
                 </p>
               )}
               {drafts.map((d) => (
-                <DraftCard key={d.id} draft={d} from={imap?.account?.email}
+                <DraftCard key={d.id} draft={d} from={d.from || imap?.account?.email}
                   onChanged={(u) => setDrafts((ds) => ds.map((x) => (x.id === u.id ? u : x)))} />
               ))}
             </div>

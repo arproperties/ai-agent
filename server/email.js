@@ -150,12 +150,13 @@ function writeTools(ctx) {
 
   return {
     create_draft: async (userId, { to, cc, subject, body, in_reply_to }) => {
+      const acc = await imapAccount(userId);
       // in_reply_to is optional here and best-effort: a draft that cannot be threaded is
       // still a draft worth showing, so a failed lookup loses the headers, not the email.
       const thread = in_reply_to ? await imapActions.original(userId, in_reply_to).catch(() => null) : null;
       const d = show(await createDraft(userId, {
         agentId: ctx.agentId, conversationId: ctx.conversationId,
-        to, cc, subject, body,
+        to, cc, subject, body, from: acc?.email ?? null,
         inReplyTo: thread?.messageId ?? null, refs: thread?.refs ?? null, replyToId: in_reply_to ?? null,
       }));
       await drafted(userId, d);
@@ -170,7 +171,7 @@ function writeTools(ctx) {
         agentId: ctx.agentId, conversationId: ctx.conversationId,
         to,
         subject: replySubject(o.subject),
-        body,
+        body, from: acc.email,
         inReplyTo: o.messageId, refs: o.refs, replyToId: message_id,
       }));
       await drafted(userId, d);
@@ -198,6 +199,15 @@ function writeTools(ctx) {
       act(userId, 'move_email', `${message_id} → ${folder}`, () => imapActions.moveMessage(userId, message_id, folder)),
   };
 }
+
+/**
+ * The name an email from this address is signed with: amran@x.com → Amran,
+ * mary.grace@x.com → Mary Grace. It follows the sending address, so changing the
+ * connected mailbox changes the sign-off with it.
+ */
+export const senderName = (address) => String(address || '').split('@')[0]
+  .split(/[._-]+/).filter((w) => /[a-z]/i.test(w))
+  .map((w) => w[0].toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 
 /** The user's connected mailbox (IMAP first, then Outlook), or null when none is connected. */
 export async function connectedMailbox(userId, ctx = {}) {

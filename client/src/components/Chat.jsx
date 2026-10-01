@@ -366,7 +366,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 onPdf={savedIdOf(m) && m.content && !(m.role === 'assistant' && lastDrawing(m.content)) ? () => setPdfOf({ id: savedIdOf(m), content: m.content, own: m.role === 'user' }) : undefined} />
             ))}
             {drafts.map((d) => (
-              <DraftCard key={d.id} draft={d} from={mailbox}
+              <DraftCard key={d.id} draft={d} from={d.from || mailbox}
                 onChanged={(u) => setDrafts((ds) => ds.map((x) => (x.id === u.id ? u : x)))}
                 onRemoved={(id) => setDrafts((ds) => ds.filter((x) => x.id !== id))} />
             ))}

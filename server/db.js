@@ -413,6 +413,10 @@ await db.exec(`
 // filling the screen without being thrown away.
 await db.exec(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false`);
 
+// The mailbox a draft was written from. The card shows this, not whatever is connected
+// today, so a draft written before a mailbox change still says who it was from.
+await db.exec(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS from_addr TEXT`);
+
 // Databases created before this treated agents.id as the OWNER of a document, so
 // deleting a shared agent destroyed every assigned user's files. agent_id is a shelf
 // label; the owner is user_id. Swap the two foreign keys over to SET NULL so a deleted
