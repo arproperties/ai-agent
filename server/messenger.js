@@ -466,6 +466,19 @@ export const messengerHandlers = {
     res.json(await chatFor(req.user.id, mine.chat_id));
   },
 
+  /** Either person can delete a one-to-one chat: it goes, with its messages and files, for both. */
+  async deleteChat(req, res) {
+    const mine = await membership(req.params.id, req.user.id);
+    if (!mine) throw bad('Not found', 404);
+    if (mine.kind !== 'direct') throw bad('Only a chat with one person can be deleted here');
+    const chatId = mine.chat_id;
+    const members = await memberIds(chatId);
+    await db.prepare('DELETE FROM dm_chats WHERE id = ?').run(chatId);
+    rmSync(`${FILE_DIR}/${chatId}`, { recursive: true, force: true });
+    emit(members, 'removed', { chatId });
+    res.json({ ok: true });
+  },
+
   /** Admins add people. They start from now: earlier messages count as already read. */
   async addMembers(req, res) {
     const mine = await membership(req.params.id, req.user.id);
@@ -556,6 +569,23 @@ export const messengerHandlers = {
     res.json((await groupsFor(req.user, id))[0]);
   },
 
+  /** Only the master. The group goes with every topic in it, their messages and files, for everyone. */
+  async deleteGroup(req, res) {
+    if (!isMaster(req.user)) throw bad('Only the workspace owner can delete a group', 403);
+    const id = Number(req.params.id);
+    // who to tell and which files to clear, read before the rows are gone
+    const topics = (await db.prepare('SELECT id FROM dm_chats WHERE group_id = ?').all(id)).map((c) => c.id);
+    const members = await db.prepare('SELECT chat_id, user_id FROM dm_members WHERE chat_id = ANY(?::int[])').all(topics);
+    const r = await db.prepare('DELETE FROM dm_groups WHERE id = ?').run(id);
+    if (!r.changes) throw bad('Not found', 404);
+    for (const chatId of topics) {
+      rmSync(`${FILE_DIR}/${chatId}`, { recursive: true, force: true });
+      emit(members.filter((m) => m.chat_id === chatId).map((m) => m.user_id), 'removed', { chatId });
+    }
+    emit(await masterIds(), 'group', { id });
+    res.json({ ok: true });
+  },
+
   /**
    * The master's page for a whole group: every topic they are in, as one timeline,
    * newest last. ?before=<id> scrolls back, ?after=<id> catches up after a reconnect.
@@ -594,6 +624,7 @@ messengerRoutes.get('/chats', wrap(h.list));
 messengerRoutes.post('/chats', wrap(h.create));
 messengerRoutes.get('/chats/:id', wrap(h.get));
 messengerRoutes.patch('/chats/:id', wrap(h.rename));
+messengerRoutes.delete('/chats/:id', wrap(h.deleteChat));
 messengerRoutes.get('/chats/:id/messages', wrap(h.messages));
 messengerRoutes.post('/chats/:id/messages', upload.single('file'), wrap(h.send));
 messengerRoutes.post('/chats/:id/share', wrap(h.share));
@@ -607,6 +638,7 @@ messengerRoutes.post('/chats/:id/members/:userId/admin', wrap(h.makeAdmin));
 messengerRoutes.get('/groups', wrap(h.groups));
 messengerRoutes.post('/groups', wrap(h.createGroup));
 messengerRoutes.patch('/groups/:id', wrap(h.renameGroup));
+messengerRoutes.delete('/groups/:id', wrap(h.deleteGroup));
 messengerRoutes.get('/groups/:id/messages', wrap(h.groupMessages));
 messengerRoutes.post('/groups/:id/route', wrap(h.route));
 messengerRoutes.delete('/messages/:id', wrap(h.remove));

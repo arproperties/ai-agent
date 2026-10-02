@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, Search, X, SquarePen, Users, UserPlus, Check, ArrowRight, LogOut, Pencil, MessageCircle, Crown, UserMinus, Lock, Hash, Plus, Layers } from 'lucide-react';
+import { ChevronLeft, Search, X, SquarePen, Users, UserPlus, Check, ArrowRight, LogOut, Pencil, MessageCircle, Crown, UserMinus, Lock, Hash, Plus, Layers, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import Sheet from './Sheet';
 import MessengerChat, { PersonAvatar, Ticks, listTime, preview, lastSeenText } from './MessengerChat';
@@ -167,6 +167,16 @@ function GroupPanel({ group, topics, dm, activeId, feedOpen, onBack, onOpen, onO
       setEditing(false);
     } catch (e) { setError(e.message); }
   };
+  const remove = async () => {
+    const inside = topics.length ? ` Its ${topics.length} topic${topics.length === 1 ? '' : 's'} and all their messages are deleted for everyone.` : '';
+    if (!confirm(`Delete the group "${group.name}"?${inside} This cannot be undone.`)) return;
+    setError('');
+    try {
+      await api.del(`/messenger/groups/${group.id}`);
+      dm.loadChats();
+      dm.setGroups((l) => (l || []).filter((x) => x.id !== group.id)); // the page goes back to the list
+    } catch (e) { setError(e.message); }
+  };
   const unread = topics.reduce((n, t) => n + t.unread, 0);
 
   return (
@@ -189,6 +199,10 @@ function GroupPanel({ group, topics, dm, activeId, feedOpen, onBack, onOpen, onO
             {master && (
               <button onClick={() => { setName(group.name); setEditing(true); }} aria-label="Rename group" title="Rename group"
                 className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>
+            )}
+            {master && (
+              <button onClick={remove} aria-label="Delete group" title="Delete group"
+                className="ml-auto grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-bad/10 hover:text-bad"><Trash2 size={15} /></button>
             )}
           </span>
         )}
@@ -413,6 +427,10 @@ function ChatInfo({ chat, dm, onClose, onLeft }) {
     if (!confirm(`Leave "${chat.name}"?`)) return;
     if (await act(() => api.del(`/messenger/chats/${chat.id}/members/${me.id}`))) onLeft();
   };
+  const removeChat = async () => {
+    if (!confirm(`Delete your chat with ${chat.name}? All its messages are deleted for both of you. This cannot be undone.`)) return;
+    if (await act(() => api.del(`/messenger/chats/${chat.id}`).then(() => dm.refreshChat(chat.id)))) onLeft();
+  };
 
   if (chat.kind === 'direct') {
     const p = dm.people.find((x) => x.id === chat.peerId);
@@ -424,6 +442,10 @@ function ChatInfo({ chat, dm, onClose, onLeft }) {
           {p?.email && <p className="text-sm text-mute">{p.email}</p>}
           <p className="text-sm text-mute">{dm.online.has(chat.peerId) ? 'online' : lastSeenText(dm.lastSeen[chat.peerId])}</p>
         </div>
+        {error && <p className="mb-2 text-sm text-bad">{error}</p>}
+        <button onClick={removeChat} className="mb-3 flex w-full items-center gap-3 rounded-2xl px-2.5 py-3 text-bad hover:bg-bad/10">
+          <Trash2 size={20} /> Delete chat
+        </button>
         <PrivacyNote className="border-t border-stroke/60 pt-3" />
       </Sheet>
     );

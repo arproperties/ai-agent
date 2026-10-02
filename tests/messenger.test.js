@@ -352,6 +352,50 @@ test('anyone in a group can add a topic, the master is always in it, and nobody 
   assert.deepEqual((await call(h.list, { user: boss })).body.map((c) => c.name).sort(), ['Deals', 'Leads']);
 });
 
+test('only the master deletes a group, and its topics and messages go for everyone', async () => {
+  await reset();
+  const [boss, tom] = await people('Boss', 'Tom');
+  const groupId = await makeGroup(boss, 'Sales');
+  const other = await makeGroup(boss, 'Office');
+  const leads = (await call(h.create, { user: boss, body: { groupId, name: 'Leads', members: [tom.id] } })).body;
+  const kept = (await call(h.create, { user: boss, body: { groupId: other, name: 'Desk', members: [tom.id] } })).body;
+  await call(h.send, { user: tom, params: { id: leads.id }, body: { body: 'hi' } });
+  await call(h.send, { user: tom, params: { id: kept.id }, body: { body: 'stay' } });
+
+  assert.equal((await call(h.deleteGroup, { user: tom, params: { id: groupId } })).status, 403);
+  const s = connect(tom);
+  assert.equal((await call(h.deleteGroup, { user: boss, params: { id: groupId } })).status, 200);
+  await tick();
+  assert.deepEqual(s.of('removed'), [{ chatId: leads.id }], 'Tom is told the topic is gone');
+  s.close();
+
+  assert.deepEqual((await call(h.groups, { user: boss })).body.map((g) => g.name), ['Office']);
+  assert.deepEqual((await call(h.list, { user: tom })).body.map((c) => c.name), ['Desk'], 'the other group is untouched');
+  assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM dm_messages WHERE chat_id = ?').get(leads.id)).n, 0);
+  assert.equal((await call(h.deleteGroup, { user: boss, params: { id: groupId } })).status, 404);
+});
+
+test('either person deletes a one-to-one chat, for both, and nobody outside it can', async () => {
+  await reset();
+  const [sara, tom, eve] = await people('Sara', 'Tom', 'Eve');
+  const chat = (await call(h.create, { user: sara, body: { userId: tom.id } })).body;
+  await call(h.send, { user: sara, params: { id: chat.id }, body: { body: 'hi' } });
+
+  assert.equal((await call(h.deleteChat, { user: eve, params: { id: chat.id } })).status, 404);
+  const s = connect(sara);
+  assert.equal((await call(h.deleteChat, { user: tom, params: { id: chat.id } })).status, 200);
+  await tick();
+  assert.deepEqual(s.of('removed'), [{ chatId: chat.id }], 'Sara is told it is gone');
+  s.close();
+
+  assert.deepEqual((await call(h.list, { user: sara })).body, []);
+  assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM dm_messages WHERE chat_id = ?').get(chat.id)).n, 0);
+
+  // a topic is not deleted this way: that is leaving it, or the master deleting its group
+  const topic = (await call(h.create, { user: sara, body: { groupId: await makeGroup(sara), name: 'Office', members: [tom.id] } })).body;
+  assert.equal((await call(h.deleteChat, { user: sara, params: { id: topic.id } })).status, 400);
+});
+
 test('a topic must go in a group', async () => {
   await reset();
   const [sara, tom] = await people('Sara', 'Tom');

@@ -10,7 +10,7 @@
 // just swiped away) does not count, so those people still get the notification.
 import { api } from './api';
 
-const EVENTS = ['ready', 'message', 'receipt', 'typing', 'presence', 'chat', 'removed'];
+const EVENTS = ['ready', 'message', 'receipt', 'typing', 'presence', 'chat', 'group', 'removed'];
 const listeners = new Set();
 let source = null;
 let wanted = false;
