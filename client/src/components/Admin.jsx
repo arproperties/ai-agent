@@ -250,8 +250,6 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
           )}
         </div>
 
-        {!editing && <HrLink person={person} />}
-
         {editing ? (
           <EditPerson key={person.id} person={person} isMe={person.id === me.id}
             onSaved={(msg) => { setEditing(false); setNote(msg); onChanged(); }}
@@ -275,7 +273,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
 
         {tab === 'duties' && <ResponsibilitiesEditor person={person} isMe={person.id === me.id} />}
         {tab === 'memory' && <Memories person={person} />}
-        {tab === 'saifsys' && <SaifsysModules person={person} />}
+        {tab === 'saifsys' && <><HrLink person={person} /><SaifsysModules person={person} /></>}
         {(tab === 'documents' || tab === 'conversations' || tab === 'messages') && <Browse person={person} kind={tab} />}
 
         {tab === 'agents' && (!loaded ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (

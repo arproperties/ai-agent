@@ -27,21 +27,23 @@ export default function HrLink({ person }) {
   const save = () => run(async () => { setLink(await api.put(`/hr-link/user/${person.id}`, { code: found.code })); setOpen(false); setFound(null); });
   const unlink = () => confirm(`Unlink ${person.name} from HR ${link.code}?`) && run(async () => { await api.del(`/hr-link/user/${person.id}`); setLink(null); });
 
-  if (link === undefined) return null;
-  const btn = 'rounded-full px-2 py-0.5 text-xs text-mute hover:bg-white/10 hover:text-txt';
+  if (link === undefined) return <Loader2 size={18} className="mx-auto my-3 animate-spin text-mute" />;
+  const btn = 'rounded-full px-2.5 py-1 text-xs text-mute hover:bg-white/10 hover:text-txt';
 
   return (
-    <div className="mt-1.5 text-xs">
+    <div className="space-y-1.5">
+      <span className="text-[11px] font-medium tracking-[0.14em] text-mute">HR EMPLOYEE</span>
       {!open && (
-        <p className="flex flex-wrap items-center gap-1 text-mute">
-          <Link2 size={12} />
-          {link ? <>HR <span className="text-txt">{link.code}</span>{link.name && ` · ${link.name}`}</> : 'Not linked to HR'}
+        <p className="flex flex-wrap items-center gap-1.5 rounded-xl bg-white/5 px-3 py-2.5 text-sm text-mute">
+          <Link2 size={14} />
+          {link ? <><span className="text-txt">{link.code}</span>{link.name && ` · ${link.name}`}</> : 'Not linked to HR yet'}
+          <span className="flex-1" />
           <button onClick={() => { setOpen(true); setCode(link?.code || ''); }} className={btn}>{link ? 'Change' : 'Link'}</button>
           {link && <button onClick={unlink} disabled={busy} className={`${btn} hover:text-bad`}>Unlink</button>}
         </p>
       )}
       {open && (
-        <div className="space-y-2 rounded-xl border border-stroke/60 bg-white/[0.03] p-2.5">
+        <div className="space-y-2 rounded-xl text-xs border border-stroke/60 bg-white/[0.03] p-2.5">
           <form onSubmit={lookup} className="flex gap-2">
             <input value={code} onChange={(e) => { setCode(e.target.value); setFound(null); }} autoFocus placeholder="Employee code, e.g. E00012"
               className="glass min-w-0 flex-1 rounded-lg px-3 py-1.5 text-sm uppercase outline-none focus:border-p1/70" />
