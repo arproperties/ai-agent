@@ -5,7 +5,7 @@ import { groupChats } from '../lib/chatGroups';
 import Icon from './Icon';
 import Avatar from './Avatar';
 import { NotifyBell } from './Notifications';
-import { Row, Count } from './NavRow';
+import { Row } from './NavRow';
 import SettingsMenu from './SettingsMenu';
 
 // The sidebar is deliberately monochrome. Every destination is the same quiet row, so
@@ -100,9 +100,24 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
         </span>
       </header>
 
-      {/* Pinned: the three things you reach for without looking. */}
-      <div className="space-y-0.5 px-2">
-        <Row icon={<Icon name="edit" size={17} />} label="New chat" onClick={onNewChat} />
+      {/* New chat and Team chat sit side by side as buttons; search is a row below. */}
+      <div className="flex gap-2 px-4 pb-2">
+        <button onClick={onNewChat}
+          className="flex flex-1 items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98]">
+          <Icon name="edit" size={17} /> New chat
+        </button>
+        {/* Team chat: messages between people - separate from the AI chats below */}
+        <button onClick={onMessages} aria-label={unreadMessages ? `Team chat, ${unreadMessages} unread` : 'Team chat'}
+          className={`relative flex flex-1 items-center justify-center gap-2 rounded-full border py-2.5 text-sm font-medium transition active:scale-[0.98] ${messagesOpen ? 'border-emerald-400/60 bg-emerald-400/15 text-emerald-200' : 'border-stroke bg-white/[0.05] hover:bg-white/10'}`}>
+          <Users size={17} className="text-emerald-300" /> Team chat
+          {unreadMessages > 0 && (
+            <span className="absolute -right-1 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-semibold text-white ring-2 ring-[#0f0d20]">
+              {unreadMessages > 99 ? '99+' : unreadMessages}
+            </span>
+          )}
+        </button>
+      </div>
+      <div className="px-2">
         {searching ? (
           <div className="flex items-center gap-2.5 rounded-lg bg-white/[0.06] px-2.5">
             <Search size={17} className="shrink-0 text-mute" />
@@ -115,10 +130,6 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
           <Row icon={<Search size={17} />} label="Search chats"
             onClick={() => { setSearching(true); requestAnimationFrame(() => searchRef.current?.focus()); }} />
         )}
-        {/* Team chat: messages between people - separate from the AI chats below */}
-        <Row icon={<Users size={17} />} label="Team chat" active={messagesOpen} onClick={onMessages}
-          aria-label={unreadMessages ? `Team chat, ${unreadMessages} unread` : 'Team chat'}
-          badge={<Count n={unreadMessages} tone="unread" />} />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2">
