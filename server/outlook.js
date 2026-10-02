@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
 import { db } from './db.js';
+import { MAX_BYTES, pickAttachment, attachmentText } from './emailAttachments.js';
 
 // Outlook via Microsoft Graph. Read-only: agents can search and read mail, never send, move or delete.
 const { MS_CLIENT_ID, MS_CLIENT_SECRET } = process.env;
@@ -163,4 +164,15 @@ async function readEmail(userId, { id }) {
   ].join('\n');
 }
 
-export const outlookTools = { search_email: searchEmail, read_email: readEmail };
+async function readAttachment(userId, { id, name }) {
+  const path = `/me/messages/${encodeURIComponent(String(id || ''))}/attachments`;
+  const { value = [] } = await graph(userId, `${path}?$select=id,name,contentType,size,isInline`);
+  const pick = pickAttachment(value.filter((a) => !a.isInline), name);
+  if (pick.size > MAX_BYTES) throw new Error(`${pick.name} is too large to read (over ${MAX_BYTES / 1024 / 1024} MB).`);
+  // Only a real file carries bytes: an attached email or a OneDrive link has no contentBytes.
+  const a = await graph(userId, `${path}/${encodeURIComponent(pick.id)}`);
+  if (!a.contentBytes) throw new Error(`${pick.name} is not a file that can be read here.`);
+  return attachmentText({ name: pick.name, mimetype: pick.contentType, buffer: Buffer.from(a.contentBytes, 'base64') });
+}
+
+export const outlookTools = { search_email: searchEmail, read_email: readEmail, read_attachment: readAttachment };

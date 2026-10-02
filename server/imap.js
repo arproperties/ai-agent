@@ -5,6 +5,7 @@ import { resolveMx } from 'node:dns/promises';
 import { db } from './db.js';
 import { encrypt, decrypt } from './secrets.js';
 import { smtpDefaults } from './smtp.js';
+import { pickAttachment, attachmentText } from './emailAttachments.js';
 
 // Any IMAP mailbox (Titan, Gmail, Zoho, Yahoo, cPanel hosting…). Read-only: folders are opened with EXAMINE,
 // so reading never marks mail as read, and nothing is sent, moved or deleted.
@@ -204,7 +205,8 @@ async function searchEmail(userId, { query = '', folder, unread_only, since, lim
   ].join('\n')).join('\n\n');
 }
 
-async function readEmail(userId, { id }) {
+// One whole message, parsed. `path` rides along because read_email reports the folder.
+async function fetchParsed(userId, id) {
   const i = String(id || '').lastIndexOf(':');
   const path = String(id).slice(0, i);
   const uid = Number(String(id).slice(i + 1));
@@ -217,7 +219,20 @@ async function readEmail(userId, { id }) {
       return simpleParser(m.source);
     } finally { lock.release(); }
   });
-  const files = (p.attachments || []).filter((a) => a.contentDisposition !== 'inline').map((a) => a.filename || 'unnamed');
+  return { p, path };
+}
+
+const attached = (p) => (p.attachments || []).filter((a) => a.contentDisposition !== 'inline')
+  .map((a) => ({ name: a.filename || 'unnamed', mimetype: a.contentType, buffer: a.content }));
+
+async function readAttachment(userId, { id, name }) {
+  const { p } = await fetchParsed(userId, id);
+  return attachmentText(pickAttachment(attached(p), name));
+}
+
+async function readEmail(userId, { id }) {
+  const { p, path } = await fetchParsed(userId, id);
+  const files = attached(p).map((a) => a.name);
   const body = String(p.text || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
   return [
     `Subject: ${p.subject || '(no subject)'}`,
@@ -232,7 +247,7 @@ async function readEmail(userId, { id }) {
   ].join('\n');
 }
 
-export const imapTools = { search_email: searchEmail, read_email: readEmail };
+export const imapTools = { search_email: searchEmail, read_email: readEmail, read_attachment: readAttachment };
 
 /**
  * The newest inbox mail since a moment, as plain records rather than a tool's text — for

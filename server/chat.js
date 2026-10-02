@@ -86,6 +86,8 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   if (mailbox) {
     parts.push(`You can read ${user.name}'s email (${mailbox.address}) with search_email and read_email. Use them when they ask about their emails, ` +
       'messages from someone, bills, bookings or anything likely to be in their inbox. ' +
+      'read_attachment opens a file attached to an email (PDF, Word, text, image): when an email has attachments, offer to read them, ' +
+      'and read them without asking when the answer is plainly in the file. ' +
       "When you use an email, mention its sender and date (and link it when an 'Open in Outlook' link is given).");
     if (mailbox.canWrite) {
       parts.push(`You can also act on this mailbox. create_draft and reply_email write an email and put it in front of ${user.name} with ` +

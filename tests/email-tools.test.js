@@ -26,7 +26,7 @@ test('a read-only mailbox is never shown a tool that could act', async () => {
   const m = await connectedMailbox(await mailbox(false));
 
   assert.equal(m.canWrite, false);
-  assert.deepEqual(names(m.definitions), ['read_email', 'search_email']);
+  assert.deepEqual(names(m.definitions), ['read_attachment', 'read_email', 'search_email']);
   assert.equal(await m.run({ id: 'x', name: 'send_email', input: { draft_id: 1 } }).then((r) => r.is_error), true,
     'and asking for one by name is refused, not improvised');
 });
@@ -37,7 +37,7 @@ test('opting in adds exactly the six', async () => {
 
   assert.equal(m.canWrite, true);
   assert.deepEqual(names(m.definitions),
-    ['create_draft', 'mark_read', 'mark_unread', 'move_email', 'read_email', 'reply_email', 'search_email', 'send_email']);
+    ['create_draft', 'mark_read', 'mark_unread', 'move_email', 'read_attachment', 'read_email', 'reply_email', 'search_email', 'send_email']);
 });
 
 test('there is no tool that deletes', () => {
@@ -184,5 +184,5 @@ test('an Outlook mailbox is never given the write tools', async () => {
   const m = await connectedMailbox(userId);
 
   assert.equal(m.canWrite, false, 'sending through Graph is a separate integration that does not exist');
-  assert.deepEqual(m.definitions.map((t) => t.name).sort(), ['read_email', 'search_email']);
+  assert.deepEqual(m.definitions.map((t) => t.name).sort(), ['read_attachment', 'read_email', 'search_email']);
 });

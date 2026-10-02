@@ -26,8 +26,23 @@ export const EMAIL_READ_TOOLS = [
   },
   {
     name: 'read_email',
-    description: 'Read one email in full (recipients, body text and attachment names) by the id from search_email.',
+    description: 'Read one email in full (recipients, body text and attachment names) by the id from search_email. ' +
+      'To read what is inside an attachment, use read_attachment.',
     input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'read_attachment',
+    description: 'Read the contents of one file attached to an email: PDF (including scanned ones), Word (.docx), text/CSV and images. ' +
+      'Takes the email id from search_email and the attachment name as read_email listed it. Returns the text of the file. ' +
+      'It only reads: nothing is saved, and the email is not marked as read.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The id of the email, exactly as search_email gave it.' },
+        name: { type: 'string', description: 'The attachment file name. May be left out when the email has only one attachment.' },
+      },
+      required: ['id'],
+    },
   },
 ];
 
@@ -112,6 +127,7 @@ export function statusFor(name, input = {}) {
   const q = String(input.query || '').slice(0, 60);
   switch (name) {
     case 'read_email': return 'Reading an email…';
+    case 'read_attachment': return input.name ? `Reading ${String(input.name).slice(0, 60)}…` : 'Reading an attachment…';
     case 'search_email': return q ? `Searching your email: “${q}”` : 'Checking your inbox…';
     case 'create_draft': return 'Writing a draft…';
     case 'reply_email': return 'Writing a reply…';
