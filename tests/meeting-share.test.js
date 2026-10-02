@@ -4,7 +4,7 @@ import express from 'express';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
 import { engine, saveVoice, createMeeting, addPart, finishMeeting, getMeeting, settled } from '../server/meetings.js';
 import { meetingShareRoutes, meetingMarkdown, meetingText } from '../server/meetingShare.js';
-import { getDraft } from '../server/drafts.js';
+import { getDraft, PER_HOUR } from '../server/drafts.js';
 import { deliver } from '../server/outbox.js';
 import { encrypt } from '../server/secrets.js';
 
@@ -81,11 +81,14 @@ test('emailing needs a mailbox, then goes out with the PDF attached', async () =
     assert.equal((await post({ to: 'bob@example.com' })).status, 400, 'no mailbox yet');
     await db.prepare(`INSERT INTO imap_accounts (user_id, email, host, username, password_enc, smtp_host, smtp_port, smtp_secure, can_write)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(user, 'boss@acme.ae', 'imap.titan.email', 'boss@acme.ae', encrypt('pw'), 'smtp.titan.email', 465, true, true);
+    // A full send quota holds the queue still, so the route's draft is what the test reads.
+    for (let i = 0; i < PER_HOUR; i++) await db.prepare(`INSERT INTO email_action_log (user_id, action, ok, created_at) VALUES (?, 'send', true, ?)`).run(user, Math.floor(Date.now() / 1000) - 60);
     const res = await post({ to: 'bob@example.com', subject: 'Notes', body: 'See attached.' });
     const out = await res.json();
     assert.equal(res.status, 200, out.error);
     assert.equal(out.attached, true);
     assert.deepEqual(out.draft.attachments, ['Q4 rent review.pdf']);
+    assert.equal(out.draft.status, 'approved', 'tapping Send is the approval');
 
     // Deliver it to a stand-in mail server and look at what would have gone.
     await db.prepare(`UPDATE email_drafts SET status = 'sending' WHERE id = ?`).run(out.draft.id);
