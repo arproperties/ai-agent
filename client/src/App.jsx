@@ -15,6 +15,7 @@ import TranscribePage from './components/Transcribe';
 import TenantCarePage from './components/TenantCare';
 import ResponsibilitiesPage from './components/Responsibilities';
 import PropertiesPage from './components/Properties';
+import LeasingPage from './components/Leasing';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { NotifyPrompt } from './components/Notifications';
@@ -138,6 +139,7 @@ export default function App() {
           tenantCare={tenantCare} tenantCareOpen={panel === 'tenantcare'} onTenantCare={() => { setPanel('tenantcare'); setDrawer(false); }}
           dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
           propertiesOpen={panel === 'properties'} onProperties={() => { setPanel('properties'); setDrawer(false); }}
+          leasingOpen={panel === 'leasing'} onLeasing={() => { setPanel('leasing'); setDrawer(false); }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
@@ -183,6 +185,7 @@ export default function App() {
         {panel === 'tenantcare' && <TenantCarePage me={me} onBack={() => setPanel(null)} onChanged={loadTenantCare} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
         {panel === 'properties' && <PropertiesPage me={me} onBack={() => setPanel(null)} />}
+        {panel === 'leasing' && <LeasingPage onBack={() => setPanel(null)} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
         {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}

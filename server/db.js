@@ -1101,3 +1101,46 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_prop_documents ON prop_documents(company_id, lower(title));
 `);
+
+// Leasing: the people and companies who rent units, and their bookings. A booking is any
+// stay, a month or a five-year lease alike; its rent is set here, never on the unit.
+//   status: draft (holds nothing) → confirmed (the unit is taken for those dates), or
+//     cancelled. Whether a confirmed one is upcoming, running or over comes from its dates.
+//   end_date: the last night, inclusive. Two confirmed bookings of one unit never share
+//     a day — checked in leasing.js under a lock on the unit row.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lease_tenants (
+    id SERIAL PRIMARY KEY,
+    kind       TEXT NOT NULL DEFAULT 'person',
+    full_name  TEXT NOT NULL,
+    nationality TEXT,
+    emirates_id_no TEXT,
+    emirates_id_expiry DATE,
+    passport_no TEXT,
+    phone      TEXT,
+    email      TEXT,
+    notes      TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS lease_bookings (
+    id SERIAL PRIMARY KEY,
+    unit_id    INTEGER NOT NULL REFERENCES prop_units(id) ON DELETE RESTRICT,
+    tenant_id  INTEGER NOT NULL REFERENCES lease_tenants(id) ON DELETE RESTRICT,
+    type       TEXT NOT NULL DEFAULT 'short_term',
+    start_date DATE NOT NULL,
+    end_date   DATE NOT NULL,
+    rent_amount NUMERIC NOT NULL,
+    rent_period TEXT NOT NULL DEFAULT 'month',
+    payment_frequency TEXT NOT NULL DEFAULT 'monthly',
+    security_deposit NUMERIC,
+    status     TEXT NOT NULL DEFAULT 'draft',
+    contract_no TEXT,
+    cancel_reason TEXT,
+    notes      TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    CHECK (end_date >= start_date)
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_bookings_unit ON lease_bookings(unit_id, start_date);
+`);

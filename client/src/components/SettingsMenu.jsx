@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Building2, ClipboardList, Landmark } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Building2, ClipboardList, Landmark, KeyRound } from 'lucide-react';
 import Icon from './Icon';
 import { Row, Count } from './NavRow';
 
@@ -14,7 +14,7 @@ import { Row, Count } from './NavRow';
  * and a number nobody can see is a number that stops working. So the counts stay on the
  * items inside, and a single dot on the gear says "something in here wants you".
  */
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, filesOpen, todosOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, propertiesOpen, onFiles, onTodos, onMeetings, onTranscribe, onTenantCare, onDuties, onProperties, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, filesOpen, todosOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, propertiesOpen, leasingOpen, onFiles, onTodos, onMeetings, onTranscribe, onTenantCare, onDuties, onProperties, onLeasing, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef(null);
 
@@ -61,6 +61,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
           )}
           <Row role="menuitem" icon={<ClipboardList size={17} strokeWidth={1.75} />} label="My responsibilities" active={dutiesOpen} onClick={go(onDuties)} />
           <Row role="menuitem" icon={<Landmark size={17} strokeWidth={1.75} />} label="Properties" active={propertiesOpen} onClick={go(onProperties)} />
+          <Row role="menuitem" icon={<KeyRound size={17} strokeWidth={1.75} />} label="Leasing" active={leasingOpen} onClick={go(onLeasing)} />
           <Row role="menuitem" icon={<Icon name="brain" size={17} />} label="Memory" onClick={go(onMemory)} />
           <Row role="menuitem" icon={<Icon name="mail" size={17} />} label="Email" onClick={go(onEmail)} />
           {/* Only the master manages people; the server refuses anyone else. */}

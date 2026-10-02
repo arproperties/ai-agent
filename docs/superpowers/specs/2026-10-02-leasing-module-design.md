@@ -42,7 +42,7 @@ tracked separately and by hand, which causes three problems:
 | D1 | Short stays and yearly leases are **one thing: a Booking**, with a type (`short_term` / `lease`) | One form, one alert engine, one set of reports. The only differences are the contract and the alert wording. |
 | D2 | When a booking is saved, the system **writes out the full payment schedule** (one row per installment) | Alerts and reports become simple questions: "which rows are due or unpaid?" |
 | D3 | Payments are recorded **against an installment** and can be partial | Tenants often pay part now and the rest later. The amount still owed must be exact. |
-| D4 | Payment methods: **cheque (including post-dated), bank transfer, cash, card** | UAE leases often use post-dated cheques. Cheques get their own status (held → deposited → cleared / bounced). |
+| D4 | Payment methods: **bank transfer, cash, card** only. No cheques (post-dated or otherwise). No payment gateway: staff record each payment by hand after it arrives. | Decided by the business 2026-10-02. Keeps the schedule simple: a payment counts the day it is recorded. |
 | D5 | **Every booking has a contract document** | A short stay gets a generated booking agreement (PDF). A lease gets the Ejari/Tawtheeq number plus the uploaded signed contract. |
 | D6 | Alerts use the **existing push and reminder machinery** (`push.js`, the minute timer in `reminders.js`, sent-once log like `reminders_sent`) | It is already proven in production, and staff already get notifications on their phones. |
 | D7 | Access follows the **existing master role**. Other staff are assigned to companies or buildings and only see those. | Matches how Jarvis already handles permissions. |
@@ -52,7 +52,7 @@ tracked separately and by hand, which causes three problems:
 
 ```
 companies ─┬─ buildings ─┬─ units ─── bookings ─┬─ installments ─── payments
-           │             │                      ├─ documents (contract, IDs, cheque scans)
+           │             │                      ├─ documents (contract, IDs, payment slips)
            │             │                      └─ booking_events (history)
            └─ leasing_staff (who looks after which company/building)
 tenants ───────────────────────────────┘
@@ -84,7 +84,7 @@ A tenant can have many bookings over time.
 | type | `short_term` (under 12 months) or `lease` (12 months or more). Suggested from the dates; staff can change it. |
 | start_date, end_date | end date is exclusive in calculations and shown inclusive on screen |
 | rent_amount, rent_period | e.g. 4,500 per `month`, or 60,000 per `year` |
-| payment_frequency | `monthly`, `quarterly`, `every_4_months`, `every_6_months`, `yearly`, `upfront`, `custom` (cheques with their own dates) |
+| payment_frequency | `monthly`, `quarterly`, `every_4_months`, `every_6_months`, `yearly`, `upfront`, `custom` (staff set their own due dates) |
 | security_deposit, deposit_status | `held` / `refunded` / `partly_refunded` / `kept` |
 | other_charges | commission, admin fee, DEWA deposit, chiller… (each one is a one-off installment row) |
 | status | `draft` → `confirmed` → `active` → `ended` / `cancelled` / `renewed` |
@@ -104,28 +104,25 @@ How the schedule is made when a booking is confirmed:
 - Rent: from start_date, one row each period up to end_date. If the last period is
   shorter, it is **pro-rated by days** (staff can override the amount).
 - Deposit and one-off fees: one row each, due on start_date.
-- `custom`: staff type in the cheque dates and amounts (this matches 4 or 12 post-dated cheques).
+- `custom`: staff type in their own due dates and amounts.
 - If the dates, rent or frequency change on a confirmed booking, the schedule is rebuilt
   **only for unpaid future rows**. Paid rows never change.
 
 ### payments
-id, installment_id, amount, method (`cheque` / `transfer` / `cash` / `card`), received_on,
-reference (transfer ref), cheque_no, cheque_bank, cheque_date,
-cheque_status (`held` / `deposited` / `cleared` / `bounced` / `replaced`), receipt_no,
-recorded_by, notes.
-- A payment counts toward `amount_paid` when it is received, **except a cheque, which only
-  counts once it clears**. A bounced cheque puts the installment back to unpaid and sends
+id, installment_id, amount, method (`transfer` / `cash` / `card`), received_on,
+reference (bank transfer ref or card slip no.), receipt_no, recorded_by, notes.
+- A payment counts toward `amount_paid` as soon as it is recorded.
   an alert at once.
 - Every payment can produce a receipt PDF on the company letterhead (we reuse the ACE
   receipt layout we already have).
 
 ### documents
 id, owner (booking / tenant / unit), kind (`contract`, `emirates_id`, `passport`,
-`trade_license`, `cheque_scan`, `other`), file, uploaded_by, uploaded_at. Uses the existing
+`trade_license`, `other`), file, uploaded_by, uploaded_at. Uses the existing
 file storage.
 
 ### booking_events
-An activity log: created, confirmed, payment recorded, cheque bounced, renewed, cancelled,
+An activity log: created, confirmed, payment recorded, renewed, cancelled,
 note added. Who did it, and when. This answers "what happened with this tenant?"
 
 ### leasing_staff
@@ -139,7 +136,7 @@ user_id, company_id or building_id, role (`manager` / `staff` / `viewer`). The m
 2. Choose or create a tenant. If a tenant with the same Emirates ID or phone already
    exists, the system says so.
 3. Rent, frequency, deposit, fees. A preview of the payment schedule updates as you type.
-4. Upload documents (ID, passport, cheque scans).
+4. Upload documents (ID, passport, payment slips).
 5. Save as **draft**, or **confirm**. Confirming locks the unit for those dates and creates the schedule.
 6. Contract: for a short stay, generate the booking agreement PDF. For a lease, enter the
    Ejari/Tawtheeq no. and upload the signed contract. (A booking can be confirmed without
@@ -147,8 +144,8 @@ user_id, company_id or building_id, role (`manager` / `staff` / `viewer`). The m
 
 ### 6.2 Record a payment
 From the booking, or from the overdue list, staff tap an installment, then **Record
-payment**, then choose the method and amount, then save. A receipt is offered. For cheques,
-recording when the cheque is deposited, clears or bounces is one tap each.
+payment**, then choose the method (transfer, cash, card), amount and reference, then save.
+A receipt is offered. There is no payment gateway: money arrives outside the app.
 
 ### 6.3 End, renew or cancel
 - **Renew:** copies the booking with new dates and rent. The old booking becomes `renewed` and the new one is linked to it.
@@ -170,8 +167,6 @@ the same sent-once log idea as `reminders_sent`, so a server restart never repea
 | Payment coming up | 3 days before due date | responsible |
 | Payment due today | on the due date, 09:00 | responsible |
 | Overdue | 1, 3 and 7 days after, then every 7 days until paid or waived | responsible. From 7 days, the building's manager too. |
-| Cheque to deposit | on the cheque date for a `held` cheque | responsible |
-| Cheque bounced | immediately when marked | responsible + manager |
 | Lease ending | 90, 60 and 30 days before end_date (short stays: 14 and 3 days) | responsible |
 | Missing contract | 3 days after confirmation if there is no contract no./file | responsible |
 | Emirates ID expiring | 30 days before expiry, for active tenants | responsible |
@@ -203,7 +198,7 @@ exported to Excel and PDF.
    collected, overdue total, leases ending in 60 days, missing contracts.
 2. **Rent roll:** every unit, tenant, rent, frequency, contract dates and status.
 3. **Overdue / aging:** amount owed per tenant, grouped 0–30 / 31–60 / 61–90 / 90+ days.
-4. **Collections:** payments received in a period, by method, by building. Cheques held for deposit.
+4. **Collections:** payments received in a period, by method (transfer, cash, card), by building.
 5. **Expiring leases:** the next 30/60/90 days, with renewal status.
 6. **Vacancy:** vacant units and the number of days each has been vacant.
 7. **Tenant statement:** one tenant's installments and payments, printable to send to them.
@@ -224,7 +219,7 @@ Reem never records payments or changes bookings. People do that on the screens.
 3. **Bookings:** list with filters, plus the **New booking** wizard (6.1).
 4. **Booking page:** details, schedule with paid/unpaid, payments, documents, history, actions.
 5. **Tenants:** list and profile (all their bookings, total owed).
-6. **Payments:** due today, overdue, cheques to deposit (where staff spend their day).
+6. **Payments:** due today, overdue, recently recorded (where staff spend their day).
 7. **Reports.**
 8. **Settings:** staff assignments, alert rules, agreement template, receipt numbering.
 
@@ -243,7 +238,7 @@ units have to be right first.
 | **1b. Buildings** | buildings under a company (emirate, area, plot/Makani, documents), staff assignment per company/building | every real building is entered under the right company, and staff only see theirs |
 | **1c. Units** | units under a building (no., floor, type, size, furnished, default rents, DEWA no., blocked/available), floor grid view, Excel import for units | all units of every building are in, and none is duplicated |
 | **1d. Tenants & bookings** | tenants, bookings with the no-overlap rule, booking documents | staff can enter current tenants, and double-booking is impossible |
-| **2. Schedule & payments** | installment generation, record payments, cheque statuses, receipts, booking agreement PDF | every current tenant's schedule matches what the office expects |
+| **2. Schedule & payments** | installment generation, record payments (transfer, cash, card), receipts, booking agreement PDF | every current tenant's schedule matches what the office expects |
 | **3. Alerts** | daily job, all alert rules, push + in-app list, daily summary, settings | one full week with alerts arriving correctly and no duplicates |
 | **4. Reports** | dashboard + the 7 reports + Excel/PDF export | the boss can get the monthly numbers without asking anyone |
 | **5. Reem + tenant reminders** (optional) | read-only Reem tools; WhatsApp/email reminders to tenants | after the boss approves the wording |
@@ -255,8 +250,8 @@ records in on day one instead of retyping them.
 ## 13. Testing
 
 - Unit tests for the parts most likely to break: schedule generation (monthly, yearly,
-  custom cheques, pro-rated last month, mid-booking changes), overlap rule, status
-  changes, alert rules with sent-once behaviour, cheque bounce bringing a debt back.
+  custom dates, pro-rated last month, mid-booking changes), overlap rule, status
+  changes, alert rules with sent-once behaviour, partial payments adding up correctly.
 - Run in the dev copy (`/root/jarvis-dev`) with test data. Never against production.
 - Before go-live: enter one real building in parallel with the current method for one
   month and compare the numbers.
@@ -272,7 +267,7 @@ records in on day one instead of retyping them.
 
 ## 15. Open questions for the business
 
-1. How do tenants usually pay: post-dated cheques, monthly transfer/cash, or a mix? (The design supports all of these. The answer sets which screen we polish first.)
+1. ~~How do tenants pay?~~ Decided: bank transfer, cash or card. No cheques, no payment gateway.
 2. Which emirates are the buildings in (Ejari vs. Tawtheeq)?
 3. Who should get alerts: one person per building, or per booking?
 4. Is VAT charged on any units (commercial units, short stays)? If so, receipts need TRN and VAT lines.

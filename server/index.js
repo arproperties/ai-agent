@@ -24,6 +24,7 @@ import { teamReminderRoutes } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { propertyRoutes } from './properties.js';
+import { leasingRoutes } from './leasing.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
@@ -66,6 +67,7 @@ app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks 
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/properties', propertyRoutes); // companies, buildings and units; the base for leasing (master writes)
+app.use('/api/leasing', leasingRoutes); // tenants and bookings of units; the rent is set per booking
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

@@ -87,7 +87,7 @@ export async function remove(kind, id) {
     const r = await db.prepare(`DELETE FROM ${KINDS[kind].table} WHERE id = ?`).run(Number(id));
     if (!r.changes) throw bad('Not found', 404);
   } catch (e) {
-    if (e.code === '23503') throw bad(kind === 'company' ? 'Remove its buildings first.' : 'Remove its units first.', 409);
+    if (e.code === '23503') throw bad({ company: 'Remove its buildings first.', building: 'Remove its units first.', unit: 'This unit has bookings. Cancel or delete them first.' }[kind], 409);
     throw e;
   }
   for (const f of files) rmSync(f, { force: true });
@@ -105,8 +105,14 @@ export const listBuildings = (companyId) => db.prepare(`
   FROM prop_buildings b WHERE b.company_id = ? ORDER BY b.name`).all(Number(companyId));
 
 // Units in floor then number order, the way they read on a building's board (2, 10, 101…).
+// Each with today's confirmed booking, if any (UAE date), so the card can say who is in it.
 export const listUnits = (buildingId) => db.prepare(`
-  SELECT * FROM prop_units WHERE building_id = ?
+  SELECT u.*, cur.tenant AS current_tenant, cur.end_date AS current_until FROM prop_units u
+  LEFT JOIN LATERAL (SELECT t.full_name AS tenant, to_char(b.end_date, 'YYYY-MM-DD') AS end_date FROM lease_bookings b
+    JOIN lease_tenants t ON t.id = b.tenant_id
+    WHERE b.unit_id = u.id AND b.status = 'confirmed' AND (now() AT TIME ZONE 'Asia/Dubai')::date BETWEEN b.start_date AND b.end_date
+    LIMIT 1) cur ON true
+  WHERE building_id = ?
   ORDER BY NULLIF(regexp_replace(floor, '\\D', '', 'g'), '')::int NULLS FIRST, floor,
     NULLIF(regexp_replace(unit_no, '\\D', '', 'g'), '')::bigint NULLS LAST, unit_no`).all(Number(buildingId));
 

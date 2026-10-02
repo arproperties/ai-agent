@@ -253,7 +253,9 @@ export default function PropertiesPage({ me, onBack }) {
         details={(u) => [['Size', u.size_sqft && `${Number(u.size_sqft).toLocaleString()} sq ft`], ['DEWA no.', u.dewa_no]]}
         stat={(u) => (
           <div className="flex min-w-0 items-center gap-2">
-            {!u.blocked && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">Available</span>}
+            {u.current_tenant
+              ? <span className="truncate rounded-full bg-p1/15 px-2 py-0.5 text-[11px] text-p1" title={`Booked until ${u.current_until}`}>{u.current_tenant} · until {u.current_until}</span>
+              : !u.blocked && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">Vacant today</span>}
             {u.furnished && <span className="rounded-full bg-p3/15 px-2 py-0.5 text-[11px] text-p3">Furnished</span>}
             {u.blocked && <span className="rounded-full bg-bad/15 px-2 py-0.5 text-[11px] text-bad">Blocked</span>}
           </div>
