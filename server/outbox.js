@@ -59,6 +59,7 @@ export async function deliver(draft, { send = sendRaw, append = imapActions.appe
       text: draft.body,
       inReplyTo: draft.in_reply_to,
       references: draft.refs,
+      attachments: draft.attachments ? JSON.parse(draft.attachments) : [],
     });
     await send(acc, password, built);
   } catch (e) {

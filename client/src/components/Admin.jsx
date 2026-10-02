@@ -5,6 +5,7 @@ import Avatar from './Avatar';
 import Sheet from './Sheet';
 import { ParticleField } from './ParticleField';
 import { ResponsibilitiesEditor } from './Responsibilities';
+import HrLink from './HrLink';
 
 /**
  * One agent, as a card in a grid. The same shape whether it is being picked as the
@@ -248,6 +249,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
             </button>
           )}
         </div>
+
+        {!editing && <HrLink person={person} />}
 
         {editing ? (
           <EditPerson key={person.id} person={person} isMe={person.id === me.id}

@@ -22,6 +22,7 @@ import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
 import { teamReminderRoutes } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
+import { hrLinkRoutes } from './hrLinks.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
@@ -30,6 +31,7 @@ import { meetingRoutes, startMeetings } from './meetings.js';
 import { transcriptRoutes, startTranscripts } from './transcripts.js';
 import { errorRoutes, recordError } from './errors.js';
 import { replyPdfRoutes } from './replyPdf.js';
+import { meetingShareRoutes } from './meetingShare.js';
 import { drawingRoutes } from './drawing.js';
 import { tenantCareRoutes, startTenantCare } from './tenantCare.js';
 
@@ -54,12 +56,14 @@ app.use('/api/suggestions', suggestionRoutes); // reminders Reem spots in new em
 app.use('/api/routines', routineRoutes); // things that come back, kept apart from the one-off todos
 app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
 app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
+app.use('/api/meetings', meetingShareRoutes); // a meeting as a PDF, on the Shelf, or emailed
 app.use('/api/meetings', meetingRoutes); // recorded meetings: who said what, and a summary
 app.use('/api/transcripts', transcriptRoutes); // any audio file or recording, as plain text
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
+app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

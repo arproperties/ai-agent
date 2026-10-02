@@ -417,6 +417,9 @@ await db.exec(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS hidden BOOLEAN 
 // today, so a draft written before a mailbox change still says who it was from.
 await db.exec(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS from_addr TEXT`);
 
+// Files that go with the email - a meeting's PDF, say - as JSON [{ filename, contentType, content (base64) }].
+await db.exec(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS attachments TEXT`);
+
 // Databases created before this treated agents.id as the OWNER of a document, so
 // deleting a shared agent destroyed every assigned user's files. agent_id is a shelf
 // label; the owner is user_id. Swap the two foreign keys over to SET NULL so a deleted
@@ -1014,4 +1017,20 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_resp_proposals_chat ON responsibility_proposals(master_id, conversation_id, id);
+`);
+
+// Which saifsys HR employee a Reem account is - see server/hrLinks.js.
+//
+// By employee code, not email: some staff have no email, and emails change in HR while
+// the code (E00012) is set once when the employee is created and never edited.
+// One row per person and each code at most once, so two accounts can never be the same
+// employee. hr_name is the name HR gave when it was linked, for showing without a lookup.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS hr_links (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    employee_code TEXT NOT NULL UNIQUE,
+    hr_name   TEXT,
+    linked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    linked_at BIGINT DEFAULT ${NOW}
+  );
 `);

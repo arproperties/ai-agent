@@ -14,7 +14,9 @@ const match = (q, ...fields) => {
   return !s || fields.some((f) => (f || '').toLowerCase().includes(s));
 };
 
-export default function ShareSheet({ dm, messageId, onClose, onDone }) {
+// `send` replaces the reply share for anything else passed on the same way (a meeting's
+// PDF, say); `note` replaces the line under the title.
+export default function ShareSheet({ dm, messageId, send, note, onClose, onDone }) {
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null); // key of the row being shared to
   const [error, setError] = useState('');
@@ -44,7 +46,8 @@ export default function ShareSheet({ dm, messageId, onClose, onDone }) {
         dm.upsert(chat);
         chatId = chat.id;
       }
-      await api.post(`/messenger/chats/${chatId}/share`, { messageId });
+      if (send) await send(chatId);
+      else await api.post(`/messenger/chats/${chatId}/share`, { messageId });
       onDone(`Shared with ${row.name}`);
       onClose();
     } catch (e) {
@@ -56,7 +59,7 @@ export default function ShareSheet({ dm, messageId, onClose, onDone }) {
   return (
     <Sheet title="Share with" icon={<Icon name="share" className="text-p1" />} onClose={onClose}>
       <p className="mb-3 text-sm text-mute">
-        The reply is sent as a message, labelled with the agent who wrote it. Your question and the rest of this chat stay private.
+        {note || 'The reply is sent as a message, labelled with the agent who wrote it. Your question and the rest of this chat stay private.'}
       </p>
 
       <div className="mb-2 flex items-center gap-2 rounded-full bg-white/5 px-3.5 py-2">

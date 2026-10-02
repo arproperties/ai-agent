@@ -40,9 +40,10 @@ export function transportFor(acc, password) {
 // threads against it. A second compile would generate a second Message-ID and break that.
 const composer = nodemailer.createTransport({ streamTransport: true, buffer: true });
 
-export async function compose({ from, to, cc = [], subject = '', text = '', inReplyTo, references }) {
+export async function compose({ from, to, cc = [], subject = '', text = '', inReplyTo, references, attachments = [] }) {
   const info = await composer.sendMail({
     from, to, subject, text,
+    ...(attachments.length ? { attachments: attachments.map((a) => ({ ...a, encoding: 'base64' })) } : {}),
     ...(cc.length ? { cc } : {}),
     ...(inReplyTo ? { inReplyTo } : {}),
     ...(references ? { references } : {}),

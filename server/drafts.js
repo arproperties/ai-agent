@@ -21,7 +21,7 @@ export function cleanAddresses(value, label) {
 
 export async function createDraft(userId, {
   agentId = null, conversationId = null, to, cc = [], subject = '', body = '',
-  inReplyTo = null, refs = null, replyToId = null, from = null,
+  inReplyTo = null, refs = null, replyToId = null, from = null, attachments = [],
 }) {
   const toList = cleanAddresses(to, 'To');
   const ccList = cleanAddresses(cc, 'Cc');
@@ -30,13 +30,14 @@ export async function createDraft(userId, {
   if (toList.length + ccList.length > MAX_RECIPIENTS) throw fail(400, `Too many recipients (at most ${MAX_RECIPIENTS} across To and Cc)`);
 
   const { id } = await db.prepare(
-    `INSERT INTO email_drafts (user_id, agent_id, conversation_id, to_addrs, cc_addrs, subject, body, in_reply_to, refs, reply_to_id, from_addr)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+    `INSERT INTO email_drafts (user_id, agent_id, conversation_id, to_addrs, cc_addrs, subject, body, in_reply_to, refs, reply_to_id, from_addr, attachments)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
   ).run(
     userId, agentId, conversationId,
     JSON.stringify(toList), JSON.stringify(ccList),
     String(subject || '').slice(0, 200), String(body || '').slice(0, 20000),
     inReplyTo, refs, replyToId, from,
+    attachments.length ? JSON.stringify(attachments) : null,
   );
   return getDraft(userId, id);
 }
@@ -102,6 +103,7 @@ export const draftOut = (d) => d && {
   sentAt: d.sent_at,
   hidden: !!d.hidden,
   from: d.from_addr,
+  attachments: d.attachments ? JSON.parse(d.attachments).map((a) => a.filename) : [],
 };
 
 // ---------- the record, and the limit ----------

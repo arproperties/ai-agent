@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { recordMeeting, recordSample } from '../lib/meeting';
 import Sheet from './Sheet';
 import { ParticleField } from './ParticleField';
+import MeetingShare from './MeetingShare';
 
 // Meetings: record one, and get back who said what plus a summary. The work happens on
 // the server (server/meetings.js); this page records, uploads and shows the result.
@@ -188,7 +189,7 @@ function Recording({ meeting, recorder, state, onStopped }) {
 }
 
 // ---------- after the meeting ----------
-function Detail({ id, onDeleted }) {
+function Detail({ id, dm, onOpenFiles, onDeleted }) {
   const [m, setM] = useState(null);
   const [error, setError] = useState('');
   const [openTranscript, setOpenTranscript] = useState(false);
@@ -276,6 +277,8 @@ function Detail({ id, onDeleted }) {
           </section>
         )}
 
+        {m.status === 'ready' && (s || m.lines.length > 0) && <MeetingShare meeting={m} dm={dm} onOpenFiles={onOpenFiles} />}
+
         {turns.length > 0 && (
           <section>
             <button onClick={() => setOpenTranscript((v) => !v)} className="px-1 py-1 text-[11px] font-medium tracking-[0.14em] text-mute hover:text-txt">
@@ -311,7 +314,7 @@ function Detail({ id, onDeleted }) {
 }
 
 // ---------- the page ----------
-export default function MeetingsPage({ onBack }) {
+export default function MeetingsPage({ dm, onOpenFiles, onBack }) {
   const [meetings, setMeetings] = useState(null);
   const [voices, setVoices] = useState([]);
   const [open, setOpen] = useState(null); // a meeting id
@@ -381,7 +384,7 @@ export default function MeetingsPage({ onBack }) {
         <Recording meeting={live.meeting} recorder={live.recorder} state={state}
           onStopped={(id) => { setLive(null); setOpen(id); }} />
       ) : open ? (
-        <Detail id={open} onDeleted={() => { setOpen(null); load(); }} />
+        <Detail id={open} dm={dm} onOpenFiles={onOpenFiles} onDeleted={() => { setOpen(null); load(); }} />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
           <div className="mx-auto w-full space-y-6 pb-8">

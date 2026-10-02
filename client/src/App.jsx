@@ -176,7 +176,7 @@ export default function App() {
           </div>
         )}
         {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => { setPanel(null); loadExpiring(); }} onOpenChat={openChat} />}
-        {panel === 'meetings' && <MeetingsPage onBack={() => setPanel(null)} />}
+        {panel === 'meetings' && <MeetingsPage dm={dm} onOpenFiles={() => setPanel('files')} onBack={() => setPanel(null)} />}
         {panel === 'transcribe' && <TranscribePage onBack={() => setPanel(null)} />}
         {panel === 'tenantcare' && <TenantCarePage me={me} onBack={() => setPanel(null)} onChanged={loadTenantCare} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}

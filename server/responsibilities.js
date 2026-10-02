@@ -162,7 +162,8 @@ const DEFS = {
       '"what is Rona responsible for?", "what are my responsibilities?", or to pick the right person before reminding someone. ' +
       'Leave person empty to get everyone. ' +
       'These are the day-to-day duties and are separate from HR (saifsys): visa, sponsoring company and job title there are the ' +
-      'official record and often differ from this. A mismatch is normal - never correct one from the other or point it out as a problem.',
+      'official record and often differ from this. A mismatch is normal - never correct one from the other or point it out as a problem. ' +
+      'A person shown with [HR E00012] is linked to that HR employee: to see their HR profile, call hr_employee with that exact code, never a name search.',
     input_schema: {
       type: 'object',
       properties: { person: { type: 'string', description: 'Optional. A name, part of a name, or "me" for the user.' } },
@@ -215,8 +216,9 @@ const STATUS = {
 async function directory(user, person) {
   const want = String(person || '').trim().toLowerCase();
   const rows = await db.prepare(`
-    SELECT r.id, u.id AS uid, u.name, r.title, r.body FROM responsibilities r
+    SELECT r.id, u.id AS uid, u.name, h.employee_code AS code, r.title, r.body FROM responsibilities r
     JOIN users u ON u.id = r.user_id
+    LEFT JOIN hr_links h ON h.user_id = u.id
     WHERE NOT u.disabled ORDER BY lower(u.name), r.id`).all();
   const mine = ['me', 'my', 'mine'].includes(want);
   const picked = rows.filter((r) => (mine ? r.uid === user.id : !want || r.name.toLowerCase().includes(want)));
@@ -225,11 +227,12 @@ async function directory(user, person) {
   }
   const master = user.role === 'master'; // only the master needs ids, to change them
   const people = new Map();
+  const label = (r) => `${r.name}${r.code ? ` [HR ${r.code}]` : ''}`;
   for (const r of picked) {
     const text = [r.title, r.body.length > PER_ITEM ? `${r.body.slice(0, PER_ITEM)}…` : r.body].filter(Boolean).join(': ');
-    people.set(r.name, [...(people.get(r.name) || []), `- ${master ? `#${r.id} ` : ''}${text}`]);
+    people.set(label(r), [...(people.get(label(r)) || []), `- ${master ? `#${r.id} ` : ''}${text}`]);
   }
-  return [...people].map(([name, lines]) => `${name}${picked.find((r) => r.name === name).uid === user.id ? ' (the user)' : ''}:\n${lines.join('\n')}`)
+  return [...people].map(([name, lines]) => `${name}${picked.find((r) => label(r) === name).uid === user.id ? ' (the user)' : ''}:\n${lines.join('\n')}`)
     .join('\n\n').slice(0, PER_CALL);
 }
 
