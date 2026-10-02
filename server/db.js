@@ -1034,3 +1034,70 @@ await db.exec(`
     linked_at BIGINT DEFAULT ${NOW}
   );
 `);
+
+// Properties: company → building → unit, kept here (no saifsys). The base the leasing
+// module builds on later. A unit's occupancy is never stored; bookings will say it.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS prop_companies (
+    id SERIAL PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    trade_license_no TEXT,
+    trn        TEXT,
+    phone      TEXT,
+    email      TEXT,
+    address    TEXT,
+    notes      TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS prop_buildings (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES prop_companies(id) ON DELETE RESTRICT,
+    name       TEXT NOT NULL,
+    emirate    TEXT,
+    area       TEXT,
+    address    TEXT,
+    plot_no    TEXT,
+    makani_no  TEXT,
+    notes      TEXT,
+    created_at BIGINT DEFAULT ${NOW},
+    UNIQUE (company_id, name)
+  );
+  CREATE TABLE IF NOT EXISTS prop_units (
+    id SERIAL PRIMARY KEY,
+    building_id INTEGER NOT NULL REFERENCES prop_buildings(id) ON DELETE RESTRICT,
+    unit_no    TEXT NOT NULL,
+    floor      TEXT,
+    type       TEXT,
+    size_sqft  NUMERIC,
+    furnished  BOOLEAN NOT NULL DEFAULT false,
+    dewa_no    TEXT,
+    blocked    BOOLEAN NOT NULL DEFAULT false,
+    notes      TEXT,
+    created_at BIGINT DEFAULT ${NOW},
+    UNIQUE (building_id, unit_no)
+  );
+`);
+
+// A company's documents, named freely (Trade License, MOA, EIN Letter…). Several with one
+// name may be kept: the old licence stays when a renewed one is added under the same name,
+// and the newest decides the status.
+//   expiry_date: null for documents that do not expire (MOA), which show as "on file".
+//   file_path: on disk under data/properties; the row can exist without a file.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS prop_documents (
+    id SERIAL PRIMARY KEY,
+    company_id  INTEGER NOT NULL REFERENCES prop_companies(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    number      TEXT,
+    issue_date  DATE,
+    expiry_date DATE,
+    notes       TEXT,
+    file_path   TEXT,
+    file_name   TEXT,
+    file_mime   TEXT,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_prop_documents ON prop_documents(company_id, lower(title));
+`);
