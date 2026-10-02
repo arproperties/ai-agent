@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
 import { ParticleField } from './ParticleField';
+import { ResponsibilitiesEditor } from './Responsibilities';
 
 /**
  * One agent, as a card in a grid. The same shape whether it is being picked as the
@@ -214,7 +215,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   // a screen for it here.
   // "AI chats" and "Team chat" sit next to each other, so neither may be called just
   // "Chats": the whole point of the pair is which side of the app a message came from.
-  const TABS = [['agents', 'Agents'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
+  const TABS = [['agents', 'Agents'], ['duties', 'Responsibilities'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
     ['messages', 'Team chat'], ['memory', 'Memory'], ['saifsys', 'saifsys']];
 
   return (
@@ -269,6 +270,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-safe md:px-6">
         <div className="@container mx-auto w-full space-y-4">
 
+        {tab === 'duties' && <ResponsibilitiesEditor person={person} isMe={person.id === me.id} />}
         {tab === 'memory' && <Memories person={person} />}
         {tab === 'saifsys' && <SaifsysModules person={person} />}
         {(tab === 'documents' || tab === 'conversations' || tab === 'messages') && <Browse person={person} kind={tab} />}

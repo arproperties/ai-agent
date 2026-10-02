@@ -973,3 +973,45 @@ await db.exec(`
   UPDATE agents SET name = 'Reem', persona = replace(persona, 'You are Jarvis', 'You are Reem')
    WHERE name = 'Jarvis';
 `);
+
+// What each person is responsible for, written by the master in their own words.
+//
+// Its own table rather than a column on users: a person can hold several, each one is
+// edited and deleted on its own, and nothing about who they are changes with them.
+//   title: optional, a few words ("Rent collection"). body: free text, any length.
+//   created_by: the master who wrote it, kept if that account is later removed.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS responsibilities (
+    id SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title      TEXT,
+    body       TEXT NOT NULL DEFAULT '',
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_responsibilities_user ON responsibilities(user_id, id);
+`);
+
+// A change to someone's responsibilities that Reem got ready from the master's chat,
+// waiting on a card for Save or Cancel. Nothing touches `responsibilities` until Save.
+//   action: add a new one, edit one (responsibility_id), or remove one.
+//   title / body: what it will say after Save (for an edit, the whole new text).
+//   result_id: the responsibility that Save wrote, so the card can say what became of it.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS responsibility_proposals (
+    id SERIAL PRIMARY KEY,
+    master_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    action  TEXT NOT NULL CHECK (action IN ('add', 'edit', 'remove')),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    responsibility_id INTEGER REFERENCES responsibilities(id) ON DELETE SET NULL,
+    title TEXT,
+    body  TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'saved', 'cancelled')),
+    result_id  INTEGER,
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_resp_proposals_chat ON responsibility_proposals(master_id, conversation_id, id);
+`);

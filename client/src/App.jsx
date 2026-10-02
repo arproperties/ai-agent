@@ -13,6 +13,7 @@ import ListsPage from './components/Lists';
 import MeetingsPage from './components/Meetings';
 import TranscribePage from './components/Transcribe';
 import TenantCarePage from './components/TenantCare';
+import ResponsibilitiesPage from './components/Responsibilities';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { NotifyPrompt } from './components/Notifications';
@@ -26,7 +27,8 @@ const outlookReturn = params.get('outlook') && { status: params.get('outlook'), 
 const notifiedChat = Number(params.get('chat')) || null;
 const notifiedTodos = params.get('todos') === '1';
 const notifiedTenantCare = params.get('tenantcare') === '1'; // a tenant email is waiting for a reply
-if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare) window.history.replaceState(null, '', '/');
+const notifiedDuties = params.get('responsibilities') === '1'; // the master gave them a new responsibility
+if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedDuties) window.history.replaceState(null, '', '/');
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -40,7 +42,7 @@ export default function App() {
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'tenantcare'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedDuties ? 'duties' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'tenantcare' | 'duties'
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
@@ -82,6 +84,7 @@ export default function App() {
       const where = new URL(e.data.url, window.location.origin).searchParams;
       if (where.get('todos') === '1') { setPanel('todos'); loadDue(); return; }
       if (where.get('tenantcare') === '1') { setPanel('tenantcare'); loadTenantCare(); return; }
+      if (where.get('responsibilities') === '1') { setPanel('duties'); return; }
       // A reminder from someone else waits on the first screen of a new chat.
       if (where.get('reminders') === '1') { setChat({ key: Date.now(), id: null }); setPanel(null); loadDue(); return; }
       const id = Number(where.get('chat')) || null;
@@ -132,6 +135,7 @@ export default function App() {
           meetingsOpen={panel === 'meetings'} onMeetings={() => { setPanel('meetings'); setDrawer(false); }}
           transcribeOpen={panel === 'transcribe'} onTranscribe={() => { setPanel('transcribe'); setDrawer(false); }}
           tenantCare={tenantCare} tenantCareOpen={panel === 'tenantcare'} onTenantCare={() => { setPanel('tenantcare'); setDrawer(false); }}
+          dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
@@ -175,6 +179,7 @@ export default function App() {
         {panel === 'meetings' && <MeetingsPage onBack={() => setPanel(null)} />}
         {panel === 'transcribe' && <TranscribePage onBack={() => setPanel(null)} />}
         {panel === 'tenantcare' && <TenantCarePage me={me} onBack={() => setPanel(null)} onChanged={loadTenantCare} />}
+        {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
         {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}

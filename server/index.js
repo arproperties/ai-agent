@@ -21,6 +21,7 @@ import { messengerRoutes } from './messenger.js';
 import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
 import { teamReminderRoutes } from './teamReminders.js';
+import { responsibilityRoutes } from './responsibilities.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
@@ -58,6 +59,7 @@ app.use('/api/transcripts', transcriptRoutes); // any audio file or recording, a
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
+app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
