@@ -117,20 +117,6 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
           )}
         </button>
       </div>
-      <div className="px-2">
-        {searching ? (
-          <div className="flex items-center gap-2.5 rounded-lg bg-white/[0.06] px-2.5">
-            <Search size={17} className="shrink-0 text-mute" />
-            <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chats"
-              onKeyDown={(e) => e.key === 'Escape' && closeSearch()}
-              className="w-full bg-transparent py-[7px] text-sm outline-none placeholder:text-mute/70" />
-            <button onClick={closeSearch} aria-label="Clear search" className="shrink-0 text-mute hover:text-txt"><X size={15} /></button>
-          </div>
-        ) : (
-          <Row icon={<Search size={17} />} label="Search chats"
-            onClick={() => { setSearching(true); requestAnimationFrame(() => searchRef.current?.focus()); }} />
-        )}
-      </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2">
         {/* With a single agent the grid is just one avatar saying what the whole app
@@ -157,6 +143,22 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
             )}
           </div>
         </>)}
+
+        {/* Search sits under the team, just above the chats it searches. */}
+        <div className="mt-3">
+          {searching ? (
+            <div className="flex items-center gap-2.5 rounded-lg bg-white/[0.06] px-2.5">
+              <Search size={17} className="shrink-0 text-mute" />
+              <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chats"
+                onKeyDown={(e) => e.key === 'Escape' && closeSearch()}
+                className="w-full bg-transparent py-[7px] text-sm outline-none placeholder:text-mute/70" />
+              <button onClick={closeSearch} aria-label="Clear search" className="shrink-0 text-mute hover:text-txt"><X size={15} /></button>
+            </div>
+          ) : (
+            <Row icon={<Search size={17} />} label="Search chats"
+              onClick={() => { setSearching(true); requestAnimationFrame(() => searchRef.current?.focus()); }} />
+          )}
+        </div>
 
         {/* Searching replaces the date headings with one flat list of matches: the
             groupings are about recency, which is not what you are scanning for. */}
