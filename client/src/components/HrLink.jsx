@@ -38,7 +38,11 @@ export default function HrLink({ person }) {
           <Link2 size={14} />
           {link ? <><span className="text-txt">{link.code}</span>{link.name && ` · ${link.name}`}</> : 'Not linked to HR yet'}
           <span className="flex-1" />
-          <button onClick={() => { setOpen(true); setCode(link?.code || ''); }} className={btn}>{link ? 'Change' : 'Link'}</button>
+          <button onClick={() => { setOpen(true); setCode(link?.code || ''); }}
+            className={link ? 'rounded-full border border-stroke px-3 py-1 text-xs text-txt hover:bg-white/10'
+              : 'flex items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-1.5 text-sm font-medium text-white shadow-lg shadow-p1/25 active:scale-[0.98]'}>
+            {link ? 'Change' : <><Link2 size={14} /> Link to HR</>}
+          </button>
           {link && <button onClick={unlink} disabled={busy} className={`${btn} hover:text-bad`}>Unlink</button>}
         </p>
       )}
