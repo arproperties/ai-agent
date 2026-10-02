@@ -160,7 +160,9 @@ const DEFS = {
     name: 'team_responsibilities',
     description: 'What each person in the team is responsible for, as written by the owner. Use for "who handles X?", ' +
       '"what is Rona responsible for?", "what are my responsibilities?", or to pick the right person before reminding someone. ' +
-      'Leave person empty to get everyone.',
+      'Leave person empty to get everyone. ' +
+      'These are the day-to-day duties and are separate from HR (saifsys): visa, sponsoring company and job title there are the ' +
+      'official record and often differ from this. A mismatch is normal - never correct one from the other or point it out as a problem.',
     input_schema: {
       type: 'object',
       properties: { person: { type: 'string', description: 'Optional. A name, part of a name, or "me" for the user.' } },
