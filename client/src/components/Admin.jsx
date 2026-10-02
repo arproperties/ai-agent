@@ -355,7 +355,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
  * The saifsys workspaces this person's agents can look into, in the launcher's order.
  * A tap saves straight away - it is one switch per module, with nothing to review first.
  * Modules with nothing connected yet can still be ticked, so access is ready the day
- * they are.
+ * they are. What Reem can do in a module (create a booking…) sits inside that module's
+ * card once it is ticked, so it reads as part of the module and not a list of its own.
  */
 function SaifsysModules({ person }) {
   const [data, setData] = useState(null);
@@ -394,51 +395,49 @@ function SaifsysModules({ person }) {
       <p className="text-sm leading-relaxed text-mute">
         {data.master
           ? 'The master sees every saifsys module.'
-          : `Tick the saifsys modules ${person.name} can ask Reem about. Anything not ticked, their agents cannot look up.`}
+          : `Tick the saifsys modules ${person.name} can ask Reem about. Anything not ticked, their agents cannot look up. A ticked module shows what Reem can also do there - that needs their company email connected in Reem.`}
       </p>
-      <div className="grid gap-2 @md:grid-cols-2">
-        {data.modules.map((m) => (
-          <button key={m.key} onClick={() => !data.master && toggle(m.key)} disabled={data.master} aria-pressed={m.on}
-            className={`flex items-center gap-3 rounded-[1.25rem] border p-3 text-left transition ${
-              m.on ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent' : 'border-stroke bg-white/[0.035] hover:bg-white/[0.07]'}`}>
-            <span className="min-w-0 flex-1">
-              <span className={`block truncate text-sm font-medium ${m.on ? 'text-txt' : 'text-mute'}`}>{m.label}</span>
-              <span className="block truncate text-xs text-mute">{m.connected ? 'Connected' : 'Nothing connected yet'}</span>
-            </span>
-            <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
-              m.on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
-              {m.on && <Check size={11} strokeWidth={3.5} />}
-            </span>
-          </button>
-        ))}
-      </div>
-      {data.actions?.length > 0 && (
-        <>
-          <p className="pt-2 text-sm leading-relaxed text-mute">
-            {data.master
-              ? 'The master can do all of these.'
-              : `What ${person.name} can ask Reem to do in saifsys. Each one also needs its module ticked above, and their company email connected in Reem.`}
-          </p>
-          <div className="grid gap-2 @md:grid-cols-2">
-            {data.actions.map((a) => (
-              <button key={a.key} onClick={() => !data.master && toggleAction(a.key)} disabled={data.master} aria-pressed={a.on}
-                className={`flex items-center gap-3 rounded-[1.25rem] border p-3 text-left transition ${
-                  a.on ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent' : 'border-stroke bg-white/[0.035] hover:bg-white/[0.07]'}`}>
+      <div className="grid items-start gap-2 @md:grid-cols-2">
+        {data.modules.map((m) => {
+          // What Reem can do in a module lives inside that module's card, and only once it is ticked.
+          const actions = m.on || data.master ? (data.actions || []).filter((a) => a.module === m.key) : [];
+          return (
+            <div key={m.key}
+              className={`rounded-[1.25rem] border transition ${
+                m.on ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent' : 'border-stroke bg-white/[0.035] hover:bg-white/[0.07]'}`}>
+              <button onClick={() => !data.master && toggle(m.key)} disabled={data.master} aria-pressed={m.on}
+                className="flex w-full items-center gap-3 p-3 text-left">
                 <span className="min-w-0 flex-1">
-                  <span className={`block truncate text-sm font-medium ${a.on ? 'text-txt' : 'text-mute'}`}>{a.label}</span>
-                  <span className="block truncate text-xs text-mute">
-                    {data.modules.find((m) => m.key === a.module)?.on ? 'Asks for approval before every booking' : 'Needs the module ticked above'}
-                  </span>
+                  <span className={`block truncate text-sm font-medium ${m.on ? 'text-txt' : 'text-mute'}`}>{m.label}</span>
+                  <span className="block truncate text-xs text-mute">{m.connected ? 'Connected' : 'Nothing connected yet'}</span>
                 </span>
                 <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
-                  a.on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
-                  {a.on && <Check size={11} strokeWidth={3.5} />}
+                  m.on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
+                  {m.on && <Check size={11} strokeWidth={3.5} />}
                 </span>
               </button>
-            ))}
-          </div>
-        </>
-      )}
+              {actions.length > 0 && (
+                <div className="border-t border-white/10 px-3 pb-2 pt-2.5">
+                  <span className="block text-[11px] uppercase tracking-wider text-mute">Can also do</span>
+                  {actions.map((a) => (
+                    <button key={a.key} onClick={() => !data.master && toggleAction(a.key)} disabled={data.master} aria-pressed={a.on}
+                      className="flex w-full items-center gap-3 py-1.5 text-left">
+                      <span className="min-w-0 flex-1">
+                        <span className={`block truncate text-sm ${a.on ? 'text-txt' : 'text-mute'}`}>{a.label}</span>
+                        <span className="block truncate text-xs text-mute">Asks for approval before every booking</span>
+                      </span>
+                      <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
+                        a.on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
+                        {a.on && <Check size={11} strokeWidth={3.5} />}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
       {error && <p className="text-sm text-bad">{error}</p>}
     </>
   );
