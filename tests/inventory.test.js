@@ -6,6 +6,7 @@ import { reset, makeUser, closeDb, db } from './helpers/db.js';
 import { saveBuilding, deleteBuilding } from '../server/buildings.js';
 import {
   overview, getInventory, addArea, deleteArea, saveItem, deleteItem, history, setPhoto, unitsOf, inventoryKit, propose, decide, getProposal,
+  takeItem, takenForJob,
 } from '../server/inventory.js';
 
 test.after(() => closeDb());
@@ -341,4 +342,28 @@ test('from chat: a picture sent with the message becomes the item\'s own photo o
 
   rmSync(photo, { force: true });
   rmSync(dir, { recursive: true, force: true });
+});
+
+test('taking for a job lowers the count, writes it down, and never goes below nothing', async () => {
+  const { ask, jessa, sabha, master, park } = await setup();
+  const store = await addArea(jessa, park.id, { name: 'Store room' });
+  const bulbs = await saveItem(jessa, park.id, null, { place: `a:${store.id}`, name: 'Bulb', counted_in: 'pcs', quantity: 5 }, ask);
+
+  const after = await takeItem(jessa, park.id, bulbs.id, { job_id: 41, quantity: 2, note: ' Given to  Francis ' });
+  assert.equal(after.quantity, 3);
+  await assert.rejects(takeItem(jessa, park.id, bulbs.id, { job_id: 41, quantity: 4 }), /Only 3 pcs of Bulb left in Store room/);
+  await assert.rejects(takeItem(jessa, park.id, bulbs.id, { job_id: 41, quantity: 0 }), /how much was taken/);
+  await assert.rejects(takeItem(jessa, park.id, bulbs.id, { quantity: 1 }), /which job/);
+  assert.equal(await takeItem(sabha, park.id, bulbs.id, { job_id: 41, quantity: 1 }), null, 'not her building');
+  await takeItem(master, park.id, bulbs.id, { job_id: 41, quantity: 3 });
+  assert.equal((await getInventory(jessa, park.id, ask)).items[0].quantity, 0, 'the last ones can go');
+
+  const taken = await takenForJob(jessa, 41);
+  assert.deepEqual(taken.map((t) => [t.item, t.place, t.quantity, t.counted_in, t.note, t.by, t.building.name]), [
+    ['Bulb', 'Store room', 2, 'pcs', 'Given to Francis', 'Jessa', 'Park Place'],
+    ['Bulb', 'Store room', 3, 'pcs', null, 'Owner', 'Park Place'],
+  ]);
+  assert.deepEqual(await takenForJob(sabha, 41), [], 'another building\'s administrator sees none of it');
+  assert.deepEqual(await takenForJob(jessa, 42), []);
+  assert.equal((await history(jessa, park.id, bulbs.id))[1].what, 'Taken for job #41 (Given to Francis) · Quantity 5 pcs → 3 pcs');
 });

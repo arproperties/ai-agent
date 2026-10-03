@@ -1185,6 +1185,17 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_inventory_log_item ON inventory_log(item_id, id);
 `);
 
+// What was taken out for a saifsys job - see takeItem in server/inventory.js. Kept on the
+// log line itself (job_id set = this line is a take), so an item's history and a job's
+// list of materials are the same record and cannot disagree.
+await db.exec(`
+  ALTER TABLE inventory_log ADD COLUMN IF NOT EXISTS job_id     INTEGER;
+  ALTER TABLE inventory_log ADD COLUMN IF NOT EXISTS taken      NUMERIC;
+  ALTER TABLE inventory_log ADD COLUMN IF NOT EXISTS counted_in TEXT;
+  ALTER TABLE inventory_log ADD COLUMN IF NOT EXISTS note       TEXT;
+  CREATE INDEX IF NOT EXISTS idx_inventory_log_job ON inventory_log(job_id) WHERE job_id IS NOT NULL;
+`);
+
 // Inventory items got ready from chat, waiting for Add or Cancel on their card - see
 // "adding from chat" in server/inventory.js. lines is every item in every place, as it
 // will be added; added is how many went in.

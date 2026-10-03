@@ -217,6 +217,50 @@ export async function deleteItem(user, buildingId, id) {
   return { ok: true };
 }
 
+// ---------- taking out for a job ----------
+//
+// The office hands a material to a saifsys Operations job: the count of the item goes
+// down by that much, and one log line says how much, for which job and who gave it. The
+// job page in saifsys lists those lines; the item's own history shows the same ones.
+
+const MAX_NOTE = 200;
+
+/** Take some of an item out for a saifsys job. null: not their building, or no such item. */
+export async function takeItem(user, buildingId, id, input) {
+  const b = await building(user, buildingId);
+  const row = b && await db.prepare(`${ITEM} WHERE i.id = ? AND i.building_id = ?`).get(Number(id) || 0, b.id);
+  if (!row) return null;
+  const jobId = Number(input?.job_id);
+  if (!Number.isInteger(jobId) || jobId <= 0) throw bad('Say which job it is for');
+  const taken = Math.round(Number(input?.quantity) * 100) / 100;
+  if (!Number.isFinite(taken) || taken <= 0 || taken > MAX_QUANTITY) throw bad('Say how much was taken: a number above 0');
+  const note = line(input?.note, MAX_NOTE) || null;
+
+  // One statement decides it, so two people taking the last one cannot both get it.
+  const done = await db.prepare(`UPDATE inventory_items SET quantity = quantity - ?, updated_by = ?, updated_at = ${NOW}
+    WHERE id = ? AND quantity >= ? RETURNING id`).get(taken, user.id, row.id, taken);
+  if (!done) throw bad(`Only ${amount(row)} of ${row.name} left in ${placeOf(row).label}`);
+  const after = await db.prepare(`${ITEM} WHERE i.id = ?`).get(row.id);
+  await db.prepare(`INSERT INTO inventory_log (building_id, item_id, item_name, place, user_id, what, job_id, taken, counted_in, note)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(b.id, row.id, row.name, placeOf(row).label, user.id,
+    `Taken for job #${jobId}${note ? ` (${note})` : ''} · Quantity ${amount(row)} → ${amount(after)}`, jobId, taken, row.counted_in, note);
+  return shape(after);
+}
+
+/** What has been taken for one job, oldest first - from the buildings this person keeps. */
+export async function takenForJob(user, jobId) {
+  const mine = await listBuildings(user);
+  if (!mine.length) return [];
+  const names = new Map(mine.map((b) => [b.id, b.name]));
+  const rows = await db.prepare(`SELECT l.id, l.building_id, l.item_id, l.item_name, l.place, l.taken, l.counted_in, l.note, l.at, u.name AS by
+    FROM inventory_log l LEFT JOIN users u ON u.id = l.user_id
+    WHERE l.job_id = ? AND l.building_id = ANY(?::int[]) ORDER BY l.id`).all(Number(jobId) || 0, mine.map((b) => b.id));
+  return rows.map((r) => ({
+    id: r.id, building: { id: r.building_id, name: names.get(r.building_id) }, item_id: r.item_id, item: r.item_name, place: r.place,
+    quantity: r.taken, counted_in: r.counted_in, note: r.note, at: r.at, by: r.by,
+  }));
+}
+
 /** Everything that happened to one item, newest first. */
 export async function history(user, buildingId, id) {
   const b = await building(user, buildingId);
@@ -572,12 +616,15 @@ inventoryRoutes.get('/proposals/:id/photo/:doc', wrap(async (req, res) => {
 for (const [path, add] of [['add', true], ['cancel', false]]) {
   inventoryRoutes.post(`/proposals/:id/${path}`, wrap(async (req, res) => send(res, await decide(req.user, req.params.id, add))));
 }
+// Materials given to a saifsys job. Before the '/:b' routes, so "jobs" is never read as a building.
+inventoryRoutes.get('/jobs/:job', wrap(async (req, res) => res.json(await takenForJob(req.user, req.params.job))));
 inventoryRoutes.get('/:b', wrap(async (req, res) => send(res, await getInventory(req.user, req.params.b))));
 inventoryRoutes.post('/:b/areas', wrap(async (req, res) => send(res, await addArea(req.user, req.params.b, req.body))));
 inventoryRoutes.delete('/:b/areas/:area', wrap(async (req, res) => send(res, await deleteArea(req.user, req.params.b, req.params.area))));
 inventoryRoutes.post('/:b/items', wrap(async (req, res) => send(res, await saveItem(req.user, req.params.b, null, req.body || {}))));
 inventoryRoutes.put('/:b/items/:id', wrap(async (req, res) => send(res, await saveItem(req.user, req.params.b, req.params.id, req.body || {}))));
 inventoryRoutes.delete('/:b/items/:id', wrap(async (req, res) => send(res, await deleteItem(req.user, req.params.b, req.params.id))));
+inventoryRoutes.post('/:b/items/:id/take', wrap(async (req, res) => send(res, await takeItem(req.user, req.params.b, req.params.id, req.body || {}))));
 inventoryRoutes.get('/:b/items/:id/history', wrap(async (req, res) => send(res, await history(req.user, req.params.b, req.params.id))));
 inventoryRoutes.post('/:b/items/:id/photo', upload.single('photo'), wrap(async (req, res) => {
   if (!req.file) throw bad('No photo came through');
