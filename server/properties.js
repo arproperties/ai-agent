@@ -193,10 +193,11 @@ const getDoc = async (id) => {
 };
 const shown = ({ file_path, ...d }) => d;
 
-function saveFile(file) {
+/** Keep an uploaded file on disk; gives the columns to store for it (nothing when no file came). */
+export function saveFile(file, dir = DOC_DIR) {
   if (!file) return {};
-  mkdirSync(DOC_DIR, { recursive: true });
-  const path = `${DOC_DIR}/${Date.now()}-${randomBytes(6).toString('hex')}`;
+  mkdirSync(dir, { recursive: true });
+  const path = `${dir}/${Date.now()}-${randomBytes(6).toString('hex')}`;
   writeFileSync(path, file.buffer);
   return { file_path: path, file_name: file.originalname.slice(0, 200), file_mime: file.mimetype };
 }
@@ -233,22 +234,24 @@ export async function removeDoc(id) {
 export const propertyRoutes = Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+export const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
 const INLINE = /^(image\/(png|jpe?g|gif|webp)|application\/pdf)$/; // opened in the browser; anything else downloads
+
+/** Send a stored document's file: shown in the browser when it can be, downloaded otherwise. */
+export function sendDoc(req, res, d) {
+  if (!d.file_path) throw bad('Not found', 404);
+  const inline = INLINE.test(d.file_mime || '') && !req.query.download;
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(d.file_name || 'document')}`);
+  res.type(inline ? d.file_mime : 'application/octet-stream').sendFile(d.file_path);
+}
 
 propertyRoutes.get('/docs', wrap(async (req, res) => res.json(await docBoard())));
 propertyRoutes.get('/companies/:id/docs', wrap(async (req, res) => res.json(await companyDocs(req.params.id, req.query.title))));
 propertyRoutes.post('/companies/:id/docs', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await addDoc(req.params.id, req.body, req.file, req.user.id))));
 propertyRoutes.put('/docs/:id', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await updateDoc(req.params.id, req.body, req.file))));
 propertyRoutes.delete('/docs/:id', requireMaster, wrap(async (req, res) => res.json(await removeDoc(req.params.id))));
-propertyRoutes.get('/docs/:id/file', wrap(async (req, res) => {
-  const d = await getDoc(req.params.id);
-  if (!d.file_path) throw bad('Not found', 404);
-  const inline = INLINE.test(d.file_mime || '') && !req.query.download;
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(d.file_name || 'document')}`);
-  res.type(inline ? d.file_mime : 'application/octet-stream').sendFile(d.file_path);
-}));
+propertyRoutes.get('/docs/:id/file', wrap(async (req, res) => sendDoc(req, res, await getDoc(req.params.id))));
 
 propertyRoutes.get('/companies', wrap(async (req, res) => res.json(await listCompanies())));
 propertyRoutes.get('/companies/:id', wrap(async (req, res) => res.json({ ...(await one('prop_companies', req.params.id)), list: await listBuildings(req.params.id) })));

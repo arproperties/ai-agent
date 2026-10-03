@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
+import BookingDocs from './BookingDocs';
 
 // Leasing: bookings of units and the tenants who make them. Anyone signed in can use it.
 // The server is server/leasing.js; the units come from Properties.
@@ -75,9 +76,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     setError('');
     const body = { ...v, ...(tenantMode === 'existing' ? { tenant_id: tenantId } : { tenant }) };
     try {
-      if (start) await api.put(`/leasing/bookings/${start.id}`, body);
-      else await api.post('/leasing/bookings', { ...body, status });
-      onDone();
+      onDone(start ? await api.put(`/leasing/bookings/${start.id}`, body) : await api.post('/leasing/bookings', { ...body, status }));
     } catch (err) { setError(err.message); setBusy(false); }
   };
 
@@ -178,7 +177,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   );
 }
 
-function BookingCard({ b, onEdit, onChanged }) {
+function BookingCard({ b, onEdit, onDocs, onChanged }) {
   const [error, setError] = useState('');
   const act = async (fn) => { setError(''); try { await fn(); onChanged(); } catch (e) { setError(e.message); } };
   const [label, tone] = STAGE[b.stage];
@@ -205,21 +204,22 @@ function BookingCard({ b, onEdit, onChanged }) {
         {b.cancel_reason && <p className="py-2 text-xs text-bad">Cancelled: {b.cancel_reason}</p>}
       </dl>
       {error && <p className="px-4 pb-1 text-xs text-bad">{error}</p>}
-      {b.status !== 'cancelled' && (
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-stroke px-4 py-2.5">
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-stroke px-4 py-2.5">
+        <button onClick={onDocs} className={`${GHOST} mr-auto`}><Paperclip size={13} /> Documents{b.docs > 0 && <span className="rounded-full bg-white/15 px-1.5 text-[10px] text-txt">{b.docs}</span>}</button>
+        {b.status !== 'cancelled' && <>
           {b.status === 'draft' && <button onClick={() => act(() => api.post(`/leasing/bookings/${b.id}/confirm`))} className={GHOST}><Check size={13} /> Confirm</button>}
           <button onClick={onEdit} className={GHOST}><Pencil size={13} /> Edit</button>
           {b.status === 'draft'
             ? <button onClick={() => confirm('Delete this draft?') && act(() => api.del(`/leasing/bookings/${b.id}`))} className={`${GHOST} hover:text-bad`}><Trash2 size={13} /> Delete</button>
             : <button onClick={() => { const reason = prompt('Why is this booking cancelled?'); if (reason) act(() => api.post(`/leasing/bookings/${b.id}/cancel`, { reason })); }}
               className={`${GHOST} hover:text-bad`}><X size={13} /> Cancel booking</button>}
-        </div>
-      )}
+        </>}
+      </div>
     </div>
   );
 }
 
-function Bookings({ onEdit }) {
+function Bookings({ onEdit, onDocs }) {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState('');
   const [stage, setStage] = useState('');
@@ -243,7 +243,7 @@ function Bookings({ onEdit }) {
       {error && <p className="text-sm text-bad">{error}</p>}
       {!shown ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
         : shown.length === 0 ? <p className="py-3 text-sm text-mute">{rows.length ? 'No bookings match.' : 'No bookings yet. Use New booking to make the first one.'}</p>
-          : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{shown.map((b) => <BookingCard key={b.id} b={b} onEdit={() => onEdit(b)} onChanged={load} />)}</div>}
+          : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{shown.map((b) => <BookingCard key={b.id} b={b} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onChanged={load} />)}</div>}
     </div>
   );
 }
@@ -448,12 +448,26 @@ function Calendar({ onEdit, onNew }) {
 
 export default function LeasingPage({ onBack }) {
   const [tab, setTab] = useState('bookings');
-  const [form, setForm] = useState(null); // { preset } for a new booking, a booking being edited, or null
+  const [form, setForm] = useState(null); // { preset } for a new booking, a booking being edited, { docsOf } for its documents, or null
   const [key, setKey] = useState(0); // bumped after a save, so the list reloads
+  const close = () => { setForm(null); setKey((k) => k + 1); };
 
+  if (form?.docsOf) {
+    const b = form.docsOf;
+    return (
+      <Page title={`Documents · ${b.ref}`} onBack={close} action={<button onClick={close} className={PRIMARY}><Check size={16} /> Done</button>}>
+        <p className="mb-4 text-sm text-mute">{b.tenant} · Unit {b.unit_no}, {b.building} · {fmt(b.start_date)} → {fmt(b.end_date)}</p>
+        <BookingDocs booking={b} />
+      </Page>
+    );
+  }
+
+  // A new booking goes on to its documents, so the contract and ID are attached while they are at hand.
   if (form) return (
-    <Page title={form.id ? `Edit ${form.ref}` : 'New booking'} onBack={() => setForm(null)}>
-      <BookingForm start={form.id ? form : null} preset={form.preset} onDone={() => { setForm(null); setTab('bookings'); setKey((k) => k + 1); }} onCancel={() => setForm(null)} />
+    <Page title={form.id ? `Edit ${form.ref}` : 'New booking'} onBack={() => setForm(null)}
+      action={form.id && <button onClick={() => setForm({ docsOf: form })} className={PRIMARY}><Paperclip size={16} /> Documents</button>}>
+      <BookingForm start={form.id ? form : null} preset={form.preset}
+        onDone={(saved) => { setTab('bookings'); if (form.id) close(); else setForm({ docsOf: saved }); }} onCancel={() => setForm(null)} />
     </Page>
   );
 
@@ -465,7 +479,7 @@ export default function LeasingPage({ onBack }) {
             className={`-mb-px border-b-2 pb-2 pt-1 transition ${tab === k ? 'border-p1 text-txt' : 'border-transparent text-mute hover:text-txt'}`}>{l}</button>
         ))}
       </div>
-      {tab === 'bookings' ? <Bookings key={key} onEdit={(b) => setForm(b)} />
+      {tab === 'bookings' ? <Bookings key={key} onEdit={(b) => setForm(b)} onDocs={(b) => setForm({ docsOf: b })} />
         : tab === 'calendar' ? <Calendar key={key} onEdit={(b) => setForm(b)} onNew={(preset) => setForm({ preset })} />
           : <Tenants />}
     </Page>

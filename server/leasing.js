@@ -1,5 +1,8 @@
 import { Router } from 'express';
+import { rmSync } from 'node:fs';
 import { db, tx } from './db.js';
+import { DATA_DIR } from './config.js';
+import { saveFile, sendDoc, upload } from './properties.js';
 
 // Leasing: tenants and their bookings of units (the properties are in properties.js).
 // Anyone signed in can add tenants and make bookings; the price is set per booking.
@@ -80,6 +83,7 @@ export async function removeTenant(id) {
 
 const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amount, b.rent_period, b.payment_frequency,
     b.security_deposit, b.status, b.contract_no, b.cancel_reason, b.notes, b.created_at,
+    (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
     to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
     u.unit_no, u.floor, u.type AS unit_type, bl.id AS building_id, bl.name AS building, c.id AS company_id, c.name AS company,
     t.full_name AS tenant, t.phone AS tenant_phone, t.email AS tenant_email
@@ -227,7 +231,47 @@ export async function cancelBooking(id, reason) {
 export async function removeBooking(id) {
   const b = await getBooking(id);
   if (b.status !== 'draft') throw bad('Only a draft can be deleted. Cancel a confirmed booking instead.', 409);
+  // Its documents go with it; their rows cascade, their files are removed here.
+  const files = await db.prepare('SELECT file_path FROM lease_documents WHERE booking_id = ? AND file_path IS NOT NULL').all(b.id);
   await db.prepare('DELETE FROM lease_bookings WHERE id = ?').run(b.id);
+  for (const f of files) rmSync(f.file_path, { force: true });
+  return { ok: true };
+}
+
+// ---------- booking documents ----------
+
+const DOC_DIR = `${DATA_DIR}/leasing`;
+const DOC_COLS = `id, booking_id, title, notes, file_name, file_mime, uploaded_by, created_at, (file_path IS NOT NULL) AS has_file`;
+
+const getDoc = async (id) => {
+  const d = await db.prepare(`SELECT ${DOC_COLS}, file_path FROM lease_documents WHERE id = ?`).get(Number(id));
+  if (!d) throw bad('Not found', 404);
+  return d;
+};
+
+/** What is kept with a booking (contract, ID, payment slips…), in the order it was added. */
+export async function bookingDocs(bookingId) {
+  const b = await getBooking(bookingId);
+  return db.prepare(`SELECT ${DOC_COLS} FROM lease_documents WHERE booking_id = ? ORDER BY id`).all(b.id);
+}
+
+/** A cancelled booking can still take documents (the cancellation letter, the refund slip). */
+export async function addBookingDoc(bookingId, body = {}, file, by) {
+  const title = text(body.title);
+  if (!title) throw bad('Give the document a name.');
+  const b = await getBooking(bookingId);
+  const row = { title, notes: text(body.notes, 2000), ...saveFile(file, DOC_DIR), booking_id: b.id, uploaded_by: by ?? null };
+  const cols = Object.keys(row);
+  const { id } = await db.prepare(`INSERT INTO lease_documents (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')}) RETURNING id`)
+    .run(...cols.map((c) => row[c]));
+  const { file_path, ...doc } = await getDoc(id);
+  return doc;
+}
+
+export async function removeBookingDoc(id) {
+  const d = await getDoc(id);
+  await db.prepare('DELETE FROM lease_documents WHERE id = ?').run(d.id);
+  if (d.file_path) rmSync(d.file_path, { force: true });
   return { ok: true };
 }
 
@@ -263,3 +307,8 @@ leasingRoutes.put('/bookings/:id', wrap(async (req, res) => res.json(await updat
 leasingRoutes.post('/bookings/:id/confirm', wrap(async (req, res) => res.json(await confirmBooking(req.params.id))));
 leasingRoutes.post('/bookings/:id/cancel', wrap(async (req, res) => res.json(await cancelBooking(req.params.id, req.body?.reason))));
 leasingRoutes.delete('/bookings/:id', wrap(async (req, res) => res.json(await removeBooking(req.params.id))));
+
+leasingRoutes.get('/bookings/:id/docs', wrap(async (req, res) => res.json(await bookingDocs(req.params.id))));
+leasingRoutes.post('/bookings/:id/docs', upload.single('file'), wrap(async (req, res) => res.json(await addBookingDoc(req.params.id, req.body, req.file, req.user.id))));
+leasingRoutes.delete('/docs/:id', wrap(async (req, res) => res.json(await removeBookingDoc(req.params.id))));
+leasingRoutes.get('/docs/:id/file', wrap(async (req, res) => sendDoc(req, res, await getDoc(req.params.id))));

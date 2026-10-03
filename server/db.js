@@ -1144,3 +1144,21 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_lease_bookings_unit ON lease_bookings(unit_id, start_date);
 `);
+
+// What is kept with a booking: the signed contract, the tenant's ID and passport, payment
+// slips. Named freely, like a company's documents, but with no expiry to watch.
+//   file_path: on disk under data/leasing; the row can exist without a file.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lease_documents (
+    id SERIAL PRIMARY KEY,
+    booking_id  INTEGER NOT NULL REFERENCES lease_bookings(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    notes       TEXT,
+    file_path   TEXT,
+    file_name   TEXT,
+    file_mime   TEXT,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_documents ON lease_documents(booking_id);
+`);

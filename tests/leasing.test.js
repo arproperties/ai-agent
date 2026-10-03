@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reset, closeDb } from './helpers/db.js';
+import { reset, closeDb, db } from './helpers/db.js';
 import { create, update } from '../server/properties.js';
 import { addTenant, removeTenant, listTenants, createBooking, updateBooking, confirmBooking, cancelBooking, removeBooking,
-  listBookings, availability, suggestType, bookingStage } from '../server/leasing.js';
+  listBookings, availability, suggestType, bookingStage, bookingDocs, addBookingDoc, removeBookingDoc } from '../server/leasing.js';
 
 test.after(() => closeDb());
 
@@ -70,4 +70,28 @@ test('blocked units, checks on input, tenants with bookings stay', async () => {
   await assert.rejects(removeTenant(t.id), /has bookings/);
   await removeBooking(bk.id);
   await removeTenant(t.id);
+});
+
+test('booking documents: named freely, counted on the booking, gone with a deleted draft', async () => {
+  const { u1 } = await units();
+  const bk = await createBooking(stay(u1.id, '2026-11-01', '2026-11-30'));
+  assert.equal(bk.docs, 0);
+
+  const contract = await addBookingDoc(bk.id, { title: ' Signed contract ', notes: 'Original in the office' });
+  assert.equal(contract.title, 'Signed contract');
+  assert.equal(contract.has_file, false);
+  assert.equal('file_path' in contract, false, 'where the file is kept is never sent out');
+  await addBookingDoc(bk.id, { title: 'Emirates ID' });
+  await assert.rejects(addBookingDoc(bk.id, {}), /Give the document a name/);
+  await assert.rejects(addBookingDoc(999, { title: 'X' }), /Booking not found/);
+
+  assert.deepEqual((await bookingDocs(bk.id)).map((d) => d.title), ['Signed contract', 'Emirates ID']);
+  assert.equal((await listBookings())[0].docs, 2);
+
+  await removeBookingDoc(contract.id);
+  await assert.rejects(removeBookingDoc(contract.id), /Not found/);
+  assert.equal((await bookingDocs(bk.id)).length, 1);
+
+  await removeBooking(bk.id); // its documents go with it
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_documents').get()).n, 0);
 });
