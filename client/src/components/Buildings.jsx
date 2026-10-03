@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Building2, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, MessageSquare, Minus, Package, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
+import Picker from './Picker';
 
 // Buildings: who runs each one and the field staff given to them, and the cleaning and
 // maintenance jobs those staff do on the saifsys staff app. The master sets the buildings
@@ -310,25 +311,20 @@ function Editor({ start, onSaved, onCancel }) {
   const toggle = (id) => setSites((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]));
 
   if (!opts) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
+  const people = opts.people.map((p) => ({ value: p.id, label: p.name }));
   const label = 'text-[11px] font-medium tracking-[0.14em] text-mute';
   return (
     <form onSubmit={save} className="space-y-3 rounded-2xl border border-stroke/60 bg-white/[0.03] p-3">
       <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="Building name, e.g. Park Place" className={FIELD} autoFocus={!start} />
       <div className="grid gap-2 sm:grid-cols-2">
-        <label className="space-y-1">
+        <div className="space-y-1">
           <span className={label}>ADMINISTRATOR</span>
-          <select value={adminId} onChange={(e) => setAdminId(Number(e.target.value) || '')} className={FIELD}>
-            <option value="">Not set</option>
-            {opts.people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </label>
-        <label className="space-y-1">
+          <Picker value={adminId} onChange={setAdminId} options={people} none="Not set" searchPlaceholder="Search people" />
+        </div>
+        <div className="space-y-1">
           <span className={label}>RENEWALS HANDLED BY</span>
-          <select value={renewalsId} onChange={(e) => setRenewalsId(Number(e.target.value) || '')} className={FIELD}>
-            <option value="">The administrator</option>
-            {opts.people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </label>
+          <Picker value={renewalsId} onChange={setRenewalsId} options={people} none="The administrator" searchPlaceholder="Search people" />
+        </div>
       </div>
 
       <div className="space-y-1">
@@ -348,10 +344,12 @@ function Editor({ start, onSaved, onCancel }) {
         {staff.map((s) => (
           <div key={s.code} className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-1.5 text-sm">
             <span className="min-w-0 flex-1 truncate">{s.name} <span className="text-mute">· {s.code}</span></span>
-            <select value={s.kind} onChange={(e) => setStaff((list) => list.map((x) => (x.code === s.code ? { ...x, kind: e.target.value } : x)))}
-              className="rounded-full border border-stroke bg-transparent px-2 py-1 text-xs outline-none">
-              {Object.entries(KIND).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
+            <div className="flex shrink-0 rounded-full bg-white/5 p-0.5 text-xs">
+              {Object.entries(KIND).map(([k, l]) => (
+                <button key={k} type="button" onClick={() => setStaff((list) => list.map((x) => (x.code === s.code ? { ...x, kind: k } : x)))}
+                  className={`rounded-full px-2.5 py-1 transition ${s.kind === k ? 'bg-white/15 text-txt' : 'text-mute hover:text-txt'}`}>{l}</button>
+              ))}
+            </div>
             <button type="button" onClick={() => setStaff((list) => list.filter((x) => x.code !== s.code))} aria-label={`Remove ${s.name}`}
               className="grid size-7 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={14} /></button>
           </div>
