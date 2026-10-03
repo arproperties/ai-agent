@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Building2, ClipboardList, ListChecks, HardHat, Package, Repeat } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Building2, ClipboardList, ListChecks, HardHat, Package } from 'lucide-react';
 import Icon from './Icon';
 import { Row, Count } from './NavRow';
 
@@ -14,7 +14,7 @@ import { Row, Count } from './NavRow';
  * and a number nobody can see is a number that stops working. So the counts stay on the
  * items inside, and a single dot on the gear says "something in here wants you".
  */
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, filesOpen, todosOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, recurringOpen, onFiles, onTodos, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onRecurring, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, filesOpen, todosOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, onFiles, onTodos, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef(null);
 
@@ -65,8 +65,6 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
           {hasBuildings && <Row role="menuitem" icon={<HardHat size={17} strokeWidth={1.75} />} label="Buildings" active={buildingsOpen} onClick={go(onBuildings)} />}
           {/* The same people keep the inventory of those buildings. */}
           {hasBuildings && <Row role="menuitem" icon={<Package size={17} strokeWidth={1.75} />} label="Inventory" active={inventoryOpen} onClick={go(onInventory)} />}
-          {/* Receivables and payables: the master's own, for now. */}
-          {user.role === 'master' && <Row role="menuitem" icon={<Repeat size={17} strokeWidth={1.75} />} label="Recurring" active={recurringOpen} onClick={go(onRecurring)} />}
           <Row role="menuitem" icon={<Icon name="brain" size={17} />} label="Memory" onClick={go(onMemory)} />
           <Row role="menuitem" icon={<Icon name="mail" size={17} />} label="Email" onClick={go(onEmail)} />
           {/* Only the master manages people; the server refuses anyone else. */}
