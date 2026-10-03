@@ -225,3 +225,19 @@
 :focus { outline: none; }
 :focus-visible { outline: 2px solid rgb(167 139 250 / 0.7); outline-offset: 2px; }
 input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; } /* fields show focus with their border */
+
+/* The meeting play bar: a thin line that fills in the brand colours, with a small white knob.
+   --fill is how far through the recording it is, set by the page. */
+.seek { -webkit-appearance: none; appearance: none; height: 20px; background: transparent; cursor: pointer; }
+.seek::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 999px;
+  background: linear-gradient(to right, var(--color-p1), var(--color-p2)) 0 / var(--fill, 0%) 100% no-repeat, rgb(255 255 255 / 0.12);
+}
+.seek::-moz-range-track { height: 4px; border-radius: 999px; background: rgb(255 255 255 / 0.12); }
+.seek::-moz-range-progress { height: 4px; border-radius: 999px; background: linear-gradient(to right, var(--color-p1), var(--color-p2)); }
+.seek::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 0 4px rgb(167 139 250 / 0.25); transition: transform 0.15s;
+}
+.seek::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 4px rgb(167 139 250 / 0.25); }
+.seek:hover::-webkit-slider-thumb, .seek:active::-webkit-slider-thumb { transform: scale(1.2); }

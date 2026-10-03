@@ -229,7 +229,8 @@ const Player = forwardRef(function Player({ id, parts, total }, ref) {
           {busy ? <Loader2 size={18} className="animate-spin" /> : playing ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
         </button>
         <input type="range" min={0} max={end} step={1} value={Math.min(pos, end)} aria-label="Position in the recording"
-          onChange={(e) => seek(Number(e.target.value), playing)} className="min-w-0 flex-1 accent-p1" />
+          onChange={(e) => seek(Number(e.target.value), playing)} className="seek min-w-0 flex-1"
+          style={{ '--fill': `${(Math.min(pos, end) / end) * 100}%` }} />
         <span className="shrink-0 font-mono text-[11px] text-mute">{clock(pos)} / {clock(end)}</span>
       </div>
       {error && <p className="mt-2 text-sm text-bad">{error}</p>}
