@@ -71,6 +71,16 @@ export function withContent(attachments) {
   });
 }
 
+/** One attachment of a draft, for its owner to look at before approving: bytes, or null. */
+export function fileOf(draft, index) {
+  const a = (draft?.attachments ? JSON.parse(draft.attachments) : [])[Number(index)];
+  if (!a) return null;
+  try {
+    const buffer = a.path ? readFileSync(a.path) : Buffer.from(a.content || '', 'base64');
+    return { name: a.filename, mime: a.contentType, buffer };
+  } catch { return null; }
+}
+
 /** Remove a draft's copies. Only ever inside our own folder, whatever the row says. */
 export function discard(draft) {
   for (const a of draft?.attachments ? JSON.parse(draft.attachments) : []) {

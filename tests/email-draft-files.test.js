@@ -130,3 +130,35 @@ test('a refused draft leaves no copies behind, and neither does a rejected or de
   await emailHandlers.remove({ user: { id: userId }, params: { id: d.id } }, res);
   assert.equal(await getDraft(userId, d.id), undefined);
 });
+
+test('the owner can open an attachment before approving, and nobody else can', async () => {
+  await reset();
+  const userId = await mailbox();
+  const other = await mailbox('Tom');
+  await shelve(userId, 'Offer.txt', 'AED 40,000');
+  const seen = [];
+  await draft(await connectedMailbox(userId, { onDraft: (d) => seen.push(d) }), { attachments: [{ name: 'Offer.txt' }] });
+  const [d] = await listDrafts(userId, {});
+
+  assert.deepEqual(seen[0].files, [{ name: 'Offer.txt', size: 10, here: true }]);
+
+  const open = async (user, n) => {
+    const out = { headers: {} };
+    const res = {
+      setHeader: (k, v) => { out.headers[k] = v; }, type(t) { out.type = t; return this; },
+      status(c) { out.status = c; return this; }, json(b) { out.body = b; }, send(b) { out.sent = b; },
+    };
+    await emailHandlers.file({ user: { id: user }, params: { id: d.id, n }, query: {} }, res);
+    return out;
+  };
+  const mine = await open(userId, 0);
+  assert.equal(mine.sent.toString(), 'AED 40,000');
+  assert.match(mine.type, /^text\/plain/);
+  assert.match(mine.headers['Content-Disposition'], /^inline/);
+  assert.equal((await open(other, 0)).status, 404);
+  assert.equal((await open(userId, 5)).status, 404);
+
+  discard(d);
+  assert.equal(draftOut(await getDraft(userId, d.id)).files[0].here, false, 'once the copy is gone the card stops offering it');
+  assert.equal((await open(userId, 0)).status, 404);
+});
