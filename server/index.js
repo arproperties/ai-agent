@@ -26,6 +26,7 @@ import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
+import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
@@ -47,6 +48,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; checked by its one-time state
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
+app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api/outlook', outlookRoutes);
 app.use('/api/imap', imapRoutes);
