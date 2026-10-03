@@ -1084,3 +1084,55 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_checklist_run_items ON checklist_run_items(run_id, position);
 `);
+
+// Buildings: who runs each building and which field staff were given to them - see
+// server/buildings.js. Its own tables: this is the company's structure, not HR's manager
+// field and not a responsibility.
+//   buildings: the name the office uses ("Townhouses"), its administrator, and who
+//     handles its renewals when that is not the administrator. watched_at: when the
+//     job watcher first looked, so the first look records what is there without buzzing.
+//   building_sites: the saifsys buildings (re_buildings.id) behind that name - usually
+//     one, several where the office's name covers more than one.
+//   building_staff: the cleaners and technicians, by HR employee code. They have no Reem
+//     account; they work on the saifsys staff app. One person can be in several buildings.
+//   building_jobs_seen: each staff job as the watcher last saw it, so a buzz goes out
+//     once when something changes and never again for the same thing.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS buildings (
+    id SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    admin_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    renewals_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    watched_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_buildings_admin ON buildings(admin_id);
+
+  CREATE TABLE IF NOT EXISTS building_sites (
+    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    site_id     INTEGER NOT NULL,
+    name        TEXT NOT NULL,
+    PRIMARY KEY (building_id, site_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS building_staff (
+    building_id   INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    employee_code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('cleaner', 'technician')),
+    PRIMARY KEY (building_id, employee_code)
+  );
+
+  CREATE TABLE IF NOT EXISTS building_jobs_seen (
+    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    job_id      INTEGER NOT NULL,
+    status      TEXT NOT NULL,
+    late            BOOLEAN NOT NULL DEFAULT false,
+    needs_materials BOOLEAN NOT NULL DEFAULT false,
+    problems        BOOLEAN NOT NULL DEFAULT false,
+    last_message_id INTEGER NOT NULL DEFAULT 0,
+    seen_at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (building_id, job_id)
+  );
+`);

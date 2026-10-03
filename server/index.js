@@ -24,6 +24,7 @@ import { teamReminderRoutes } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
+import { buildingRoutes, startBuildings } from './buildings.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
@@ -65,6 +66,7 @@ app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an Auto
 app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/checklists', checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
+app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
@@ -371,6 +373,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // unchanged and keep working on their own if this timer ever stops.
   startReminders();
   startTenantCare(); // does nothing until the Tenant care inbox is connected
+  startBuildings(); // buzzes a building's administrator when a staff job needs them
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));

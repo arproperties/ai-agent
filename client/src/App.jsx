@@ -15,6 +15,7 @@ import TranscribePage from './components/Transcribe';
 import TenantCarePage from './components/TenantCare';
 import ResponsibilitiesPage from './components/Responsibilities';
 import ChecklistsPage from './components/Checklists';
+import BuildingsPage from './components/Buildings';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { NotifyPrompt } from './components/Notifications';
@@ -29,7 +30,9 @@ const notifiedChat = Number(params.get('chat')) || null;
 const notifiedTodos = params.get('todos') === '1';
 const notifiedTenantCare = params.get('tenantcare') === '1'; // a tenant email is waiting for a reply
 const notifiedDuties = params.get('responsibilities') === '1'; // the master gave them a new responsibility
-if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedDuties) window.history.replaceState(null, '', '/');
+// a staff job in one of their buildings needs them: /?building=2&job=41
+const notifiedBuilding = Number(params.get('building')) ? { building: Number(params.get('building')), job: Number(params.get('job')) || null } : null;
+if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedDuties || notifiedBuilding) window.history.replaceState(null, '', '/');
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -43,8 +46,10 @@ export default function App() {
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedDuties ? 'duties' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'tenantcare' | 'duties' | 'checklists'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedDuties ? 'duties' : notifiedBuilding ? 'buildings' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
+  const [hasBuildings, setHasBuildings] = useState(false); // the master, or someone who runs a building
+  const [jumpToBuilding, setJumpToBuilding] = useState(notifiedBuilding); // a building (and job) a notification asked for
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
   const chatOpened = useCallback(() => setJumpToChat(null), []);
@@ -86,6 +91,11 @@ export default function App() {
       if (where.get('todos') === '1') { setPanel('todos'); loadDue(); return; }
       if (where.get('tenantcare') === '1') { setPanel('tenantcare'); loadTenantCare(); return; }
       if (where.get('responsibilities') === '1') { setPanel('duties'); return; }
+      if (Number(where.get('building'))) {
+        setJumpToBuilding({ building: Number(where.get('building')), job: Number(where.get('job')) || null });
+        setPanel('buildings');
+        return;
+      }
       // A reminder from someone else waits on the first screen of a new chat.
       if (where.get('reminders') === '1') { setChat({ key: Date.now(), id: null }); setPanel(null); loadDue(); return; }
       const id = Number(where.get('chat')) || null;
@@ -105,6 +115,7 @@ export default function App() {
     loadExpiring();
     loadDue();
     loadTenantCare();
+    api.get('/buildings').then((b) => setHasBuildings(me.role === 'master' || b.length > 0)).catch(() => {});
   }, [me, loadAgents, loadConvs, loadExpiring, loadDue, loadTenantCare]);
 
   const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setPanel(null); };
@@ -138,6 +149,7 @@ export default function App() {
           tenantCare={tenantCare} tenantCareOpen={panel === 'tenantcare'} onTenantCare={() => { setPanel('tenantcare'); setDrawer(false); }}
           dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
+          hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
@@ -183,6 +195,7 @@ export default function App() {
         {panel === 'tenantcare' && <TenantCarePage me={me} onBack={() => setPanel(null)} onChanged={loadTenantCare} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
         {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}
+        {panel === 'buildings' && <BuildingsPage me={me} start={jumpToBuilding} onBack={() => setPanel(null)} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
         {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}

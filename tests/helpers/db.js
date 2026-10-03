@@ -38,6 +38,7 @@ const TABLES = [
   'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'team_reminders', 'team_reminder_people', 'reminder_suggestions', 'suggestion_scans',
   'tenant_inbox', 'tenant_inbox_members', 'tenant_asks', 'responsibilities', 'responsibility_proposals', 'hr_links',
   'checklists', 'checklist_items', 'checklist_runs', 'checklist_run_items',
+  'buildings', 'building_sites', 'building_staff', 'building_jobs_seen',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

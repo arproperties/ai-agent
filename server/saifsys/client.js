@@ -34,6 +34,27 @@ export async function askSaifsys(module, action, params = {}) {
   return body;
 }
 
+/**
+ * A file through the same door (a job photo, a voice note): the saifsys answer as it
+ * comes, body unread, so the caller can pass it straight on. `range` is the browser's
+ * own Range header, which a video player needs honoured.
+ */
+export async function fileFromSaifsys(module, action, params = {}, range) {
+  if (!saifsysConfigured()) throw bad('saifsys is not connected yet: SAIFSYS_API_KEY is missing from .env.', 503);
+  const url = new URL(`${BASE()}/api/jarvis/v1/`);
+  url.searchParams.set('module', module);
+  url.searchParams.set('action', action);
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+  let res;
+  try {
+    res = await fetch(url, { headers: { 'X-Jarvis-Key': KEY(), ...(range ? { Range: range } : {}) }, signal: AbortSignal.timeout(60_000) });
+  } catch (e) {
+    throw bad(`saifsys did not answer (${e.name}: ${e.message}).`, 502);
+  }
+  if (!res.ok) throw bad('That file could not be found.', 404);
+  return res;
+}
+
 // ---------- the door for actions ----------
 
 // Doing things in saifsys goes through a second door, api/jarvis/v1/act.php, with its own
