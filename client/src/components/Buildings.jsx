@@ -21,16 +21,13 @@ const when = (secs) => new Date(secs * 1000).toLocaleString([], { day: 'numeric'
 const TONE = { open: 'bg-white/10 text-mute', in_progress: 'bg-p3/20 text-p3', done: 'bg-ok/20 text-ok', cancelled: 'bg-white/10 text-mute' };
 const Pill = ({ tone, children }) => <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${tone}`}>{children}</span>;
 
-// Each job is in exactly one of these, so the numbers add up to the list below them.
+// Each job is in exactly one of these, so the numbers on the tabs add up to the day's jobs.
 const GROUPS = [
   ['Late', (j) => j.late],
   ['In progress', (j) => !j.late && j.status === 'in_progress'],
   ['Not started', (j) => !j.late && j.status === 'open'],
   ['Done', (j) => j.status === 'done'],
 ];
-// A backlog of late jobs must not push today's work off the screen.
-const LATE_SHOWN = 4;
-
 /** "1 late · 3 done · 1 in progress · 2 not started", with what needs someone said first. */
 function Summary({ jobs }) {
   if (!jobs.length) return <span className="text-mute">No jobs today</span>;
@@ -172,12 +169,12 @@ function BuildingView({ b, startJob, master, onEdit }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [open, setOpen] = useState(startJob || null);
-  const [allLate, setAllLate] = useState(false);
+  const [tab, setTab] = useState(null); // null until one is picked: then the open job's tab, or the first with jobs
   const isToday = day === today();
 
   const load = useCallback(() => api.get(`/buildings/${b.id}/jobs${isToday ? '' : `?from=${day}`}`)
     .then((d) => { setData(d); setError(''); }).catch((e) => setError(e.message)), [b.id, day, isToday]);
-  useEffect(() => { setData(null); load(); }, [load]);
+  useEffect(() => { setData(null); setTab(null); load(); }, [load]);
   // Today moves while it is being watched; a day that has passed does not.
   useEffect(() => {
     if (!isToday) return undefined;
@@ -213,30 +210,36 @@ function BuildingView({ b, startJob, master, onEdit }) {
       {error && <p className="text-sm text-bad">{error}</p>}
       {!data && !error && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />}
       {data?.unset && <p className="py-8 text-center text-sm text-mute">No saifsys building or staff has been set for this building yet.</p>}
-      {data && !data.unset && (
+      {data && !data.unset && (() => {
+        const groups = GROUPS.map(([label, pick]) => [label, data.jobs.filter(pick)]);
+        // The job a notification asked for decides the tab it opens on.
+        const shownTab = tab
+          || groups.find(([, jobs]) => jobs.some((j) => j.id === open))?.[0]
+          || groups.find(([, jobs]) => jobs.length)?.[0]
+          || GROUPS[0][0];
+        const jobs = groups.find(([label]) => label === shownTab)[1];
+        const materials = data.jobs.filter((j) => j.needs_materials && j.status !== 'done').length;
+        return (
         <>
-          <p className="px-1 text-sm"><Summary jobs={data.jobs} /></p>
-          {data.jobs.length === 0 && <p className="py-8 text-center text-sm text-mute">{isToday ? 'Nothing is scheduled for today.' : 'Nothing was scheduled that day.'}</p>}
-          {GROUPS.map(([label, pick]) => {
-            const jobs = data.jobs.filter(pick);
-            const cut = label === 'Late' && !allLate && jobs.length > LATE_SHOWN + 1;
-            // The job a notification asked for is shown even when the rest are folded away.
-            const shown = cut ? jobs.filter((j, n) => n < LATE_SHOWN || j.id === open) : jobs;
-            return jobs.length > 0 && (
-              <section key={label} className="space-y-2">
-                <h2 className={`px-1 text-[11px] font-medium tracking-[0.14em] ${label === 'Late' ? 'text-bad' : 'text-mute'}`}>{label.toUpperCase()} · {jobs.length}</h2>
-                {shown.map((j) => <JobRow key={j.id} buildingId={b.id} job={j} open={open === j.id} onToggle={() => setOpen(open === j.id ? null : j.id)} />)}
-                {cut && (
-                  <button onClick={() => setAllLate(true)} className="w-full rounded-full border border-stroke/70 py-2 text-sm text-mute hover:bg-white/5 hover:text-txt">
-                    Show all {jobs.length} late jobs
-                  </button>
-                )}
-              </section>
-            );
-          })}
+          <div className="grid grid-cols-4 rounded-full bg-white/5 p-1 text-sm">
+            {groups.map(([label, list]) => (
+              <button key={label} onClick={() => setTab(label)}
+                className={`truncate rounded-full px-1 py-1.5 transition ${shownTab === label ? 'bg-white/15 text-txt' : 'text-mute hover:text-txt'}`}>
+                {label} <span className={label === 'Late' && list.length > 0 ? 'text-bad' : 'text-mute'}>{list.length}</span>
+              </button>
+            ))}
+          </div>
+          {materials > 0 && <p className="px-1 text-sm text-warn">{materials} need materials</p>}
+          {data.jobs.length === 0
+            ? <p className="py-8 text-center text-sm text-mute">{isToday ? 'Nothing is scheduled for today.' : 'Nothing was scheduled that day.'}</p>
+            : jobs.length === 0 && <p className="py-8 text-center text-sm text-mute">Nothing here.</p>}
+          <div className="space-y-2">
+            {jobs.map((j) => <JobRow key={j.id} buildingId={b.id} job={j} open={open === j.id} onToggle={() => setOpen(open === j.id ? null : j.id)} />)}
+          </div>
           {data.more && <p className="text-center text-xs text-mute">There are more jobs than fit here.</p>}
         </>
-      )}
+        );
+      })()}
     </div>
   );
 }
