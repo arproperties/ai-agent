@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { mkdirSync, rmSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
-import { db } from './db.js';
+import { writeFile, copyFile } from 'node:fs/promises';
+import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
 import { listBuildings } from './buildings.js';
 import { askSaifsys } from './saifsys/client.js';
@@ -158,13 +158,8 @@ async function readPlace(b, key, ask) {
   return { unit: value, area_id: null };
 }
 
-/** Add an item (id null) or change one. null: not their building, or no such item. */
-export async function saveItem(user, buildingId, id, input, ask = askSaifsys) {
-  const b = await building(user, buildingId);
-  if (!b) return null;
-  const old = id ? await db.prepare(`${ITEM} WHERE i.id = ? AND i.building_id = ?`).get(Number(id) || 0, b.id) : null;
-  if (id && !old) return null;
-
+/** What was typed or said about one item, checked. */
+function readFields(input) {
   const name = line(input?.name, MAX_NAME);
   if (!name) throw bad('Say what it is');
   const countedIn = line(input.counted_in, 10) || null;
@@ -174,20 +169,32 @@ export async function saveItem(user, buildingId, id, input, ask = askSaifsys) {
   const condition = input.condition || 'good';
   if (!CONDITIONS.includes(condition)) throw bad('The condition is good, damaged or missing');
   const notes = String(input.notes ?? '').trim().slice(0, MAX_NOTES) || null;
+  return { name, counted_in: countedIn, quantity: Math.round(quantity * 100) / 100, condition, notes };
+}
+
+/** Put one checked item in one checked place, and write down who did. */
+async function insertItem(buildingId, place, f, userId) {
+  const { id } = await db.prepare(`INSERT INTO inventory_items (building_id, unit, area_id, name, counted_in, quantity, condition, notes, created_by, updated_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(buildingId, place.unit, place.area_id, f.name, f.counted_in, f.quantity, f.condition, f.notes, userId, userId);
+  const row = await db.prepare(`${ITEM} WHERE i.id = ?`).get(id);
+  await log(buildingId, row, userId, 'Added');
+  return row;
+}
+
+/** Add an item (id null) or change one. null: not their building, or no such item. */
+export async function saveItem(user, buildingId, id, input, ask = askSaifsys) {
+  const b = await building(user, buildingId);
+  if (!b) return null;
+  const old = id ? await db.prepare(`${ITEM} WHERE i.id = ? AND i.building_id = ?`).get(Number(id) || 0, b.id) : null;
+  if (id && !old) return null;
+
+  const f = readFields(input);
   // A place that has not moved was checked when the item was put there.
   const place = old && input.place === placeOf(old).key ? { unit: old.unit, area_id: old.area_id } : await readPlace(b, input.place, ask);
-  const qty = Math.round(quantity * 100) / 100;
-
-  if (!old) {
-    const { id: newId } = await db.prepare(`INSERT INTO inventory_items (building_id, unit, area_id, name, counted_in, quantity, condition, notes, created_by, updated_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(b.id, place.unit, place.area_id, name, countedIn, qty, condition, notes, user.id, user.id);
-    const row = await db.prepare(`${ITEM} WHERE i.id = ?`).get(newId);
-    await log(b.id, row, user.id, 'Added');
-    return shape(row);
-  }
+  if (!old) return shape(await insertItem(b.id, place, f, user.id));
 
   await db.prepare(`UPDATE inventory_items SET unit = ?, area_id = ?, name = ?, counted_in = ?, quantity = ?, condition = ?, notes = ?,
-    updated_by = ?, updated_at = ${NOW} WHERE id = ?`).run(place.unit, place.area_id, name, countedIn, qty, condition, notes, user.id, old.id);
+    updated_by = ?, updated_at = ${NOW} WHERE id = ?`).run(place.unit, place.area_id, f.name, f.counted_in, f.quantity, f.condition, f.notes, user.id, old.id);
   const row = await db.prepare(`${ITEM} WHERE i.id = ?`).get(old.id);
   const said = [
     old.name !== row.name && `Renamed from ${old.name}`,
@@ -247,6 +254,182 @@ async function photoPath(user, buildingId, id) {
   return (b && (await db.prepare('SELECT photo FROM inventory_items WHERE id = ? AND building_id = ?').get(Number(id) || 0, b.id))?.photo) || null;
 }
 
+// ---------- adding from chat ----------
+//
+// "Unit 206 has a fridge, 2 ACs and a bed", typed or said, or "add a fridge to units 201
+// to 210". Reem never writes it straight in: it gets a card ready that lists every place
+// and item as it understood them, and only Add on the card puts them in the inventory -
+// a misheard unit is caught on the card, not found in the list a month later.
+
+const MAX_LINES = 600; // one card: 60 units with 10 things each
+const tail = (unit) => unit.split(' · ').pop(); // "Townhouse A · 12" → "12"
+const numberOf = (unit) => { const m = tail(unit).match(/\d+/); return m ? Number(m[0]) : null; };
+const same = (x, y) => String(x).trim().toLowerCase() === String(y).trim().toLowerCase();
+const keyOf = (place) => (place.new_area ? `n:${place.new_area.toLowerCase()}` : place.area_id ? `a:${place.area_id}` : `u:${place.unit}`);
+
+/** The places a request names, each checked: units saifsys has, this building's areas, or areas to be made. */
+async function findPlaces(b, input, ask) {
+  const areas = await areasOf(b.id);
+  const named = (Array.isArray(input.places) ? input.places : []).map((x) => line(x, MAX_NAME)).filter(Boolean);
+  const range = input.unit_range && input.unit_range.from !== undefined ? input.unit_range : null;
+  const units = named.length || range ? await unitsOf(b, ask).catch((e) => { if (areas.length && !range) return []; throw e; }) : [];
+  const unit = (u) => ({ unit: u, area_id: null, label: `Unit ${u}` });
+  const area = (a) => ({ unit: null, area_id: a.id, label: a.name });
+  const out = new Map();
+  const put = (place) => out.set(keyOf(place), place);
+
+  for (const raw of named) {
+    const want = raw.replace(/^(unit|flat|apt|apartment|room|villa|office|shop)\s*(no\.?|number|#)?\s*/i, '') || raw;
+    const exactArea = areas.find((a) => same(a.name, raw) || same(a.name, want));
+    if (exactArea) { put(area(exactArea)); continue; }
+    const exact = units.filter((u) => same(u, want));
+    // "103" is "103 (Staff Accommodation)", and "12" is "Townhouse A · 12" - if only one is.
+    const loose = exact.length ? exact : units.filter((u) => same(tail(u), want) || same(tail(u).split(/\s+/)[0], want));
+    if (loose.length === 1) { put(unit(loose[0])); continue; }
+    if (loose.length > 1) throw bad(`"${raw}" could be ${loose.slice(0, 8).map((u) => `unit ${u}`).join(' or ')} in ${b.name}. Ask which one.`);
+    const likeArea = areas.filter((a) => has(a.name, raw));
+    if (likeArea.length === 1) { put(area(likeArea[0])); continue; }
+    throw bad(`${b.name} has no unit or area called "${raw}".${areas.length ? ` Its areas: ${areas.map((a) => a.name).join(', ')}.` : ''} ` +
+      'If the user means a new area, ask them, then pass it in new_areas. If it is a unit, tell them saifsys has no such unit in this building.');
+  }
+  if (range) {
+    const from = Number(range.from);
+    const to = Number(range.to);
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) throw bad('unit_range needs two numbers, from the lower to the higher');
+    const inside = units.filter((u) => numberOf(u) !== null && numberOf(u) >= from && numberOf(u) <= to);
+    if (!inside.length) throw bad(`${b.name} has no units numbered ${from} to ${to} in saifsys.`);
+    inside.forEach((u) => put(unit(u)));
+  }
+  for (const raw of Array.isArray(input.new_areas) ? input.new_areas : []) {
+    const name = line(raw, MAX_NAME);
+    if (!name) continue;
+    const there = areas.find((a) => same(a.name, name));
+    put(there ? area(there) : { unit: null, area_id: null, new_area: name, label: `${name} (new area)` });
+  }
+  if (!out.size) throw bad('Say where: a unit, several units, or an area.');
+  return [...out.values()];
+}
+
+/**
+ * A picture sent in chat, by the name Reem was shown for it. Chat keeps every attachment
+ * as one of the user's documents; the newest of that name wins, this chat's first.
+ */
+async function chatPhoto(userId, conversationId, name) {
+  const want = line(name, 200).toLowerCase();
+  const doc = await db.prepare(`SELECT id, name, mime, path FROM documents WHERE user_id = ? AND path IS NOT NULL AND lower(name) = ?
+    ORDER BY (conversation_id IS NOT DISTINCT FROM ?) DESC, id DESC LIMIT 1`).get(userId, want, conversationId);
+  if (!doc) throw bad(`There is no picture called "${name}" in this chat. Use the name from its <image name="…" /> tag, or leave the photo out.`);
+  if (!PHOTO_TYPES[doc.mime]) throw bad(`${doc.name} cannot be an item's photo: it must be a JPG or PNG picture. Leave the photo out and say so.`);
+  return doc;
+}
+
+const proposalRow = (userId, id) => db.prepare(`SELECT p.*, b.name AS building FROM inventory_proposals p
+  LEFT JOIN buildings b ON b.id = p.building_id WHERE p.id = ? AND p.user_id = ?`).get(Number(id) || 0, userId);
+
+/** The card: places that are getting the same things are said once, together. */
+function card(p) {
+  const places = new Map();
+  for (const l of p.lines) places.set(l.place.label, [...(places.get(l.place.label) || []), l]);
+  const groups = new Map();
+  for (const [label, list] of places) {
+    const items = list.map(({ place, ...item }) => item);
+    const sig = JSON.stringify(items);
+    groups.set(sig, { places: [...(groups.get(sig)?.places || []), label], items });
+  }
+  return {
+    id: p.id, conversation_id: p.conversation_id, status: p.status, building: p.building || 'A deleted building', building_id: p.building_id,
+    groups: [...groups.values()], total: p.lines.filter((l) => !l.exists).length, skipped: p.lines.filter((l) => l.exists).length, added: p.added,
+  };
+}
+
+export const getProposal = async (user, id) => { const p = await proposalRow(user.id, id); return p ? card(p) : null; };
+
+/** Get a card ready. Nothing is added. */
+export async function propose(user, input, { conversationId = null } = {}, ask = askSaifsys) {
+  const mine = await listBuildings(user);
+  if (!mine.length) throw bad('This user keeps no building\'s inventory.');
+  const hits = input.building ? mine.filter((b) => has(b.name, input.building)) : mine;
+  const exact = hits.filter((b) => same(b.name, input.building || ''));
+  const b = exact.length === 1 ? exact[0] : hits.length === 1 ? hits[0] : null;
+  if (!b) {
+    throw bad(hits.length > 1
+      ? `Which building? ${input.building ? `"${input.building}" could be` : 'This user has'} ${hits.map((x) => x.name).join(', ')}. Ask which one.`
+      : `No building of this user matches "${input.building}". Theirs: ${mine.map((x) => x.name).join(', ')}.`);
+  }
+  const items = [];
+  for (const raw of Array.isArray(input.items) ? input.items : []) {
+    const photo = raw?.photo ? await chatPhoto(user.id, conversationId, raw.photo) : null;
+    items.push({ ...readFields(raw), ...(photo && { photo_doc: photo.id }) });
+  }
+  if (!items.length) throw bad('Say what to add.');
+  const places = await findPlaces(b, input, ask);
+  if (places.length * items.length > MAX_LINES) throw bad(`That is ${places.length * items.length} items in one go; ${MAX_LINES} is the most for one card. Do it in parts.`);
+
+  // What is already listed in a place is not added a second time: saying the same units
+  // again, or a range that overlaps the last one, must not double the inventory.
+  const have = new Set((await itemsOf(b.id)).map((r) => `${r.area_id ? `a:${r.area_id}` : `u:${r.unit}`}|${r.name.toLowerCase()}`));
+  const lines = places.flatMap((place) => items.map((f) => ({ place, ...f, exists: have.has(`${keyOf(place)}|${f.name.toLowerCase()}`) })));
+  const { id } = await db.prepare('INSERT INTO inventory_proposals (user_id, conversation_id, building_id, lines) VALUES (?, ?, ?, ?::jsonb) RETURNING id')
+    .run(user.id, conversationId, b.id, JSON.stringify(lines));
+  return getProposal(user, id);
+}
+
+/** Add or Cancel on the card. The status change is the lock, so a double tap adds once. */
+export async function decide(user, id, add) {
+  const p = await proposalRow(user.id, id);
+  if (!p) return null;
+  if (p.status !== 'pending') throw bad(`This was already ${p.status}.`, 409);
+  const { changes } = await db.prepare(`UPDATE inventory_proposals SET status = ?, decided_at = ${NOW} WHERE id = ? AND status = 'pending'`)
+    .run(add ? 'added' : 'cancelled', p.id);
+  if (!changes) throw bad('This was already decided.', 409);
+  if (add) {
+    const copied = [];
+    try {
+      const b = await building(user, p.building_id);
+      if (!b) throw bad('You no longer keep this building\'s inventory.', 403);
+      const added = await tx(async () => {
+        const areas = await areasOf(b.id);
+        const have = new Set((await itemsOf(b.id)).map((r) => `${r.area_id ? `a:${r.area_id}` : `u:${r.unit}`}|${r.name.toLowerCase()}`));
+        let n = 0;
+        for (const { place, exists, photo_doc: docId, ...f } of p.lines) {
+          let at = place;
+          if (place.new_area) {
+            let a = areas.find((x) => same(x.name, place.new_area));
+            if (!a) {
+              a = { id: (await db.prepare('INSERT INTO inventory_areas (building_id, name) VALUES (?, ?) RETURNING id').run(b.id, place.new_area)).id, name: place.new_area };
+              areas.push(a);
+            }
+            at = { unit: null, area_id: a.id };
+          } else if (place.area_id && !areas.some((x) => x.id === place.area_id)) throw bad(`The area ${place.label} has since been removed.`, 409);
+          const key = `${keyOf(at)}|${f.name.toLowerCase()}`;
+          if (have.has(key)) continue;
+          have.add(key);
+          const row = await insertItem(b.id, at, f, user.id);
+          n++;
+          // The picture sent with it becomes the item's own copy, so clearing the Shelf later does not take it away.
+          const doc = docId && await db.prepare('SELECT mime, path FROM documents WHERE id = ? AND user_id = ? AND path IS NOT NULL').get(docId, user.id);
+          if (doc && PHOTO_TYPES[doc.mime]) {
+            mkdirSync(DIR, { recursive: true });
+            const path = `${DIR}/${row.id}-${Date.now()}.${PHOTO_TYPES[doc.mime]}`;
+            if (await copyFile(doc.path, path).then(() => true, () => false)) {
+              copied.push(path);
+              await db.prepare('UPDATE inventory_items SET photo = ? WHERE id = ?').run(path, row.id);
+            }
+          }
+        }
+        await db.prepare('UPDATE inventory_proposals SET added = ? WHERE id = ?').run(n, p.id);
+        return n;
+      });
+      p.added = added;
+    } catch (e) {
+      copied.forEach(dropPhoto);
+      await db.prepare(`UPDATE inventory_proposals SET status = 'pending', decided_at = NULL WHERE id = ?`).run(p.id);
+      throw e;
+    }
+  }
+  return getProposal(user, id);
+}
+
 // ---------- Reem in chat ----------
 
 const DEF = {
@@ -255,7 +438,7 @@ const DEF = {
     'with how many, the condition (good, damaged or missing), notes, and who last changed it. ' +
     'Use for "what is in unit 204?", "which units have a damaged AC?", "what is missing at Park Place?", "how many fridges do we have?". ' +
     'Every filter is optional; leave them all empty for everything. ' +
-    'View only: items are added and changed on the Inventory page, not from chat - say so if asked.',
+    'View only. To add items use add_inventory; changing and removing is done on the Inventory page - say so if asked.',
   input_schema: {
     type: 'object',
     properties: {
@@ -266,7 +449,49 @@ const DEF = {
     },
   },
 };
-const MAX_LINES = 300;
+const ADD = {
+  name: 'add_inventory',
+  description: 'Get new inventory items ready to add to a building this user looks after: things kept in a unit or an area. ' +
+    'Use when the user says or types things like "add a fridge to Ayla unit 206", "unit 206 has a fridge, 2 ACs, a bed and a washing machine", ' +
+    '"add a fridge and 2 ACs to units 201 to 210 in Ayla", "the lobby has 3 sofas". ' +
+    'Every item goes to every place given, so one call covers many items and many units; make separate calls when different places get different things. ' +
+    'For "units 201 to 210" use unit_range - it takes only the units that really exist. ' +
+    'This only shows a card: nothing is added until the user taps Add on it, so never say it was added. ' +
+    'Messages are often spoken, so fix obvious mishearings in item names (e.g. "fride" is a fridge) and use short, plain names in the singular ("Fridge", "Split AC"). ' +
+    'When the message comes with a picture of ONE item ("this is the fridge in unit 206"), give that item the picture by its name in photo. ' +
+    'When it is a picture of a whole room or several things ("this is unit 206"), look at it and list the fixtures, appliances and furniture you can clearly see, ' +
+    'counting each kind; leave out anything you are unsure of, do not set photo, and tell the user the list came from the picture so they should check the card. ' +
+    'It cannot change or remove what is already listed - that is done on the Inventory page.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      building: { type: 'string', description: 'The building name, or part of it. May be left out when the user has only one building.' },
+      places: { type: 'array', items: { type: 'string' }, description: 'Unit numbers ("206") and names of existing areas ("Lobby").' },
+      unit_range: {
+        type: 'object', description: 'Every existing unit numbered from..to, both included.',
+        properties: { from: { type: 'integer' }, to: { type: 'integer' } }, required: ['from', 'to'],
+      },
+      new_areas: { type: 'array', items: { type: 'string' }, description: 'Areas to create, only when the user asked for a new area or agreed to one.' },
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            quantity: { type: 'number', description: 'How many in each place. 1 when not said.' },
+            counted_in: { type: 'string', enum: COUNTED_IN.map((c) => c.value), description: 'Only when the user says a unit of count or measure. Leave out otherwise.' },
+            condition: { type: 'string', enum: CONDITIONS, description: 'good unless the user says it is damaged or missing.' },
+            notes: { type: 'string', description: 'Brand, serial number, or what is wrong with it, if said or clearly readable in the picture.' },
+            photo: { type: 'string', description: 'The name of a picture attached to this message (from its <image name="…" /> tag) that shows this one item. Leave out otherwise.' },
+          },
+          required: ['name'],
+        },
+      },
+    },
+    required: ['items'],
+  },
+};
+const MAX_CHAT_LINES = 300;
 
 async function inventoryForChat(user, input) {
   const mine = (await listBuildings(user)).filter((b) => !input.building || has(b.name, input.building));
@@ -286,19 +511,34 @@ async function inventoryForChat(user, input) {
   }
   if (!out.length) return 'Nothing in the inventory matches that.';
   const lines = out.join('\n\n').split('\n');
-  return lines.length > MAX_LINES ? `${lines.slice(0, MAX_LINES).join('\n')}\n(${total} items in all; ask for one building or place to see the rest.)` : lines.join('\n');
+  return lines.length > MAX_CHAT_LINES ? `${lines.slice(0, MAX_CHAT_LINES).join('\n')}\n(${total} items in all; ask for one building or place to see the rest.)` : lines.join('\n');
 }
 
-/** The inventory tool, same shape as buildingKit(). Only for the master and administrators. */
-export async function inventoryKit(user) {
+/**
+ * The inventory tools, same shape as buildingKit(). Only for the master and administrators.
+ * ctx: { conversationId, onCard } - onCard puts the Add/Cancel card in front of them.
+ */
+export async function inventoryKit(user, ctx = {}, ask = askSaifsys) {
   const keeps = (await listBuildings(user)).length > 0;
+  const handlers = keeps ? {
+    inventory: (input) => inventoryForChat(user, input),
+    add_inventory: async (input) => {
+      const p = await propose(user, input, ctx, ask);
+      ctx.onCard?.(p);
+      const places = p.groups.flatMap((g) => g.places);
+      return `Ready as card #${p.id}: ${p.total} ${p.total === 1 ? 'item' : 'items'} for ${p.building} (${places.length > 12 ? `${places.length} places` : places.join(', ')}).` +
+        `${p.skipped ? ` ${p.skipped} already listed there and will be skipped.` : ''}` +
+        ' NOT added yet - tell the user in one short line to check the card and tap Add. Never say it is added.';
+    },
+  } : {};
   return {
-    definitions: keeps ? [DEF] : [],
-    status: () => 'Looking at the inventory…',
+    definitions: keeps ? [DEF, ADD] : [],
+    status: (name) => (name === ADD.name ? 'Getting the inventory items ready…' : 'Looking at the inventory…'),
     run: async (block) => {
       try {
-        if (!keeps || block.name !== DEF.name) throw new Error(`Unknown tool ${block.name}`);
-        return { type: 'tool_result', tool_use_id: block.id, content: await inventoryForChat(user, block.input || {}) };
+        const fn = handlers[block.name];
+        if (!fn) throw new Error(`Unknown tool ${block.name}`);
+        return { type: 'tool_result', tool_use_id: block.id, content: await fn(block.input || {}) };
       } catch (e) {
         return { type: 'tool_result', tool_use_id: block.id, content: e.message, is_error: true };
       }
@@ -314,6 +554,24 @@ const send = (res, row) => (row ? res.json(row) : res.status(404).json({ error: 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
 
 inventoryRoutes.get('/', wrap(async (req, res) => res.json(await overview(req.user))));
+// Cards from chat. Before the '/:b' routes, so "proposals" is never read as a building.
+inventoryRoutes.get('/proposals', wrap(async (req, res) => {
+  const rows = await db.prepare('SELECT id FROM inventory_proposals WHERE user_id = ? AND conversation_id = ? ORDER BY id')
+    .all(req.user.id, Number(req.query.conversation) || 0);
+  res.json(await Promise.all(rows.map((r) => getProposal(req.user, r.id))));
+}));
+// The picture on a card, before and after Add: only one that this person's card names.
+inventoryRoutes.get('/proposals/:id/photo/:doc', wrap(async (req, res) => {
+  const p = await proposalRow(req.user.id, req.params.id);
+  const docId = Number(req.params.doc) || 0;
+  const doc = p?.lines.some((l) => l.photo_doc === docId)
+    && await db.prepare('SELECT mime, path FROM documents WHERE id = ? AND user_id = ? AND path IS NOT NULL').get(docId, req.user.id);
+  if (!doc || !PHOTO_TYPES[doc.mime]) return res.status(404).json({ error: 'Not found' });
+  res.set('Cache-Control', 'private, max-age=3600').set('X-Content-Type-Options', 'nosniff').type(doc.mime).sendFile(doc.path);
+}));
+for (const [path, add] of [['add', true], ['cancel', false]]) {
+  inventoryRoutes.post(`/proposals/:id/${path}`, wrap(async (req, res) => send(res, await decide(req.user, req.params.id, add))));
+}
 inventoryRoutes.get('/:b', wrap(async (req, res) => send(res, await getInventory(req.user, req.params.b))));
 inventoryRoutes.post('/:b/areas', wrap(async (req, res) => send(res, await addArea(req.user, req.params.b, req.body))));
 inventoryRoutes.delete('/:b/areas/:area', wrap(async (req, res) => send(res, await deleteArea(req.user, req.params.b, req.params.area))));

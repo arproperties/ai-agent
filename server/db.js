@@ -1184,3 +1184,21 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_inventory_log_item ON inventory_log(item_id, id);
 `);
+
+// Inventory items got ready from chat, waiting for Add or Cancel on their card - see
+// "adding from chat" in server/inventory.js. lines is every item in every place, as it
+// will be added; added is how many went in.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS inventory_proposals (
+    id SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    building_id     INTEGER REFERENCES buildings(id) ON DELETE SET NULL,
+    lines JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'added', 'cancelled')),
+    added INTEGER,
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_inventory_proposals_chat ON inventory_proposals(user_id, conversation_id, id);
+`);
