@@ -1034,3 +1034,53 @@ await db.exec(`
     linked_at BIGINT DEFAULT ${NOW}
   );
 `);
+
+// Checklists: the points of one job, ticked off each time it is done - see server/checklists.js.
+// Their own tables rather than a flag on todos or routines: those are single things, and
+// a checklist is several steps that belong together and are done as one.
+//   kind: 'daily' comes back empty every morning; 'ondemand' is started when the job comes up.
+//   checklist_runs: one go. day is the Dubai date for a daily go (one per day, hence the
+//     unique index - NULLs do not collide, so a when-needed checklist has as many as it likes).
+//   checklist_run_items: the go's own copy of the points, so editing the checklist later
+//     never rewrites what was ticked before. item_id is where the copy came from.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS checklists (
+    id SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    kind        TEXT NOT NULL CHECK (kind IN ('daily', 'ondemand')),
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_checklists_user ON checklists(user_id, id);
+
+  CREATE TABLE IF NOT EXISTS checklist_items (
+    id SERIAL PRIMARY KEY,
+    checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    text     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_checklist_items ON checklist_items(checklist_id, position);
+
+  CREATE TABLE IF NOT EXISTS checklist_runs (
+    id SERIAL PRIMARY KEY,
+    checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    label TEXT,
+    day   TEXT,
+    started_at  BIGINT DEFAULT ${NOW},
+    finished_at BIGINT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_checklist_run_day ON checklist_runs(checklist_id, day);
+
+  CREATE TABLE IF NOT EXISTS checklist_run_items (
+    id SERIAL PRIMARY KEY,
+    run_id  INTEGER NOT NULL REFERENCES checklist_runs(id) ON DELETE CASCADE,
+    item_id INTEGER REFERENCES checklist_items(id) ON DELETE SET NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    text     TEXT NOT NULL,
+    done_at  BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_checklist_run_items ON checklist_run_items(run_id, position);
+`);

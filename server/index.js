@@ -22,6 +22,7 @@ import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
 import { teamReminderRoutes } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
+import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
@@ -63,6 +64,7 @@ app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
+app.use('/api/checklists', checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
