@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, Mic, Square, Loader2, Trash2, Plus, Play, RotateCcw, Pencil, UserRound, AlertTriangle, Check } from 'lucide-react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { ChevronLeft, Mic, Square, Loader2, Trash2, Plus, Play, Pause, RotateCcw, Pencil, UserRound, AlertTriangle, Check } from 'lucide-react';
 import { api } from '../lib/api';
 import { recordMeeting, recordSample } from '../lib/meeting';
 import Sheet from './Sheet';
@@ -188,13 +188,71 @@ function Recording({ meeting, recorder, state, onStopped }) {
   );
 }
 
+// ---------- listening ----------
+// The recording is kept in the ten-minute pieces it arrived in, so this plays them one
+// after another and shows them as a single line of time. Nothing is fetched until Play.
+const Player = forwardRef(function Player({ id, parts, total }, ref) {
+  const audio = useRef(null);
+  const cur = useRef(-1); // which piece is in the <audio>
+  const want = useRef(null); // where to jump to once that piece has loaded
+  const [playing, setPlaying] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [pos, setPos] = useState(0);
+  const [error, setError] = useState('');
+  const end = Math.max(total || 0, parts.at(-1).offset_s + 1);
+
+  // The src is set here, in the tap itself, rather than by a re-render: an iPhone only
+  // lets sound start from inside the tap.
+  const open = (i, at, play) => {
+    const el = audio.current;
+    if (cur.current !== i) { cur.current = i; el.src = `/api/meetings/${id}/parts/${parts[i].seq}/audio`; }
+    if (el.readyState >= 1) el.currentTime = at; else want.current = at;
+    if (play) { setError(''); setBusy(el.readyState < 3); el.play().catch(() => {}); }
+  };
+  const seek = (t, play = true) => {
+    let i = 0;
+    parts.forEach((p, n) => { if (p.offset_s <= t) i = n; });
+    setPos(t);
+    open(i, Math.max(0, t - parts[i].offset_s), play);
+  };
+  useImperativeHandle(ref, () => ({ seek }));
+  const toggle = () => {
+    if (playing) audio.current.pause();
+    else if (cur.current < 0) open(0, 0, true);
+    else { setBusy(audio.current.readyState < 3); audio.current.play().catch(() => {}); }
+  };
+
+  return (
+    <section className="rounded-3xl border border-stroke bg-white/[0.04] px-4 py-3">
+      <div className="flex items-center gap-3">
+        <button onClick={toggle} aria-label={playing ? 'Pause' : 'Play'} className="grid size-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-p1 to-p2 text-white shadow-lg shadow-p1/25 transition active:scale-95">
+          {busy ? <Loader2 size={18} className="animate-spin" /> : playing ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
+        </button>
+        <input type="range" min={0} max={end} step={1} value={Math.min(pos, end)} aria-label="Position in the recording"
+          onChange={(e) => seek(Number(e.target.value), playing)} className="min-w-0 flex-1 accent-p1" />
+        <span className="shrink-0 font-mono text-[11px] text-mute">{clock(pos)} / {clock(end)}</span>
+      </div>
+      {error && <p className="mt-2 text-sm text-bad">{error}</p>}
+      <audio ref={audio} preload="none" className="hidden"
+        onLoadedMetadata={(e) => { if (want.current !== null) { e.currentTarget.currentTime = want.current; want.current = null; } }}
+        onTimeUpdate={(e) => { if (want.current === null && cur.current >= 0) setPos(parts[cur.current].offset_s + e.currentTarget.currentTime); }}
+        onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+        onPlaying={() => setBusy(false)} onWaiting={() => setBusy(true)}
+        onEnded={() => { if (cur.current < parts.length - 1) open(cur.current + 1, 0, true); }}
+        onError={() => { setBusy(false); setPlaying(false); setError('This part of the recording could not be played.'); }} />
+    </section>
+  );
+});
+
 // ---------- after the meeting ----------
-function Detail({ id, dm, onOpenFiles, onDeleted }) {
+// team: the master looking at someone else's meeting - to read and listen, nothing more.
+function Detail({ id, team, dm, onOpenFiles, onDeleted }) {
   const [m, setM] = useState(null);
   const [error, setError] = useState('');
   const [openTranscript, setOpenTranscript] = useState(false);
+  const player = useRef(null);
 
-  const load = useCallback(() => api.get(`/meetings/${id}`).then(setM).catch((e) => setError(e.message)), [id]);
+  const load = useCallback(() => api.get(team ? `/meetings/team/${id}` : `/meetings/${id}`).then(setM).catch((e) => setError(e.message)), [id, team]);
   useEffect(() => { load(); }, [load]);
   // Still being written up: check back every few seconds until it is done.
   useEffect(() => {
@@ -230,17 +288,19 @@ function Detail({ id, dm, onOpenFiles, onDeleted }) {
     <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
       <div className="mx-auto w-full space-y-4 pb-8">
         <div>
-          <button onClick={rename} className="group flex items-start gap-2 text-left">
-            <h2 className="text-xl font-light">{titleOf(m)}</h2>
-            <Pencil size={14} className="mt-1.5 shrink-0 text-mute opacity-60 group-hover:opacity-100" />
-          </button>
-          <p className="text-sm text-mute">{dated(m.created_at)}{m.duration_s ? ` · ${length(m.duration_s)}` : ''}{m.speaker_names.length ? ` · ${m.speaker_names.join(', ')}` : ''}</p>
+          {team ? <h2 className="text-xl font-light">{titleOf(m)}</h2> : (
+            <button onClick={rename} className="group flex items-start gap-2 text-left">
+              <h2 className="text-xl font-light">{titleOf(m)}</h2>
+              <Pencil size={14} className="mt-1.5 shrink-0 text-mute opacity-60 group-hover:opacity-100" />
+            </button>
+          )}
+          <p className="text-sm text-mute">{team && m.owner ? `${m.owner} · ` : ''}{dated(m.created_at)}{m.duration_s ? ` · ${length(m.duration_s)}` : ''}{m.speaker_names.length ? ` · ${m.speaker_names.join(', ')}` : ''}</p>
         </div>
 
         {m.status === 'recording' && (
           <div className="rounded-2xl bg-warn/10 p-4 text-sm">
             <p>This recording never finished — maybe the phone went off. Whatever reached Reem can still be written up.</p>
-            <button onClick={finish} className="mt-3 rounded-full bg-warn/20 px-4 py-1.5 text-warn">Write up what was saved</button>
+            {!team && <button onClick={finish} className="mt-3 rounded-full bg-warn/20 px-4 py-1.5 text-warn">Write up what was saved</button>}
           </div>
         )}
         {m.status === 'processing' && (
@@ -254,6 +314,8 @@ function Detail({ id, dm, onOpenFiles, onDeleted }) {
             <AlertTriangle size={18} className="shrink-0 text-bad" /> <span>{m.error}</span>
           </div>
         )}
+
+        {m.status !== 'recording' && m.parts.length > 0 && <Player ref={player} id={m.id} parts={m.parts} total={m.duration_s} />}
 
         {s && (
           <section className="space-y-4 rounded-3xl border border-stroke bg-white/[0.04] p-5">
@@ -277,7 +339,7 @@ function Detail({ id, dm, onOpenFiles, onDeleted }) {
           </section>
         )}
 
-        {m.status === 'ready' && (s || m.lines.length > 0) && <MeetingShare meeting={m} dm={dm} onOpenFiles={onOpenFiles} />}
+        {!team && m.status === 'ready' && (s || m.lines.length > 0) && <MeetingShare meeting={m} dm={dm} onOpenFiles={onOpenFiles} />}
 
         {turns.length > 0 && (
           <section>
@@ -288,9 +350,12 @@ function Detail({ id, dm, onOpenFiles, onDeleted }) {
               <ol className="mt-2 space-y-3">
                 {turns.map((t, i) => (
                   <li key={i} className="text-sm leading-relaxed">
-                    <span className={`font-medium ${tone(t.who)}`}>{t.who || UNKNOWN}</span>
-                    <span className="ml-2 font-mono text-[11px] text-mute">{clock(t.at)}</span>
-                    <p>{t.text}</p>
+                    {/* Tap a line to hear it. */}
+                    <button onClick={() => player.current?.seek(t.at)} className="-mx-2 block w-[calc(100%+1rem)] rounded-xl px-2 py-1 text-left hover:bg-white/5">
+                      <span className={`font-medium ${tone(t.who)}`}>{t.who || UNKNOWN}</span>
+                      <span className="ml-2 font-mono text-[11px] text-mute">{clock(t.at)}</span>
+                      <p>{t.text}</p>
+                    </button>
                   </li>
                 ))}
               </ol>
@@ -298,7 +363,7 @@ function Detail({ id, dm, onOpenFiles, onDeleted }) {
           </section>
         )}
 
-        <div className="flex flex-wrap gap-2 pt-2">
+        {!team && <div className="flex flex-wrap gap-2 pt-2">
           {m.status === 'ready' && m.lines.length > 0 && (
             <button onClick={again} className="flex items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute hover:text-txt">
               <RotateCcw size={14} /> Summarise again
@@ -307,17 +372,19 @@ function Detail({ id, dm, onOpenFiles, onDeleted }) {
           <button onClick={remove} className="flex items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute hover:text-bad">
             <Trash2 size={14} /> Delete
           </button>
-        </div>
+        </div>}
       </div>
     </div>
   );
 }
 
 // ---------- the page ----------
-export default function MeetingsPage({ dm, onOpenFiles, onBack }) {
+export default function MeetingsPage({ master, dm, onOpenFiles, onBack }) {
   const [meetings, setMeetings] = useState(null);
   const [voices, setVoices] = useState([]);
   const [open, setOpen] = useState(null); // a meeting id
+  const [team, setTeam] = useState([]); // the master only: everyone else's meetings
+  const [openTeam, setOpenTeam] = useState(null); // one of those, by id
   const [sheet, setSheet] = useState(null); // 'start' | 'voice'
   const [live, setLive] = useState(null); // { meeting, recorder }
   const [state, setState] = useState({ elapsed: 0, waiting: 0, failed: 0, level: 0 });
@@ -327,7 +394,8 @@ export default function MeetingsPage({ dm, onOpenFiles, onBack }) {
   const load = useCallback(() => Promise.all([
     api.get('/meetings').then(setMeetings),
     api.get('/meetings/voices').then(setVoices),
-  ]).catch(() => setMeetings((m) => m || [])), []);
+    master ? api.get('/meetings/team').then(setTeam) : null,
+  ]).catch(() => setMeetings((m) => m || [])), [master]);
   useEffect(() => { load(); }, [load]);
 
   // Closing the tab mid-meeting would lose the piece being recorded: ask first.
@@ -364,7 +432,8 @@ export default function MeetingsPage({ dm, onOpenFiles, onBack }) {
   };
   const back = () => {
     if (live) return;
-    if (open) { setOpen(null); load(); } else onBack();
+    if (openTeam) setOpenTeam(null);
+    else if (open) { setOpen(null); load(); } else onBack();
   };
 
   return (
@@ -383,6 +452,8 @@ export default function MeetingsPage({ dm, onOpenFiles, onBack }) {
       {live ? (
         <Recording meeting={live.meeting} recorder={live.recorder} state={state}
           onStopped={(id) => { setLive(null); setOpen(id); }} />
+      ) : openTeam ? (
+        <Detail key={`team-${openTeam}`} id={openTeam} team />
       ) : open ? (
         <Detail id={open} dm={dm} onOpenFiles={onOpenFiles} onDeleted={() => { setOpen(null); load(); }} />
       ) : (
@@ -430,6 +501,25 @@ export default function MeetingsPage({ dm, onOpenFiles, onBack }) {
                   </ul>
                 )}
             </section>
+
+            {team.length > 0 && (
+              <section>
+                <h2 className="px-1 pb-2 text-[11px] font-medium tracking-[0.14em] text-mute">YOUR TEAM'S MEETINGS · {team.length}</h2>
+                <ul className="space-y-1">
+                  {team.map((m) => (
+                    <li key={m.id}>
+                      <button onClick={() => setOpenTeam(m.id)} className="w-full rounded-2xl px-3 py-3 text-left transition hover:bg-white/5">
+                        <span className="flex items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate">{titleOf(m)}</span>
+                          <Status m={m} />
+                        </span>
+                        <span className="block text-xs text-mute">{m.owner} · {dated(m.created_at)}{m.duration_s ? ` · ${length(m.duration_s)}` : ''}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
           </div>
         </div>
       )}

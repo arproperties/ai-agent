@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
 import {
   engine, saveVoice, listVoices, deleteVoice, createMeeting, addPart, finishMeeting, getMeeting, listMeetings,
-  deleteMeeting, resummarize, settled, turns, transcriptText, clock, meetingKit,
+  deleteMeeting, resummarize, settled, turns, transcriptText, clock, meetingKit, partAudio, teamMeetings, teamMeeting,
 } from '../server/meetings.js';
 
 test.after(() => closeDb());
@@ -238,4 +238,39 @@ test('an agent can find the meeting and what Francis promised', async () => {
   const other = await makeUser('Other');
   const theirs = await meetingKit(other).run({ id: 't3', name: 'read_meeting', input: { id: m.id } });
   assert.equal(theirs.is_error, true, 'another user\'s meeting is not there');
+});
+
+// ---------- listening ----------
+
+test('the recording can be played by the person who made it and by the master, and by nobody else', async () => {
+  const { user } = await setup();
+  let made = 0;
+  engine.convert = async (from, to) => { made += 1; writeFileSync(to, 'm4a'); };
+  const m = await createMeeting(user, { title: 'Rent review' });
+  await addPart(user, m.id, { seq: 0, offset: 0, buffer: audio, mimetype: 'audio/webm' });
+  await addPart(user, m.id, { seq: 1, offset: 600, buffer: audio, mimetype: 'audio/webm' });
+  await finishMeeting(user, m.id);
+  await settled();
+  assert.deepEqual((await getMeeting(user, m.id)).parts.map((p) => p.offset_s), [0, 600], 'the page knows where each piece starts');
+
+  const path = await partAudio({ id: user, role: 'user' }, m.id, 1);
+  assert.match(path, /1\.listen\.m4a$/);
+  assert.ok(existsSync(path));
+  await partAudio({ id: user, role: 'user' }, m.id, 1);
+  assert.equal(made, 1, 'a piece is converted once, then kept');
+  assert.equal(await partAudio({ id: user, role: 'user' }, m.id, 7), null, 'no such piece');
+
+  const other = await makeUser('Other');
+  assert.equal(await partAudio({ id: other, role: 'user' }, m.id, 0), null, 'someone else cannot listen');
+
+  const master = { id: await makeUser('Owner'), role: 'master' };
+  assert.ok(await partAudio(master, m.id, 0), 'the master can');
+  const team = await teamMeetings(master);
+  assert.deepEqual(team.map((t) => [t.id, t.owner]), [[m.id, 'Boss']]);
+  assert.equal((await teamMeeting(m.id)).lines.length, 6);
+  assert.equal(await getMeeting(master.id, m.id), null, 'but the ordinary route still shows only your own');
+  assert.equal(await deleteMeeting(master.id, m.id), false, 'and the master cannot delete it');
+
+  await deleteMeeting(user, m.id);
+  assert.ok(!existsSync(path), 'the copy goes with the meeting');
 });
