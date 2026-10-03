@@ -33,17 +33,25 @@ async function setup() {
   const master = { id: await makeUser('Owner'), role: 'master' };
   const jessa = { id: await makeUser('Jessa'), role: 'user' };
   const sabha = { id: await makeUser('Sabha'), role: 'user' };
-  const park = await saveBuilding(master, null, { name: 'Park Place', admin_id: jessa.id, sites: [3] }, ask);
-  const town = await saveBuilding(master, null, { name: 'Townhouses', admin_id: sabha.id, sites: [7, 8] }, ask);
-  return { ask, state, master, jessa, sabha, park, town };
+  // Two entries on the Buildings screen: one covering a single saifsys building, one covering two.
+  const parkEntry = await saveBuilding(master, null, { name: 'Park Place', admin_id: jessa.id, sites: [3] }, ask);
+  const townEntry = await saveBuilding(master, null, { name: 'Townhouses', admin_id: sabha.id, sites: [7, 8] }, ask);
+  // In the inventory every real saifsys building is its own, by its saifsys id and name.
+  return { ask, state, master, jessa, sabha, parkEntry, townEntry, park: { id: 3 }, town: { id: 7 }, townB: { id: 8 } };
 }
 
 test('the units are the ones saifsys has, in counting order', async () => {
-  const { ask, park, town, master } = await setup();
-  assert.deepEqual(await unitsOf(park, ask), ['204', '205', '206 (Staff)', '304', '1001']);
-  assert.deepEqual(await unitsOf(town, ask), ['Townhouse A · 1', 'Townhouse A · 2', 'Townhouse B · 1'], 'two buildings under one name can both have a unit 1');
+  const { ask, parkEntry, townEntry, town, townB, master } = await setup();
+  assert.deepEqual(await unitsOf(parkEntry, ask), ['204', '205', '206 (Staff)', '304', '1001']);
+  assert.deepEqual(await unitsOf(townEntry, ask), ['Townhouse A · 1', 'Townhouse A · 2', 'Townhouse B · 1'], 'two buildings under one name can both have a unit 1');
   const bare = await saveBuilding(master, null, { name: 'Bare' }, ask);
   assert.deepEqual(await unitsOf(bare, ask), []);
+
+  // The inventory never shows the entry's name: each building it covers is its own, with plain units.
+  assert.deepEqual((await overview(master)).map((b) => [b.id, b.name]), [[3, 'Park Place'], [7, 'Townhouse A'], [8, 'Townhouse B']]);
+  assert.deepEqual((await getInventory(master, town.id, ask)).units, ['1', '2']);
+  assert.deepEqual((await getInventory(master, townB.id, ask)).building, { id: 8, name: 'Townhouse B' });
+  assert.equal(await getInventory(master, bare.id + 1000, ask), null, 'an entry with nothing ticked has no inventory');
 });
 
 test('an item goes in a unit or an area, and comes back with its place', async () => {
@@ -81,19 +89,21 @@ test('an item goes in a unit or an area, and comes back with its place', async (
 test('an administrator keeps only their own building; the master keeps all', async () => {
   const { ask, master, jessa, sabha, park, town } = await setup();
   const ac = await saveItem(jessa, park.id, null, { place: 'u:304', name: 'AC', condition: 'damaged' }, ask);
-  await saveItem(master, town.id, null, { place: 'u:Townhouse A · 1', name: 'Fridge', condition: 'missing' }, ask);
+  await saveItem(master, town.id, null, { place: 'u:1', name: 'Fridge', condition: 'missing' }, ask);
 
   assert.deepEqual(await overview(master), [
     { id: park.id, name: 'Park Place', items: 1, damaged: 1, missing: 0 },
-    { id: town.id, name: 'Townhouses', items: 1, damaged: 0, missing: 1 },
+    { id: town.id, name: 'Townhouse A', items: 1, damaged: 0, missing: 1 },
+    { id: 8, name: 'Townhouse B', items: 0, damaged: 0, missing: 0 },
   ]);
   assert.deepEqual((await overview(jessa)).map((b) => b.name), ['Park Place']);
+  assert.deepEqual((await overview(sabha)).map((b) => b.name), ['Townhouse A', 'Townhouse B'], 'one entry, both of its buildings');
   assert.deepEqual(await overview({ id: await makeUser('Nobody'), role: 'user' }), []);
 
   assert.equal(await getInventory(sabha, park.id, ask), null);
   assert.equal(await saveItem(sabha, park.id, null, { place: 'u:304', name: 'TV' }, ask), null);
   assert.equal(await saveItem(sabha, park.id, ac.id, { place: 'u:304', name: 'Mine now' }, ask), null);
-  assert.equal(await saveItem(sabha, town.id, ac.id, { place: 'u:Townhouse A · 1', name: 'Mine now' }, ask), null, 'nor by naming it under her own building');
+  assert.equal(await saveItem(sabha, town.id, ac.id, { place: 'u:1', name: 'Mine now' }, ask), null, 'nor by naming it under her own building');
   assert.equal(await deleteItem(sabha, park.id, ac.id), null);
   assert.equal(await history(sabha, park.id, ac.id), null);
   assert.equal(await addArea(sabha, park.id, { name: 'Roof' }), null);
@@ -164,15 +174,46 @@ test('a photo is kept on disk and goes when the item goes', async () => {
   assert.equal(await deleteArea(jessa, park.id, lobby.id), null);
 });
 
-test('deleting a building takes its inventory with it', async () => {
-  const { ask, master, jessa, park } = await setup();
+test('the inventory stays with the real building when the entries on the Buildings screen change', async () => {
+  const { ask, master, jessa, sabha, park, parkEntry, townEntry } = await setup();
   await addArea(jessa, park.id, { name: 'Lobby' });
   await saveItem(jessa, park.id, null, { place: 'u:304', name: 'AC' }, ask);
-  await deleteBuilding(park.id);
+
+  // The entry goes: nobody keeps Park Place now, but nothing of it is lost.
+  await deleteBuilding(parkEntry.id);
+  assert.deepEqual((await overview(master)).map((b) => b.name), ['Townhouse A', 'Townhouse B']);
+  assert.equal(await getInventory(jessa, park.id, ask), null);
   for (const t of ['inventory_areas', 'inventory_items', 'inventory_log']) {
-    assert.equal((await db.prepare(`SELECT count(*)::int AS n FROM ${t}`).get()).n, 0, t);
+    assert.equal((await db.prepare(`SELECT count(*)::int AS n FROM ${t}`).get()).n, 1, t);
   }
-  assert.deepEqual((await overview(master)).map((b) => b.name), ['Townhouses']);
+
+  // Ticked on another entry, under another name and administrator: it is all there again.
+  await saveBuilding(master, townEntry.id, { name: 'Everything', admin_id: sabha.id, sites: [3, 7, 8] }, ask);
+  assert.deepEqual((await overview(sabha)).map((b) => [b.name, b.items]), [['Park Place', 1], ['Townhouse A', 0], ['Townhouse B', 0]]);
+  const inv = await getInventory(sabha, park.id, ask);
+  assert.deepEqual([inv.areas.map((a) => a.name), inv.items.map((i) => i.place.label)], [['Lobby'], ['Unit 304']]);
+});
+
+test('rows from before the change are moved to their real building once', async () => {
+  const { ask, master, park, town, townB, parkEntry, townEntry } = await setup();
+  const old = async (table, cols, vals) => (await db.prepare(`INSERT INTO ${table} (${cols}) VALUES (${vals.map(() => '?').join(', ')}) RETURNING id`).run(...vals)).id;
+  // As they were written before: by entry, a grouped unit carrying its building's name.
+  const lobby = await old('inventory_areas', 'building_id, name', [townEntry.id, 'Lobby']);
+  await old('inventory_items', 'building_id, unit, name', [parkEntry.id, '304', 'AC']);
+  await old('inventory_items', 'building_id, unit, name', [townEntry.id, 'Townhouse B · 1', 'Fridge']);
+  await old('inventory_items', 'building_id, area_id, name', [townEntry.id, lobby, 'Sofa']);
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../server/db.js', import.meta.url), 'utf8');
+  const moves = source.slice(source.indexOf('  UPDATE inventory_areas a SET site_id'), source.indexOf('  DROP INDEX IF EXISTS idx_inventory_areas_name;'))
+    .replaceAll("${FIRST_SITE('a')}", first('a')).replaceAll("${FIRST_SITE('i')}", first('i')).replaceAll("${FIRST_SITE('l')}", first('l'));
+  function first(alias) { return `(SELECT s.site_id FROM building_sites s WHERE s.building_id = ${alias}.building_id ORDER BY lower(s.name), s.site_id LIMIT 1)`; }
+  await db.exec(moves);
+  await db.exec(moves); // boots again: nothing moves twice
+
+  const at = async (id) => (await getInventory(master, id, ask)).items.map((i) => [i.name, i.place.label]);
+  assert.deepEqual(await at(park.id), [['AC', 'Unit 304']]);
+  assert.deepEqual(await at(townB.id), [['Fridge', 'Unit 1']], 'the grouped unit went to its own building, with its plain number');
+  assert.deepEqual(await at(town.id), [['Sofa', 'Lobby']], 'an area goes to the first building of its old entry');
 });
 
 test('Reem: what is in a place, and which places have something damaged', async () => {
@@ -181,7 +222,7 @@ test('Reem: what is in a place, and which places have something damaged', async 
   await saveItem(jessa, park.id, null, { place: 'u:304', name: 'Split AC', counted_in: 'pcs', quantity: 2, condition: 'damaged', notes: 'Leaks' }, ask);
   await saveItem(jessa, park.id, null, { place: 'u:204', name: 'Fridge' }, ask);
   await saveItem(jessa, park.id, null, { place: `a:${lobby.id}`, name: 'Sofa' }, ask);
-  await saveItem(sabha, town.id, null, { place: 'u:Townhouse A · 1', name: 'Window AC', condition: 'damaged' }, ask);
+  await saveItem(sabha, town.id, null, { place: 'u:1', name: 'Window AC', condition: 'damaged' }, ask);
   const call = async (user, input = {}) => (await (await inventoryKit(user, {}, ask)).run({ id: 't', name: 'inventory', input }));
 
   const stranger = { id: await makeUser('Nobody'), role: 'user' };
@@ -191,13 +232,13 @@ test('Reem: what is in a place, and which places have something damaged', async 
   assert.equal((await call(jessa, { place: '304' })).content,
     'Park Place\n  Unit 304\n    - Split AC: 2 pcs, damaged (Leaks) [last changed by Jessa]');
   assert.match((await call(jessa)).content, /Lobby\n {4}- Sofa: 1, good.*\n {2}Unit 204\n {4}- Fridge.*\n {2}Unit 304/);
-  assert.doesNotMatch((await call(jessa)).content, /Townhouses/);
+  assert.doesNotMatch((await call(jessa)).content, /Townhouse/);
   assert.match((await call(jessa, { building: 'town' })).content, /No building of yours matches/);
   assert.match((await call(jessa, { item: 'piano' })).content, /Nothing in the inventory matches/);
 
   const damaged = (await call(master, { item: 'ac', condition: 'damaged' })).content;
   assert.match(damaged, /Park Place\n {2}Unit 304\n {4}- Split AC/);
-  assert.match(damaged, /Townhouses\n {2}Unit Townhouse A · 1\n {4}- Window AC/);
+  assert.match(damaged, /Townhouse A\n {2}Unit 1\n {4}- Window AC/);
   assert.doesNotMatch(damaged, /Fridge|Sofa/);
 });
 
@@ -264,9 +305,10 @@ test('from chat: places are found the way people say them, or asked about', asyn
 
   // The building: theirs only, and asked about when it could be several.
   await assert.rejects(places(jessa, { building: 'Townhouses', places: ['1'] }), /No building of this user matches.*Theirs: Park Place/);
-  await assert.rejects(places(master, { places: ['204'] }), /Which building\? This user has Park Place, Townhouses/);
-  await assert.rejects(places(master, { building: 'town', places: ['1'] }), /could be unit Townhouse A · 1 or unit Townhouse B · 1/);
-  assert.deepEqual(await places(master, { building: 'town', places: ['Townhouse B · 1', '2'] }), ['Unit Townhouse B · 1', 'Unit Townhouse A · 2']);
+  await assert.rejects(places(master, { places: ['204'] }), /Which building\? This user has Park Place, Townhouse A, Townhouse B/);
+  await assert.rejects(places(master, { building: 'town', places: ['1'] }), /Which building\? "town" could be Townhouse A, Townhouse B/);
+  assert.deepEqual(await places(master, { building: 'Townhouse B', places: ['1'] }), ['Unit 1']);
+  assert.deepEqual(await places(master, { building: 'townhouse a', places: ['1', '2'] }), ['Unit 1', 'Unit 2']);
 
   // A new area is made when Add is tapped, not before.
   const p = await propose(jessa, { new_areas: ['Roof'], places: ['lobby'], items: [{ name: 'Water tank' }] }, {}, ask);
@@ -278,7 +320,7 @@ test('from chat: places are found the way people say them, or asked about', asyn
 });
 
 test('from chat: a card whose area or building has gone adds nothing and stays to be cancelled', async () => {
-  const { ask, master, jessa, park } = await setup();
+  const { ask, master, jessa, park, parkEntry } = await setup();
   const lobby = await addArea(jessa, park.id, { name: 'Lobby' });
   const p = await propose(jessa, { places: ['204', 'Lobby'], items: [{ name: 'Chair' }] }, {}, ask);
   await deleteArea(jessa, park.id, lobby.id);
@@ -286,7 +328,7 @@ test('from chat: a card whose area or building has gone adds nothing and stays t
   assert.equal((await getInventory(jessa, park.id, ask)).items.length, 0, 'not half of it');
   assert.equal((await getProposal(jessa, p.id)).status, 'pending');
 
-  await saveBuilding(master, park.id, { name: 'Park Place', admin_id: master.id, sites: [3] }, ask);
+  await saveBuilding(master, parkEntry.id, { name: 'Park Place', admin_id: master.id, sites: [3] }, ask);
   await assert.rejects(decide(jessa, p.id, true), /no longer keep/);
   assert.equal((await decide(jessa, p.id, false)).status, 'cancelled');
 });

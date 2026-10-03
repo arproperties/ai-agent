@@ -1151,7 +1151,6 @@ await db.exec(`
     name TEXT NOT NULL,
     created_at BIGINT DEFAULT ${NOW}
   );
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_areas_name ON inventory_areas(building_id, lower(name));
 
   CREATE TABLE IF NOT EXISTS inventory_items (
     id SERIAL PRIMARY KEY,
@@ -1196,6 +1195,51 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_inventory_log_job ON inventory_log(job_id) WHERE job_id IS NOT NULL;
 `);
 
+// Inventory is kept per real saifsys building (site_id = re_buildings.id), not per entry
+// on the Buildings screen - see the top of server/inventory.js. The old building_id stays
+// on rows written before this and is no longer read or written; its foreign key and its
+// NOT NULL go, so regrouping or deleting an entry there cannot take a real building's
+// inventory with it.
+//
+// Rows from before are moved once (site_id IS NULL marks them): a unit item of an entry
+// covering several buildings carried "Name · unit" and goes to that building with the
+// plain unit; everything else goes to the entry's building, the first by name when it
+// covered several. An entry with nothing ticked had no real building: its rows stay
+// unmoved and unseen.
+const FIRST_SITE = (alias) => `(SELECT s.site_id FROM building_sites s WHERE s.building_id = ${alias}.building_id ORDER BY lower(s.name), s.site_id LIMIT 1)`;
+await db.exec(`
+  ALTER TABLE inventory_areas     ADD COLUMN IF NOT EXISTS site_id INTEGER;
+  ALTER TABLE inventory_items     ADD COLUMN IF NOT EXISTS site_id INTEGER;
+  ALTER TABLE inventory_log       ADD COLUMN IF NOT EXISTS site_id INTEGER;
+
+  ALTER TABLE inventory_areas DROP CONSTRAINT IF EXISTS inventory_areas_building_id_fkey;
+  ALTER TABLE inventory_items DROP CONSTRAINT IF EXISTS inventory_items_building_id_fkey;
+  ALTER TABLE inventory_log   DROP CONSTRAINT IF EXISTS inventory_log_building_id_fkey;
+  ALTER TABLE inventory_areas ALTER COLUMN building_id DROP NOT NULL;
+  ALTER TABLE inventory_items ALTER COLUMN building_id DROP NOT NULL;
+  ALTER TABLE inventory_log   ALTER COLUMN building_id DROP NOT NULL;
+
+  UPDATE inventory_areas a SET site_id = ${FIRST_SITE('a')} WHERE a.site_id IS NULL AND a.building_id IS NOT NULL;
+  UPDATE inventory_items i SET site_id = s.site_id, unit = substr(i.unit, length(s.name) + 4)
+    FROM building_sites s
+    WHERE i.site_id IS NULL AND i.unit IS NOT NULL AND s.building_id = i.building_id
+      AND left(i.unit, length(s.name) + 3) = s.name || ' · '
+      AND (SELECT count(*) FROM building_sites c WHERE c.building_id = i.building_id) > 1;
+  UPDATE inventory_items i SET site_id = a.site_id FROM inventory_areas a WHERE i.site_id IS NULL AND i.area_id = a.id;
+  UPDATE inventory_items i SET site_id = ${FIRST_SITE('i')} WHERE i.site_id IS NULL AND i.building_id IS NOT NULL;
+  UPDATE inventory_log l SET site_id = i.site_id FROM inventory_items i WHERE l.site_id IS NULL AND l.item_id = i.id;
+  UPDATE inventory_log l SET site_id = ${FIRST_SITE('l')} WHERE l.site_id IS NULL AND l.building_id IS NOT NULL;
+
+  -- Two entries that both covered one building may each have had a "Store room": the
+  -- later one keeps its items and gets its number in the name, so the index below holds.
+  UPDATE inventory_areas a SET name = a.name || ' (' || a.id || ')'
+    WHERE a.site_id IS NOT NULL AND EXISTS (SELECT 1 FROM inventory_areas o
+      WHERE o.site_id = a.site_id AND lower(o.name) = lower(a.name) AND o.id < a.id);
+  DROP INDEX IF EXISTS idx_inventory_areas_name;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_areas_site_name ON inventory_areas(site_id, lower(name)) WHERE site_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_inventory_items_site ON inventory_items(site_id);
+`);
+
 // Inventory items got ready from chat, waiting for Add or Cancel on their card - see
 // "adding from chat" in server/inventory.js. lines is every item in every place, as it
 // will be added; added is how many went in.
@@ -1212,4 +1256,5 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_inventory_proposals_chat ON inventory_proposals(user_id, conversation_id, id);
+  ALTER TABLE inventory_proposals ADD COLUMN IF NOT EXISTS site_id INTEGER;
 `);

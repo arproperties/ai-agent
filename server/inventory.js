@@ -9,13 +9,20 @@ import { askSaifsys } from './saifsys/client.js';
 
 // Inventory: the things that stay in a place - the AC, the fridge, the furniture, the keys.
 //
+// A building here is one real saifsys building, under its own name. The Buildings screen
+// lets one entry cover several of them (one administrator, one set of staff); here each
+// of those is its own building with its own units, areas and items, and no group name is
+// shown. Inventory rows carry site_id, the saifsys building id, so they stay with the
+// real building when the grouping on that screen is changed.
+//
 // A place is a unit of a building or an area of it (lobby, store room, roof). The units
 // are saifsys's own, read through its Real Estate module and never typed here; the areas
 // are added per building. Each item has a name, how many, what it is counted in, its
 // condition, a photo and a note, and every change is written down with who made it.
 //
-// The master keeps every building's inventory, an administrator their own building's
-// (the same rule as server/buildings.js). Nothing here is written to saifsys.
+// The master keeps every building's inventory, an administrator that of the saifsys
+// buildings ticked on the entries they run (the same rule as server/buildings.js).
+// Nothing here is written to saifsys.
 
 const MAX_NAME = 80;
 const MAX_NOTES = 500;
@@ -38,8 +45,21 @@ const line = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, ma
 const has = (text, part) => String(text).toLowerCase().includes(String(part ?? '').trim().toLowerCase());
 const amount = (i) => [i.quantity, i.counted_in].filter((x) => x !== null && x !== '').join(' ');
 
+/**
+ * The buildings whose inventory this person keeps: every saifsys building ticked on the
+ * entries they run, each once, by name. Shaped like a listBuildings() row with that one
+ * site, so unitsOf() gives its units plain ("101", never "Name · 101").
+ */
+export async function keptBuildings(user) {
+  const out = new Map();
+  for (const b of await listBuildings(user)) {
+    for (const s of b.sites) if (!out.has(s.id)) out.set(s.id, { id: s.id, name: s.name, sites: [s] });
+  }
+  return [...out.values()].sort((x, y) => x.name.localeCompare(y.name, undefined, { sensitivity: 'base' }) || x.id - y.id);
+}
+
 /** The building, if this person keeps its inventory. */
-const building = async (user, id) => (await listBuildings(user)).find((b) => b.id === Number(id)) || null;
+const building = async (user, id) => (await keptBuildings(user)).find((b) => b.id === Number(id)) || null;
 
 // ---------- the units, from saifsys ----------
 
@@ -70,7 +90,7 @@ export async function unitsOf(b, ask = askSaifsys) {
 
 // ---------- reading ----------
 
-const ITEM = `SELECT i.id, i.building_id, i.unit, i.area_id, a.name AS area, i.name, i.counted_in, i.quantity, i.condition,
+const ITEM = `SELECT i.id, i.site_id, i.unit, i.area_id, a.name AS area, i.name, i.counted_in, i.quantity, i.condition,
     i.notes, i.photo, i.updated_at, u.name AS updated_by
   FROM inventory_items i LEFT JOIN inventory_areas a ON a.id = i.area_id LEFT JOIN users u ON u.id = i.updated_by`;
 
@@ -80,16 +100,16 @@ const shape = (r) => ({
   notes: r.notes, photo: !!r.photo, updated_at: r.updated_at, updated_by: r.updated_by,
 });
 
-const itemsOf = async (buildingId) => (await db.prepare(`${ITEM} WHERE i.building_id = ? ORDER BY lower(i.name), i.id`).all(buildingId));
-const areasOf = (buildingId) => db.prepare('SELECT id, name FROM inventory_areas WHERE building_id = ? ORDER BY lower(name)').all(buildingId);
+const itemsOf = async (buildingId) => (await db.prepare(`${ITEM} WHERE i.site_id = ? ORDER BY lower(i.name), i.id`).all(buildingId));
+const areasOf = (buildingId) => db.prepare('SELECT id, name FROM inventory_areas WHERE site_id = ? ORDER BY lower(name)').all(buildingId);
 
 /** The buildings whose inventory this person keeps, with how much is in each. */
 export async function overview(user) {
-  const mine = await listBuildings(user);
+  const mine = await keptBuildings(user);
   if (!mine.length) return [];
-  const counts = new Map((await db.prepare(`SELECT building_id, count(*)::int AS items,
+  const counts = new Map((await db.prepare(`SELECT site_id, count(*)::int AS items,
       count(*) FILTER (WHERE condition = 'damaged')::int AS damaged, count(*) FILTER (WHERE condition = 'missing')::int AS missing
-    FROM inventory_items WHERE building_id = ANY(?::int[]) GROUP BY building_id`).all(mine.map((b) => b.id))).map((c) => [c.building_id, c]));
+    FROM inventory_items WHERE site_id = ANY(?::int[]) GROUP BY site_id`).all(mine.map((b) => b.id))).map((c) => [c.site_id, c]));
   return mine.map((b) => ({ id: b.id, name: b.name, items: counts.get(b.id)?.items || 0, damaged: counts.get(b.id)?.damaged || 0, missing: counts.get(b.id)?.missing || 0 }));
 }
 
@@ -117,7 +137,7 @@ export async function getInventory(user, buildingId, ask = askSaifsys) {
 // ---------- writing ----------
 
 const log = (buildingId, item, userId, what) => db.prepare(
-  'INSERT INTO inventory_log (building_id, item_id, item_name, place, user_id, what) VALUES (?, ?, ?, ?, ?, ?)',
+  'INSERT INTO inventory_log (site_id, item_id, item_name, place, user_id, what) VALUES (?, ?, ?, ?, ?, ?)',
 ).run(buildingId, item.id, item.name, placeOf(item).label, userId, what);
 
 export async function addArea(user, buildingId, input) {
@@ -125,17 +145,17 @@ export async function addArea(user, buildingId, input) {
   if (!b) return null;
   const name = line(input?.name, MAX_NAME);
   if (!name) throw bad('Give the area a name, like Lobby or Store room');
-  if (await db.prepare('SELECT 1 FROM inventory_areas WHERE building_id = ? AND lower(name) = lower(?)').get(b.id, name)) {
+  if (await db.prepare('SELECT 1 FROM inventory_areas WHERE site_id = ? AND lower(name) = lower(?)').get(b.id, name)) {
     throw bad(`${b.name} already has an area called ${name}`);
   }
-  const { id } = await db.prepare('INSERT INTO inventory_areas (building_id, name) VALUES (?, ?) RETURNING id').run(b.id, name);
+  const { id } = await db.prepare('INSERT INTO inventory_areas (site_id, name) VALUES (?, ?) RETURNING id').run(b.id, name);
   return { id, name };
 }
 
 /** Removes the area and everything listed in it. */
 export async function deleteArea(user, buildingId, areaId) {
   const b = await building(user, buildingId);
-  const area = b && await db.prepare('SELECT id, name FROM inventory_areas WHERE id = ? AND building_id = ?').get(Number(areaId) || 0, b.id);
+  const area = b && await db.prepare('SELECT id, name FROM inventory_areas WHERE id = ? AND site_id = ?').get(Number(areaId) || 0, b.id);
   if (!area) return null;
   const inside = await db.prepare(`${ITEM} WHERE i.area_id = ?`).all(area.id);
   for (const i of inside) { await log(b.id, i, user.id, 'Removed'); dropPhoto(i.photo); }
@@ -148,7 +168,7 @@ async function readPlace(b, key, ask) {
   const [kind, ...rest] = String(key ?? '').split(':');
   const value = rest.join(':').trim();
   if (kind === 'a') {
-    const area = await db.prepare('SELECT id, name FROM inventory_areas WHERE id = ? AND building_id = ?').get(Number(value) || 0, b.id);
+    const area = await db.prepare('SELECT id, name FROM inventory_areas WHERE id = ? AND site_id = ?').get(Number(value) || 0, b.id);
     if (!area) throw bad('Pick the area from the list');
     return { unit: null, area_id: area.id };
   }
@@ -174,7 +194,7 @@ function readFields(input) {
 
 /** Put one checked item in one checked place, and write down who did. */
 async function insertItem(buildingId, place, f, userId) {
-  const { id } = await db.prepare(`INSERT INTO inventory_items (building_id, unit, area_id, name, counted_in, quantity, condition, notes, created_by, updated_by)
+  const { id } = await db.prepare(`INSERT INTO inventory_items (site_id, unit, area_id, name, counted_in, quantity, condition, notes, created_by, updated_by)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(buildingId, place.unit, place.area_id, f.name, f.counted_in, f.quantity, f.condition, f.notes, userId, userId);
   const row = await db.prepare(`${ITEM} WHERE i.id = ?`).get(id);
   await log(buildingId, row, userId, 'Added');
@@ -185,7 +205,7 @@ async function insertItem(buildingId, place, f, userId) {
 export async function saveItem(user, buildingId, id, input, ask = askSaifsys) {
   const b = await building(user, buildingId);
   if (!b) return null;
-  const old = id ? await db.prepare(`${ITEM} WHERE i.id = ? AND i.building_id = ?`).get(Number(id) || 0, b.id) : null;
+  const old = id ? await db.prepare(`${ITEM} WHERE i.id = ? AND i.site_id = ?`).get(Number(id) || 0, b.id) : null;
   if (id && !old) return null;
 
   const f = readFields(input);
@@ -209,7 +229,7 @@ export async function saveItem(user, buildingId, id, input, ask = askSaifsys) {
 
 export async function deleteItem(user, buildingId, id) {
   const b = await building(user, buildingId);
-  const row = b && await db.prepare(`${ITEM} WHERE i.id = ? AND i.building_id = ?`).get(Number(id) || 0, b.id);
+  const row = b && await db.prepare(`${ITEM} WHERE i.id = ? AND i.site_id = ?`).get(Number(id) || 0, b.id);
   if (!row) return null;
   await log(b.id, row, user.id, 'Removed');
   await db.prepare('DELETE FROM inventory_items WHERE id = ?').run(row.id);
@@ -228,7 +248,7 @@ const MAX_NOTE = 200;
 /** Take some of an item out for a saifsys job. null: not their building, or no such item. */
 export async function takeItem(user, buildingId, id, input) {
   const b = await building(user, buildingId);
-  const row = b && await db.prepare(`${ITEM} WHERE i.id = ? AND i.building_id = ?`).get(Number(id) || 0, b.id);
+  const row = b && await db.prepare(`${ITEM} WHERE i.id = ? AND i.site_id = ?`).get(Number(id) || 0, b.id);
   if (!row) return null;
   const jobId = Number(input?.job_id);
   if (!Number.isInteger(jobId) || jobId <= 0) throw bad('Say which job it is for');
@@ -241,7 +261,7 @@ export async function takeItem(user, buildingId, id, input) {
     WHERE id = ? AND quantity >= ? RETURNING id`).get(taken, user.id, row.id, taken);
   if (!done) throw bad(`Only ${amount(row)} of ${row.name} left in ${placeOf(row).label}`);
   const after = await db.prepare(`${ITEM} WHERE i.id = ?`).get(row.id);
-  await db.prepare(`INSERT INTO inventory_log (building_id, item_id, item_name, place, user_id, what, job_id, taken, counted_in, note)
+  await db.prepare(`INSERT INTO inventory_log (site_id, item_id, item_name, place, user_id, what, job_id, taken, counted_in, note)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(b.id, row.id, row.name, placeOf(row).label, user.id,
     `Taken for job #${jobId}${note ? ` (${note})` : ''} · Quantity ${amount(row)} → ${amount(after)}`, jobId, taken, row.counted_in, note);
   return shape(after);
@@ -249,14 +269,14 @@ export async function takeItem(user, buildingId, id, input) {
 
 /** What has been taken for one job, oldest first - from the buildings this person keeps. */
 export async function takenForJob(user, jobId) {
-  const mine = await listBuildings(user);
+  const mine = await keptBuildings(user);
   if (!mine.length) return [];
   const names = new Map(mine.map((b) => [b.id, b.name]));
-  const rows = await db.prepare(`SELECT l.id, l.building_id, l.item_id, l.item_name, l.place, l.taken, l.counted_in, l.note, l.at, u.name AS by
+  const rows = await db.prepare(`SELECT l.id, l.site_id, l.item_id, l.item_name, l.place, l.taken, l.counted_in, l.note, l.at, u.name AS by
     FROM inventory_log l LEFT JOIN users u ON u.id = l.user_id
-    WHERE l.job_id = ? AND l.building_id = ANY(?::int[]) ORDER BY l.id`).all(Number(jobId) || 0, mine.map((b) => b.id));
+    WHERE l.job_id = ? AND l.site_id = ANY(?::int[]) ORDER BY l.id`).all(Number(jobId) || 0, mine.map((b) => b.id));
   return rows.map((r) => ({
-    id: r.id, building: { id: r.building_id, name: names.get(r.building_id) }, item_id: r.item_id, item: r.item_name, place: r.place,
+    id: r.id, building: { id: r.site_id, name: names.get(r.site_id) }, item_id: r.item_id, item: r.item_name, place: r.place,
     quantity: r.taken, counted_in: r.counted_in, note: r.note, at: r.at, by: r.by,
   }));
 }
@@ -266,7 +286,7 @@ export async function history(user, buildingId, id) {
   const b = await building(user, buildingId);
   if (!b) return null;
   return db.prepare(`SELECT l.what, l.at, u.name AS by FROM inventory_log l LEFT JOIN users u ON u.id = l.user_id
-    WHERE l.building_id = ? AND l.item_id = ? ORDER BY l.id DESC LIMIT 50`).all(b.id, Number(id) || 0);
+    WHERE l.site_id = ? AND l.item_id = ? ORDER BY l.id DESC LIMIT 50`).all(b.id, Number(id) || 0);
 }
 
 // ---------- the photo ----------
@@ -277,7 +297,7 @@ const dropPhoto = (path) => { if (path) rmSync(path, { force: true }); };
 /** Give an item its photo, or take it away (file null). */
 export async function setPhoto(user, buildingId, id, file) {
   const b = await building(user, buildingId);
-  const row = b && await db.prepare(`${ITEM} WHERE i.id = ? AND i.building_id = ?`).get(Number(id) || 0, b.id);
+  const row = b && await db.prepare(`${ITEM} WHERE i.id = ? AND i.site_id = ?`).get(Number(id) || 0, b.id);
   if (!row) return null;
   let path = null;
   if (file) {
@@ -295,7 +315,7 @@ export async function setPhoto(user, buildingId, id, file) {
 
 async function photoPath(user, buildingId, id) {
   const b = await building(user, buildingId);
-  return (b && (await db.prepare('SELECT photo FROM inventory_items WHERE id = ? AND building_id = ?').get(Number(id) || 0, b.id))?.photo) || null;
+  return (b && (await db.prepare('SELECT photo FROM inventory_items WHERE id = ? AND site_id = ?').get(Number(id) || 0, b.id))?.photo) || null;
 }
 
 // ---------- adding from chat ----------
@@ -367,8 +387,8 @@ async function chatPhoto(userId, conversationId, name) {
   return doc;
 }
 
-const proposalRow = (userId, id) => db.prepare(`SELECT p.*, b.name AS building FROM inventory_proposals p
-  LEFT JOIN buildings b ON b.id = p.building_id WHERE p.id = ? AND p.user_id = ?`).get(Number(id) || 0, userId);
+const proposalRow = (userId, id) => db.prepare(`SELECT p.*, (SELECT s.name FROM building_sites s WHERE s.site_id = p.site_id LIMIT 1) AS building
+  FROM inventory_proposals p WHERE p.id = ? AND p.user_id = ?`).get(Number(id) || 0, userId);
 
 /** The card: places that are getting the same things are said once, together. */
 function card(p) {
@@ -381,7 +401,7 @@ function card(p) {
     groups.set(sig, { places: [...(groups.get(sig)?.places || []), label], items });
   }
   return {
-    id: p.id, conversation_id: p.conversation_id, status: p.status, building: p.building || 'A deleted building', building_id: p.building_id,
+    id: p.id, conversation_id: p.conversation_id, status: p.status, building: p.building || 'A deleted building', building_id: p.site_id,
     groups: [...groups.values()], total: p.lines.filter((l) => !l.exists).length, skipped: p.lines.filter((l) => l.exists).length, added: p.added,
   };
 }
@@ -390,7 +410,7 @@ export const getProposal = async (user, id) => { const p = await proposalRow(use
 
 /** Get a card ready. Nothing is added. */
 export async function propose(user, input, { conversationId = null } = {}, ask = askSaifsys) {
-  const mine = await listBuildings(user);
+  const mine = await keptBuildings(user);
   if (!mine.length) throw bad('This user keeps no building\'s inventory.');
   const hits = input.building ? mine.filter((b) => has(b.name, input.building)) : mine;
   const exact = hits.filter((b) => same(b.name, input.building || ''));
@@ -413,7 +433,7 @@ export async function propose(user, input, { conversationId = null } = {}, ask =
   // again, or a range that overlaps the last one, must not double the inventory.
   const have = new Set((await itemsOf(b.id)).map((r) => `${r.area_id ? `a:${r.area_id}` : `u:${r.unit}`}|${r.name.toLowerCase()}`));
   const lines = places.flatMap((place) => items.map((f) => ({ place, ...f, exists: have.has(`${keyOf(place)}|${f.name.toLowerCase()}`) })));
-  const { id } = await db.prepare('INSERT INTO inventory_proposals (user_id, conversation_id, building_id, lines) VALUES (?, ?, ?, ?::jsonb) RETURNING id')
+  const { id } = await db.prepare('INSERT INTO inventory_proposals (user_id, conversation_id, site_id, lines) VALUES (?, ?, ?, ?::jsonb) RETURNING id')
     .run(user.id, conversationId, b.id, JSON.stringify(lines));
   return getProposal(user, id);
 }
@@ -429,7 +449,7 @@ export async function decide(user, id, add) {
   if (add) {
     const copied = [];
     try {
-      const b = await building(user, p.building_id);
+      const b = await building(user, p.site_id);
       if (!b) throw bad('You no longer keep this building\'s inventory.', 403);
       const added = await tx(async () => {
         const areas = await areasOf(b.id);
@@ -440,7 +460,7 @@ export async function decide(user, id, add) {
           if (place.new_area) {
             let a = areas.find((x) => same(x.name, place.new_area));
             if (!a) {
-              a = { id: (await db.prepare('INSERT INTO inventory_areas (building_id, name) VALUES (?, ?) RETURNING id').run(b.id, place.new_area)).id, name: place.new_area };
+              a = { id: (await db.prepare('INSERT INTO inventory_areas (site_id, name) VALUES (?, ?) RETURNING id').run(b.id, place.new_area)).id, name: place.new_area };
               areas.push(a);
             }
             at = { unit: null, area_id: a.id };
@@ -538,7 +558,7 @@ const ADD = {
 const MAX_CHAT_LINES = 300;
 
 async function inventoryForChat(user, input) {
-  const mine = (await listBuildings(user)).filter((b) => !input.building || has(b.name, input.building));
+  const mine = (await keptBuildings(user)).filter((b) => !input.building || has(b.name, input.building));
   if (!mine.length) return input.building ? `No building of yours matches "${input.building}".` : 'This user has no buildings.';
   const out = [];
   let total = 0;
@@ -563,7 +583,7 @@ async function inventoryForChat(user, input) {
  * ctx: { conversationId, onCard } - onCard puts the Add/Cancel card in front of them.
  */
 export async function inventoryKit(user, ctx = {}, ask = askSaifsys) {
-  const keeps = (await listBuildings(user)).length > 0;
+  const keeps = (await keptBuildings(user)).length > 0;
   const handlers = keeps ? {
     inventory: (input) => inventoryForChat(user, input),
     add_inventory: async (input) => {
