@@ -26,6 +26,7 @@ import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
+import { recurringRoutes } from './recurring.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
@@ -69,6 +70,7 @@ app.use('/api/responsibilities', responsibilityRoutes); // who looks after what;
 app.use('/api/checklists', checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
+app.use('/api/recurring', recurringRoutes); // receivables and payables with their own chart of accounts (master only)
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 

@@ -15,7 +15,7 @@ export const api = {
   put: (p, json) => request(p, { method: 'PUT', json }).then((r) => r.json()),
   patch: (p, json) => request(p, { method: 'PATCH', json }).then((r) => r.json()),
   del: (p) => request(p, { method: 'DELETE' }).then((r) => r.json()),
-  upload: (p, form) => request(p, { method: 'POST', body: form }).then((r) => r.json()),
+  upload: (p, form, method = 'POST') => request(p, { method, body: form }).then((r) => r.json()),
 };
 
 // POST /api/chat and read the server-sent events as they arrive

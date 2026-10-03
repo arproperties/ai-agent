@@ -1202,3 +1202,43 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_inventory_proposals_chat ON inventory_proposals(user_id, conversation_id, id);
 `);
+
+// Recurring: receivables and payables, with the module's own chart of accounts - see
+// server/recurring.js. Nothing here refers to any other feature's tables.
+//   recurring_accounts: the chart. A row with no parent_id is a parent (the company);
+//     a row with one is an account under it. side keeps the receivable chart and the
+//     payable chart apart. hidden takes an account out of the picker, not out of history.
+//   recurring_entries: one amount against one account. file is a path on disk and is
+//     never empty: an entry is not saved without its attachment. "Overdue" is worked
+//     out from status and due_date, not stored.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_accounts (
+    id SERIAL PRIMARY KEY,
+    side TEXT NOT NULL CHECK (side IN ('receivable', 'payable')),
+    parent_id INTEGER REFERENCES recurring_accounts(id) ON DELETE RESTRICT,
+    name TEXT NOT NULL,
+    hidden BOOLEAN NOT NULL DEFAULT false,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_accounts_name ON recurring_accounts(side, coalesce(parent_id, 0), lower(name));
+
+  CREATE TABLE IF NOT EXISTS recurring_entries (
+    id SERIAL PRIMARY KEY,
+    side TEXT NOT NULL CHECK (side IN ('receivable', 'payable')),
+    account_id INTEGER NOT NULL REFERENCES recurring_accounts(id) ON DELETE RESTRICT,
+    amount NUMERIC(14, 2) NOT NULL CHECK (amount > 0),
+    method TEXT NOT NULL CHECK (method IN ('cash', 'bank', 'cheque')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid')),
+    due_date DATE NOT NULL,
+    note TEXT,
+    file TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_mime TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_recurring_entries_side ON recurring_entries(side, due_date);
+`);
