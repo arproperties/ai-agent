@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Repeat, Loader2, Plus, Pause, Play, Trash2 } from 'lucide-react';
+import Picker from './Picker';
 import { api } from '../lib/api';
 import { toInput, fromInput } from './Todos';
 import Sheet from './Sheet';
@@ -205,10 +206,8 @@ function RoutineSheet({ r, onClose, onSaved }) {
             <span className="text-sm text-mute">Every</span>
             <input type="number" min={1} max={366} value={every} onChange={(e) => setEvery(e.target.value)}
               className="w-16 rounded-xl border border-stroke bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-p1/60" />
-            <select value={unit} onChange={(e) => setUnit(e.target.value)}
-              className="flex-1 rounded-xl border border-stroke bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-p1/60">
-              {UNITS.map(([u]) => <option key={u} value={u} className="bg-[#141128]">{u}{Number(every) > 1 ? 's' : ''}</option>)}
-            </select>
+            <Picker value={unit} onChange={setUnit} className="flex-1 text-sm"
+              options={UNITS.map(([u]) => ({ value: u, label: `${u}${Number(every) > 1 ? 's' : ''}` }))} />
           </div>
         </div>
         <label className="block space-y-1.5">

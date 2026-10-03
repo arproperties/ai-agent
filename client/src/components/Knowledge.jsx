@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileSignature, Building2, Receipt, Landmark, Scale, Users, IdCard, BadgeCheck, Mail, Megaphone, Image as ImageIcon,
-  Folder, FolderOpen, Search, Download, ExternalLink, Loader2, AlertCircle, Upload, ChevronLeft, ChevronDown, Trash2, MessageSquare, X, Info, PenLine, Sparkles,
+  Folder, FolderOpen, Search, Download, ExternalLink, Loader2, AlertCircle, Upload, ChevronLeft, Trash2, MessageSquare, X, Info, PenLine, Sparkles,
   FileArchive, FolderInput, CheckCircle2, Clock, Play,
 } from 'lucide-react';
 import { api } from '../lib/api';
@@ -11,6 +11,7 @@ import { describeIgnored } from '../lib/zip';
 import Icon from './Icon';
 import Sheet from './Sheet';
 import Page from './Page';
+import Picker from './Picker';
 import Orb from './Orb';
 import { ParticleField } from './ParticleField';
 
@@ -378,17 +379,11 @@ export function FileDetail({ d, folders, companies = [], me, shelfName, onClose,
           <div className="flex flex-wrap gap-1.5">{d.tags.map((t) => <span key={t} className="rounded-full bg-white/[0.06] px-2.5 py-1 text-xs text-mute">#{t}</span>)}</div>
         )}
 
-        <label className="block">
+        <div>
           <span className="mb-1.5 block text-xs font-medium tracking-wide text-mute">FOLDER</span>
-          <span className="relative block">
-            <FolderIcon size={16} className={`pointer-events-none absolute left-3.5 top-1/2 z-10 -translate-y-1/2 ${tone}`} />
-            <select value={d.folder} onChange={(e) => move(e.target.value)}
-              className="glass w-full appearance-none rounded-xl py-2.5 pl-10 pr-9 outline-none focus:border-p1/70">
-              {folders.map((f) => <option key={f} value={f} className="bg-bg">{f}</option>)}
-            </select>
-            <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-mute" />
-          </span>
-        </label>
+          <Picker value={d.folder} onChange={move} options={folders.map((f) => ({ value: f, label: f }))}
+            icon={<FolderIcon size={16} className={`shrink-0 ${tone}`} />} searchPlaceholder="Search folders" />
+        </div>
 
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium tracking-wide text-mute">EXPIRES</span>

@@ -7,9 +7,9 @@ import { Check, ChevronDown, Search } from 'lucide-react';
  * browser's own dropdown, which cannot be searched and ignores the look of the app.
  *
  * options: [{ value, label, hint? }]. `none` is the label of the "nothing chosen" row
- * (value ''), left out when a choice is required.
+ * (value ''), left out when a choice is required. `icon` sits before the chosen label.
  */
-export default function Picker({ value, onChange, options, none, placeholder = 'Choose', searchPlaceholder = 'Search', className = '' }) {
+export default function Picker({ value, onChange, options, none, icon, placeholder = 'Choose', searchPlaceholder = 'Search', className = '' }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [at, setAt] = useState(0); // the row the arrow keys are on
@@ -47,6 +47,7 @@ export default function Picker({ value, onChange, options, none, placeholder = '
     <div ref={wrap} className={`relative ${className}`}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}
         className={`glass flex w-full items-center gap-2 rounded-xl px-3.5 py-2.5 text-left outline-none transition ${open ? 'border-p1/70' : 'hover:border-white/20'}`}>
+        {icon}
         <span className={`min-w-0 flex-1 truncate ${!current || current.quiet ? 'text-mute' : ''}`}>{current?.label || placeholder}</span>
         <ChevronDown size={16} className={`shrink-0 text-mute transition ${open ? 'rotate-180' : ''}`} />
       </button>

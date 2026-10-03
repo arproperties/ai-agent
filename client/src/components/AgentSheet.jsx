@@ -2,20 +2,12 @@ import { useState } from 'react';
 import { api } from '../lib/api';
 import { ChevronDown, Sparkles } from 'lucide-react';
 import Sheet from './Sheet';
+import Picker from './Picker';
 import { FilesPanel } from './Knowledge';
 import Avatar, { AGENT_ICONS, AGENT_COLORS } from './Avatar';
 
 const field = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const label = 'mb-1.5 block text-xs font-medium tracking-wide text-mute';
-
-function Select({ value, onChange, children, className = '' }) {
-  return (
-    <div className="relative">
-      <select value={value} onChange={onChange} className={`${field} appearance-none pr-9 ${className}`}>{children}</select>
-      <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-mute" />
-    </div>
-  );
-}
 
 /**
  * What an agent looks like to someone who was given it rather than made it: its name,
@@ -137,15 +129,13 @@ function PersonaTab({ agent, config, onSaved }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={label}>MODEL</label>
-              <Select value={f.model} onChange={set('model')}>
-                {config.models.map((m) => <option key={m.id} value={m.id} className="bg-bg">{m.label}</option>)}
-              </Select>
+              <Picker value={f.model} onChange={(value) => set('model')({ target: { value } })}
+                options={config.models.map((m) => ({ value: m.id, label: m.label }))} searchPlaceholder="Search models" />
             </div>
             <div>
               <label className={label}>VOICE</label>
-              <Select value={f.voice} onChange={set('voice')} className="capitalize">
-                {config.voices.map((v) => <option key={v} value={v} className="bg-bg">{v}</option>)}
-              </Select>
+              <Picker value={f.voice} onChange={(value) => set('voice')({ target: { value } })}
+                options={config.voices.map((v) => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1) }))} searchPlaceholder="Search voices" />
             </div>
           </div>
           <div>
