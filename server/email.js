@@ -2,6 +2,7 @@ import { outlookAccount, outlookTools } from './outlook.js';
 import { imapAccount, imapTools, imapActions, replySubject } from './imap.js';
 import { createDraft, getDraft, draftOut, logAction } from './drafts.js';
 import { kick } from './outbox.js';
+import { gather, discard } from './draftFiles.js';
 
 // The tool surface the agents see. Reading works against an IMAP mailbox or Outlook.
 // Acting works against IMAP only, and only when its owner has turned it on — the write
@@ -46,6 +47,20 @@ export const EMAIL_READ_TOOLS = [
   },
 ];
 
+const ATTACHMENTS = {
+  type: 'array',
+  description: 'Files to attach. Each is one of the user\'s saved files (their Shelf, including any file they attached in this chat) ' +
+    'by its file name, or — with email_id — a file that came attached to an email, to send it on. Only attach what the user asked for.',
+  items: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: 'The file name, exactly as listed.' },
+      email_id: { type: 'string', description: 'Only for a file attached to an email: the id of that email from search_email.' },
+    },
+    required: ['name'],
+  },
+};
+
 const MESSAGE_ID = { type: 'string', description: 'The id of an email, exactly as search_email gave it (for example "INBOX:1423").' };
 
 /**
@@ -75,6 +90,7 @@ export const EMAIL_WRITE_TOOLS = [
         subject: { type: 'string' },
         body: { type: 'string', description: 'Plain text. No Markdown — this goes out as an email, not a chat message.' },
         in_reply_to: { ...MESSAGE_ID, description: 'Optional: an email this is a reply to, so it threads. Prefer reply_email.' },
+        attachments: ATTACHMENTS,
       },
       required: ['to', 'body'],
     },
@@ -85,7 +101,7 @@ export const EMAIL_WRITE_TOOLS = [
       'This does NOT send it — the user must tap Approve. Recipients and subject are taken from the original.',
     input_schema: {
       type: 'object',
-      properties: { message_id: MESSAGE_ID, body: { type: 'string', description: 'Plain text.' } },
+      properties: { message_id: MESSAGE_ID, body: { type: 'string', description: 'Plain text.' }, attachments: ATTACHMENTS },
       required: ['message_id', 'body'],
     },
   },
@@ -144,7 +160,8 @@ export function statusFor(name, input = {}) {
 function writeTools(ctx) {
   const show = (d) => { ctx.onDraft?.(draftOut(d)); return d; };
   const waiting = (d) => `Draft ${d.id} is written and is now in front of ${ctx.userName || 'the user'} with Approve and Reject buttons. ` +
-    'It has NOT been sent and you cannot send it — tell them it is ready for them to approve.';
+    'It has NOT been sent and you cannot send it — tell them it is ready for them to approve.' +
+    (d.attachments ? ` Attached: ${JSON.parse(d.attachments).map((a) => a.filename).join(', ')}.` : '');
 
   // Marking and moving happen without anyone tapping anything, so the log is the only
   // record that they happened at all — and the only way a user finds out that an email
@@ -161,16 +178,28 @@ function writeTools(ctx) {
     }
   };
 
+  // The files are copied before the draft exists, so a draft that is then refused (a bad
+  // address, say) must not leave its copies behind.
+  const draftWith = async (userId, wanted, fields) => {
+    const attachments = await gather(userId, wanted);
+    try {
+      return await createDraft(userId, { ...fields, attachments });
+    } catch (e) {
+      discard({ attachments: JSON.stringify(attachments) });
+      throw e;
+    }
+  };
+
   const drafted = (userId, d) =>
     logAction(userId, { agentId: ctx.agentId, action: 'draft', draftId: d.id, recipients: d.to_addrs, target: d.reply_to_id });
 
   return {
-    create_draft: async (userId, { to, cc, subject, body, in_reply_to }) => {
+    create_draft: async (userId, { to, cc, subject, body, in_reply_to, attachments }) => {
       const acc = await imapAccount(userId);
       // in_reply_to is optional here and best-effort: a draft that cannot be threaded is
       // still a draft worth showing, so a failed lookup loses the headers, not the email.
       const thread = in_reply_to ? await imapActions.original(userId, in_reply_to).catch(() => null) : null;
-      const d = show(await createDraft(userId, {
+      const d = show(await draftWith(userId, attachments, {
         agentId: ctx.agentId, conversationId: ctx.conversationId,
         to, cc, subject, body, from: acc?.email ?? null,
         inReplyTo: thread?.messageId ?? null, refs: thread?.refs ?? null, replyToId: in_reply_to ?? null,
@@ -179,11 +208,11 @@ function writeTools(ctx) {
       return waiting(d);
     },
 
-    reply_email: async (userId, { message_id, body }) => {
+    reply_email: async (userId, { message_id, body, attachments }) => {
       const o = await imapActions.original(userId, message_id);
       const acc = await imapAccount(userId);
       const to = replyRecipients(o, acc.email);
-      const d = show(await createDraft(userId, {
+      const d = show(await draftWith(userId, attachments, {
         agentId: ctx.agentId, conversationId: ctx.conversationId,
         to,
         subject: replySubject(o.subject),

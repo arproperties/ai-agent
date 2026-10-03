@@ -3,6 +3,7 @@ import { decrypt } from './secrets.js';
 import { imapAccount, imapActions } from './imap.js';
 import { compose, sendRaw, friendlySmtp } from './smtp.js';
 import { logAction, sendQuota } from './drafts.js';
+import { withContent, discard } from './draftFiles.js';
 
 // The only code in the app that sends mail on the user's behalf, and the only caller of
 // SMTP. It is reached from exactly one place: a draft whose status is 'approved', which
@@ -59,7 +60,7 @@ export async function deliver(draft, { send = sendRaw, append = imapActions.appe
       text: draft.body,
       inReplyTo: draft.in_reply_to,
       references: draft.refs,
-      attachments: draft.attachments ? JSON.parse(draft.attachments) : [],
+      attachments: withContent(draft.attachments ? JSON.parse(draft.attachments) : []),
     });
     await send(acc, password, built);
   } catch (e) {
@@ -72,6 +73,7 @@ export async function deliver(draft, { send = sendRaw, append = imapActions.appe
   await db.prepare(`UPDATE email_drafts SET status = 'sent', message_id = ?, error = NULL,
       sent_at = extract(epoch from now())::bigint WHERE id = ?`).run(built.messageId, draft.id);
   await log({ action: 'send', recipients: draft.to_addrs, target: draft.reply_to_id, messageId: built.messageId });
+  discard(draft); // the copies were for this send; the card keeps the file names
 
   // The email has gone and cannot be recalled. A Sent copy that will not file is a filing
   // problem, so it is recorded on its own and never turns a delivered email into a failure.

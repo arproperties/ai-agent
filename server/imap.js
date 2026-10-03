@@ -225,10 +225,13 @@ async function fetchParsed(userId, id) {
 const attached = (p) => (p.attachments || []).filter((a) => a.contentDisposition !== 'inline')
   .map((a) => ({ name: a.filename || 'unnamed', mimetype: a.contentType, buffer: a.content }));
 
-async function readAttachment(userId, { id, name }) {
+/** One attachment's bytes: { name, mimetype, buffer }. For reading it, or for sending it on. */
+export async function emailFile(userId, { id, name }) {
   const { p } = await fetchParsed(userId, id);
-  return attachmentText(pickAttachment(attached(p), name));
+  return pickAttachment(attached(p), name);
 }
+
+const readAttachment = async (userId, input) => attachmentText(await emailFile(userId, input));
 
 async function readEmail(userId, { id }) {
   const { p, path } = await fetchParsed(userId, id);

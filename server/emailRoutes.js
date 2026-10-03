@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { listDrafts, getDraft, decideDraft, hideDraft, deleteDraft, draftOut, logAction, actionLog, sendQuota } from './drafts.js';
 import { kick } from './outbox.js';
+import { discard } from './draftFiles.js';
 
 // Approving and rejecting. This is the only thing in the app that moves a draft out of
 // 'pending', and it is reachable only by the signed-in owner of the mailbox — which is
@@ -14,6 +15,7 @@ const decide = (verb, approved) => async (req, res) => {
   // Approving sends now rather than up to a minute from now. Its failure is the draft's,
   // recorded on the row the screen is about to reload — never this response's.
   if (approved) kick();
+  else discard(d); // a rejected draft will never send: its copies of the files go with it
   res.json({ draft: draftOut(await getDraft(req.user.id, d.id)) });
 };
 
@@ -44,7 +46,9 @@ export const emailHandlers = {
     res.json({ draft: draftOut(await hideDraft(req.user.id, req.params.id, req.body?.hidden !== false)) });
   },
   remove: async (req, res) => {
+    const d = await getDraft(req.user.id, req.params.id);
     await deleteDraft(req.user.id, req.params.id);
+    discard(d); // only reached when the delete was allowed
     res.json({ ok: true });
   },
 

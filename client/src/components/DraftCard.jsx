@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown } from 'lucide-react';
+import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown, Paperclip } from 'lucide-react';
 import { api } from '../lib/api';
 
 // An email an agent wrote, waiting for the person whose name it would go out under.
@@ -132,6 +132,16 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
       </dl>
 
       <p className="mt-2.5 whitespace-pre-wrap border-t border-stroke/60 pt-2.5 text-[13px] leading-relaxed">{draft.body}</p>
+
+      {draft.attachments?.length > 0 && (
+        <ul className="mt-2.5 flex flex-wrap gap-1.5 border-t border-stroke/60 pt-2.5">
+          {draft.attachments.map((name, i) => (
+            <li key={i} className="flex max-w-full items-center gap-1.5 rounded-full border border-stroke px-2.5 py-1 text-xs text-mute">
+              <Paperclip size={12} className="shrink-0" /><span className="truncate">{name}</span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {draft.error && (
         <p className="mt-2.5 flex items-start gap-2 text-xs text-bad"><AlertCircle size={14} className="mt-0.5 shrink-0" />{draft.error}</p>
