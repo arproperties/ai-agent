@@ -8,6 +8,7 @@ import { todoKit } from './todos.js';
 import { teamReminderKit } from './teamReminders.js';
 import { responsibilityKit } from './responsibilities.js';
 import { buildingKit } from './buildings.js';
+import { inventoryKit } from './inventory.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
 import { isAudio, readAudio } from './transcripts.js';
@@ -269,6 +270,7 @@ export async function chat(req, res) {
   const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id),
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
     await buildingKit(user),
+    await inventoryKit(user),
     ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));

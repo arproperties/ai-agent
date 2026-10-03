@@ -1136,3 +1136,51 @@ await db.exec(`
     PRIMARY KEY (building_id, job_id)
   );
 `);
+
+// Inventory: the things kept in each unit and area of a building - see server/inventory.js.
+// Its own tables, hung off buildings so the same people keep it who run the building.
+//   inventory_areas: the places of a building that are not a unit (lobby, store room).
+//   inventory_items: one thing in one place. unit is the saifsys unit number as text;
+//     an item is in a unit or in an area, never both. photo is a path on disk.
+//   inventory_log: every change, with who made it. item_id is not a foreign key, so
+//     what happened to an item is still there after the item is removed.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS inventory_areas (
+    id SERIAL PRIMARY KEY,
+    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_areas_name ON inventory_areas(building_id, lower(name));
+
+  CREATE TABLE IF NOT EXISTS inventory_items (
+    id SERIAL PRIMARY KEY,
+    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    unit    TEXT,
+    area_id INTEGER REFERENCES inventory_areas(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    counted_in TEXT,
+    quantity   NUMERIC NOT NULL DEFAULT 1,
+    condition  TEXT NOT NULL DEFAULT 'good' CHECK (condition IN ('good', 'damaged', 'missing')),
+    notes TEXT,
+    photo TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW},
+    CHECK ((unit IS NULL) <> (area_id IS NULL))
+  );
+  CREATE INDEX IF NOT EXISTS idx_inventory_items_building ON inventory_items(building_id);
+
+  CREATE TABLE IF NOT EXISTS inventory_log (
+    id SERIAL PRIMARY KEY,
+    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    item_id   INTEGER NOT NULL,
+    item_name TEXT NOT NULL,
+    place     TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    what TEXT NOT NULL,
+    at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_inventory_log_item ON inventory_log(item_id, id);
+`);

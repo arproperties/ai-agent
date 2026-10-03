@@ -25,6 +25,7 @@ import { responsibilityRoutes } from './responsibilities.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
+import { inventoryRoutes } from './inventory.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
@@ -67,6 +68,7 @@ app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks 
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/checklists', checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
+app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
