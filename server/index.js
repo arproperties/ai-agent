@@ -25,6 +25,11 @@ import { responsibilityRoutes } from './responsibilities.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { propertyRoutes } from './properties.js';
 import { leasingRoutes } from './leasing.js';
+import { reportRoutes } from './leasingReports.js';
+import { alertRoutes, startLeasingAlerts } from './leasingAlerts.js';
+import { receiptRoutes } from './leasingReceipt.js';
+import { regionRoutes } from './leasingRegion.js';
+import { importRoutes as leasingImportRoutes } from './leasingImport.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
@@ -35,7 +40,6 @@ import { errorRoutes, recordError } from './errors.js';
 import { replyPdfRoutes } from './replyPdf.js';
 import { meetingShareRoutes } from './meetingShare.js';
 import { drawingRoutes } from './drawing.js';
-import { tenantCareRoutes, startTenantCare } from './tenantCare.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -54,7 +58,7 @@ app.use('/api/imports', importRoutes);
 app.use('/api/messenger', messengerRoutes); // people-to-people chat, separate from the AI chats
 app.use('/api/todos', todoRoutes);
 app.use('/api/team-reminders', teamReminderRoutes); // reminders sent to other people, proposed in chat
-app.use('/api/suggestions', suggestionRoutes); // reminders Reem spots in new email and chat, one tap to keep
+app.use('/api/suggestions', suggestionRoutes); // reminders Riley spots in new email and chat, one tap to keep
 app.use('/api/routines', routineRoutes); // things that come back, kept apart from the one-off todos
 app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
 app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
@@ -63,10 +67,14 @@ app.use('/api/meetings', meetingRoutes); // recorded meetings: who said what, an
 app.use('/api/transcripts', transcriptRoutes); // any audio file or recording, as plain text
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
-app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/properties', propertyRoutes); // companies, buildings and units; the base for leasing (master writes)
+app.use('/api/leasing/reports', reportRoutes); // rent roll, aging, collections, expiring leases, vacancy, tenant statement
+app.use('/api/leasing/alerts', alertRoutes); // what needs attention today, and the master's alert rules
+app.use('/api/leasing/region', regionRoutes); // the business's currency, time zone and phone country code (master sets)
+app.use('/api/leasing/payments', receiptRoutes); // the receipt PDF for one payment
+app.use('/api/leasing/import', leasingImportRoutes); // the office's existing spreadsheet, all or nothing (master only)
 app.use('/api/leasing', leasingRoutes); // tenants and bookings of units; the rent is set per booking
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
@@ -372,11 +380,12 @@ app.listen(PORT, '0.0.0.0', () => {
   // The buzz when a to-do or a routine falls due. The badge and the first screen are
   // unchanged and keep working on their own if this timer ever stops.
   startReminders();
-  startTenantCare(); // does nothing until the Tenant care inbox is connected
+  // Rent due, overdue, leases ending: the same kind of buzz, on its own ten-minute timer.
+  startLeasingAlerts();
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));
   // The saifsys morning checkout reminder (startArs in server/saifsys/ars.js) is on hold
-  // by the user's choice, 2026-09-25: they ask Reem instead. The tool still works.
-  console.log(`Reem server → http://localhost:${PORT}`);
+  // by the user's choice, 2026-09-25: they ask Riley instead. The tool still works.
+  console.log(`Riley server → http://localhost:${PORT}`);
 });

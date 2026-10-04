@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ListTodo, BellRing, Check, Lightbulb, X, Bell } from 'lucide-react';
+import { ListTodo, BellRing, Check, Lightbulb, X, Bell, MessagesSquare } from 'lucide-react';
 import { api, streamChat } from '../lib/api';
 import { speakText, stopSpeaking, togglePause } from '../lib/voice';
 import Icon from './Icon';
@@ -24,7 +24,7 @@ import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
 
 // Which reply can be shared: one the server has written down. A reply still streaming
 // has only a made-up id here, and the share is sent by id so the team gets the words
-// Reem actually said, not whatever the browser is holding.
+// Riley actually said, not whatever the browser is holding.
 const savedIdOf = (m) => (m.error ? null : m.saved ?? (typeof m.id === 'number' ? m.id : null));
 const shareIdOf = (m) => (m.role === 'assistant' ? savedIdOf(m) : null);
 // The latest saved drawing at or before message i: what "convert into pdf" hands over.
@@ -43,7 +43,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [], fromOthers: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0 }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [], fromOthers: [] }, onDueChanged, onConversation, onMenu, onHistory, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0 }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -60,7 +60,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [reminders, setReminders] = useState([]); // reminders for other people got ready in this chat
   const [duties, setDuties] = useState([]); // responsibility changes got ready in this chat (master only)
   const [bookings, setBookings] = useState([]); // ARS bookings got ready in this chat, waiting for Create
-  const [suggested, setSuggested] = useState([]); // reminders Reem spotted, waiting for a yes or no
+  const [suggested, setSuggested] = useState([]); // reminders Riley spotted, waiting for a yes or no
   const push = usePush();
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
   const [pdfOf, setPdfOf] = useState(null); // { id, content, own } of the message being made into a PDF
@@ -209,10 +209,13 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     <div className="relative flex h-full flex-col">
       {/* header */}
       <header className="flex items-center gap-1 border-b border-stroke/60 px-2 pb-2 pt-safe md:px-4">
-        <span className="relative md:hidden">
-          <IconBtn icon="menu" label={menuBadge ? 'Menu (new messages)' : 'Menu'} onClick={onMenu} />
+        <span className="md:hidden"><IconBtn icon="menu" label="Menu" onClick={onMenu} /></span>
+        {/* On a phone the chats are a screen of their own; Team chat is in there, so its dot is here. */}
+        <button onClick={onHistory} aria-label={menuBadge ? 'Chats (new messages)' : 'Chats'} title="Chats"
+          className="relative grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
+          <MessagesSquare size={20} />
           {menuBadge > 0 && <span className="pointer-events-none absolute right-1.5 top-1.5 size-2.5 rounded-full bg-emerald-400 ring-2 ring-bg" />}
-        </span>
+        </button>
         <div className="flex min-w-0 flex-1 items-center gap-3 py-1 pl-1">
           {lastAgent ? (
             <Avatar icon={lastAgent.icon} color={lastAgent.color} size={38}
@@ -239,7 +242,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             <span className="absolute right-1 top-1 grid min-w-4 place-items-center rounded-full bg-p1 px-1 text-[10px] font-semibold leading-4 text-white">{docIds.length}</span>
           </button>
         )}
-        <IconBtn icon="edit" label="New Reem chat" onClick={onNewChat} />
+        <IconBtn icon="edit" label="New Riley chat" onClick={onNewChat} />
       </header>
 
       {/* messages */}
@@ -279,7 +282,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 </button>
               </div>
             ))}
-            {/* Spotted by Reem in new email and chat. A suggestion, never a reminder until
+            {/* Spotted by Riley in new email and chat. A suggestion, never a reminder until
                 "Remind me" is tapped — then it is an ordinary todo on their own list. */}
             {suggested.map((sg) => (
               <div key={`sg${sg.id}`}
@@ -430,7 +433,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       {details && <FileDetail d={details} folders={folders} me={user} onClose={() => setDetails(null)} onChanged={() => {}} />}
 
       {toast && (
-        <div className="rise absolute inset-x-4 top-20 z-30 mx-auto max-w-md rounded-2xl border border-warn/30 bg-[#1d1830]/95 px-4 py-3 text-sm shadow-xl">{toast}</div>
+        <div className="rise absolute inset-x-4 top-20 z-30 mx-auto max-w-md rounded-2xl border border-warn/30 bg-surface-2/95 px-4 py-3 text-sm shadow-xl">{toast}</div>
       )}
     </div>
   );

@@ -57,7 +57,7 @@ export async function currentUser(req) {
 /**
  * When each account was last actually used. Written from here because this is the one
  * place every signed-in request passes through, and at most once every few minutes per
- * person: the People screen asks who is still using Reem, and a coarse answer serves
+ * person: the People screen asks who is still using Riley, and a coarse answer serves
  * that as well as an exact one would while costing one write an hour instead of one a
  * request. Fire-and-forget - somebody's request must never fail over a statistic.
  */

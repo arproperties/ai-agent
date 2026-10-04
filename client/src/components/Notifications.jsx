@@ -11,7 +11,7 @@ import { canPush, isSubscribed, enablePush, disablePush, testPush } from '../lib
 //
 // The browser is the single source of truth about whether this device is on. Nothing is
 // remembered in React that the browser could contradict a moment later: someone can
-// revoke the permission in their phone's settings without ever opening Reem.
+// revoke the permission in their phone's settings without ever opening Riley.
 
 const DISMISSED = 'jarvis:notify-banner-dismissed';
 
@@ -35,7 +35,7 @@ export function usePush() {
     check();
     watchers.add(check);
     // Someone can revoke the permission in their phone's settings without ever opening
-    // Reem, so coming back to the app asks the browser again rather than trusting this.
+    // Riley, so coming back to the app asks the browser again rather than trusting this.
     document.addEventListener('visibilitychange', check);
     return () => { watchers.delete(check); document.removeEventListener('visibilitychange', check); };
   }, [check]);
@@ -119,7 +119,7 @@ export function NotifyBanner() {
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">{done ? 'Notifications are on' : 'Get notified of new messages'}</p>
           <p className="mt-0.5 text-xs text-mute">
-            {done ? 'We just sent you one so you can see what it looks like.' : 'Reem can buzz your phone when a message arrives, even when the app is closed.'}
+            {done ? 'We just sent you one so you can see what it looks like.' : 'Riley can buzz your phone when a message arrives, even when the app is closed.'}
           </p>
           {problem && <p className="mt-1.5 text-xs text-warn">{problem}</p>}
           {!done && (
@@ -142,7 +142,7 @@ const SNOOZE_FOR = 3 * 24 * 3600 * 1000;
 
 /**
  * The card that greets anyone whose device is not set up yet, right after they open
- * Reem. The Team chat banner alone was too easy to miss: most of the team never turned
+ * Riley. The Team chat banner alone was too easy to miss: most of the team never turned
  * notifications on, and a chat app that never buzzes is a chat app nobody opens.
  *
  * "Not now" puts it away for a few days on this device, not for good. An iPhone in Safari
@@ -174,15 +174,15 @@ export function NotifyPrompt() {
     setTimeout(() => setHidden(true), 2500);
   };
 
-  const title = done ? 'Notifications are on' : needsHomeScreen ? 'Add Reem to your Home Screen' : blocked ? 'Notifications are blocked' : 'Turn on notifications';
+  const title = done ? 'Notifications are on' : needsHomeScreen ? 'Add Riley to your Home Screen' : blocked ? 'Notifications are blocked' : 'Turn on notifications';
   const text = done ? 'We just sent you one so you can see what it looks like.'
-    : needsHomeScreen ? 'iPhone only allows notifications from the Home Screen app. Tap the Share button, then “Add to Home Screen”, and open Reem from there.'
-    : blocked ? 'This device is set to block Reem. Allow notifications for this site in your browser or phone settings, then come back.'
-    : 'So you know the moment a colleague messages you — even when Reem is closed.';
+    : needsHomeScreen ? 'iPhone only allows notifications from the Home Screen app. Tap the Share button, then “Add to Home Screen”, and open Riley from there.'
+    : blocked ? 'This device is set to block Riley. Allow notifications for this site in your browser or phone settings, then come back.'
+    : 'So you know the moment a colleague messages you — even when Riley is closed.';
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm sm:items-center">
-      <div className="rise w-full max-w-sm rounded-3xl border border-stroke bg-[#141225] p-6 text-center shadow-2xl">
+      <div className="rise w-full max-w-sm rounded-3xl border border-stroke bg-surface p-6 text-center shadow-2xl">
         <span className="mx-auto grid size-12 place-items-center rounded-full bg-emerald-400/15 text-emerald-300"><Bell size={22} /></span>
         <p className="mt-4 text-lg font-medium">{title}</p>
         <p className="mt-1.5 text-sm text-mute">{text}</p>

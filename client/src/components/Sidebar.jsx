@@ -1,24 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { Search, X, Users, Eye } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { BarChart3, BellRing, CalendarDays, ClipboardList, Eye, Globe, Landmark, LayoutDashboard, MessagesSquare, Search, Users } from 'lucide-react';
 import { api } from '../lib/api';
-import { groupChats } from '../lib/chatGroups';
 import Icon from './Icon';
-import Avatar from './Avatar';
+import { AGENT_COLORS } from './Avatar';
 import { NotifyBell } from './Notifications';
-import { Row } from './NavRow';
 import SettingsMenu from './SettingsMenu';
 
-// The sidebar is deliberately monochrome. Every destination is the same quiet row, so
-// the eye lands on the chat you are looking for rather than on the furniture. Colour is
-// spent only where it carries information: an agent's avatar (which is how you tell one
-// agent from another) and a count that wants attention.
-
-// wrap each occurrence of q in <mark>
-function Highlight({ text, q }) {
-  if (!q) return text;
-  const parts = text.split(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'));
-  return parts.map((p, i) => (i % 2 ? <mark key={i} className="rounded bg-p1/35 px-0.5 text-txt">{p}</mark> : p));
-}
+// The sidebar is the app's main nav: the places you can go. The chats themselves - New
+// chat, Team chat and the history - live beside the chat, in ChatHistory.
 
 function Clock() {
   const [now, setNow] = useState(new Date());
@@ -26,163 +15,75 @@ function Clock() {
   return <span>{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>;
 }
 
-function when(ts) {
-  const d = new Date(ts * 1000);
-  const days = Math.floor((Date.now() - d) / 86400000);
-  if (days < 1 && d.getDate() === new Date().getDate()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  if (days < 7) return d.toLocaleDateString([], { weekday: 'short' });
-  return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+/**
+ * One of the main places: a coloured disc, its name, and a line saying what is in there.
+ * The sections inside each (Leasing's tabs, the reports, the kinds of alert) are chosen on
+ * the page itself, so the sidebar stays a few rows long. `badge` is a count asking for attention.
+ */
+function Place({ Ico, color, label, hint, here, onClick, badge = 0 }) {
+  return (
+    <button onClick={onClick} aria-current={here ? 'page' : undefined}
+      className={`group flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition ${here ? 'bg-white/10' : 'hover:bg-white/[0.06]'}`}>
+      <span className={`grid size-9 shrink-0 place-items-center rounded-full bg-gradient-to-br text-white shadow-lg transition group-hover:scale-105 group-active:scale-95 ${AGENT_COLORS[color] || color}`}>
+        <Ico size={16} strokeWidth={1.75} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className={`block truncate text-sm ${here ? 'font-medium text-txt' : 'text-txt/90'}`}>{label}</span>
+        <span className="block truncate text-[11px] text-mute">{hint}</span>
+      </span>
+      {badge > 0 && <span className="shrink-0 rounded-full bg-bad px-1.5 text-[11px] font-semibold leading-[18px] text-white">{badge > 99 ? '99+' : badge}</span>}
+    </button>
+  );
 }
 
-// Sentence case and no letter-spacing: a heading here is a whisper, not a banner.
-const Label = ({ children, action }) => (
-  <div className="flex items-center justify-between px-2.5 pb-1 pt-4 text-[11px] font-medium text-mute/80">
-    <span>{children}</span>{action}
-  </div>
-);
-
-export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, dutiesOpen, onDuties, propertiesOpen, onProperties, leasingOpen, onLeasing, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
-  const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
-  const [q, setQ] = useState('');
-  const [searching, setSearching] = useState(false);
-  const [results, setResults] = useState(null);
-  const searchRef = useRef(null);
+export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, dutiesOpen, onDuties, propertiesOpen, onProperties, chatsOpen, unreadMessages = 0, onChats, leasingOpen, leasingTab, onLeasing, onEditAgent, onFiles, onMemory, onEmail, onPeople, regionOpen, onRegion, onActivity, onLogout, onClose }) {
   // Only shown once somebody has actually looked at this account, so it is silent for
   // anyone nobody inspects - and impossible to miss for anyone who is.
   const [watched, setWatched] = useState(0);
   useEffect(() => { api.get('/access').then((r) => setWatched(r.length)).catch(() => {}); }, []);
+  // How many leasing alerts of each kind are open (overdue, due today, a contract missing…), counted again when Leasing is opened or left.
+  const [alerts, setAlerts] = useState({ count: 0, rules: {} });
+  useEffect(() => { api.get('/leasing/alerts/count').then(setAlerts).catch(() => {}); }, [leasingOpen, leasingTab]);
 
-  useEffect(() => {
-    const term = q.trim();
-    if (!term) { setResults(null); return; }
-    const t = setTimeout(() => api.get(`/conversations/search?q=${encodeURIComponent(term)}`).then(setResults).catch(() => {}), 250);
-    return () => clearTimeout(t);
-  }, [q, convs]);
-
-  const closeSearch = () => { setQ(''); setResults(null); setSearching(false); };
-  const showTeam = user.role === 'master' || agents.length > 1;
-  const groups = groupChats(convs);
-
-  // One chat row, used by both the grouped list and the search results. Search is the
-  // only place the snippet appears: in the idle list it doubles the height of every row
-  // to repeat what the title already says, but while searching it is the whole point --
-  // it shows you which chat the match is in.
-  const chatRow = (c, { snippet }) => {
-    const a = byId[c.agent_id];
-    return (
-      <li key={c.id} className={`group flex items-center rounded-lg transition ${c.id === activeConvId ? 'bg-white/10' : 'hover:bg-white/[0.06]'}`}>
-        <button onClick={() => onOpenConv(c.id)} className="flex min-w-0 flex-1 items-center gap-2.5 py-[7px] pl-2.5 text-left">
-          {snippet && (a
-            ? <Avatar icon={a.icon} color={a.color} size={22} className="shadow-none" />
-            : <span className="grid size-[22px] shrink-0 place-items-center rounded-full bg-white/10 text-mute"><Icon name="sparkles" size={12} /></span>)}
-          <span className="min-w-0 flex-1">
-            <span className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-sm"><Highlight text={c.title || 'Untitled'} q={results && q.trim()} /></span>
-              {snippet && <span className="shrink-0 text-[11px] text-mute">{when(c.updated_at)}</span>}
-            </span>
-            {snippet && c.snippet && <span className="mt-0.5 line-clamp-2 text-xs leading-snug text-mute"><Highlight text={c.snippet} q={q.trim()} /></span>}
-          </span>
-        </button>
-        <button onClick={() => onDeleteConv(c.id)} aria-label="Delete chat"
-          className="mr-1 grid size-7 shrink-0 place-items-center rounded-md text-mute opacity-50 hover:bg-white/10 hover:text-bad md:opacity-0 md:group-hover:opacity-100">
-          <Icon name="trash" size={14} />
-        </button>
-      </li>
-    );
-  };
+  // The main places. What is inside each is chosen on its own page.
+  const places = [
+    { Ico: LayoutDashboard, color: 'amber', label: 'Overview', hint: 'Occupancy, rent and what needs attention', here: leasingOpen && leasingTab === 'overview', onClick: () => onLeasing('overview') },
+    { Ico: MessagesSquare, color: 'from-cyan-400 to-blue-600 shadow-cyan-500/30', label: 'Chats', hint: 'Riley, and your team chat', here: chatsOpen, onClick: onChats, badge: unreadMessages },
+    { Ico: ClipboardList, color: 'teal', label: 'Bookings', hint: 'Bookings, and the buildings they are in',
+      here: leasingOpen && (leasingTab === 'bookings' || leasingTab === 'buildings'), onClick: () => onLeasing(leasingTab === 'buildings' ? 'buildings' : 'bookings') },
+    { Ico: CalendarDays, color: 'blue', label: 'Calendar', hint: 'Who is in which unit, month by month', here: leasingOpen && leasingTab === 'calendar', onClick: () => onLeasing('calendar') },
+    { Ico: Users, color: 'rose', label: 'Tenants', hint: 'The people and companies renting', here: leasingOpen && leasingTab === 'tenants', onClick: () => onLeasing('tenants') },
+    { Ico: BarChart3, color: 'violet', label: 'Reports', hint: 'Daily, rent roll, overdue, collections', here: leasingOpen && leasingTab === 'reports', onClick: () => onLeasing('reports') },
+    { Ico: BellRing, color: 'from-orange-400 to-red-500 shadow-red-500/30', label: 'Alerts', hint: alerts.count ? `${alerts.count} need${alerts.count === 1 ? 's' : ''} attention` : 'Nothing needs attention',
+      here: leasingOpen && leasingTab === 'alerts', onClick: () => onLeasing('alerts'), badge: alerts.count },
+    { Ico: Landmark, color: 'slate', label: 'Properties', hint: 'Companies, buildings, units, documents', here: propertiesOpen, onClick: onProperties },
+    // The business's currency, time zone and phone country code: the master's to set.
+    user.role === 'master' && { Ico: Globe, color: 'from-indigo-400 to-purple-600 shadow-indigo-500/30', label: 'Region', hint: 'Currency, time zone, phone code', here: regionOpen, onClick: onRegion },
+  ].filter(Boolean);
+  // The box at the top narrows the rows to those whose name or line mentions what is typed.
+  const [q, setQ] = useState('');
+  const term = q.trim().toLowerCase();
+  const shown = term ? places.filter((p) => `${p.label} ${p.hint}`.toLowerCase().includes(term)) : places;
 
   return (
     <div className="flex h-full flex-col pt-safe">
       <header className="flex items-center justify-between px-4 pb-2 pt-2 text-xs tracking-[0.14em] text-mute">
-        <span>REEM</span>
+        <span>RILEY</span>
         <span className="flex items-center gap-3"><Clock />
           <button onClick={onClose} aria-label="Close menu" className="-mr-2 grid size-8 place-items-center rounded-full hover:bg-white/10 md:hidden"><Icon name="x" size={18} /></button>
         </span>
       </header>
 
-      {/* New chat and Team chat sit side by side as buttons; search is a row below. */}
-      <div className="flex gap-2 px-4 pb-2">
-        <button onClick={onNewChat}
-          className="flex flex-1 items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98]">
-          <Icon name="edit" size={17} /> New chat
-        </button>
-        {/* Team chat: messages between people - separate from the AI chats below */}
-        <button onClick={onMessages} aria-label={unreadMessages ? `Team chat, ${unreadMessages} unread` : 'Team chat'}
-          className={`relative flex flex-1 items-center justify-center gap-2 rounded-full border py-2.5 text-sm font-medium transition active:scale-[0.98] ${messagesOpen ? 'border-emerald-400/60 bg-emerald-400/15 text-emerald-200' : 'border-stroke bg-white/[0.05] hover:bg-white/10'}`}>
-          <Users size={17} className="text-emerald-300" /> Team chat
-          {unreadMessages > 0 && (
-            <span className="absolute -right-1 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-semibold text-white ring-2 ring-[#0f0d20]">
-              {unreadMessages > 99 ? '99+' : unreadMessages}
-            </span>
-          )}
-        </button>
-      </div>
-
       <div className="min-h-0 flex-1 overflow-y-auto px-2">
-        {/* With a single agent the grid is just one avatar saying what the whole app
-            already says, so only show it to the master (who adds agents here) or to
-            anyone who really does have a team. */}
-        {showTeam && (<>
-          <Label action={<span>{agents.length}</span>}>Your team</Label>
-          <div className="grid grid-cols-4 gap-y-3 px-1.5 pt-1">
-            {agents.map((a) => (
-              <button key={a.id} onClick={() => onEditAgent(a)} title={`Edit ${a.name}`} className="group flex flex-col items-center gap-1">
-                <Avatar icon={a.icon} color={a.color} size={36} className="transition group-hover:scale-105 group-active:scale-95" />
-                <span className="w-full truncate px-0.5 text-center text-[11px] text-mute group-hover:text-txt">{a.name.split(' ')[0]}</span>
-              </button>
-            ))}
-            {/* Only the master creates agents; the server refuses anyone else, so do not
-                offer a form that can only end in "Not allowed". */}
-            {user.role === 'master' && (
-              <button onClick={() => onEditAgent({})} className="group flex flex-col items-center gap-1" aria-label="New agent">
-                <span className="grid size-9 place-items-center rounded-full border border-dashed border-white/25 text-mute transition group-hover:border-p1 group-hover:text-p1">
-                  <Icon name="plus" size={16} />
-                </span>
-                <span className="text-[11px] text-mute">Add</span>
-              </button>
-            )}
-          </div>
-        </>)}
-
-        {/* Search sits under the team, just above the chats it searches. */}
-        <div className="mt-3">
-          {searching ? (
-            <div className="flex items-center gap-2.5 rounded-lg bg-white/[0.06] px-2.5">
-              <Search size={17} className="shrink-0 text-mute" />
-              <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chats"
-                onKeyDown={(e) => e.key === 'Escape' && closeSearch()}
-                className="w-full bg-transparent py-[7px] text-sm outline-none placeholder:text-mute/70" />
-              <button onClick={closeSearch} aria-label="Clear search" className="shrink-0 text-mute hover:text-txt"><X size={15} /></button>
-            </div>
-          ) : (
-            <Row icon={<Search size={17} />} label="Search chats"
-              onClick={() => { setSearching(true); requestAnimationFrame(() => searchRef.current?.focus()); }} />
-          )}
+        <label className="relative mt-2 block px-0.5">
+          <Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" aria-label="Search the menu"
+            className="w-full rounded-xl border border-p1/15 bg-p1/[0.08] py-2 pl-9 pr-3 text-sm outline-none placeholder:text-mute focus:border-p1/50" />
+        </label>
+        <div className="space-y-1 pt-2">
+          {shown.map((p) => <Place key={p.label} {...p} />)}
+          {shown.length === 0 && <p className="px-2.5 py-2 text-sm text-mute">Nothing matches.</p>}
         </div>
-
-        {/* Searching replaces the date headings with one flat list of matches: the
-            groupings are about recency, which is not what you are scanning for. */}
-        {results ? (
-          <>
-            <Label>{results.length ? `Results for “${q.trim()}”` : 'Results'}</Label>
-            <ul className="space-y-0.5">
-              {results.length === 0 && <li className="px-2.5 py-3 text-sm text-mute">No chats match “{q.trim()}”</li>}
-              {results.map((c) => chatRow(c, { snippet: true }))}
-            </ul>
-          </>
-        ) : convs.length === 0 ? (
-          <>
-            <Label>Chats</Label>
-            <p className="px-2.5 py-3 text-sm text-mute">Your chats will appear here</p>
-          </>
-        ) : (
-          groups.map((g) => (
-            <div key={g.label}>
-              <Label>{g.label}</Label>
-              <ul className="space-y-0.5">{g.items.map((c) => chatRow(c, { snippet: false }))}</ul>
-            </div>
-          ))
-        )}
       </div>
 
       {/* relative: the settings menu opens against this, so it spans the sidebar. */}
@@ -199,10 +100,10 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
               <Eye size={16} />
             </button>
           )}
-          <SettingsMenu user={user} expiring={expiring} dueTodos={dueTodos} tenantCare={tenantCare}
-            filesOpen={filesOpen} todosOpen={todosOpen} meetingsOpen={meetingsOpen} transcribeOpen={transcribeOpen} tenantCareOpen={tenantCareOpen} dutiesOpen={dutiesOpen} propertiesOpen={propertiesOpen} leasingOpen={leasingOpen}
-            onFiles={onFiles} onTodos={onTodos} onMeetings={onMeetings} onTranscribe={onTranscribe} onTenantCare={onTenantCare} onDuties={onDuties} onProperties={onProperties} onLeasing={onLeasing}
-            onMemory={onMemory} onEmail={onEmail} onPeople={onPeople} />
+          <SettingsMenu user={user} agents={agents} onEditAgent={onEditAgent} expiring={expiring} dueTodos={dueTodos}
+            filesOpen={filesOpen} todosOpen={todosOpen} meetingsOpen={meetingsOpen} transcribeOpen={transcribeOpen} dutiesOpen={dutiesOpen} propertiesOpen={propertiesOpen} leasingOpen={leasingOpen}
+            onFiles={onFiles} onTodos={onTodos} onMeetings={onMeetings} onTranscribe={onTranscribe} onDuties={onDuties} onProperties={onProperties} onLeasing={onLeasing}
+            onMemory={onMemory} onEmail={onEmail} onPeople={onPeople} onRegion={onRegion} />
           <NotifyBell />
           <button onClick={onLogout} aria-label="Sign out" title="Sign out" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
             <Icon name="logout" size={17} />

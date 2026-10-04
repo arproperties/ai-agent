@@ -2,7 +2,6 @@ import { useCallback, useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import TodoPanel from './Todos';
 import RoutinePanel from './Routines';
-import { ParticleField } from './ParticleField';
 
 // Two lists, deliberately separate everywhere it matters — different tables, different
 // modules, different tools — meeting only here, in a tab strip. Separating the models
@@ -14,7 +13,7 @@ const Tab = ({ active, count, onClick, children }) => (
     className={`flex items-center justify-center gap-1.5 rounded-full py-1.5 text-sm transition ${active ? 'bg-white/15 text-txt' : 'text-mute hover:text-txt'}`}>
     {children}
     {count > 0 && (
-      <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-warn px-1 text-[10px] font-semibold text-[#141128]">{count}</span>
+      <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-warn px-1 text-[10px] font-semibold text-ink">{count}</span>
     )}
   </button>
 );
@@ -30,8 +29,6 @@ export default function ListsPage({ onBack, onChanged, initialTab = 'todos' }) {
 
   return (
     <div className="sky absolute inset-0 z-20 flex flex-col">
-      {/* The panel paints solid over the chat, so it carries its own field. */}
-      <ParticleField className="fx-canvas-panel" />
       <header className="px-4 pb-3 pt-safe md:px-8">
         <div className="mx-auto flex w-full items-center gap-2 pt-1">
           <button onClick={onBack} aria-label="Back" className="-ml-2 grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">

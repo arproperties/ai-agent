@@ -3,7 +3,6 @@ import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, EyeOff, Check, 
 import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
-import { ParticleField } from './ParticleField';
 import { ResponsibilitiesEditor } from './Responsibilities';
 import HrLink from './HrLink';
 
@@ -355,7 +354,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
  * The saifsys workspaces this person's agents can look into, in the launcher's order.
  * A tap saves straight away - it is one switch per module, with nothing to review first.
  * Modules with nothing connected yet can still be ticked, so access is ready the day
- * they are. What Reem can do in a module (create a booking…) sits inside that module's
+ * they are. What Riley can do in a module (create a booking…) sits inside that module's
  * card once it is ticked, so it reads as part of the module and not a list of its own.
  */
 function SaifsysModules({ person }) {
@@ -395,11 +394,11 @@ function SaifsysModules({ person }) {
       <p className="text-sm leading-relaxed text-mute">
         {data.master
           ? 'The master sees every saifsys module.'
-          : `Tick the saifsys modules ${person.name} can ask Reem about. Anything not ticked, their agents cannot look up. A ticked module shows what Reem can also do there - that needs their company email connected in Reem.`}
+          : `Tick the saifsys modules ${person.name} can ask Riley about. Anything not ticked, their agents cannot look up. A ticked module shows what Riley can also do there - that needs their company email connected in Riley.`}
       </p>
       <div className="grid items-start gap-2 @md:grid-cols-2">
         {data.modules.map((m) => {
-          // What Reem can do in a module lives inside that module's card, and only once it is ticked.
+          // What Riley can do in a module lives inside that module's card, and only once it is ticked.
           const actions = m.on || data.master ? (data.actions || []).filter((a) => a.module === m.key) : [];
           return (
             <div key={m.key}
@@ -708,8 +707,6 @@ export default function AdminPage({ agents, me, onBack }) {
 
   return (
     <div className="sky absolute inset-0 z-20 flex flex-col">
-      {/* The panel paints solid over the chat, so it carries its own field. */}
-      <ParticleField className="fx-canvas-panel" />
       <header className="flex items-center gap-2 border-b border-stroke/60 px-4 py-3 pt-safe md:px-6">
         <button onClick={onBack} aria-label="Back" className="-ml-2 grid size-10 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
           <ChevronLeft size={22} />

@@ -23,21 +23,21 @@ test('the transcript names the person and the agent that answered', () => {
     { role: 'user', content: 'Can we close the Marina unit on Thursday?', files: '[]', agent_name: null },
     { role: 'assistant', content: 'The seller asked for Friday.', files: '[]', agent_name: 'Layla' },
     { role: 'assistant', content: 'Noted.', files: '[]', agent_name: null },
-  ], 'Reem');
-  assert.match(out, /Reem: Can we close the Marina unit on Thursday\?/);
+  ], 'Riley');
+  assert.match(out, /Riley: Can we close the Marina unit on Thursday\?/);
   assert.match(out, /Layla: The seller asked for Friday\./);
   assert.match(out, /Assistant: Noted\./, 'an agent since deleted still has to read as the assistant');
 });
 
 test('the transcript says a file was there without pretending to have read it', () => {
-  const out = transcript([{ role: 'user', content: 'See this', files: JSON.stringify([{ name: 'tenancy.pdf' }]), agent_name: null }], 'Reem');
+  const out = transcript([{ role: 'user', content: 'See this', files: JSON.stringify([{ name: 'tenancy.pdf' }]), agent_name: null }], 'Riley');
   assert.match(out, /\[Attached: tenancy\.pdf\]/);
 });
 
 test('a short chat is passed through as it stands, with no paid call', async () => {
   await reset();
-  const id = await makeUser('Reem');
-  const user = { id, name: 'Reem' };
+  const id = await makeUser('Riley');
+  const user = { id, name: 'Riley' };
   const a = await makeConv(id, 'Marina tower');
   const agent = await makeAgent(id, 'Layla');
   await say(a, 'user', 'What did the seller want?');
@@ -53,20 +53,20 @@ test('a short chat is passed through as it stands, with no paid call', async () 
 
 test("somebody else's chat cannot be brought in", async () => {
   await reset();
-  const mine = await makeUser('Reem');
+  const mine = await makeUser('Riley');
   const theirs = await makeUser('Eve');
   const hers = await makeConv(theirs, 'Eve private');
   await say(hers, 'user', 'something of mine');
 
-  assert.equal(await recapOf({ id: mine, name: 'Reem' }, hers), null);
-  const { chats } = await carry({ id: mine, name: 'Reem' }, await makeConv(mine, 'Meeting'), [hers]);
+  assert.equal(await recapOf({ id: mine, name: 'Riley' }, hers), null);
+  const { chats } = await carry({ id: mine, name: 'Riley' }, await makeConv(mine, 'Meeting'), [hers]);
   assert.deepEqual(chats, [], 'nothing about it comes back, not even the title');
 });
 
 test('a long chat is summarised once, and again only when it has grown', async () => {
   await reset();
-  const id = await makeUser('Reem');
-  const user = { id, name: 'Reem' };
+  const id = await makeUser('Riley');
+  const user = { id, name: 'Riley' };
   const a = await makeConv(id, 'Lease renewals');
   for (let i = 0; i < 4; i++) await say(a, i % 2 ? 'assistant' : 'user', long(1500)); // past VERBATIM, so it is worth summarising
 
@@ -87,8 +87,8 @@ test('a long chat is summarised once, and again only when it has grown', async (
 
 test('a chat brought in once keeps counting for the rest of the conversation', async () => {
   await reset();
-  const id = await makeUser('Reem');
-  const user = { id, name: 'Reem' };
+  const id = await makeUser('Riley');
+  const user = { id, name: 'Riley' };
   const a = await makeConv(id, 'Marina tower');
   const b = await makeConv(id, 'Service charges');
   const c = await makeConv(id, 'Board meeting');
@@ -117,17 +117,17 @@ test('a chat brought in once keeps counting for the rest of the conversation', a
 
 test('a chat cannot be brought into itself', async () => {
   await reset();
-  const id = await makeUser('Reem');
+  const id = await makeUser('Riley');
   const c = await makeConv(id, 'Board meeting');
   await say(c, 'user', 'hello');
-  const { chats } = await carry({ id, name: 'Reem' }, c, [c]);
+  const { chats } = await carry({ id, name: 'Riley' }, c, [c]);
   assert.deepEqual(chats, []);
 });
 
 test('the record survives the chat it came from being deleted', async () => {
   await reset();
-  const id = await makeUser('Reem');
-  const user = { id, name: 'Reem' };
+  const id = await makeUser('Riley');
+  const user = { id, name: 'Riley' };
   const a = await makeConv(id, 'Marina tower');
   const c = await makeConv(id, 'Board meeting');
   await say(a, 'user', 'Seller wants Friday.');

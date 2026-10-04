@@ -3,7 +3,7 @@ import { db } from './db.js';
 import { requireMaster } from './auth.js';
 import { askSaifsys } from './saifsys/client.js';
 
-// Links a Reem account to its employee in saifsys HR, by employee code.
+// Links a Riley account to its employee in saifsys HR, by employee code.
 //
 // The code is checked against HR before it is saved, and the master sees the name,
 // company and job title HR has for it first - a typo shows the wrong person, it does

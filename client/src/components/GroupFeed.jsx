@@ -7,7 +7,7 @@ import { PersonAvatar, Bubble, Menu, Composer, NAME_COLORS, dayLabel } from './M
 
 /**
  * The master's page for a whole group: every topic they are in as one timeline, and
- * one box at the bottom. Reem suggests which topic a new message belongs in and the
+ * one box at the bottom. Riley suggests which topic a new message belongs in and the
  * master confirms it with a tap; a reply goes back to the topic of the message it
  * answers, with no guessing. Everyone else only ever writes inside a topic.
  */
@@ -123,7 +123,7 @@ export default function GroupFeed({ group, topics, dm, onBack, voiceEnabled }) {
     const el = document.getElementById(`gm-${id}`);
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.animate([{ background: 'rgb(255 255 255 / 0.12)' }, { background: 'transparent' }], { duration: 1400 });
+    el.animate([{ background: 'color-mix(in srgb, var(--color-white) 12%, transparent)' }, { background: 'transparent' }], { duration: 1400 });
   };
 
   // ---------- sending ----------
@@ -199,7 +199,7 @@ export default function GroupFeed({ group, topics, dm, onBack, voiceEnabled }) {
   const chosen = pending?.chatId ? byTopic[pending.chatId] : null;
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <header className="z-10 flex items-center gap-2 border-b border-white/[0.06] bg-[#13112a]/85 px-2 pb-2 pt-safe backdrop-blur-xl md:px-4">
+      <header className="z-10 flex items-center gap-2 border-b border-white/[0.06] bg-bar/85 px-2 pb-2 pt-safe backdrop-blur-xl md:px-4">
         <button onClick={onBack} aria-label="Back to topics" className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
           <ChevronLeft size={24} />
         </button>
@@ -215,7 +215,7 @@ export default function GroupFeed({ group, topics, dm, onBack, voiceEnabled }) {
         {messages === null && <p className="py-10 text-center text-sm text-mute">Loading…</p>}
         {more && <p className="py-3 text-center text-xs text-mute">Loading earlier messages…</p>}
         {messages?.length === 0 && (
-          <p className="mx-auto mt-16 max-w-xs text-center text-sm text-mute">Nothing said in this group yet. Type below and Reem will put it in the right topic.</p>
+          <p className="mx-auto mt-16 max-w-xs text-center text-sm text-mute">Nothing said in this group yet. Type below and Riley will put it in the right topic.</p>
         )}
         {messages?.map((m) => {
           const d = new Date(m.createdAt * 1000).toDateString();
@@ -230,12 +230,12 @@ export default function GroupFeed({ group, topics, dm, onBack, voiceEnabled }) {
             <div key={m.nonce || m.id} id={typeof m.id === 'number' ? `gm-${m.id}` : undefined} className="rounded-xl">
               {newDay && (
                 <div className="sticky top-2 z-[5] my-3 flex justify-center">
-                  <span className="rounded-full border border-white/[0.06] bg-[#1b1834]/90 px-3.5 py-1 text-xs font-medium text-mute shadow-md backdrop-blur">{dayLabel(m.createdAt)}</span>
+                  <span className="rounded-full border border-white/[0.06] bg-surface-2/90 px-3.5 py-1 text-xs font-medium text-mute shadow-md backdrop-blur">{dayLabel(m.createdAt)}</span>
                 </div>
               )}
               {m.kind === 'system' ? (
                 <div className="my-2 flex justify-center">
-                  <span className="max-w-[85%] rounded-full bg-[#1b1834]/80 px-3.5 py-1 text-center text-xs text-mute backdrop-blur">#{topic?.name} · {m.body}</span>
+                  <span className="max-w-[85%] rounded-full bg-surface-2/80 px-3.5 py-1 text-center text-xs text-mute backdrop-blur">#{topic?.name} · {m.body}</span>
                 </div>
               ) : (
                 <Bubble m={withName} mine={mine} first={first} others={othersIn(m.chatId)} tag={first ? topic?.name : null}
@@ -250,18 +250,18 @@ export default function GroupFeed({ group, topics, dm, onBack, voiceEnabled }) {
 
       {!atBottom && (
         <button onClick={() => { scroller.current.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' }); setBelow(0); }} aria-label="Jump to the latest message"
-          className="absolute bottom-24 right-4 grid size-11 place-items-center rounded-full border border-white/10 bg-[#1b1834]/95 text-txt shadow-xl backdrop-blur md:right-8">
+          className="absolute bottom-24 right-4 grid size-11 place-items-center rounded-full border border-white/10 bg-surface-2/95 text-txt shadow-xl backdrop-blur md:right-8">
           <ArrowDown size={20} />
           {below > 0 && <span className="absolute -top-1.5 -right-1 grid min-w-5 place-items-center rounded-full bg-emerald-500 px-1 text-[11px] font-semibold">{below}</span>}
         </button>
       )}
 
       {pending ? (
-        <div className="border-t border-white/[0.06] bg-[#13112a]/85 px-3 pb-safe pt-3 backdrop-blur-xl md:px-4">
+        <div className="border-t border-white/[0.06] bg-bar/85 px-3 pb-safe pt-3 backdrop-blur-xl md:px-4">
          <div className="mx-auto max-w-6xl space-y-2.5 pb-2">
           <p className="line-clamp-2 rounded-xl bg-white/5 px-3 py-2 text-sm text-txt/90">{pending.body || (pending.file ? `📎 ${pending.file.name}` : '')}</p>
           {pending.routing ? (
-            <p className="flex items-center gap-2 text-sm text-mute"><Sparkles size={15} className="animate-pulse text-emerald-300" /> Reem is picking the topic…</p>
+            <p className="flex items-center gap-2 text-sm text-mute"><Sparkles size={15} className="animate-pulse text-emerald-300" /> Riley is picking the topic…</p>
           ) : pending.choosing || !chosen ? (
             <>
               <p className="text-sm text-mute">{pending.error || 'Which topic should this go in?'}</p>
@@ -296,7 +296,7 @@ export default function GroupFeed({ group, topics, dm, onBack, voiceEnabled }) {
       ) : (
         <Composer key={draft.key} chatId={null} initial={draft.text} voiceEnabled={voiceEnabled}
           reply={reply} replyName={reply && `${nameOf(reply)} · # ${byTopic[reply.chatId]?.name || ''}`} onCancelReply={() => setReply(null)}
-          placeholder={topics.length > 1 ? 'Message — Reem picks the topic' : 'Type a message'} onSend={send} />
+          placeholder={topics.length > 1 ? 'Message — Riley picks the topic' : 'Type a message'} onSend={send} />
       )}
 
       {menu && (
@@ -304,7 +304,7 @@ export default function GroupFeed({ group, topics, dm, onBack, voiceEnabled }) {
           onReply={() => { setReply(menu.m); setMenu(null); }} onCopy={() => copy(menu.m)} onDelete={() => remove(menu.m)} />
       )}
       {viewing && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setViewing(null)}>
+        <div className="on-dark fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setViewing(null)}>
           <img src={viewing} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
           <a href={`${viewing}?download=1`} onClick={(e) => e.stopPropagation()} aria-label="Download"
             className="absolute right-16 top-[max(env(safe-area-inset-top),16px)] grid size-10 place-items-center rounded-full bg-white/10 text-white"><Download size={20} /></a>

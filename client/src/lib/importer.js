@@ -81,7 +81,7 @@ export async function startImport(source, name) {
   window.addEventListener('beforeunload', warnOnLeave);
   try {
     const { items, ignored } = source instanceof File ? await fromZip(source) : fromFolder(source);
-    if (!items.length) throw new Error('Nothing in there that Reem can read');
+    if (!items.length) throw new Error('Nothing in there that Riley can read');
     const { id } = await api.post('/imports', { name, ignored });
     set({ name, phase: 'uploading', sent: 0, total: items.length });
     let sent = 0;

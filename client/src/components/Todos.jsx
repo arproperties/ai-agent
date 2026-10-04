@@ -210,7 +210,7 @@ function TodoSheet({ t, onClose, onSaved }) {
           <ReminderField value={when} onChange={setWhen} />
           {/* Said plainly here, where somebody is in the middle of setting one, rather than
               left to be discovered the first time a reminder does not arrive. */}
-          <p className="text-[11px] leading-snug text-mute">When the time comes this moves to the top of your list and shows on the menu. Reem can't reach you outside the app.</p>
+          <p className="text-[11px] leading-snug text-mute">When the time comes this moves to the top of your list and shows on the menu. Riley can't reach you outside the app.</p>
         </div>
         {error && <p className="text-sm text-bad">{error}</p>}
         <div className="flex items-center gap-2 pt-1">

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2, Link2, Search } from 'lucide-react';
 import { api } from '../lib/api';
 
-// Which saifsys HR employee this Reem account is, by employee code (server/hrLinks.js).
+// Which saifsys HR employee this Riley account is, by employee code (server/hrLinks.js).
 // Typing a code shows who HR has under it first; only Link saves it.
 
 export default function HrLink({ person }) {

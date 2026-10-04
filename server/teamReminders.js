@@ -5,7 +5,7 @@ import { remindAt } from './todos.js';
 
 // Reminders one person sends to others: "remind Rona and Tauqeer to send the report at 3".
 //
-// Said in chat, never typed into a form. Reem only ever PROPOSES one: the tool writes it
+// Said in chat, never typed into a form. Riley only ever PROPOSES one: the tool writes it
 // down as pending and a card appears in the chat with Send and Cancel. Nothing reaches
 // anybody until the sender taps Send — a misheard name or a wrong time is caught on the
 // card, not on someone else's phone.
@@ -35,7 +35,7 @@ const others = (userId) =>
 /**
  * "Rona", "tauqeer", "rona@..." → people. Whole name first, then any one word of the name,
  * then the front of the email address. A name that fits nobody, or fits two people, is an
- * error that names the candidates, so Reem asks rather than picks.
+ * error that names the candidates, so Riley asks rather than picks.
  */
 export async function findPeople(senderId, names) {
   const pool = await others(senderId);
@@ -51,7 +51,7 @@ export async function findPeople(senderId, names) {
     ];
     let hits = [];
     for (const fits of tiers) { hits = pool.filter(fits); if (hits.length) break; }
-    if (!hits.length) throw bad(`Nobody called "${raw}" uses Reem. The people are: ${pool.map((u) => u.name).join(', ') || 'nobody else yet'}.`);
+    if (!hits.length) throw bad(`Nobody called "${raw}" uses Riley. The people are: ${pool.map((u) => u.name).join(', ') || 'nobody else yet'}.`);
     if (hits.length > 1) throw bad(`"${raw}" could be ${hits.map((u) => u.name).join(' or ')}. Ask which one.`);
     found.set(hits[0].id, hits[0]);
   }
@@ -151,7 +151,7 @@ function definitions(names) {
   return [
     {
       name: 'remind_people',
-      description: 'Send a reminder to OTHER people who use Reem — "remind Rona and Tauqeer to send the report at 3pm", ' +
+      description: 'Send a reminder to OTHER people who use Riley — "remind Rona and Tauqeer to send the report at 3pm", ' +
         '"tell everyone the office closes early tomorrow". For the user\'s own reminders use add_todo instead. ' +
         'This does NOT send it: a card with Send and Cancel appears in the chat and nothing goes out until the user taps Send. ' +
         'Say in one short line that it is ready for them to send. If a name is unclear the tool says so — ask, do not guess. ' +
@@ -197,7 +197,7 @@ const STATUS = {
 
 /**
  * The toolkit for chat.js. The list of names is read once per turn and put in the tool's
- * description, so Reem spells people the way the app does.
+ * description, so Riley spells people the way the app does.
  * ctx: { conversationId, onCard } — onCard puts the Send/Cancel card in front of the user.
  */
 export async function teamReminderKit(userId, ctx = {}) {

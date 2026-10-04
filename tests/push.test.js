@@ -107,7 +107,7 @@ test('a device that says it is gone for good is dropped', async () => {
     if (sub.endpoint.endsWith('deleted-app')) throw Object.assign(new Error('Gone'), { statusCode: 410 });
     return { statusCode: 201 };
   };
-  const sent = await sendPush([me], { title: 'Reem', body: 'Hello' });
+  const sent = await sendPush([me], { title: 'Riley', body: 'Hello' });
 
   assert.equal(sent, 1);
   assert.deepEqual((await subscriptionsFor(me)).map((r) => r.device), ['iPhone']);
@@ -120,7 +120,7 @@ test('a push service having a bad morning does not lose the device', async () =>
   await saveSubscription(me, device('phone'), 'iPhone');
 
   answer = async () => { throw Object.assign(new Error('Service Unavailable'), { statusCode: 503 }); };
-  assert.equal(await sendPush([me], { title: 'Reem', body: 'Hello' }), 0);
+  assert.equal(await sendPush([me], { title: 'Riley', body: 'Hello' }), 0);
   assert.equal((await subscriptionsFor(me)).length, 1); // still there for next time
 });
 
@@ -171,7 +171,7 @@ test('an app that is open but not on screen still gets the notice', async () => 
   await saveSubscription(tom.id, device(tom.name), 'Laptop');
   const chat = await call(h.create, { user: sara, body: { userId: tom.id } });
 
-  // Tom's laptop has Reem in a background tab: connected, but not looking.
+  // Tom's laptop has Riley in a background tab: connected, but not looking.
   const closeTab = connect(tom, { sid: 'tab', watching: false });
   await call(h.send, { user: sara, params: { id: chat.id }, body: { body: 'One' } });
   await tick();

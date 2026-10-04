@@ -545,11 +545,11 @@ await db.exec(`
   END $$;
 `);
 
-// A Reem reply, carried into a team chat by the person who asked for it.
+// A Riley reply, carried into a team chat by the person who asked for it.
 //
 // Its own table on purpose. What lands in the chat is an ordinary dm_message and stays
 // one - it replies, deletes and reads like every other message. This row is only the
-// label saying where the words came from, so nobody mistakes Reem for the sender.
+// label saying where the words came from, so nobody mistakes Riley for the sender.
 //   agent_name is copied, not looked up: the agent may be renamed or removed later, and
 //     the message must keep saying who actually wrote it at the time.
 //   source_message_id detaches rather than cascades - the sender clearing his own chat
@@ -739,7 +739,7 @@ await db.exec(`
     SELECT id, 'ars' FROM users WHERE role IS DISTINCT FROM 'master' ON CONFLICT DO NOTHING`);
 }
 
-// Things Reem may DO in saifsys, per person (server/saifsys/booking.js). Separate from
+// Things Riley may DO in saifsys, per person (server/saifsys/booking.js). Separate from
 // saifsys_access, which is only what they may look at. The master may do all of it and
 // is never listed. One row per person per action; today the only action is
 // 'ars_create_booking'.
@@ -751,7 +751,7 @@ await db.exec(`
   );
 `);
 
-// An ARS booking Reem has got ready in chat, waiting for the person to tap Create.
+// An ARS booking Riley has got ready in chat, waiting for the person to tap Create.
 //   status: pending (the card is showing), creating (Create was tapped; the lock that
 //     stops a double tap making two bookings), created, cancelled, failed.
 //   input: what goes to saifsys, with unit and guest already resolved to ids.
@@ -783,7 +783,7 @@ await db.exec(`
 //     the speech API names up to four known voices per request.
 //   meeting_parts: the recording arrives in ten-minute pieces as it is made, so a phone that
 //     dies at 1h50 still leaves 1h50. offset_s is where the piece starts in the meeting.
-//   meeting_lines: what was said. speaker NULL means a voice nobody taught Reem.
+//   meeting_lines: what was said. speaker NULL means a voice nobody taught Riley.
 await db.exec(`
   CREATE TABLE IF NOT EXISTS voice_profiles (
     id SERIAL PRIMARY KEY,
@@ -855,7 +855,7 @@ await db.exec(`
 //
 // Apart from todos on purpose: a todo is one person's own list, this is a message with a
 // sender, several people on the end of it, and each of them ticking it off on their own.
-//   status: pending until the sender taps Send on the card in chat (Reem only ever
+//   status: pending until the sender taps Send on the card in chat (Riley only ever
 //     proposes), then scheduled, then delivered once the phones have been told. cancelled
 //     for one the sender thought better of. Nothing reaches anyone while it is pending.
 //   remind_at: NULL means "as soon as they tap Send".
@@ -886,7 +886,7 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_team_rem_people ON team_reminder_people(user_id, done);
 `);
 
-// Reminders Reem thinks someone might want — the tables behind server/suggestions.js.
+// Reminders Riley thinks someone might want — the tables behind server/suggestions.js.
 //
 // Only ever suggested: nothing becomes a todo until the person taps "Remind me". So this
 // is its own table, not todos with a flag — a suggestion that was waved away still has to
@@ -919,62 +919,14 @@ await db.exec(`
   );
 `);
 
-// Tenant care — one shared inbox tenants write to (server/tenantCare.js). When a new email
-// does not say which building and unit it is about, Reem writes a reply asking, and the
-// people looking after the inbox tap Send. Its own tables, not imap_accounts: that mailbox
-// belongs to one person, this one to a team.
-//   tenant_inbox: at most one row (id = 1). last_uid is the newest email already looked
-//     at; a new connection starts from the top of the inbox, so old mail is never asked about.
-//     uid_validity: when the mail server renumbers the inbox, last_uid starts again.
-//   tenant_inbox_members: who sees the replies and may send them (the master always may).
-//   tenant_asks: one row per email that needs asking. ref = "<uid_validity>:<uid>", unique,
-//     so looking at the same email twice cannot ask twice. missing: building, unit or both.
 await db.exec(`
-  CREATE TABLE IF NOT EXISTS tenant_inbox (
-    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    email TEXT NOT NULL,
-    host TEXT NOT NULL,
-    port INTEGER NOT NULL DEFAULT 993,
-    username TEXT NOT NULL,
-    password_enc TEXT NOT NULL,
-    smtp_host TEXT NOT NULL,
-    smtp_port INTEGER NOT NULL,
-    smtp_secure BOOLEAN NOT NULL DEFAULT true,
-    last_uid BIGINT,
-    uid_validity BIGINT,
-    checked_at BIGINT,
-    error TEXT,
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_at BIGINT DEFAULT ${NOW}
-  );
-  CREATE TABLE IF NOT EXISTS tenant_inbox_members (
-    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS tenant_asks (
-    id SERIAL PRIMARY KEY,
-    ref TEXT NOT NULL UNIQUE,
-    message_id TEXT,
-    refs TEXT,
-    from_addr TEXT NOT NULL,
-    from_name TEXT,
-    subject TEXT,
-    preview TEXT,
-    received_at BIGINT,
-    missing TEXT NOT NULL CHECK (missing IN ('building', 'unit', 'both')),
-    reply TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sending', 'sent', 'skipped', 'failed')),
-    error TEXT,
-    decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    decided_at BIGINT,
-    created_at BIGINT DEFAULT ${NOW}
-  );
-  CREATE INDEX IF NOT EXISTS idx_tenant_asks_open ON tenant_asks(id DESC) WHERE status IN ('pending', 'failed');
-  CREATE INDEX IF NOT EXISTS idx_tenant_asks_from ON tenant_asks(from_addr, created_at DESC);
-
-  -- The app was renamed from Jarvis to Reem (2026-10-01). The general assistant every
-  -- account started with keeps its chats; only its name and the name in its persona change.
-  UPDATE agents SET name = 'Reem', persona = replace(persona, 'You are Jarvis', 'You are Reem')
+  -- The app was renamed from Jarvis to Reem (2026-10-01), then from Reem to Riley
+  -- (2026-10-04). The general assistant every account started with keeps its chats; only
+  -- its name and the name in its persona change.
+  UPDATE agents SET name = 'Riley', persona = replace(persona, 'You are Jarvis', 'You are Riley')
    WHERE name = 'Jarvis';
+  UPDATE agents SET name = 'Riley', persona = replace(persona, 'You are Reem', 'You are Riley')
+   WHERE name = 'Reem';
 `);
 
 // What each person is responsible for, written by the master in their own words.
@@ -996,7 +948,7 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_responsibilities_user ON responsibilities(user_id, id);
 `);
 
-// A change to someone's responsibilities that Reem got ready from the master's chat,
+// A change to someone's responsibilities that Riley got ready from the master's chat,
 // waiting on a card for Save or Cancel. Nothing touches `responsibilities` until Save.
 //   action: add a new one, edit one (responsibility_id), or remove one.
 //   title / body: what it will say after Save (for an edit, the whole new text).
@@ -1019,7 +971,7 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_resp_proposals_chat ON responsibility_proposals(master_id, conversation_id, id);
 `);
 
-// Which saifsys HR employee a Reem account is - see server/hrLinks.js.
+// Which saifsys HR employee a Riley account is - see server/hrLinks.js.
 //
 // By employee code, not email: some staff have no email, and emails change in HR while
 // the code (E00012) is set once when the employee is created and never edited.
@@ -1161,4 +1113,118 @@ await db.exec(`
     created_at  BIGINT DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_lease_documents ON lease_documents(booking_id);
+`);
+
+// A confirmed booking's rent, written out as one row per payment due, and what has been
+// received against each. A payment can be part of what is due; whether a row is paid,
+// part paid or overdue is worked out from its payments, never stored.
+//   method: transfer | cash | card. Staff record a payment by hand after the money arrives.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lease_installments (
+    id SERIAL PRIMARY KEY,
+    booking_id INTEGER NOT NULL REFERENCES lease_bookings(id) ON DELETE CASCADE,
+    due_date   DATE NOT NULL,
+    amount     NUMERIC NOT NULL,
+    UNIQUE (booking_id, due_date)
+  );
+  CREATE TABLE IF NOT EXISTS lease_payments (
+    id SERIAL PRIMARY KEY,
+    installment_id INTEGER NOT NULL REFERENCES lease_installments(id) ON DELETE CASCADE,
+    amount      NUMERIC NOT NULL,
+    method      TEXT NOT NULL,
+    received_on DATE NOT NULL,
+    reference   TEXT,
+    notes       TEXT,
+    recorded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_payments ON lease_payments(installment_id);
+`);
+
+// Leasing alerts. lease_settings holds the master's alert rules as one JSON value.
+// lease_alerts_sent is the sent-once log: one row per person, alert and day, written
+// before the notice goes, so a restart never buzzes anyone twice for the same thing.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lease_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS lease_alerts_sent (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key     TEXT NOT NULL,
+    day     DATE NOT NULL,
+    PRIMARY KEY (user_id, key, day)
+  );
+`);
+
+// Later additions to leasing, as changes so a database made before them catches up:
+//   a schedule row is rent, the security deposit, or a named other charge (fee);
+//   a booking carries its other charges, the booking it renews, and how its deposit was settled;
+//   prop_photos is the one picture a company (its logo) or a building (a photo of it) may have;
+//   prop_unit_photos is a unit's photos, several of them, the first being the one on its card;
+//   a payment can carry its proof: the transfer slip, the card slip or a photo of the cash receipt;
+//   lease_events is each booking's history: what happened, who did it, when;
+//   lease_services is the list a booking's other charges are picked from (pet fee, parking…).
+await db.exec(`
+  ALTER TABLE lease_installments ADD COLUMN IF NOT EXISTS kind  TEXT NOT NULL DEFAULT 'rent';
+  ALTER TABLE lease_installments ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT '';
+  ALTER TABLE lease_installments DROP CONSTRAINT IF EXISTS lease_installments_booking_id_due_date_key;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_installments_one ON lease_installments(booking_id, kind, label, due_date);
+  CREATE TABLE IF NOT EXISTS prop_photos (
+    kind       TEXT NOT NULL,
+    owner_id   INTEGER NOT NULL,
+    file_path  TEXT NOT NULL,
+    file_mime  TEXT NOT NULL,
+    updated_at BIGINT NOT NULL DEFAULT ${NOW},
+    PRIMARY KEY (kind, owner_id)
+  );
+  CREATE TABLE IF NOT EXISTS prop_unit_photos (
+    id SERIAL PRIMARY KEY,
+    unit_id    INTEGER NOT NULL REFERENCES prop_units(id) ON DELETE CASCADE,
+    file_path  TEXT NOT NULL,
+    file_mime  TEXT NOT NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_prop_unit_photos ON prop_unit_photos(unit_id);
+  ALTER TABLE lease_payments ADD COLUMN IF NOT EXISTS file_path TEXT;
+  ALTER TABLE lease_payments ADD COLUMN IF NOT EXISTS file_name TEXT;
+  ALTER TABLE lease_payments ADD COLUMN IF NOT EXISTS file_mime TEXT;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS fees TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS renewed_from INTEGER REFERENCES lease_bookings(id) ON DELETE SET NULL;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_refunded NUMERIC;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_note TEXT;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_settled_on DATE;
+  CREATE TABLE IF NOT EXISTS lease_events (
+    id SERIAL PRIMARY KEY,
+    booking_id INTEGER NOT NULL REFERENCES lease_bookings(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    detail     TEXT,
+    user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_events ON lease_events(booking_id);
+  CREATE TABLE IF NOT EXISTS lease_services (
+    id SERIAL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    amount     NUMERIC,
+    repeats    BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_services_name ON lease_services(lower(name));
+`);
+
+// Who looks after a building (they get its leasing alerts, with whoever made the booking and
+// the master), and the days a tenant was emailed a reminder automatically, so none goes twice.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS prop_building_staff (
+    building_id INTEGER NOT NULL REFERENCES prop_buildings(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (building_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS lease_tenant_notices (
+    booking_id INTEGER NOT NULL REFERENCES lease_bookings(id) ON DELETE CASCADE,
+    day        DATE NOT NULL,
+    PRIMARY KEY (booking_id, day)
+  );
 `);

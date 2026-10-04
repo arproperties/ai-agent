@@ -74,3 +74,62 @@ test('company documents: named freely, and the newest under one name decides', a
   await removeDoc(renewed.id);
   await remove('company', c.id); // documents go with the company
 });
+
+test('a company has a logo and a building a photo: one each, replaced, and gone with it', async () => {
+  const { existsSync } = await import('node:fs');
+  const { setPhoto, getPhoto, removePhoto, listCompanies, listBuildings, remove: drop } = await import('../server/properties.js');
+  await reset();
+  const c = await create('company', { name: 'ACE' });
+  const b = await create('building', { name: 'Tower' }, c.id);
+  const jpg = (text) => ({ buffer: Buffer.from(text), originalname: 'p.jpg', mimetype: 'image/jpeg' });
+  assert.equal((await listCompanies())[0].photo_at, null);
+
+  await assert.rejects(setPhoto('company', c.id, { buffer: Buffer.from('x'), originalname: 'a.pdf', mimetype: 'application/pdf' }), /not a picture/);
+  await assert.rejects(setPhoto('building', 999, jpg('x')), /Not found/);
+  await assert.rejects(setPhoto('company', c.id, null), /Choose a picture/);
+  await setPhoto('company', c.id, jpg('logo'));
+  assert.ok((await listCompanies())[0].photo_at);
+  assert.equal((await listBuildings(c.id))[0].photo_at, null, 'the company\'s logo is not the building\'s photo');
+
+  await setPhoto('building', b.id, jpg('one'));
+  const first = (await getPhoto('building', b.id)).file_path;
+  await setPhoto('building', b.id, jpg('two'));
+  const second = (await getPhoto('building', b.id)).file_path;
+  assert.deepEqual([existsSync(first), existsSync(second), !!(await listBuildings(c.id))[0].photo_at], [false, true, true]);
+
+  await drop('building', b.id);
+  assert.equal(existsSync(second), false);
+  await assert.rejects(getPhoto('building', b.id), /Not found/);
+  const logo = (await getPhoto('company', c.id)).file_path;
+  await removePhoto('company', c.id);
+  await removePhoto('company', c.id);
+  assert.deepEqual([existsSync(logo), (await listCompanies())[0].photo_at], [false, null]);
+});
+
+test('a unit has several photos, in the order they were added, and they go with it', async () => {
+  const { existsSync } = await import('node:fs');
+  const { addUnitPhoto, getUnitPhoto, removeUnitPhoto, remove: drop } = await import('../server/properties.js');
+  await reset();
+  const c = await create('company', { name: 'ACE' });
+  const b = await create('building', { name: 'Tower' }, c.id);
+  const u = await create('unit', { unit_no: '101' }, b.id);
+  await create('unit', { unit_no: '102' }, b.id);
+  const jpg = (text) => ({ buffer: Buffer.from(text), originalname: 'p.jpg', mimetype: 'image/jpeg' });
+
+  const one = await addUnitPhoto(u.id, jpg('living room'));
+  const two = await addUnitPhoto(u.id, jpg('kitchen'));
+  assert.deepEqual((await listUnits(b.id)).map((x) => [x.unit_no, x.photos]), [['101', [one.id, two.id]], ['102', []]]);
+  await assert.rejects(addUnitPhoto(u.id, { buffer: Buffer.from('x'), originalname: 'a.pdf', mimetype: 'application/pdf' }), /not a picture/);
+  await assert.rejects(addUnitPhoto(999, jpg('x')), /Not found/);
+
+  const gone = (await getUnitPhoto(one.id)).file_path;
+  await removeUnitPhoto(one.id);
+  assert.deepEqual([existsSync(gone), (await listUnits(b.id))[0].photos], [false, [two.id]]);
+  for (let i = 0; i < 11; i++) await addUnitPhoto(u.id, jpg(`more ${i}`));
+  await assert.rejects(addUnitPhoto(u.id, jpg('one too many')), /can have 12 photos/);
+
+  const kept = (await getUnitPhoto(two.id)).file_path;
+  await drop('unit', u.id);
+  assert.equal(existsSync(kept), false);
+  await assert.rejects(getUnitPhoto(two.id), /Not found/);
+});

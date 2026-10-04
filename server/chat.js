@@ -9,6 +9,7 @@ import { teamReminderKit } from './teamReminders.js';
 import { responsibilityKit } from './responsibilities.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
+import { leasingKit } from './leasingKit.js';
 import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
 import { chatAgents } from './access.js';
@@ -76,7 +77,7 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'complete_todo ticks one off and reschedule_todo moves or drops a reminder. ' +
     'Add a todo whenever they ask you to remember something, ask to be reminded, or say they must do something later — and say you have. ' +
     'Check the list before answering anything about what they still have to do. The reminder is optional: set a time only when one was actually meant. ' +
-    'A reminder is not an alert — Reem cannot reach them outside the app, so say it will be waiting on their list, and never promise to notify them.');
+    'A reminder is not an alert — Riley cannot reach them outside the app, so say it will be waiting on their list, and never promise to notify them.');
   parts.push('Things that come back on a rhythm are routines, not todos, and live on their own list: add_routine, list_routines, ' +
     'complete_routine and pause_routine. Use a routine the moment they say "every", "each", "daily", "weekly", "monthly" or "yearly", ' +
     'and a todo for anything done once. A todo is finished and gone; a routine comes round again. ' +
@@ -262,7 +263,7 @@ export async function chat(req, res) {
   const saifsys = await saifsysKit(user);
   // Doing things in saifsys (today: creating an ARS booking) — proposed here, done only from the card.
   const saifsysAct = await saifsysActionKit(user, { conversationId: convId, onCard: (b) => send('arsBooking', b) });
-  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id),
+  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), leasingKit(),
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
     ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));

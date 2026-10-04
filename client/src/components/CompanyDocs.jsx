@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Building2, DoorOpen, Loader2, Pencil, Trash2, ChevronRight, ChevronDown, FileText, Paperclip, Plus, Search } from 'lucide-react';
+import { photoUrl } from './PropertyPhoto';
 import { api } from '../lib/api';
 import Sheet from './Sheet';
 
@@ -137,8 +138,8 @@ function Card({ c, master, onOpen, onDoc }) {
     <div className="flex flex-col rounded-2xl border border-stroke">
       <div className="flex items-center gap-3 px-4 pt-4">
         <button onClick={onOpen} aria-label={`Open ${c.name}`}
-          className="grid size-10 shrink-0 place-items-center rounded-lg bg-p1/15 text-sm font-semibold text-p1">
-          {initials(c.name)}
+          className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-p1/15 text-sm font-semibold text-p1">
+          {photoUrl('companies', c) ? <img src={photoUrl('companies', c)} alt="" loading="lazy" className="size-full object-cover" /> : initials(c.name)}
         </button>
         <div className="min-w-0 flex-1">
           <button onClick={onOpen} className="block max-w-full truncate text-left font-medium hover:text-p1">{c.name}</button>

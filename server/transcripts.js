@@ -11,7 +11,7 @@ import { DATA_DIR } from './config.js';
 import { transcribe } from './ai.js';
 
 // Transcribe: any audio in, plain text out. A WhatsApp voice note, a phone recording,
-// or something said straight into Reem. Audio attached in a chat comes through here
+// or something said straight into Riley. Audio attached in a chat comes through here
 // too (readAudio), and is listed on the Transcribe page like any other.
 //
 // A feature of its own, apart from Meetings: no names, no summary, just the words. The
@@ -149,7 +149,7 @@ export async function readAudio(userId, buffer, name) {
 }
 
 const friendly = (e) => (e.code === 'ENOENT' ? 'Reading audio needs ffmpeg on the server (sudo apt install -y ffmpeg)'
-  : e.cmd?.includes('ffmpeg') ? 'Reem could not read this file as audio.'
+  : e.cmd?.includes('ffmpeg') ? 'Riley could not read this file as audio.'
   : 'Could not turn this into text. Try again in a minute.');
 
 /** Any audio (or video) -> small mono mp3 pieces of at most ten minutes. */

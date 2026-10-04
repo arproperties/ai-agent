@@ -4,6 +4,7 @@ import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
 import Icon from './components/Icon';
 import Chat from './components/Chat';
+import ChatHistory from './components/ChatHistory';
 import AgentSheet from './components/AgentSheet';
 import { FilesPage, MemoryPage } from './components/Knowledge';
 import EmailPage from './components/EmailSheet';
@@ -12,25 +13,27 @@ import MessengerPage from './components/Messenger';
 import ListsPage from './components/Lists';
 import MeetingsPage from './components/Meetings';
 import TranscribePage from './components/Transcribe';
-import TenantCarePage from './components/TenantCare';
 import ResponsibilitiesPage from './components/Responsibilities';
 import PropertiesPage from './components/Properties';
 import LeasingPage from './components/Leasing';
+import RegionSettings from './components/RegionSettings';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
+import { loadRegion, onRegion } from './lib/region';
 import { NotifyPrompt } from './components/Notifications';
 import MessageToast from './components/MessageToast';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
 const outlookReturn = params.get('outlook') && { status: params.get('outlook'), message: params.get('message') };
-// a notification tapped while Reem was closed: /?chat=12 opens that team chat,
+// a notification tapped while Riley was closed: /?chat=12 opens that team chat,
 // /?todos=1 opens the list of what is due
 const notifiedChat = Number(params.get('chat')) || null;
 const notifiedTodos = params.get('todos') === '1';
-const notifiedTenantCare = params.get('tenantcare') === '1'; // a tenant email is waiting for a reply
 const notifiedDuties = params.get('responsibilities') === '1'; // the master gave them a new responsibility
-if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedDuties) window.history.replaceState(null, '', '/');
+const notifiedLeasing = params.get('leasing') === 'alerts'; // a leasing alert: rent due, overdue, a lease ending
+const notifiedReminders = params.get('reminders') === '1'; // a reminder from someone else: it waits on the first screen of a new chat
+if (outlookReturn || notifiedChat || notifiedTodos || notifiedDuties || notifiedLeasing) window.history.replaceState(null, '', '/');
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -40,11 +43,14 @@ export default function App() {
   const [convsLoaded, setConvsLoaded] = useState(false); // an empty list means nothing until it has arrived
   const [expiring, setExpiring] = useState([]); // paperwork running out inside a month
   const [due, setDue] = useState({ todos: [], routines: [], fromOthers: [] }); // reminders that have come round, and routines asking to be done
-  const [tenantCare, setTenantCare] = useState({ member: false, waiting: 0 }); // the shared tenant inbox, for those who look after it
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
+  const [history, setHistory] = useState(false); // on a phone: the list of chats is showing in place of the chat
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedDuties ? 'duties' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'tenantcare' | 'duties'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedDuties ? 'duties' : notifiedReminders ? null : 'leasing'); // home is Leasing's Overview; null is the chat. 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'duties'
+  const [leasingTab, setLeasingTab] = useState(notifiedLeasing ? 'alerts' : 'overview'); // which section of Leasing is open; the sidebar shortcuts set it too
+  const [leasingReport, setLeasingReport] = useState('daily'); // which report is open in Leasing's Reports; the sidebar's Reports shortcuts set it
+  const [leasingAlert, setLeasingAlert] = useState(''); // which kind of alert Leasing's Alerts is showing ('' is all); the sidebar's Alerts shortcuts set it
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
@@ -59,6 +65,9 @@ export default function App() {
 
   // This device's notifications follow whoever is signed in (see claimPush).
   useEffect(() => { if (me?.id) claimPush(); }, [me?.id]);
+  // The business's currency and time zone: read once signed in, and the screens are drawn again whenever it changes.
+  const [, setRegionSeen] = useState(0);
+  useEffect(() => { if (me?.id) loadRegion(); return onRegion(() => setRegionSeen((n) => n + 1)); }, [me?.id]);
 
   const loadAgents = useCallback(() => api.get('/agents').then(setAgents), []);
   const loadConvs = useCallback(() => api.get('/conversations').then((c) => { setConvs(c); setConvsLoaded(true); }), []);
@@ -74,9 +83,7 @@ export default function App() {
     api.get('/team-reminders/inbox').catch(() => []), // what other people have asked of them
   ]).then(([todos, routines, fromOthers]) => setDue({ todos, routines, fromOthers })), []);
 
-  const loadTenantCare = useCallback(() => api.get('/tenant-care/me').then(setTenantCare).catch(() => {}), []);
-
-  // A notification tapped while Reem was already open somewhere: the service worker
+  // A notification tapped while Riley was already open somewhere: the service worker
   // brings that window forward rather than starting a second one, and says what the
   // notice was about — a team chat, or the list of what has just fallen due.
   useEffect(() => {
@@ -85,8 +92,8 @@ export default function App() {
       if (e.data?.type !== 'notification') return;
       const where = new URL(e.data.url, window.location.origin).searchParams;
       if (where.get('todos') === '1') { setPanel('todos'); loadDue(); return; }
-      if (where.get('tenantcare') === '1') { setPanel('tenantcare'); loadTenantCare(); return; }
       if (where.get('responsibilities') === '1') { setPanel('duties'); return; }
+      if (where.get('leasing') === 'alerts') { setLeasingTab('alerts'); setPanel('leasing'); return; }
       // A reminder from someone else waits on the first screen of a new chat.
       if (where.get('reminders') === '1') { setChat({ key: Date.now(), id: null }); setPanel(null); loadDue(); return; }
       const id = Number(where.get('chat')) || null;
@@ -96,7 +103,7 @@ export default function App() {
     };
     navigator.serviceWorker.addEventListener('message', tapped);
     return () => navigator.serviceWorker.removeEventListener('message', tapped);
-  }, [loadDue, loadTenantCare]);
+  }, [loadDue]);
 
   useEffect(() => {
     if (!me) return;
@@ -105,10 +112,9 @@ export default function App() {
     loadConvs();
     loadExpiring();
     loadDue();
-    loadTenantCare();
-  }, [me, loadAgents, loadConvs, loadExpiring, loadDue, loadTenantCare]);
+  }, [me, loadAgents, loadConvs, loadExpiring, loadDue]);
 
-  const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setPanel(null); };
+  const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setHistory(false); setPanel(null); };
   const onConversation = (id) => { if (id) setChat((c) => ({ ...c, id })); loadConvs(); };
   const deleteConv = async (id) => {
     if (!confirm('Delete this chat?')) return;
@@ -129,28 +135,43 @@ export default function App() {
   return (
     <div className="relative z-10 flex h-dvh">
       {drawer && <div className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden" onClick={() => setDrawer(false)} />}
-      <aside className={`max-md:liquid-glass fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'}`}>
-        <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
-          messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
-          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}
+      <aside className={`max-md:liquid-glass rail-wash fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'}`}>
+        <Sidebar user={me} agents={agents} filesOpen={panel === 'files'}
           expiring={expiring.length} dueTodos={due.todos.length + due.routines.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
           meetingsOpen={panel === 'meetings'} onMeetings={() => { setPanel('meetings'); setDrawer(false); }}
           transcribeOpen={panel === 'transcribe'} onTranscribe={() => { setPanel('transcribe'); setDrawer(false); }}
-          tenantCare={tenantCare} tenantCareOpen={panel === 'tenantcare'} onTenantCare={() => { setPanel('tenantcare'); setDrawer(false); }}
           dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
           propertiesOpen={panel === 'properties'} onProperties={() => { setPanel('properties'); setDrawer(false); }}
-          leasingOpen={panel === 'leasing'} onLeasing={() => { setPanel('leasing'); setDrawer(false); }}
+          chatsOpen={panel === null || panel === 'messages'} unreadMessages={dm.unread}
+          onChats={() => { setPanel(null); setHistory(true); setDrawer(false); }}
+          leasingOpen={panel === 'leasing'} leasingTab={leasingTab}
+          onLeasing={(tab = 'overview', sub) => {
+            setLeasingTab(tab);
+            if (tab === 'reports' && sub) setLeasingReport(sub);
+            if (tab === 'alerts') setLeasingAlert(sub || '');
+            setPanel('leasing'); setDrawer(false);
+          }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
-          onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
+          onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} regionOpen={panel === 'region'} onRegion={() => { setPanel('region'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
       </aside>
 
       <main className="relative flex min-w-0 flex-1 flex-col">
         {agents.length > 0 ? (
-          <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice}
-            firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
-            due={due} onDueChanged={loadDue} onOpenLists={() => setPanel('todos')}
-            onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />
+          // The chats and the chat side by side, as in Team chat; on a phone it is one or the other.
+          <div className="flex min-h-0 flex-1">
+            <section className={`${history ? 'flex' : 'hidden md:flex'} w-full min-w-0 flex-col list-wash border-stroke md:w-80 md:border-r`}>
+              <ChatHistory agents={agents} convs={convs} activeConvId={chat.id}
+                messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setHistory(false); }}
+                onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} onClose={() => setHistory(false)} />
+            </section>
+            <section className={`${history ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
+              <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice}
+                firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
+                due={due} onDueChanged={loadDue} onOpenLists={() => setPanel('todos')}
+                onConversation={onConversation} onMenu={() => setDrawer(true)} onHistory={() => setHistory(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />
+            </section>
+          </div>
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —
           // otherwise there is no way back to the sidebar (or to sign out) on mobile.
@@ -182,10 +203,10 @@ export default function App() {
         {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => { setPanel(null); loadExpiring(); }} onOpenChat={openChat} />}
         {panel === 'meetings' && <MeetingsPage dm={dm} onOpenFiles={() => setPanel('files')} onBack={() => setPanel(null)} />}
         {panel === 'transcribe' && <TranscribePage onBack={() => setPanel(null)} />}
-        {panel === 'tenantcare' && <TenantCarePage me={me} onBack={() => setPanel(null)} onChanged={loadTenantCare} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
         {panel === 'properties' && <PropertiesPage me={me} onBack={() => setPanel(null)} />}
-        {panel === 'leasing' && <LeasingPage onBack={() => setPanel(null)} />}
+        {panel === 'region' && <RegionSettings onBack={() => setPanel(null)} />}
+        {panel === 'leasing' && <LeasingPage tab={leasingTab} onTab={setLeasingTab} report={leasingReport} onReport={setLeasingReport} alert={leasingAlert} onAlert={setLeasingAlert} onBack={() => setPanel(null)} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
         {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}

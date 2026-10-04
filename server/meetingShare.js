@@ -3,7 +3,7 @@
 // as an ordinary file message.
 //
 // The PDF is laid out by replyDoc.js from markdown built here, so a meeting looks like
-// every other document Reem makes. The transcript goes in only when asked for: a two-hour
+// every other document Riley makes. The transcript goes in only when asked for: a two-hour
 // meeting is dozens of pages, and the summary is what most people want.
 import { Router } from 'express';
 import { getMeeting, clock, turns, UNKNOWN } from './meetings.js';

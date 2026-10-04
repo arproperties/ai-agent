@@ -13,7 +13,123 @@
   --color-ok: #4ade80;
   --color-warn: #fbbf24;
   --color-bad: #fb7185;
+  /* The brightest text there is, for the one word that has to stand out of --color-txt. */
+  --color-hi: #fff;
+  /* Text that sits on a bright fill (a warning count, a badge). */
+  --color-ink: #141128;
+  /* Solid grounds, for anything that has to hide what is behind it: sheets and menus,
+     the pills and pop-ups in a chat, the bars above and below one, the sidebar a badge
+     is cut out of, and the other person's message bubble. */
+  --color-surface: #141128;
+  --color-surface-2: #1b1834;
+  --color-bar: #13112a;
+  --color-rail: #0f0d20;
+  --color-bubble: #252140;
+  /* The main series in a chart: the accent, a shade deeper so a filled bar is not glaring. */
+  --color-chart: #8b5cf6;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+/* ---------- Themes ----------
+   Aurora above is the default and is what you get with no data-theme at all. Every
+   other theme is a block here that swaps the same tokens; lib/theme.js puts the name
+   on <html>. Two values are not Tailwind colours, so they live beside the tokens:
+   --glow is the colour of the sky glow, the dot grid and the focus ring, as bare
+   channels so each can pick its own alpha, and --menu-ground is the near-solid fill
+   under the settings menu. */
+:root { --glow: 167 139 250; --menu-ground: rgb(17 14 38 / 0.96); }
+
+/* Light is the odd one out. The app is drawn in white-on-dark overlays (bg-white/10,
+   border-white/15, text-white/60 ...), and Tailwind builds every one of those from
+   --color-white -- so turning that one variable into ink flips them all, with no
+   component having to know. The pale -200/-300 tints, which only read on a dark ground,
+   are deepened the same way. */
+[data-mode="light"] {
+  color-scheme: light;
+  --color-bg: #e9e7f3; --color-txt: #1b1838; --color-mute: #625e85;
+  --color-glass: rgb(255 255 255 / 0.5); --color-stroke: rgb(27 24 56 / 0.12);
+  --color-p1: #7c3aed; --color-p2: #db2777; --color-p3: #0284c7;
+  --color-ok: #15803d; --color-warn: #b45309; --color-bad: #e11d48;
+  --color-hi: #0b0920; --color-ink: #fff; --color-white: #1b1838;
+  /* The same ladder Aurora climbs, the other way up: the ground is the deepest tone, and
+     the sidebar, the bars, a card, a menu and a message bubble each sit one step lighter
+     than the last. It stops short of pure white: a bright page with white cards glared. */
+  --color-rail: #edebf6; --color-bar: #f0eef8; --color-surface: #f3f1fa;
+  --color-surface-2: #f7f5fc; --color-bubble: #fbfaff; --color-chart: #8b5cf6;
+  --glow: 124 58 237; --menu-ground: rgb(244 242 250 / 0.97);
+  --color-emerald-200: #047857; --color-emerald-300: #047857; --color-emerald-400: #059669;
+  --color-sky-300: #0369a1; --color-sky-400: #0284c7;
+  --color-amber-200: #92400e; --color-amber-300: #b45309;
+  --color-rose-300: #be123c; --color-violet-300: #6d28d9; --color-teal-300: #0f766e;
+  --color-indigo-300: #4338ca; --color-cyan-300: #0e7490; --color-pink-300: #be185d;
+  --color-fuchsia-300: #a21caf; --color-lime-300: #4d7c0f; --color-slate-300: #334155;
+}
+/* Solid white text is the exception: it is only ever written on a coloured fill (a
+   gradient button, a count, an avatar), where it has to stay white. */
+[data-mode="light"] .text-white { color: #fff; }
+/* Likewise a solid white ground: that is paper (a PDF preview, a drawing), not an overlay. */
+[data-mode="light"] .bg-white { background-color: #fff; }
+/* And some things stay dark whatever the theme -- a photo opened full screen, the label
+   on a thumbnail, your own green message bubble. `on-dark` hands them the dark values
+   back, so what is written inside reads as it does in Aurora. */
+[data-mode="light"] .on-dark {
+  --color-white: #fff; --color-txt: #f2f0ff; --color-mute: #9a95bd; --color-hi: #fff;
+  --color-emerald-200: #a4f4cf; --color-emerald-300: #5ee9b5;
+}
+/* The ground every theme wears: a still grid of fine dots, on the same two layers the
+   glow uses -- the body's, and a copy inside each panel that covers the chat. 24px,
+   because the sidebar is 18rem = 12 cells wide, so a panel's grid lands exactly on the
+   body's and nothing shifts when one opens. */
+body::after, .sky::after {
+  content: ""; pointer-events: none;
+  position: fixed; inset: 0; z-index: 0;
+  background: radial-gradient(circle at 1px 1px, rgb(var(--glow) / var(--dot, 0.22)) 1px, transparent 1.6px) 0 0 / 24px 24px;
+}
+.sky::after { position: absolute; z-index: -1; }
+/* On paper the same dots need more ink to show at all. */
+[data-mode="light"] { --dot: 0.42; }
+/* The sidebar on a wide screen: a wash of the theme's own accent, strongest at the top
+   and warming toward the second accent at the foot, so the left column reads as a
+   different place from the page beside it. See-through, so the dots carry on under it.
+   On a phone the sidebar is a glass drawer instead and keeps that. */
+@media (width >= 48rem) {
+  .rail-wash {
+    background: linear-gradient(170deg,
+      rgb(var(--glow) / var(--wash, 0.2)),
+      rgb(var(--glow) / calc(var(--wash, 0.2) * 0.35)) 55%,
+      color-mix(in srgb, var(--color-p2) 14%, transparent));
+  }
+  /* The list of chats beside the sidebar: the same wash at about half strength, so it is
+     of a piece with the sidebar but reads as the next column in, not more of the same. */
+  .list-wash {
+    background: linear-gradient(170deg,
+      rgb(var(--glow) / calc(var(--wash, 0.2) * 0.5)),
+      rgb(var(--glow) / calc(var(--wash, 0.2) * 0.18)) 55%,
+      color-mix(in srgb, var(--color-p2) 7%, transparent));
+  }
+}
+/* With a pattern on the ground, a card has to be solid or the dots run through what is
+   written on it. The faint fills cards and fields are drawn with (3-7% white on dark)
+   become the same tint laid on the solid surface rather than on nothing. Anything `on-dark`
+   keeps its see-through fill. */
+.bg-white\/\[0\.03\]:not(.on-dark, .on-dark *) { background-color: color-mix(in srgb, var(--color-white) 1%, var(--color-surface)); }
+.bg-white\/\[0\.035\]:not(.on-dark, .on-dark *) { background-color: color-mix(in srgb, var(--color-white) 1%, var(--color-surface)); }
+.bg-white\/\[0\.04\]:not(.on-dark, .on-dark *) { background-color: color-mix(in srgb, var(--color-white) 2%, var(--color-surface)); }
+.bg-white\/\[0\.05\]:not(.on-dark, .on-dark *),
+.bg-white\/5:not(.on-dark, .on-dark *) { background-color: color-mix(in srgb, var(--color-white) 3%, var(--color-surface)); }
+.bg-white\/\[0\.06\]:not(.on-dark, .on-dark *) { background-color: color-mix(in srgb, var(--color-white) 4%, var(--color-surface)); }
+.bg-white\/\[0\.07\]:not(.on-dark, .on-dark *) { background-color: color-mix(in srgb, var(--color-white) 5%, var(--color-surface)); }
+/* And a bordered card with no fill of its own gets the surface too. In the components
+   layer, so any background a card does ask for still wins. */
+@layer components {
+  :is(.rounded-2xl, .rounded-3xl).border:not(.on-dark, .on-dark *) { background-color: var(--color-surface); }
+}
+/* The sidebar drawer on a phone: a white pane rather than a tinted one. */
+@media (width < 48rem) {
+  [data-mode="light"] .max-md\:liquid-glass {
+    background: rgb(255 255 255 / 0.82);
+    box-shadow: inset -1px 0 0 rgb(27 24 56 / 0.08), 0 8px 40px -8px rgb(27 24 56 / 0.18);
+  }
 }
 
 @layer base {
@@ -30,7 +146,7 @@
   }
   /* ---------- One glow ----------
      The shape is borrowed from Business Lens (admin/src/styles/tokens.css);
-     the colour is Reem's own violet, not that app's mint.
+     the colour is Riley's own violet, not that app's mint.
      One fixed layer. The body wears it, so it sits behind the chat. Any
      full-screen panel that covers the chat (Files, People, Team chat, Live
      voice) needs its own copy, because it has to hide the chat underneath --
@@ -40,7 +156,7 @@
     content: ""; pointer-events: none;
     position: fixed; top: -25vh; left: 50%; transform: translateX(-50%);
     width: 130vw; height: 90vh;
-    background: radial-gradient(ellipse at center, rgb(167 139 250 / 0.14), transparent 62%);
+    background: radial-gradient(ellipse at center, rgb(var(--glow) / 0.14), transparent 62%);
   }
   /* behind the app, which App.jsx puts at z-10 */
   body::before { z-index: 0; }
@@ -48,7 +164,7 @@
   input, textarea, select { font-size: 16px; }
   button { cursor: pointer; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.18); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--color-white) 18%, transparent); border-radius: 3px; }
 }
 
 @layer components {
@@ -73,23 +189,6 @@
      is the screen's and the correction above would push it off instead. Last rule wins
      at equal specificity, which is why this sits below the media query. */
   .sky-full::before { left: 50%; }
-
-  /* The particle canvas (ParticleField), mounted beside the app in main.jsx.
-     z-index 1, not the -1 Business Lens uses: their #root sits at z-1, ours at
-     z-10, so 1 is what lands between the app and the glow at z-0. */
-  .fx-canvas {
-    position: fixed; inset: 0; width: 100%; height: 100%;
-    display: block; pointer-events: none; z-index: 1;
-  }
-  /* The same field inside a full-screen panel. Absolute, so it stays within the panel
-     rather than painting over the sidebar, and z-index -1 so it lands between the
-     panel's own background and its content. The panel's solid background-color paints
-     below negative-z children, so the order is: solid ground, glow, particles, content
-     -- the same stack the body wears, which is the point. */
-  .fx-canvas-panel {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    display: block; pointer-events: none; z-index: -1;
-  }
 }
 
 @utility glass {
@@ -101,7 +200,7 @@
 /* A heavier, lit version of `glass` for the side nav — that one is flat frost and is
    worn by 26 small surfaces, so it stays as it is rather than growing this weight.
    Three things separate glass from frosted plastic: the saturate(), which pulls colour
-   out of the glow, grid and particles passing behind; the gradient, so the surface
+   out of the glow and grid passing behind; the gradient, so the surface
    falls off instead of sitting at one flat tint; and the inset highlights, which catch
    light along the top and right edges the way a real pane does. */
 /* The menu opens over the chat list, so it has to hide what is behind it: a see-through
@@ -111,11 +210,11 @@
    separate it from the sidebar. */
 @utility menu-glass {
   background:
-    linear-gradient(to bottom, rgb(255 255 255 / 0.06), rgb(255 255 255 / 0.02)),
-    rgb(17 14 38 / 0.96);
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-white) 6%, transparent), color-mix(in srgb, var(--color-white) 2%, transparent)),
+    var(--menu-ground);
   backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
-  border: 1px solid rgb(255 255 255 / 0.12);
+  border: 1px solid color-mix(in srgb, var(--color-white) 12%, transparent);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.12),
     0 18px 44px -14px rgb(0 0 0 / 0.6);
@@ -141,28 +240,28 @@
 /* ---------- Orb (from html/index.html · Prism Bloom) ---------- */
 .orb { position: relative; aspect-ratio: 1; display: grid; place-items: center; }
 .orb .bl {
-  position: absolute; background: transparent; border: 1.5px solid rgb(167 139 250 / 0.6);
+  position: absolute; background: transparent; border: 1.5px solid color-mix(in srgb, var(--color-p1) 60%, transparent);
   animation: morph 16s ease-in-out infinite, spin 44s linear infinite;
-  box-shadow: 0 0 22px rgb(167 139 250 / 0.35), inset 0 0 22px rgb(167 139 250 / 0.12);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--color-p1) 35%, transparent), inset 0 0 22px color-mix(in srgb, var(--color-p1) 12%, transparent);
 }
 .orb .b1 { inset: 4%; }
-.orb .b2 { inset: 11%; border-color: rgb(244 114 182 / 0.55); animation-duration: 7s, 18s; animation-direction: reverse;
-  box-shadow: 0 0 20px rgb(244 114 182 / 0.3), inset 0 0 18px rgb(244 114 182 / 0.1); }
-.orb .b3 { inset: 18%; border-color: rgb(56 189 248 / 0.5); animation-duration: 11s, 30s;
-  box-shadow: 0 0 18px rgb(56 189 248 / 0.3), inset 0 0 16px rgb(56 189 248 / 0.1); }
-.orb .b4 { inset: 26%; border-color: rgb(255 255 255 / 0.28); animation-duration: 13s, 38s; animation-direction: reverse;
-  box-shadow: 0 0 14px rgb(255 255 255 / 0.18); }
-.orb .b5 { inset: -2%; border-width: 1px; border-color: rgb(255 255 255 / 0.12); animation-duration: 16s, 46s; box-shadow: none; }
+.orb .b2 { inset: 11%; border-color: color-mix(in srgb, var(--color-p2) 55%, transparent); animation-duration: 7s, 18s; animation-direction: reverse;
+  box-shadow: 0 0 20px color-mix(in srgb, var(--color-p2) 30%, transparent), inset 0 0 18px color-mix(in srgb, var(--color-p2) 10%, transparent); }
+.orb .b3 { inset: 18%; border-color: color-mix(in srgb, var(--color-p3) 50%, transparent); animation-duration: 11s, 30s;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--color-p3) 30%, transparent), inset 0 0 16px color-mix(in srgb, var(--color-p3) 10%, transparent); }
+.orb .b4 { inset: 26%; border-color: color-mix(in srgb, var(--color-white) 28%, transparent); animation-duration: 13s, 38s; animation-direction: reverse;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--color-white) 18%, transparent); }
+.orb .b5 { inset: -2%; border-width: 1px; border-color: color-mix(in srgb, var(--color-white) 12%, transparent); animation-duration: 16s, 46s; box-shadow: none; }
 .orb .aura {
   position: absolute; inset: 0; filter: blur(16px); opacity: 0.9;
-  background: conic-gradient(from 0deg, #a78bfa, #f472b6, #38bdf8, #a78bfa);
+  background: conic-gradient(from 0deg, var(--color-p1), var(--color-p2), var(--color-p3), var(--color-p1));
   animation: morph 16s ease-in-out infinite, spin 44s linear infinite;
   -webkit-mask: radial-gradient(circle, transparent 40%, #000 62%, transparent 86%);
           mask: radial-gradient(circle, transparent 40%, #000 62%, transparent 86%);
 }
 .orb .bezel {
   position: absolute; inset: -9%; border-radius: 50%; opacity: 0.5; animation: spin 46s linear infinite;
-  background: repeating-conic-gradient(from 0deg, rgb(255 255 255 / 0.6) 0 0.4deg, transparent 0.4deg 7deg);
+  background: repeating-conic-gradient(from 0deg, color-mix(in srgb, var(--color-white) 60%, transparent) 0 0.4deg, transparent 0.4deg 7deg);
   -webkit-mask: radial-gradient(circle, transparent 82%, #000 84%, #000 88%, transparent 90%);
           mask: radial-gradient(circle, transparent 82%, #000 84%, #000 88%, transparent 90%);
 }
@@ -170,13 +269,37 @@
    orb at rest reads as the icon rather than as a row of dots. Movement is a
    scaleY, which keeps each bar's own height instead of flattening them all. */
 .orb .wave { position: relative; z-index: 4; display: flex; gap: 5px; align-items: center; height: 44px; transform: scale(0.8); }
-.orb .wave i { width: 5px; border-radius: 5px; background: rgb(255 255 255 / 0.92);
-  box-shadow: 0 0 12px rgb(255 255 255 / 0.6); transform-origin: center; transition: transform 0.25s ease; }
+.orb .wave i { width: 5px; border-radius: 5px; background: color-mix(in srgb, var(--color-white) 92%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--color-white) 60%, transparent); transform-origin: center; transition: transform 0.25s ease; }
 .orb .wave i:nth-child(1) { height: 15px; animation-delay: 0.18s; }
 .orb .wave i:nth-child(2) { height: 31px; animation-delay: 0.06s; }
 .orb .wave i:nth-child(3) { height: 44px; animation-delay: 0s; }
 .orb .wave i:nth-child(4) { height: 26px; animation-delay: 0.1s; }
 .orb .wave i:nth-child(5) { height: 12px; animation-delay: 0.22s; }
+/* The orb in Light. It is built from glows, which only show against the dark: on a pale
+   ground the blurred aura turns to a grey smudge and the white rings and bars to ink.
+   So here the colour is carried by the fill instead -- a crisper, fuller band of the
+   three hues, a white core for the bars to sit on, and the bars in the accent itself. */
+[data-mode="light"] .orb .aura {
+  filter: blur(9px) saturate(1.35); opacity: 1;
+  -webkit-mask: radial-gradient(circle, transparent 36%, #000 54%, #000 68%, transparent 82%);
+          mask: radial-gradient(circle, transparent 36%, #000 54%, #000 68%, transparent 82%);
+}
+[data-mode="light"] .orb .bl { border-width: 1px; box-shadow: none; }
+[data-mode="light"] .orb .b1 { border-color: color-mix(in srgb, var(--color-p1) 45%, transparent); }
+[data-mode="light"] .orb .b2 { border-color: rgb(255 255 255 / 0.7); }
+[data-mode="light"] .orb .b3 { border-color: rgb(255 255 255 / 0.55); }
+[data-mode="light"] .orb .b4 {
+  border-color: #fff;
+  background: radial-gradient(circle at 35% 28%, #fff 30%, color-mix(in srgb, var(--color-p1) 10%, #fff));
+  box-shadow: 0 6px 20px rgb(var(--glow) / 0.35), inset 0 -3px 8px rgb(var(--glow) / 0.1);
+}
+[data-mode="light"] .orb .b5 { border-color: color-mix(in srgb, var(--color-p1) 22%, transparent); }
+[data-mode="light"] .orb .bezel {
+  opacity: 0.55;
+  background: repeating-conic-gradient(from 0deg, color-mix(in srgb, var(--color-p1) 55%, transparent) 0 0.4deg, transparent 0.4deg 7deg);
+}
+[data-mode="light"] .orb .wave i { background: linear-gradient(to bottom, var(--color-p1), var(--color-p2)); box-shadow: none; }
 .orb[data-state="thinking"] .b1 { animation-duration: 3.4s, 7s; }
 .orb[data-state="thinking"] .b2 { animation-duration: 3s, 6s; }
 .orb[data-state="thinking"] .b3 { animation-duration: 4s, 9s; }
@@ -204,14 +327,14 @@
 .md ul { list-style: disc; padding-left: 1.3em; } .md ol { list-style: decimal; padding-left: 1.3em; }
 .md li + li { margin-top: 0.25em; }
 .md a { color: var(--color-p3); text-decoration: underline; }
-.md strong { color: #fff; font-weight: 600; }
-.md code { background: rgb(255 255 255 / 0.08); padding: 0.1em 0.35em; border-radius: 6px; font-size: 0.9em; }
-.md pre { background: rgb(0 0 0 / 0.35); border: 1px solid var(--color-stroke); padding: 12px 14px; border-radius: 12px; overflow-x: auto; }
+.md strong { color: var(--color-hi); font-weight: 600; }
+.md code { background: color-mix(in srgb, var(--color-white) 8%, transparent); padding: 0.1em 0.35em; border-radius: 6px; font-size: 0.9em; }
+.md pre { background: color-mix(in srgb, var(--color-black) 35%, transparent); border: 1px solid var(--color-stroke); padding: 12px 14px; border-radius: 12px; overflow-x: auto; }
 .md pre code { background: none; padding: 0; }
 .md blockquote { border-left: 2px solid var(--color-p1); padding-left: 12px; color: var(--color-mute); }
 .md table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 0.92em; }
 .md th { text-align: left; color: var(--color-mute); font-weight: 500; border-bottom: 1px solid var(--color-stroke); padding: 6px 12px 6px 0; }
-.md td { border-bottom: 1px solid rgb(255 255 255 / 0.05); padding: 7px 12px 7px 0; }
+.md td { border-bottom: 1px solid color-mix(in srgb, var(--color-white) 5%, transparent); padding: 7px 12px 7px 0; }
 .md hr { border-color: var(--color-stroke); }
 /* The same Markdown on white paper: the PDF preview */
 .paper.md strong { color: inherit; }
@@ -223,5 +346,5 @@
 
 /* keyboard focus only — no rings when tapping or clicking */
 :focus { outline: none; }
-:focus-visible { outline: 2px solid rgb(167 139 250 / 0.7); outline-offset: 2px; }
+:focus-visible { outline: 2px solid rgb(var(--glow) / 0.7); outline-offset: 2px; }
 input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; } /* fields show focus with their border */

@@ -27,12 +27,12 @@ export default class Crash extends Component {
         <div>
           <p className="text-lg font-light">Something went wrong</p>
           <p className="mt-1 max-w-xs text-sm text-mute">
-            Reem has been told what happened. Nothing you sent is lost — reloading usually fixes it.
+            Riley has been told what happened. Nothing you sent is lost — reloading usually fixes it.
           </p>
         </div>
         <button onClick={() => window.location.reload()}
           className="rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2.5 font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98]">
-          Reload Reem
+          Reload Riley
         </button>
       </div>
     );

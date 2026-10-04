@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 // documents part of server/leasing.js.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
-const USUAL = ['Signed contract', 'Ejari', 'Emirates ID', 'Passport', 'Visa', 'Trade License', 'Payment slip'];
+const USUAL = ['Signed contract', 'Ejari', 'ID', 'Passport', 'Visa', 'Trade License', 'Payment slip'];
 
 const when = (ts) => new Date(Number(ts)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 

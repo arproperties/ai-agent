@@ -36,7 +36,7 @@ test('link, change and unlink; one employee is never two accounts', async () => 
 
   await addResponsibility(master, jessa, { title: 'Park Place' });
   const out = (await responsibilityKit(master).run({ id: 't', name: 'team_responsibilities', input: {} })).content;
-  assert.match(out, /Jessa \[HR E00012\]:/, 'Reem sees the code next to the name');
+  assert.match(out, /Jessa \[HR E00012\]:/, 'Riley sees the code next to the name');
 
   assert.equal(await unlinkUser(jessa), true);
   assert.equal(await linkFor(jessa), undefined);

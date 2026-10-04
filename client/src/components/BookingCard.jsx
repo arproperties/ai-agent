@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Loader2, Check, X, CalendarPlus, AlertTriangle } from 'lucide-react';
 import { api } from '../lib/api';
 
-// An ARS booking Reem has got ready, waiting for the person. Nothing exists in saifsys
+// An ARS booking Riley has got ready, waiting for the person. Nothing exists in saifsys
 // until Create is tapped here; saifsys then checks the unit is still free and the price
 // is still this one, or makes nothing.
 

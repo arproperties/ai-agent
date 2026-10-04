@@ -109,7 +109,7 @@ export function ResponsibilitiesEditor({ person, isMe }) {
         )}
       <p className="text-xs leading-relaxed text-mute">
         {isMe ? 'These are yours.' : `${person.name} can read these from the menu, and their phone buzzes when you add or change one.`}
-        {' '}Reem knows them too, so anyone can ask "who handles…?".
+        {' '}Riley knows them too, so anyone can ask "who handles…?".
       </p>
     </div>
   );

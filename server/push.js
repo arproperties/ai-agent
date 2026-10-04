@@ -4,7 +4,7 @@ import webpush from 'web-push';
 import { db } from './db.js';
 import { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT } from './config.js';
 
-// A buzz on the phone when Reem is closed.
+// A buzz on the phone when Riley is closed.
 //
 // The live stream in messenger.js only exists while the app is open. This is the other
 // half: when a message lands for someone whose app is shut, the server hands a short
@@ -120,6 +120,6 @@ pushRoutes.delete('/subscribe', wrap(async (req, res) => {
 // Sends one to this user's own devices, so they can see it working rather than having to
 // ask someone to message them.
 pushRoutes.post('/test', wrap(async (req, res) => {
-  const sent = await sendPush([req.user.id], { title: 'Reem', body: 'Notifications are on. This is what they look like.', url: '/', tag: 'push-test' });
+  const sent = await sendPush([req.user.id], { title: 'Riley', body: 'Notifications are on. This is what they look like.', url: '/', tag: 'push-test' });
   res.json({ sent });
 }));

@@ -4,7 +4,7 @@ import { ask as askClaude } from './ai.js';
 import { recentInbox } from './imap.js';
 import { createTodo, remindAt, listTodos } from './todos.js';
 
-// Reminders Reem spots for you, from your new email and what you have said in chat.
+// Reminders Riley spots for you, from your new email and what you have said in chat.
 //
 // Suggested, never set: each one waits on the first screen with "Remind me" and ✕, and
 // only "Remind me" puts it on the to-do list. A wrong guess costs one tap, not a buzz at

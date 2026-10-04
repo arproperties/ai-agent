@@ -36,8 +36,8 @@ const TABLES = [
   'dm_groups', 'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
   'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs', 'saifsys_access', 'saifsys_action_access', 'ars_booking_requests',
   'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'team_reminders', 'team_reminder_people', 'reminder_suggestions', 'suggestion_scans',
-  'tenant_inbox', 'tenant_inbox_members', 'tenant_asks', 'responsibilities', 'responsibility_proposals', 'hr_links',
-  'prop_companies', 'prop_buildings', 'prop_units', 'prop_documents', 'lease_tenants', 'lease_bookings', 'lease_documents',
+  'responsibilities', 'responsibility_proposals', 'hr_links',
+  'prop_companies', 'prop_buildings', 'prop_units', 'prop_documents', 'prop_photos', 'prop_unit_photos', 'lease_tenants', 'lease_bookings', 'lease_documents', 'lease_installments', 'lease_payments', 'lease_settings', 'lease_alerts_sent', 'lease_events', 'lease_services', 'prop_building_staff', 'lease_tenant_notices',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

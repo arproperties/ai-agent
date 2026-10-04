@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { db } from './db.js';
 import { requireMaster } from './auth.js';
 import { DATA_DIR } from './config.js';
+import { todayHere } from './leasingRegion.js';
 
 // Properties: the companies of the group, their buildings, and each building's units.
 // Everyone signed in can read them; only the master adds, changes or removes. A company
@@ -82,7 +83,8 @@ export async function remove(kind, id) {
   // A company takes its documents with it; their rows cascade, their files are removed here.
   const files = kind === 'company'
     ? (await db.prepare('SELECT file_path FROM prop_documents WHERE company_id = ? AND file_path IS NOT NULL').all(Number(id))).map((d) => d.file_path)
-    : [];
+    : kind === 'unit' ? (await db.prepare('SELECT file_path FROM prop_unit_photos WHERE unit_id = ?').all(Number(id))).map((p) => p.file_path) // a unit's photos go with it
+      : [];
   try {
     const r = await db.prepare(`DELETE FROM ${KINDS[kind].table} WHERE id = ?`).run(Number(id));
     if (!r.changes) throw bad('Not found', 404);
@@ -91,36 +93,127 @@ export async function remove(kind, id) {
     throw e;
   }
   for (const f of files) rmSync(f, { force: true });
+  if (PHOTO_KINDS[kind]) await removePhoto(kind, id); // its picture goes with it
   return { ok: true };
 }
 
 /** Companies with how many buildings and units each has. */
 export const listCompanies = () => db.prepare(`
-  SELECT c.*, (SELECT count(*)::int FROM prop_buildings b WHERE b.company_id = c.id) AS buildings,
+  SELECT c.*, ${photoAt('company', 'c')}, (SELECT count(*)::int FROM prop_buildings b WHERE b.company_id = c.id) AS buildings,
     (SELECT count(*)::int FROM prop_units u JOIN prop_buildings b ON b.id = u.building_id WHERE b.company_id = c.id) AS units
   FROM prop_companies c ORDER BY c.name`).all();
 
 export const listBuildings = (companyId) => db.prepare(`
-  SELECT b.*, (SELECT count(*)::int FROM prop_units u WHERE u.building_id = b.id) AS units
+  SELECT b.*, ${photoAt('building', 'b')}, (SELECT count(*)::int FROM prop_units u WHERE u.building_id = b.id) AS units
   FROM prop_buildings b WHERE b.company_id = ? ORDER BY b.name`).all(Number(companyId));
 
 // Units in floor then number order, the way they read on a building's board (2, 10, 101…).
-// Each with today's confirmed booking, if any (UAE date), so the card can say who is in it.
+// Each with today's confirmed booking, if any (today where the business is), so the card can say who is in it.
 export const listUnits = (buildingId) => db.prepare(`
-  SELECT u.*, cur.tenant AS current_tenant, cur.end_date AS current_until FROM prop_units u
+  SELECT u.*, cur.tenant AS current_tenant, cur.end_date AS current_until,
+    (SELECT coalesce(array_agg(p.id ORDER BY p.id), '{}') FROM prop_unit_photos p WHERE p.unit_id = u.id) AS photos FROM prop_units u
   LEFT JOIN LATERAL (SELECT t.full_name AS tenant, to_char(b.end_date, 'YYYY-MM-DD') AS end_date FROM lease_bookings b
     JOIN lease_tenants t ON t.id = b.tenant_id
-    WHERE b.unit_id = u.id AND b.status = 'confirmed' AND (now() AT TIME ZONE 'Asia/Dubai')::date BETWEEN b.start_date AND b.end_date
+    WHERE b.unit_id = u.id AND b.status = 'confirmed' AND ?::date BETWEEN b.start_date AND b.end_date
     LIMIT 1) cur ON true
   WHERE building_id = ?
   ORDER BY NULLIF(regexp_replace(floor, '\\D', '', 'g'), '')::int NULLS FIRST, floor,
-    NULLIF(regexp_replace(unit_no, '\\D', '', 'g'), '')::bigint NULLS LAST, unit_no`).all(Number(buildingId));
+    NULLIF(regexp_replace(unit_no, '\\D', '', 'g'), '')::bigint NULLS LAST, unit_no`).all(todayHere(), Number(buildingId));
+
+// One company or building, with when its picture last changed (null when it has none).
+/** The people who look after a building: its leasing alerts go to them. */
+export const buildingStaff = (id) => db.prepare(`SELECT u.id, u.name FROM prop_building_staff s JOIN users u ON u.id = s.user_id
+  WHERE s.building_id = ? AND NOT u.disabled ORDER BY u.name`).all(Number(id));
+
+export async function setBuildingStaff(id, userIds) {
+  const b = await one('prop_buildings', id);
+  const ids = [...new Set((Array.isArray(userIds) ? userIds : []).map(Number).filter(Number.isInteger))];
+  await db.prepare('DELETE FROM prop_building_staff WHERE building_id = ?').run(b.id);
+  for (const u of ids) await db.prepare('INSERT INTO prop_building_staff (building_id, user_id) SELECT ?, id FROM users WHERE id = ? ON CONFLICT DO NOTHING').run(b.id, u);
+  return buildingStaff(b.id);
+}
 
 const one = async (table, id) => {
-  const r = await db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(Number(id));
+  const kind = table === 'prop_companies' ? 'company' : 'building';
+  const r = await db.prepare(`SELECT x.*, ${photoAt(kind, 'x')} FROM ${table} x WHERE x.id = ?`).get(Number(id));
   if (!r) throw bad('Not found', 404);
   return r;
 };
+
+
+// ---------- photos ----------
+//
+// One picture each: a company's logo, a building's photo. The row can be made without one.
+
+const PHOTO_DIR = `${DATA_DIR}/properties/photos`;
+const PHOTO_KINDS = { company: 'prop_companies', building: 'prop_buildings' };
+const PICTURE = /^image\/(png|jpe?g|webp|gif)$/;
+// When this one's picture last changed, for a query that lists companies (alias c) or buildings (alias b).
+const photoAt = (kind, alias) => `(SELECT p.updated_at FROM prop_photos p WHERE p.kind = '${kind}' AND p.owner_id = ${alias}.id) AS photo_at`;
+
+/** Fails unless `file` is a picture that can be shown, and not a huge one. */
+function picture(file) {
+  if (!file) throw bad('Choose a picture.');
+  if (!PICTURE.test(file.mimetype || '')) throw bad('That is not a picture this can show. Use a JPG, PNG or WebP.');
+  if (file.buffer.length > 8 * 1024 * 1024) throw bad('That picture is over 8 MB. Use a smaller one.');
+}
+
+export async function getPhoto(kind, id) {
+  const p = await db.prepare('SELECT file_path, file_mime, updated_at FROM prop_photos WHERE kind = ? AND owner_id = ?').get(kind, Number(id) || 0);
+  if (!p) throw bad('Not found', 404);
+  return p;
+}
+
+/** Put up a company's logo or a building's photo, in place of any it had. */
+export async function setPhoto(kind, id, file) {
+  await one(PHOTO_KINDS[kind], id);
+  picture(file);
+  const old = await db.prepare('SELECT file_path FROM prop_photos WHERE kind = ? AND owner_id = ?').get(kind, Number(id));
+  const f = saveFile(file, PHOTO_DIR);
+  await db.prepare(`INSERT INTO prop_photos (kind, owner_id, file_path, file_mime) VALUES (?, ?, ?, ?)
+    ON CONFLICT (kind, owner_id) DO UPDATE SET file_path = EXCLUDED.file_path, file_mime = EXCLUDED.file_mime, updated_at = extract(epoch from now())::bigint`)
+    .run(kind, Number(id), f.file_path, f.file_mime);
+  if (old) rmSync(old.file_path, { force: true });
+  return { photo_at: (await getPhoto(kind, id)).updated_at };
+}
+
+/** Take the picture down. Not having one is fine: the end state is the same. */
+export async function removePhoto(kind, id) {
+  const old = await db.prepare('SELECT file_path FROM prop_photos WHERE kind = ? AND owner_id = ?').get(kind, Number(id) || 0);
+  await db.prepare('DELETE FROM prop_photos WHERE kind = ? AND owner_id = ?').run(kind, Number(id) || 0);
+  if (old) rmSync(old.file_path, { force: true });
+  return { ok: true };
+}
+
+
+// A unit's photos: several, since the unit is what is shown to someone thinking of renting
+// it. The first is the one on its card.
+
+const UNIT_PHOTOS = 12;
+
+/** Add one photo to a unit. */
+export async function addUnitPhoto(unitId, file) {
+  if (!(await db.prepare('SELECT 1 FROM prop_units WHERE id = ?').get(Number(unitId) || 0))) throw bad('Not found', 404);
+  picture(file);
+  const { n } = await db.prepare('SELECT count(*)::int AS n FROM prop_unit_photos WHERE unit_id = ?').get(Number(unitId));
+  if (n >= UNIT_PHOTOS) throw bad(`A unit can have ${UNIT_PHOTOS} photos. Remove one first.`, 409);
+  const f = saveFile(file, PHOTO_DIR);
+  const { id } = await db.prepare('INSERT INTO prop_unit_photos (unit_id, file_path, file_mime) VALUES (?, ?, ?) RETURNING id').run(Number(unitId), f.file_path, f.file_mime);
+  return { id };
+}
+
+export async function getUnitPhoto(id) {
+  const p = await db.prepare('SELECT id, file_path, file_mime FROM prop_unit_photos WHERE id = ?').get(Number(id) || 0);
+  if (!p) throw bad('Not found', 404);
+  return p;
+}
+
+export async function removeUnitPhoto(id) {
+  const p = await getUnitPhoto(id);
+  await db.prepare('DELETE FROM prop_unit_photos WHERE id = ?').run(p.id);
+  rmSync(p.file_path, { force: true });
+  return { ok: true };
+}
 
 // ---------- company documents ----------
 
@@ -141,14 +234,13 @@ export function docStatus(doc, today) {
   return left < 0 ? 'expired' : left <= SOON ? 'due' : 'valid';
 }
 
-const todayUae = () => new Date(Date.now() + 4 * 3600_000).toISOString().slice(0, 10);
 const key = (title) => title.trim().toLowerCase();
 
 /**
  * Each company with its documents grouped by name ("Trade License" twice is one licence,
  * renewed): the newest of each name decides its status, and the card counts those.
  */
-export async function docBoard(today = todayUae()) {
+export async function docBoard(today = todayHere()) {
   const companies = await listCompanies();
   const docs = await db.prepare(`SELECT ${DOC_COLS} FROM prop_documents ORDER BY lower(title), ${NEWEST}`).all();
   return companies.map((c) => {
@@ -165,7 +257,7 @@ export async function docBoard(today = todayUae()) {
 }
 
 /** Every document of one company, or only those under one name (its renewals). */
-export async function companyDocs(companyId, title, today = todayUae()) {
+export async function companyDocs(companyId, title, today = todayHere()) {
   const rows = title
     ? await db.prepare(`SELECT ${DOC_COLS} FROM prop_documents WHERE company_id = ? AND lower(title) = ? ORDER BY ${NEWEST}`).all(Number(companyId), key(title))
     : await db.prepare(`SELECT ${DOC_COLS} FROM prop_documents WHERE company_id = ? ORDER BY lower(title), ${NEWEST}`).all(Number(companyId));
@@ -257,7 +349,28 @@ propertyRoutes.get('/companies', wrap(async (req, res) => res.json(await listCom
 propertyRoutes.get('/companies/:id', wrap(async (req, res) => res.json({ ...(await one('prop_companies', req.params.id)), list: await listBuildings(req.params.id) })));
 propertyRoutes.get('/buildings/:id', wrap(async (req, res) => {
   const b = await one('prop_buildings', req.params.id);
-  res.json({ ...b, company: await one('prop_companies', b.company_id), list: await listUnits(b.id) });
+  res.json({ ...b, company: await one('prop_companies', b.company_id), list: await listUnits(b.id), staff: await buildingStaff(b.id) });
+}));
+propertyRoutes.put('/buildings/:id/staff', requireMaster, wrap(async (req, res) => res.json(await setBuildingStaff(req.params.id, req.body?.user_ids))));
+
+for (const [kind, path] of [['company', 'companies'], ['building', 'buildings']]) {
+  propertyRoutes.get(`/${path}/:id/photo`, wrap(async (req, res) => {
+    const p = await getPhoto(kind, req.params.id);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable'); // the address changes when the picture does
+    res.type(p.file_mime).sendFile(p.file_path);
+  }));
+  propertyRoutes.post(`/${path}/:id/photo`, requireMaster, upload.single('photo'), wrap(async (req, res) => res.json(await setPhoto(kind, req.params.id, req.file))));
+  propertyRoutes.delete(`/${path}/:id/photo`, requireMaster, wrap(async (req, res) => res.json(await removePhoto(kind, req.params.id))));
+}
+
+propertyRoutes.post('/units/:id/photos', requireMaster, upload.single('photo'), wrap(async (req, res) => res.json(await addUnitPhoto(req.params.id, req.file))));
+propertyRoutes.delete('/unit-photos/:id', requireMaster, wrap(async (req, res) => res.json(await removeUnitPhoto(req.params.id))));
+propertyRoutes.get('/unit-photos/:id', wrap(async (req, res) => {
+  const p = await getUnitPhoto(req.params.id);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable'); // a photo never changes; a new one has a new address
+  res.type(p.file_mime).sendFile(p.file_path);
 }));
 
 propertyRoutes.post('/companies', requireMaster, wrap(async (req, res) => res.json(await create('company', req.body, null, req.user.id))));

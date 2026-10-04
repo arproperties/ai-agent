@@ -8,7 +8,7 @@ import { sendPush } from './push.js';
 // them), and their phone buzzes when one is added or changed, so a new duty is not
 // something they find out about by accident.
 //
-// Reem reads them too (responsibilityKit below), so "who handles rent collection?" has
+// Riley reads them too (responsibilityKit below), so "who handles rent collection?" has
 // an answer in chat, and the master can add, change or remove them from chat - always
 // through a Save/Cancel card, never straight in.
 
@@ -40,7 +40,7 @@ function tell(master, userId, row, changed) {
     title: changed ? 'A responsibility of yours was updated' : 'You have a new responsibility',
     body: what,
     url: '/?responsibilities=1',
-    tag: `reem-resp-${row.id}`,
+    tag: `riley-resp-${row.id}`,
   }).catch((e) => console.warn('[responsibilities] push', e.message));
 }
 
@@ -68,7 +68,7 @@ export const deleteResponsibility = async (id) =>
 
 // ---------- proposals from chat ----------
 //
-// The master can say "give Rona rent collection: …" in chat. Reem never writes it
+// The master can say "give Rona rent collection: …" in chat. Riley never writes it
 // straight in: it is proposed, a card appears with Save and Cancel, and only Save
 // changes the list - a misheard name is caught on the card, not on Rona's phone.
 
@@ -89,7 +89,7 @@ export async function findPerson(masterId, raw) {
     if (hits.length === 1) return hits[0];
     if (hits.length > 1) throw bad(`"${raw}" could be ${hits.map((u) => u.name).join(' or ')}. Ask which one.`);
   }
-  throw bad(`Nobody called "${raw}" uses Reem. The people are: ${pool.map((u) => u.name).join(', ')}.`);
+  throw bad(`Nobody called "${raw}" uses Riley. The people are: ${pool.map((u) => u.name).join(', ')}.`);
 }
 
 export async function getProposal(masterId, id) {

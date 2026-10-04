@@ -16,7 +16,7 @@ export const Row = ({ icon, label, badge, active, onClick, ...rest }) => (
 // a to-do that is due, a message nobody has read. Everything else stays quiet.
 export const Count = ({ n, tone }) => n > 0 && (
   <span className={`shrink-0 rounded-full px-1.5 text-[11px] font-semibold leading-[18px]
-    ${tone === 'unread' ? 'bg-emerald-500/90 text-white' : 'bg-warn/90 text-[#141128]'}`}>
+    ${tone === 'unread' ? 'bg-emerald-500/90 text-white' : 'bg-warn/90 text-ink'}`}>
     {n > 99 ? '99+' : n}
   </span>
 );

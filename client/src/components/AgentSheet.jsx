@@ -2,20 +2,12 @@ import { useState } from 'react';
 import { api } from '../lib/api';
 import { ChevronDown, Sparkles } from 'lucide-react';
 import Sheet from './Sheet';
+import Select from './Select';
 import { FilesPanel } from './Knowledge';
 import Avatar, { AGENT_ICONS, AGENT_COLORS } from './Avatar';
 
 const field = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const label = 'mb-1.5 block text-xs font-medium tracking-wide text-mute';
-
-function Select({ value, onChange, children, className = '' }) {
-  return (
-    <div className="relative">
-      <select value={value} onChange={onChange} className={`${field} appearance-none pr-9 ${className}`}>{children}</select>
-      <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-mute" />
-    </div>
-  );
-}
 
 /**
  * What an agent looks like to someone who was given it rather than made it: its name,
@@ -90,7 +82,7 @@ function PersonaTab({ agent, config, onSaved }) {
       <div className="flex items-center gap-3">
         <button type="button" onClick={() => setPicker(!picker)} aria-label="Change icon" title="Change icon" className="relative shrink-0">
           <Avatar icon={f.icon} color={f.color} size={48} />
-          <span className="absolute -bottom-0.5 -right-0.5 grid size-5 place-items-center rounded-full border-2 border-[#141128] bg-white/90 text-[#141128]">
+          <span className="absolute -bottom-0.5 -right-0.5 grid size-5 place-items-center rounded-full border-2 border-surface bg-hi/90 text-surface">
             <ChevronDown size={12} strokeWidth={2.5} />
           </span>
         </button>
@@ -102,7 +94,7 @@ function PersonaTab({ agent, config, onSaved }) {
           <div className="grid grid-cols-8 gap-1">
             {Object.entries(AGENT_ICONS).map(([k, Cmp]) => (
               <button type="button" key={k} onClick={() => setF({ ...f, icon: k })} aria-label={k}
-                className={`grid aspect-square place-items-center rounded-xl transition ${f.icon === k ? 'bg-white/15 text-white ring-1 ring-p1/70' : 'text-mute hover:bg-white/10 hover:text-txt'}`}>
+                className={`grid aspect-square place-items-center rounded-xl transition ${f.icon === k ? 'bg-white/15 text-hi ring-1 ring-p1/70' : 'text-mute hover:bg-white/10 hover:text-txt'}`}>
                 <Cmp size={17} strokeWidth={1.75} />
               </button>
             ))}
@@ -110,7 +102,7 @@ function PersonaTab({ agent, config, onSaved }) {
           <div className="mt-2 flex justify-center gap-2.5 border-t border-stroke/60 pt-2.5">
             {Object.entries(AGENT_COLORS).map(([k, cls]) => (
               <button type="button" key={k} onClick={() => setF({ ...f, color: k })} aria-label={`${k} colour`}
-                className={`size-6 rounded-full bg-gradient-to-br transition ${cls} ${f.color === k ? 'ring-2 ring-white ring-offset-2 ring-offset-[#141128]' : 'opacity-70 hover:opacity-100'}`} />
+                className={`size-6 rounded-full bg-gradient-to-br transition ${cls} ${f.color === k ? 'ring-2 ring-white ring-offset-2 ring-offset-surface' : 'opacity-70 hover:opacity-100'}`} />
             ))}
           </div>
         </div>
@@ -137,15 +129,11 @@ function PersonaTab({ agent, config, onSaved }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={label}>MODEL</label>
-              <Select value={f.model} onChange={set('model')}>
-                {config.models.map((m) => <option key={m.id} value={m.id} className="bg-bg">{m.label}</option>)}
-              </Select>
+              <Select value={f.model} onChange={set('model')} className={field} options={config.models.map((m) => [m.id, m.label])} />
             </div>
             <div>
               <label className={label}>VOICE</label>
-              <Select value={f.voice} onChange={set('voice')} className="capitalize">
-                {config.voices.map((v) => <option key={v} value={v} className="bg-bg">{v}</option>)}
-              </Select>
+              <Select value={f.voice} onChange={set('voice')} className={field} options={config.voices.map((v) => [v, v[0].toUpperCase() + v.slice(1)])} />
             </div>
           </div>
           <div>
@@ -179,7 +167,7 @@ export default function AgentSheet({ agent, config, me, onClose, onSaved }) {
           ? <PersonaTab agent={agent} config={config} onSaved={onSaved} />
           : <PersonaReadOnly agent={agent} />
       ) : (
-        <FilesPanel agentId={agent.id} folders={config.folders || []} me={me} shelfName={agent.name} hint={`Only ${agent.name} uses these files. They also help Reem know when to pick ${agent.name}.`} />
+        <FilesPanel agentId={agent.id} folders={config.folders || []} me={me} shelfName={agent.name} hint={`Only ${agent.name} uses these files. They also help Riley know when to pick ${agent.name}.`} />
       )}
     </Sheet>
   );

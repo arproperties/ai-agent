@@ -121,7 +121,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, 
         )}
         {busy ? (
           <button type="button" onClick={onStop} aria-label="Stop"
-            className="grid size-10 shrink-0 place-items-center rounded-full bg-white/15 text-white"><Icon name="stop" size={18} /></button>
+            className="grid size-10 shrink-0 place-items-center rounded-full bg-white/15 text-hi"><Icon name="stop" size={18} /></button>
         ) : (
           <button type="submit" disabled={!text.trim() && !files.length} aria-label="Send"
             className="grid size-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-p1 to-p2 text-white transition active:scale-95 disabled:opacity-30">

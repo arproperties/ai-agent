@@ -1,6 +1,6 @@
 // The one line to saifsys — the company system at saifholdinggroup.com/sys.
 //
-// Reem only asks; saifsys answers through its own small door, api/jarvis/v1, which is
+// Riley only asks; saifsys answers through its own small door, api/jarvis/v1, which is
 // read-only and locked with a shared key (SAIFSYS_API_KEY here, JARVIS_API_KEY there).
 // Like the saifsys launcher, the door is split by module (?module=ars) and each module
 // file there has a matching file here.

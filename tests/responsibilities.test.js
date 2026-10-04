@@ -34,7 +34,7 @@ test('the master writes, edits and deletes; each person has their own list', asy
   assert.equal((await listFor(rona)).length, 0);
 });
 
-test('Reem can say who handles what, for everyone, one person, or "me"', async () => {
+test('Riley can say who handles what, for everyone, one person, or "me"', async () => {
   await reset();
   const master = { id: await makeUser('Owner'), role: 'master' };
   const rona = await makeUser('Rona');

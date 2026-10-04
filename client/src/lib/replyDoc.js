@@ -1,4 +1,4 @@
-// The document inside a Reem reply - what its PDF is made from. Kept in step with
+// The document inside a Riley reply - what its PDF is made from. Kept in step with
 // documentPart() in server/replyDoc.js, which builds the PDF: this copy only decides
 // what the preview shows.
 

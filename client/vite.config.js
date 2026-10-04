@@ -16,8 +16,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icons/apple-touch-icon.png', 'icons/favicon.svg'],
       manifest: {
-        name: 'Reem',
-        short_name: 'Reem',
+        name: 'Riley',
+        short_name: 'Riley',
         description: 'Your personal AI agents',
         theme_color: '#0b0a1a',
         background_color: '#0b0a1a',

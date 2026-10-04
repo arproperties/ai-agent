@@ -13,7 +13,7 @@ export default function Sheet({ title, icon, tabs, tab, onTab, onClose, children
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 backdrop-blur-md md:items-center" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()}
-        className="rise flex max-h-[92dvh] w-full flex-col rounded-t-[28px] border border-stroke bg-[#141128] shadow-2xl shadow-black/50 md:max-w-lg md:rounded-[28px]">
+        className="rise flex max-h-[92dvh] w-full flex-col rounded-t-[28px] border border-stroke bg-surface shadow-2xl shadow-black/50 md:max-w-lg md:rounded-[28px]">
         <div className="flex items-center gap-2.5 px-5 pb-2 pt-4">
           {icon}
           <h2 className="flex-1 truncate text-lg font-light">{title}</h2>

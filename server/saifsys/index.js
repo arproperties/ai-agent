@@ -14,7 +14,7 @@ import { ACTIONS, actionKeys, setActions, bookingKit, bookingRoutes } from './bo
 // Who sees what: the master sees every module. Everyone else sees only the modules
 // ticked for them on the admin screen (saifsys_access). An agent only carries the tools
 // of the modules its user has, so a question about a module you do not have is simply
-// one Reem cannot look up.
+// one Riley cannot look up.
 
 export { saifsysConfigured } from './client.js';
 

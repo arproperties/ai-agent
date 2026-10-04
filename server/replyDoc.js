@@ -1,4 +1,4 @@
-// A Reem reply, turned into a PDF.
+// A Riley reply, turned into a PDF.
 //
 // When an agent writes something meant to be kept - an interview packet, a letter, a
 // checklist - it wraps the document itself in <!--doc--> ... <!--/doc-->, and the chat
@@ -202,8 +202,8 @@ const FILL = rgb(0.95, 0.94, 0.98);
 export async function renderPdf({ title, markdown, date = new Date() }) {
   const pdf = await PDFDocument.create({ updateMetadata: false });
   pdf.setTitle(sanitize(title));
-  pdf.setCreator('Reem');
-  pdf.setProducer('Reem');
+  pdf.setCreator('Riley');
+  pdf.setProducer('Riley');
   pdf.setCreationDate(date);
   pdf.setModificationDate(date);
   const F = {

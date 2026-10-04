@@ -84,7 +84,7 @@ test('the master always has the booking tools; staff only when ticked and with A
   assert.ok('historical' in (await bookingKit(boss, {})).definitions[0].input_schema.properties);
 });
 
-test('no connected company email: Reem says where to connect it, and nothing reaches saifsys', async () => {
+test('no connected company email: Riley says where to connect it, and nothing reaches saifsys', async () => {
   await reset();
   const boss = await person('Boss', { master: true });
   const out = await (await bookingKit(boss, {})).run({ id: 't', name: 'ars_quote_booking', input: STAY });

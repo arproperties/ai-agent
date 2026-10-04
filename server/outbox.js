@@ -42,7 +42,7 @@ export async function deliver(draft, { send = sendRaw, append = imapActions.appe
   try {
     password = decrypt(acc.password_enc);
   } catch (e) {
-    const why = 'This mailbox is not set up to send yet — whoever runs Reem needs to check its email settings.';
+    const why = 'This mailbox is not set up to send yet — whoever runs Riley needs to check its email settings.';
     console.error('[outbox] cannot decrypt the mailbox password:', e.message);
     await unclaim(draft.id);
     await log({ action: 'send', recipients: draft.to_addrs, target: draft.reply_to_id, ok: false, error: why });

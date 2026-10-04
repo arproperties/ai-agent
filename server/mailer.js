@@ -21,7 +21,7 @@ export async function sendPasswordReset(user, link) {
   await transport.sendMail({
     from: MAIL_FROM || SMTP_USER,
     to: user.email,
-    subject: 'Reset your Reem password',
+    subject: 'Reset your Riley password',
     text: `Hi ${user.name},\n\nUse this link to set a new password (valid for 1 hour):\n${link}\n\nIf you didn't ask for this, you can ignore this email.`,
     html: `<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:480px;margin:auto;padding:24px;color:#1d1b2e">
       <h2 style="font-weight:500">Reset your password</h2>
@@ -30,3 +30,8 @@ export async function sendPasswordReset(user, link) {
       <p style="color:#777;font-size:13px">If you didn't ask for this, you can ignore this email.</p></div>`,
   });
 }
+
+/** Whether this server can send email at all. */
+export const mailReady = () => !!transport;
+/** A plain message to one address (the automatic rent reminder to a tenant). */
+export const sendPlain = (to, subject, text) => transport.sendMail({ from: MAIL_FROM || SMTP_USER, to, subject, text });

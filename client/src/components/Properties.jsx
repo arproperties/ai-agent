@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Plus, Pencil, Trash2, ChevronRight, Building2, Landmark, DoorOpen } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, ChevronRight, Building2, Landmark, DoorOpen, Camera, X } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
+import Select from './Select';
 import CompanyDocs from './CompanyDocs';
+import { Cover, Logo, CardCover, UnitPhotos } from './PropertyPhoto';
 
 // Companies → buildings → units. Everyone can look; only the master adds, edits or removes.
 // The server is server/properties.js.
@@ -31,9 +33,65 @@ const FORMS = {
 const REQUIRED = new Set(['name', 'unit_no']);
 const EMIRATES = ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah'];
 const fieldsOf = (kind) => FORMS[kind].flatMap(([, fs]) => fs);
+// The picture chosen on a form: what it is called, where it is sent once the row is saved, and whether there can be several.
+const PHOTO = {
+  company: ['Logo', 'Add the company logo', (id) => `/properties/companies/${id}/photo`, false],
+  building: ['Photo', 'Add a photo of the building', (id) => `/properties/buildings/${id}/photo`, false],
+  unit: ['Photos', 'Add photos of the unit', (id) => `/properties/units/${id}/photos`, true],
+};
+/** Send the pictures chosen on a form, once the row they belong to has an id. */
+async function sendPhotos(kind, id, files = []) {
+  for (const file of files) {
+    const form = new FormData();
+    form.append('photo', file);
+    await api.upload(PHOTO[kind][2](id), form);
+  }
+}
+
+/**
+ * Choosing pictures on a form: drop them on the box or tap it to pick. They are shown
+ * small underneath, and sent when the form is saved.
+ */
+function PhotoField({ kind, files, onChange, replacing }) {
+  const [label, ask, , many] = PHOTO[kind];
+  const [over, setOver] = useState(false); // something is being dragged over the box
+  const [error, setError] = useState('');
+  const take = (list) => {
+    const pics = [...list].filter((f) => /^image\/(png|jpe?g|webp|gif)$/.test(f.type));
+    setError(pics.length < list.length ? 'Only pictures can go here: JPG, PNG or WebP.' : '');
+    if (pics.length) onChange(many ? [...files, ...pics] : pics.slice(0, 1));
+  };
+  return (
+    <fieldset>
+      <legend className="mb-2 text-[11px] font-medium uppercase tracking-widest text-mute">{label}</legend>
+      <label onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
+        onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer.files); }}
+        className={`flex w-full cursor-pointer flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed px-4 py-7 text-center text-sm transition
+          ${over ? 'border-p1 bg-p1/10 text-txt' : 'border-stroke text-mute hover:bg-white/5 hover:text-txt'}`}>
+        <Camera size={22} />
+        <span>{over ? 'Drop to add' : files.length && !many ? 'Drop another here, or tap to choose, to use it instead' : `${ask}: drop ${many ? 'them' : 'it'} here, or tap to choose`}</span>
+        <span className="text-xs text-mute">JPG, PNG or WebP, up to 8 MB{many ? ' each, 12 at most' : ''}.{replacing && !many && ' It replaces the one it has now.'}{replacing && many && ' These are added to the ones it has.'}</span>
+        <input type="file" multiple={many} accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(e) => { take(e.target.files); e.target.value = ''; }} />
+      </label>
+      {error && <p className="mt-2 text-sm text-bad">{error}</p>}
+      {files.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-3">
+          {files.map((f, i) => (
+            <span key={`${f.name}-${i}`} className="relative">
+              <img src={URL.createObjectURL(f)} alt={f.name} className="size-24 rounded-xl border border-stroke object-cover" />
+              <button type="button" onClick={() => onChange(files.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`}
+                className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-bad text-white"><X size={12} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+    </fieldset>
+  );
+}
 
 function Form({ kind, start, onSave, onCancel, bare }) {
   const [v, setV] = useState(() => Object.fromEntries(fieldsOf(kind).map(([f, , t]) => [f, start?.[f] ?? (t === 'bool' ? false : '')])));
+  const [files, setFiles] = useState([]); // pictures chosen here, sent once the row is saved
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
@@ -43,7 +101,7 @@ function Form({ kind, start, onSave, onCancel, bare }) {
     if (busy) return;
     setBusy(true);
     setError('');
-    try { await onSave(v); } catch (err) { setError(err.message); setBusy(false); }
+    try { await onSave(v, files); } catch (err) { setError(err.message); setBusy(false); }
   };
 
   return (
@@ -56,16 +114,14 @@ function Form({ kind, start, onSave, onCancel, bare }) {
               const span = wide ? 'sm:col-span-2' : '';
               if (t === 'bool') return (
                 <label key={f} className={`flex cursor-pointer items-center gap-3 rounded-xl bg-white/5 px-3.5 py-2.5 text-sm ${span}`}>
-                  <input type="checkbox" checked={!!v[f]} onChange={set(f)} className="size-4 accent-[#a78bfa]" /> {label}
+                  <input type="checkbox" checked={!!v[f]} onChange={set(f)} className="size-4 accent-p1" /> {label}
                 </label>
               );
               let input;
               if (t === 'area') input = <textarea value={v[f] ?? ''} onChange={set(f)} rows={3} placeholder={example} className={`${FIELD} resize-none`} />;
               else if (t === 'emirate' || t === 'unittype') input = (
-                <select value={v[f] ?? ''} onChange={set(f)} className={`${FIELD} bg-[#141128]`}>
-                  <option value="">Choose…</option>
-                  {(t === 'emirate' ? EMIRATES : UNIT_TYPES).map((o) => <option key={o}>{o}</option>)}
-                </select>
+                <Select value={v[f] ?? ''} onChange={set(f)} className={`${FIELD} bg-surface`} placeholder="Choose…"
+                  options={[['', 'None'], ...(t === 'emirate' ? EMIRATES : UNIT_TYPES)]} />
               );
               else input = <input type={t === 'number' ? 'number' : t} step="any" min={t === 'number' ? 0 : undefined} required={REQUIRED.has(f)}
                 value={v[f] ?? ''} onChange={set(f)} placeholder={example} autoFocus={si === 0 && i === 0} className={FIELD} />;
@@ -79,6 +135,7 @@ function Form({ kind, start, onSave, onCancel, bare }) {
           </div>
         </fieldset>
       ))}
+      <PhotoField kind={kind} files={files} onChange={setFiles} replacing={!!start} />
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex justify-end gap-2 border-t border-stroke/60 pt-3">
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
@@ -92,7 +149,7 @@ function Form({ kind, start, onSave, onCancel, bare }) {
 
 
 /** One level of the tree: a list of rows, each opening the next level, with master-only add/edit/delete. */
-function Level({ kind, rows, master, onOpen, onAdd, onSave, onRemove, addLabel, empty, line, details, stat, addOpen, onAddClose }) {
+function Level({ kind, rows, master, onOpen, onAdd, onSave, onRemove, onChanged, addLabel, empty, line, details, stat, addOpen, onAddClose }) {
   const [editing, setEditing] = useState(null); // an id, 'new', or null
   const [error, setError] = useState('');
   const Ico = kind === 'company' ? Landmark : kind === 'building' ? Building2 : DoorOpen;
@@ -108,13 +165,15 @@ function Level({ kind, rows, master, onOpen, onAdd, onSave, onRemove, addLabel, 
     <div className="space-y-4">
       {error && <p className="text-sm text-bad">{error}</p>}
       {rows.length === 0 && !addOpen && <p className="py-3 text-sm text-mute">{empty}</p>}
-      {addOpen && <Form kind={kind} onSave={async (v) => { await onAdd(v); onAddClose(); }} onCancel={onAddClose} />}
+      {addOpen && <Form kind={kind} onSave={async (v, files) => { await onAdd(v, files); onAddClose(); }} onCancel={onAddClose} />}
       {rows.find((r) => r.id === editing) && (
-        <Form kind={kind} start={rows.find((r) => r.id === editing)} onSave={async (v) => { await onSave(rows.find((r) => r.id === editing), v); setEditing(null); }} onCancel={() => setEditing(null)} />
+        <Form kind={kind} start={rows.find((r) => r.id === editing)} onSave={async (v, files) => { await onSave(rows.find((r) => r.id === editing), v, files); setEditing(null); }} onCancel={() => setEditing(null)} />
       )}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {rows.map((r) => (
           <div key={r.id} className="flex flex-col rounded-2xl border border-stroke">
+            {kind === 'building' && <CardCover row={r} master={master} onOpen={() => onOpen(r)} onChanged={onChanged} />}
+            {kind === 'unit' && <UnitPhotos unit={r} master={master} onChanged={onChanged} />}
             <div className="flex items-start gap-3 px-4 pt-4">
               <button onClick={onOpen && (() => onOpen(r))} aria-label={`Open ${r.name || r.unit_no}`}
                 className="grid size-10 shrink-0 place-items-center rounded-lg bg-p1/15 text-p1"><Ico size={18} /></button>
@@ -152,7 +211,7 @@ function Level({ kind, rows, master, onOpen, onAdd, onSave, onRemove, addLabel, 
       {error && <p className="text-sm text-bad">{error}</p>}
       {rows.length === 0 && editing !== 'new' && <p className="py-3 text-sm text-mute">{empty}</p>}
       {rows.map((r) => (editing === r.id
-        ? <Form key={r.id} kind={kind} start={r} onSave={async (v) => { await onSave(r, v); setEditing(null); }} onCancel={() => setEditing(null)} />
+        ? <Form key={r.id} kind={kind} start={r} onSave={async (v, files) => { await onSave(r, v, files); setEditing(null); }} onCancel={() => setEditing(null)} />
         : (
           <div key={r.id} className="flex items-center gap-2 rounded-2xl bg-white/5 px-3 py-2.5">
             <button onClick={onOpen ? () => onOpen(r) : undefined} disabled={!onOpen}
@@ -173,7 +232,7 @@ function Level({ kind, rows, master, onOpen, onAdd, onSave, onRemove, addLabel, 
           </div>
         )))}
       {master && (editing === 'new'
-        ? <Form kind={kind} onSave={async (v) => { await onAdd(v); setEditing(null); }} onCancel={() => setEditing(null)} />
+        ? <Form kind={kind} onSave={async (v, files) => { await onAdd(v, files); setEditing(null); }} onCancel={() => setEditing(null)} />
         : (
           <button onClick={() => setEditing('new')}
             className="flex w-full items-center justify-center gap-2 rounded-full border border-stroke/70 py-2.5 text-sm text-mute hover:bg-white/5 hover:text-txt">
@@ -185,6 +244,37 @@ function Level({ kind, rows, master, onOpen, onAdd, onSave, onRemove, addLabel, 
 }
 
 const join = (...xs) => xs.filter(Boolean).join(' · ');
+
+/** Who looks after a building: they get its leasing alerts. Everyone sees the names; the master picks them. */
+function BuildingStaff({ building, master, onChanged }) {
+  const [users, setUsers] = useState(null); // everybody, once the master opens the picker
+  const [error, setError] = useState('');
+  const mine = new Set((building.staff || []).map((u) => u.id));
+  const open = () => api.get('/admin/users').then((list) => setUsers(list.filter((u) => !u.disabled))).catch((e) => setError(e.message));
+  const toggle = async (id) => {
+    setError('');
+    const next = mine.has(id) ? [...mine].filter((x) => x !== id) : [...mine, id];
+    try { await api.put(`/properties/buildings/${building.id}/staff`, { user_ids: next }); onChanged(); } catch (e) { setError(e.message); }
+  };
+  if (!master && !mine.size) return null;
+  return (
+    <div className="mb-4 rounded-2xl border border-stroke p-3">
+      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="mr-1 text-mute">Looked after by</span>
+        {users
+          ? users.map((u) => (
+            <button key={u.id} onClick={() => toggle(u.id)} className={`rounded-full px-3 py-1 ${mine.has(u.id) ? 'bg-p1/20 text-p1' : 'border border-stroke/70 text-mute hover:text-txt'}`}>{u.name}</button>
+          ))
+          : mine.size ? building.staff.map((u) => <span key={u.id} className="rounded-full bg-p1/15 px-3 py-1 text-p1">{u.name}</span>) : <span className="text-mute">nobody yet</span>}
+        {master && (users
+          ? <button onClick={() => setUsers(null)} className="ml-auto rounded-full px-3 py-1 text-mute hover:bg-white/5 hover:text-txt">Done</button>
+          : <button onClick={open} className="ml-auto rounded-full border border-stroke/70 px-3 py-1 text-mute hover:bg-white/5 hover:text-txt">Change</button>)}
+      </div>
+      <p className="mt-2 text-xs text-mute">They get this building’s leasing alerts on their phone, with whoever made the booking and the master.</p>
+      {error && <p className="mt-2 text-sm text-bad">{error}</p>}
+    </div>
+  );
+}
 
 export default function PropertiesPage({ me, onBack }) {
   const master = me?.role === 'master';
@@ -209,7 +299,7 @@ export default function PropertiesPage({ me, onBack }) {
     onBack();
   };
   const title = at.level === 'companies' ? 'Properties' : data?.name || '…';
-  const edit = (path) => async (r, v) => { await api.put(`/properties/${path}/${r.id}`, v); load(); };
+  const edit = (path, kind) => async (r, v, files) => { await api.put(`/properties/${path}/${r.id}`, v); await sendPhotos(kind, r.id, files); load(); };
   const del = (path) => async (r) => { await api.del(`/properties/${path}/${r.id}`); load(); };
 
   let body;
@@ -223,8 +313,9 @@ export default function PropertiesPage({ me, onBack }) {
   else if (at.level === 'company') body = (
     <>
       {(
-          <div className="mb-3 flex items-start gap-2">
-            <p className="flex-1 text-sm text-mute">{join(data.trade_license_no && `Trade licence ${data.trade_license_no}`, data.trn && `TRN ${data.trn}`, data.phone, data.email, data.address) || 'No details yet.'}</p>
+          <div className="mb-4 flex items-start gap-3">
+            <Logo row={data} master={master} onChanged={load} />
+            <p className="flex-1 self-center text-sm text-mute">{join(data.trade_license_no && `Trade licence ${data.trade_license_no}`, data.trn && `TRN ${data.trn}`, data.phone, data.email, data.address) || 'No details yet.'}</p>
             {master && <>
               <button onClick={() => setAdding(true)} aria-label="Edit company" title="Edit company"
                 className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>
@@ -241,13 +332,15 @@ export default function PropertiesPage({ me, onBack }) {
         details={(b) => [['Address', b.address], ['Plot no.', b.plot_no], ['Makani no.', b.makani_no]]}
         stat={(b) => <span className="text-sm"><span className="text-lg font-light">{b.units}</span> <span className="text-mute">{b.units === 1 ? 'unit' : 'units'}</span></span>}
         addOpen={newBuilding} onAddClose={() => setNewBuilding(false)}
-        onOpen={(b) => setAt({ level: 'building', id: b.id })}
-        onAdd={async (v) => { await api.post(`/properties/companies/${data.id}/buildings`, v); load(); }} onSave={edit('buildings')} onRemove={del('buildings')} />
+        onOpen={(b) => setAt({ level: 'building', id: b.id })} onChanged={load}
+        onAdd={async (v, files) => { const b = await api.post(`/properties/companies/${data.id}/buildings`, v); await sendPhotos('building', b.id, files); load(); }} onSave={edit('buildings', 'building')} onRemove={del('buildings')} />
     </>
   );
   else body = (
     <>
+      <Cover row={data} master={master} onChanged={load} />
       <p className="mb-3 text-sm text-mute">{join(data.company?.name, data.area, data.emirate, data.makani_no && `Makani ${data.makani_no}`)}</p>
+      <BuildingStaff building={data} master={master} onChanged={load} />
       <Level kind="unit" rows={data.list} master={master} addLabel="Add a unit" empty="No units in this building yet."
         line={(u) => join(u.floor && `Floor ${u.floor}`, u.type)}
         details={(u) => [['Size', u.size_sqft && `${Number(u.size_sqft).toLocaleString()} sq ft`], ['DEWA no.', u.dewa_no]]}
@@ -260,8 +353,8 @@ export default function PropertiesPage({ me, onBack }) {
             {u.blocked && <span className="rounded-full bg-bad/15 px-2 py-0.5 text-[11px] text-bad">Blocked</span>}
           </div>
         )}
-        addOpen={newUnit} onAddClose={() => setNewUnit(false)}
-        onAdd={async (v) => { await api.post(`/properties/buildings/${data.id}/units`, v); load(); }} onSave={edit('units')} onRemove={del('units')} />
+        addOpen={newUnit} onAddClose={() => setNewUnit(false)} onChanged={load}
+        onAdd={async (v, files) => { const u = await api.post(`/properties/buildings/${data.id}/units`, v); await sendPhotos('unit', u.id, files); load(); }} onSave={edit('units', 'unit')} onRemove={del('units')} />
     </>
   );
 
@@ -269,8 +362,8 @@ export default function PropertiesPage({ me, onBack }) {
   if (adding && data && at.level !== 'building') {
     const editing = at.level === 'company' ? data : null;
     const save = editing
-      ? async (v) => { await api.put(`/properties/companies/${data.id}`, v); setAdding(false); load(); }
-      : async (v) => { const c = await api.post('/properties/companies', v); setAdding(false); setAt({ level: 'company', id: c.id }); };
+      ? async (v, files) => { await api.put(`/properties/companies/${data.id}`, v); await sendPhotos('company', data.id, files); setAdding(false); load(); }
+      : async (v, files) => { const c = await api.post('/properties/companies', v); await sendPhotos('company', c.id, files); setAdding(false); setAt({ level: 'company', id: c.id }); };
     return (
       <Page title={editing ? `Edit ${editing.name}` : 'Register company'} onBack={() => setAdding(false)}>
         <div className="rounded-3xl border border-stroke p-5 md:p-7">

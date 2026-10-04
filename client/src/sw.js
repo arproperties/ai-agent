@@ -3,7 +3,7 @@ import { precacheAndRoute, cleanupOutdatedCaches, createHandlerBoundToURL } from
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { clientsClaim } from 'workbox-core';
 
-// The service worker: the small piece of Reem that keeps running when Reem is closed.
+// The service worker: the small piece of Riley that keeps running when Riley is closed.
 //
 // It does two jobs. The first is the one it always did — hold the app's files so the
 // screen appears instantly and works on a bad connection. Vite used to write this file
@@ -18,11 +18,15 @@ import { clientsClaim } from 'workbox-core';
 self.skipWaiting();
 clientsClaim();
 cleanupOutdatedCaches();
-precacheAndRoute(self.__WB_MANIFEST);
+const files = self.__WB_MANIFEST;
+precacheAndRoute(files);
+// On the dev server nothing is precached, and binding to a page that is not there stops the
+// whole worker from starting (so notifications could never be tried on localhost).
+const hasApp = files.some((f) => (f.url || f) === 'index.html');
 
 // Any address the user navigates to is answered with the app itself — except /api, which
 // must always reach the real server. This is the same rule the generated worker had.
-registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html'), { denylist: [/^\/api/] }));
+if (hasApp) registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html'), { denylist: [/^\/api/] }));
 
 // ---------- notifications (job two) ----------
 
@@ -40,7 +44,7 @@ self.addEventListener('push', (event) => {
   const tag = data.tag || 'jarvis';
   event.waitUntil(self.registration.getNotifications({ tag })
     .then((open) => open.forEach((n) => n.close()), () => {})
-    .then(() => self.registration.showNotification(data.title || 'Reem', {
+    .then(() => self.registration.showNotification(data.title || 'Riley', {
     body: data.body || 'You have a new message',
     // The tag is the chat. A second message from the same chat replaces the first rather
     // than stacking up ten notices while someone is typing a paragraph one line at a time.
@@ -54,7 +58,7 @@ self.addEventListener('push', (event) => {
   })));
 });
 
-// Tapping it. If Reem is already open somewhere, that window is brought forward and
+// Tapping it. If Riley is already open somewhere, that window is brought forward and
 // told which chat to show; opening a second copy of the app instead would lose whatever
 // the person was in the middle of.
 self.addEventListener('notificationclick', (event) => {

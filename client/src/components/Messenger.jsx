@@ -5,7 +5,6 @@ import Sheet from './Sheet';
 import MessengerChat, { PersonAvatar, Ticks, listTime, preview, lastSeenText } from './MessengerChat';
 import GroupFeed from './GroupFeed';
 import { NotifyBanner } from './Notifications';
-import { ParticleField } from './ParticleField';
 
 const SearchBox = ({ value, onChange, placeholder }) => (
   <div className="mx-3 mb-2 flex items-center gap-2 rounded-full border border-stroke bg-white/[0.04] px-3 focus-within:border-emerald-400/60">
@@ -61,7 +60,7 @@ function ChatRow({ row: c, dm, active, onClick }) {
             online={c.kind === 'direct' && dm.online.has(c.peerId)} />}
         <span className="min-w-0 flex-1">
           <span className="flex items-baseline gap-2">
-            <span className={`min-w-0 flex-1 truncate font-medium ${c.unread ? 'text-white' : ''}`}>{c.name}</span>
+            <span className={`min-w-0 flex-1 truncate font-medium ${c.unread ? 'text-hi' : ''}`}>{c.name}</span>
             {c.last && <span className={`shrink-0 text-xs ${c.unread ? 'text-emerald-300' : 'text-mute'}`}>{listTime(c.last.createdAt)}</span>}
           </span>
           <span className="mt-0.5 flex items-center gap-1.5">
@@ -100,7 +99,7 @@ function ChatList({ dm, activeId, activeGroupId, onOpen, onOpenGroup, onNew, onB
   return (
     <>
       <header className="flex items-center gap-1 px-2 pb-2 pt-safe md:px-3">
-        <button onClick={onBack} aria-label="Back to Reem" title="Back to Reem"
+        <button onClick={onBack} aria-label="Back to Riley" title="Back to Riley"
           className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
           <ChevronLeft size={24} />
         </button>
@@ -217,7 +216,7 @@ function GroupPanel({ group, topics, dm, activeId, feedOpen, onBack, onOpen, onO
               <span className="grid size-12 shrink-0 place-items-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 text-white"><Layers size={22} /></span>
               <span className="min-w-0 flex-1">
                 <span className="block font-medium">All topics</span>
-                <span className="block truncate text-sm text-mute">One box — Reem puts each message in the right topic</span>
+                <span className="block truncate text-sm text-mute">One box — Riley puts each message in the right topic</span>
               </span>
               {unread > 0 && <span className="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-semibold text-white">{unread > 99 ? '99+' : unread}</span>}
             </button>
@@ -613,9 +612,7 @@ export default function MessengerPage({ dm, openChatId = null, onOpened, onBack,
 
   return (
     <div className="sky absolute inset-0 z-20 flex">
-      {/* The panel paints solid over the chat, so it carries its own field. */}
-      <ParticleField className="fx-canvas-panel" />
-      <section className={`${rightOpen ? 'hidden md:flex' : 'flex'} relative w-full min-w-0 flex-col border-white/[0.06] md:w-80 md:border-r lg:w-96`}>
+      <section className={`${rightOpen ? 'hidden md:flex' : 'flex'} list-wash relative w-full min-w-0 flex-col border-stroke md:w-80 md:border-r`}>
         {left}
       </section>
       <section className={`${rightOpen ? 'flex' : 'hidden md:flex'} min-w-0 flex-1 flex-col`}>

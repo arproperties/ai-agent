@@ -1,4 +1,4 @@
-// A Reem reply, passed on to the team.
+// A Riley reply, passed on to the team.
 //
 // Someone asks an agent for the points, then taps Share on that reply and picks a chat.
 // What arrives there is an ordinary message - repliable, quotable, deletable like any
@@ -10,7 +10,7 @@
 // finished answer is being copied out of one.
 //
 // The text is read from the database by id, never taken from the browser. That is the
-// difference between "Reem said this" and "somebody typed this and signed it Reem".
+// difference between "Riley said this" and "somebody typed this and signed it Riley".
 import { db, tx } from './db.js';
 
 const MAX = 4000; // the same ceiling messenger.js puts on a typed message
@@ -37,7 +37,7 @@ export async function shareReply({ chatId, userId, messageId }) {
     const { id } = await db.prepare(`INSERT INTO dm_messages (chat_id, user_id, kind, body)
       VALUES (?, ?, 'text', ?) RETURNING id`).run(chatId, userId, body);
     await db.prepare(`INSERT INTO dm_shared_replies (message_id, source_message_id, agent_id, agent_name)
-      VALUES (?, ?, ?, ?)`).run(id, m.id, m.agent_id, m.agent_name || 'Reem');
+      VALUES (?, ?, ?, ?)`).run(id, m.id, m.agent_id, m.agent_name || 'Riley');
     return id;
   });
 }

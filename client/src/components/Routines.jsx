@@ -3,6 +3,7 @@ import { Check, Repeat, Loader2, Plus, Pause, Play, Trash2 } from 'lucide-react'
 import { api } from '../lib/api';
 import { toInput, fromInput } from './Todos';
 import Sheet from './Sheet';
+import Select from './Select';
 
 // Routines are the things that come back. Nothing here knows about todos, and nothing in
 // Todos.jsx knows about routines — they only ever meet in the tab strip above them.
@@ -205,10 +206,9 @@ function RoutineSheet({ r, onClose, onSaved }) {
             <span className="text-sm text-mute">Every</span>
             <input type="number" min={1} max={366} value={every} onChange={(e) => setEvery(e.target.value)}
               className="w-16 rounded-xl border border-stroke bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-p1/60" />
-            <select value={unit} onChange={(e) => setUnit(e.target.value)}
-              className="flex-1 rounded-xl border border-stroke bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-p1/60">
-              {UNITS.map(([u]) => <option key={u} value={u} className="bg-[#141128]">{u}{Number(every) > 1 ? 's' : ''}</option>)}
-            </select>
+            <Select value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Unit" wrap="flex-1"
+              className="rounded-xl border border-stroke bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-p1/60"
+              options={UNITS.map(([u]) => [u, `${u}${Number(every) > 1 ? 's' : ''}`])} />
           </div>
         </div>
         <label className="block space-y-1.5">
@@ -217,7 +217,7 @@ function RoutineSheet({ r, onClose, onSaved }) {
             className="w-full rounded-xl border border-stroke bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-p1/60 [color-scheme:dark]" />
           <span className="block text-[11px] leading-snug text-mute">
             Every turn is worked out from this, so it fixes the time of day — and the weekday, or the day of the month.
-            It shows on your list when it comes round; Reem can't reach you outside the app.
+            It shows on your list when it comes round; Riley can't reach you outside the app.
           </span>
         </label>
         {error && <p className="text-sm text-bad">{error}</p>}

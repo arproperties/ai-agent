@@ -56,7 +56,7 @@ export default function CarrySheet({ agents, currentId, picked, onClose, onDone 
   return (
     <Sheet title="Bring in a chat" icon={<Icon name="history" className="text-p1" />} onClose={onClose}>
       <p className="mb-3 text-sm text-mute">
-        Pick the chats whose points you need here. Reem reads each one and keeps it for the rest of this conversation,
+        Pick the chats whose points you need here. Riley reads each one and keeps it for the rest of this conversation,
         so you can ask it to pull them together.
       </p>
 
@@ -98,7 +98,7 @@ export default function CarrySheet({ agents, currentId, picked, onClose, onDone 
         </ul>
       )}
 
-      <div className="sticky bottom-0 -mx-1 mt-3 bg-[#141128] pt-2">
+      <div className="sticky bottom-0 -mx-1 mt-3 bg-surface pt-2">
         <button onClick={() => { onDone(chosen); onClose(); }}
           className="w-full rounded-full bg-gradient-to-br from-p1 to-p2 py-3 font-medium text-white transition active:scale-[0.99]">
           {chosen.length === 0 ? 'Done' : `Bring in ${chosen.length} chat${chosen.length === 1 ? '' : 's'}`}

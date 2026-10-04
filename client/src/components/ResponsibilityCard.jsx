@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Loader2, Check, X, ClipboardList } from 'lucide-react';
 import { api } from '../lib/api';
 
-// A change to someone's responsibilities that Reem got ready from the master's chat.
+// A change to someone's responsibilities that Riley got ready from the master's chat.
 // Nothing changes until Save is tapped here (server/responsibilities.js, decide).
 
 const STATE = {

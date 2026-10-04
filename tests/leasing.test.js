@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, closeDb, db } from './helpers/db.js';
 import { create, update } from '../server/properties.js';
+import { report } from '../server/leasingReports.js';
+import { listAlerts } from '../server/leasingAlerts.js';
 import { addTenant, removeTenant, listTenants, createBooking, updateBooking, confirmBooking, cancelBooking, removeBooking,
-  listBookings, availability, suggestType, bookingStage, bookingDocs, addBookingDoc, removeBookingDoc } from '../server/leasing.js';
+  listBookings, availability, suggestType, bookingStage, bookingDocs, addBookingDoc, removeBookingDoc, overview, schedule, bookingPayments, recordPayment, removePayment } from '../server/leasing.js';
 
 test.after(() => closeDb());
 
@@ -94,4 +96,81 @@ test('booking documents: named freely, counted on the booking, gone with a delet
 
   await removeBooking(bk.id); // its documents go with it
   assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_documents').get()).n, 0);
+});
+
+test('the payment schedule follows the frequency', () => {
+  const lease = { start_date: '2026-11-01', end_date: '2027-10-31', rent_amount: '60000', rent_period: 'year' };
+  assert.deepEqual(schedule({ ...lease, payment_frequency: 'quarterly' }),
+    ['2026-11-01', '2027-02-01', '2027-05-01', '2027-08-01'].map((due) => ({ due, amount: 15000 })));
+  assert.deepEqual(schedule({ ...lease, payment_frequency: 'upfront' }), [{ due: '2026-11-01', amount: 60000 }]);
+  assert.deepEqual(schedule({ start_date: '2027-01-31', end_date: '2027-03-10', rent_amount: 3000, rent_period: 'month', payment_frequency: 'monthly' }).map((p) => p.due),
+    ['2027-01-31', '2027-02-28'], 'a month with no 31st is due on its last day');
+});
+
+test('overview: occupancy, rent due and collected, overdue and leases ending come from the bookings', async () => {
+  const { b, u1 } = await units();
+  await create('unit', { unit_no: '103', blocked: true }, b.id);
+  const bk = await createBooking(stay(u1.id, '2026-09-15', '2026-11-14', { status: 'confirmed' }));
+  await createBooking(stay(u1.id, '2026-12-01', '2026-12-31')); // a draft counts for nothing
+  const at = '2026-10-10';
+
+  let o = await overview({}, at);
+  assert.deepEqual(o.units, { total: 3, let: 1, occupied: 0, ending: 0, overdue: 1, vacant: 1, blocked: 1 });
+  assert.equal(o.occupancy, 0.5, 'the blocked unit is left out');
+  assert.deepEqual(o.monthly.slice(9).map((m) => [m.month, m.due, m.collected, m.inPeriod]),
+    [['2026-08', 0, 0, false], ['2026-09', 4500, 0, false], ['2026-10', 4500, 0, true]]);
+  assert.deepEqual(o.collection, { due: 4500, collected: 0 });
+  assert.deepEqual(o.overdue.rows.map((r) => [r.tenant, r.unit_no, r.owed, r.days_overdue]), [['Sara', '101', 4500, 25]]);
+  assert.deepEqual(o.overdue.aging.map((x) => x.amount), [4500, 0, 0, 0]);
+  assert.deepEqual(o.dueSoon.map((p) => [p.tenant, p.unit_no, p.rent, p.due_in]), [['Sara', '101', 4500, 5]]);
+  assert.deepEqual(o.ending.map((u) => [u.unit_no, u.days_left, u.renewal]), [['101', 35, 'Not renewed']]);
+  assert.deepEqual(o.trends.occupancy.slice(9), [0, 0.5, 0.5]);
+  assert.deepEqual(o.trends.vacant.slice(9), [2, 1, 1]);
+  assert.deepEqual(o.trends.overdue.slice(9), [0, 4500, 4500]);
+  assert.deepEqual(o.buildings.map((x) => [x.name, x.total, x.vacant, x.occupancy, x.floors[0].length]), [['Tower', 3, 1, 0.5, 3]]);
+  assert.deepEqual(o.activity.map((x) => x.kind).sort(), ['confirmed', 'draft']);
+  assert.deepEqual(o.filters, { companies: [{ id: b.company_id, name: 'A' }], buildings: [{ id: b.id, name: 'Tower', company_id: b.company_id }] });
+
+  // Part of September comes in, then the rest.
+  const [sep, oct] = await bookingPayments(bk.id, at);
+  assert.deepEqual([sep.due_date, sep.status, oct.due_date, oct.status], ['2026-09-15', 'overdue', '2026-10-15', 'upcoming']);
+  await recordPayment(sep.id, { amount: 2000, method: 'transfer', received_on: '2026-10-05', reference: 'TT-1' }, null, at);
+  await assert.rejects(recordPayment(sep.id, { amount: 2600, method: 'cash' }, null, at), /Only AED 2,500 is still owed/);
+  await assert.rejects(recordPayment(sep.id, { amount: 100, method: 'cheque' }, null, at), /bank transfer, cash or card/);
+  await assert.rejects(recordPayment(sep.id, { amount: 100, method: 'cash', received_on: '2026-10-11' }, null, at), /in the future/);
+  o = await overview({ months: 3 }, at);
+  assert.deepEqual(o.collection, { due: 9000, collected: 2000 });
+  assert.equal(o.overdue.total, 2500);
+  assert.deepEqual(o.methods.map((m) => [m.key, m.amount]), [['transfer', 2000], ['cash', 0], ['card', 0]]);
+  assert.deepEqual(o.trends.overdue.slice(10), [4500, 2500], 'what was owed at the end of September is not changed by a payment in October');
+  assert.ok(o.activity.some((x) => x.kind === 'payment' && x.amount === 2000));
+
+  const cash = await recordPayment(sep.id, { amount: 2500, method: 'cash' }, null, at);
+  await assert.rejects(recordPayment(sep.id, { amount: 1, method: 'cash' }, null, at), /already paid in full/);
+  o = await overview({}, at);
+  assert.equal(o.overdue.rows.length, 0);
+  assert.deepEqual([o.units.ending, o.units.overdue], [1, 0]);
+  assert.deepEqual((await bookingPayments(bk.id, at)).map((r) => [r.status, r.paid, r.left, r.payments.length]), [['paid', 4500, 0, 2], ['upcoming', 0, 4500, 0]]);
+
+  // With money recorded the terms are fixed; the end date can still move, and paid rows stay.
+  await assert.rejects(updateBooking(bk.id, { rent_amount: 5000 }), /Payments are recorded/);
+  await updateBooking(bk.id, { end_date: '2026-12-14', rent_amount: 4500 });
+  assert.deepEqual((await bookingPayments(bk.id, at)).map((r) => [r.due_date, r.paid]), [['2026-09-15', 4500], ['2026-10-15', 0], ['2026-11-15', 0]]);
+  await removePayment(cash.id);
+  assert.equal((await overview({}, at)).overdue.total, 2500);
+
+  // Cancelled: what had fallen due is still owed (the rest of September); October and November are taken off.
+  await cancelBooking(bk.id, 'Left early', null, at);
+  o = await overview({ months: 3 }, at);
+  assert.deepEqual([o.overdue.total, o.collection.due, o.collection.collected, o.units.vacant], [2500, 4500, 2000, 2]);
+  assert.deepEqual((await bookingPayments(bk.id, at)).map((r) => [r.due_date, r.amount, r.left, r.status]), [['2026-09-15', 4500, 2500, 'overdue']]);
+  assert.deepEqual((await listAlerts({}, at)).filter((a) => a.rule === 'overdue').map((a) => [a.tenant, a.amount]), [['Sara', 2500]], 'and it is still chased');
+  assert.equal((await report('rent-roll', {}, at)).summary.at(-1).value, 2500, 'the rent roll says what a tenant who left still owes');
+
+  assert.equal(o.missingContracts, 0);
+  const again = await createBooking(stay(u1.id, '2026-10-01', '2026-10-31', { status: 'confirmed' }));
+  assert.equal((await overview({}, at)).missingContracts, 1);
+  await addBookingDoc(again.id, { title: 'Signed contract' });
+  assert.equal((await overview({}, at)).missingContracts, 0);
+  assert.equal((await overview({ building_id: b.id + 1 }, at)).units.total, 0);
 });

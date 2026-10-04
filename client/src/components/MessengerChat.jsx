@@ -95,7 +95,7 @@ const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional
 const bigEmoji = (t) => !!t && t.length <= 20 && EMOJI_ONLY.test(t) && (t.match(/\p{Extended_Pictographic}/gu) || []).length <= 3;
 
 const MINE = '#005c4b';
-const THEIRS = '#252140';
+const THEIRS = 'var(--color-bubble)';
 
 // ---------- one message ----------
 export function Bubble({ m, mine, showName, sender, nameColor, others, first, tag, onMenu, onReply, onRetry, onView, onJump }) {
@@ -135,7 +135,7 @@ export function Bubble({ m, mine, showName, sender, nameColor, others, first, ta
         onContextMenu={(e) => { if (!canAct) return; e.preventDefault(); onMenu(m, e.clientX, e.clientY); }}
         onClick={m.failed ? () => onRetry(m) : undefined}
         className={`relative max-w-[82%] select-none rounded-2xl md:max-w-[65%] md:select-text [-webkit-touch-callout:none]
-          ${big ? 'px-1 pb-5 pt-0' : `px-2.5 pb-1.5 pt-1.5 shadow-[0_1px_1.5px_rgb(0_0_0/0.35)] ${mine ? 'text-white' : 'text-txt'}`}
+          ${big ? 'px-1 pb-5 pt-0' : `px-2.5 pb-1.5 pt-1.5 shadow-[0_1px_1.5px_rgb(0_0_0/0.35)] ${mine ? 'on-dark text-white' : 'text-txt'}`}
           ${tail} ${m.failed ? 'cursor-pointer ring-1 ring-bad/60' : ''}`}
         style={{ background: big ? 'transparent' : mine ? MINE : THEIRS, transform: dx ? `translateX(${dx}px)` : undefined, transition: dx ? 'none' : 'transform .2s' }}>
         {/* the little corner tail on the first bubble of a run */}
@@ -148,7 +148,7 @@ export function Bubble({ m, mine, showName, sender, nameColor, others, first, ta
         {canAct && !isTouch && (
           <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); onMenu(m, r.left, r.bottom); }} aria-label="Message options"
             style={{ background: big ? 'rgb(0 0 0 / 0.4)' : mine ? MINE : THEIRS }}
-            className="absolute right-1 top-1 z-10 grid size-6 place-items-center rounded-full opacity-0 transition group-hover:opacity-100">
+            className={`absolute right-1 top-1 z-10 grid size-6 place-items-center rounded-full opacity-0 transition group-hover:opacity-100 ${big ? 'on-dark' : ''}`}>
             <ChevronDown size={16} className="text-white/70" />
           </button>
         )}
@@ -200,7 +200,7 @@ export function Bubble({ m, mine, showName, sender, nameColor, others, first, ta
         )}
         {/* the invisible spacer keeps the time from sitting on top of the last word */}
         {!big && <span className={`invisible inline-block align-bottom ${mine ? 'w-[4.25rem]' : 'w-10'}`} aria-hidden="true" />}
-        <span className={`absolute bottom-1 right-2 flex items-center gap-1 text-[11px] leading-none text-white/55 ${big ? 'rounded-full bg-black/40 px-1.5 py-0.5' : ''}`}>
+        <span className={`absolute bottom-1 right-2 flex items-center gap-1 text-[11px] leading-none text-white/55 ${big ? 'on-dark rounded-full bg-black/40 px-1.5 py-0.5' : ''}`}>
           {m.failed ? <span className="text-bad">Tap to retry</span> : clock(m.createdAt)}
           {mine && <Ticks m={m} others={others} />}
         </span>
@@ -223,7 +223,7 @@ export function Menu({ at, mine, onClose, onReply, onCopy, onDelete }) {
   return createPortal(
     <div className="fixed inset-0 z-50" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }}>
       <div onClick={(e) => e.stopPropagation()} style={{ left, top, width: w }}
-        className="rise absolute overflow-hidden rounded-2xl border border-stroke bg-[#1b1834] py-1 shadow-2xl shadow-black/60">
+        className="rise absolute overflow-hidden rounded-2xl border border-stroke bg-surface-2 py-1 shadow-2xl shadow-black/60">
         <button className={item} onClick={onReply}><Reply size={17} /> Reply</button>
         <button className={item} onClick={onCopy}><Copy size={17} /> Copy</button>
         {mine && <button className={`${item} text-bad`} onClick={onDelete}><Trash2 size={17} /> Delete for everyone</button>}
@@ -337,7 +337,7 @@ export function Composer({ chatId, reply, onCancelReply, replyName, onSend, voic
   };
 
   return (
-    <div className="relative border-t border-white/[0.06] bg-[#13112a]/85 px-2 pb-safe pt-2 backdrop-blur-xl md:px-4">
+    <div className="relative border-t border-white/[0.06] bg-bar/85 px-2 pb-safe pt-2 backdrop-blur-xl md:px-4">
      <div className="mx-auto max-w-6xl">
       {(reply || file) && (
         <div className="mb-2 space-y-2">
@@ -365,7 +365,7 @@ export function Composer({ chatId, reply, onCancelReply, replyName, onSend, voic
       {emoji && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setEmoji(false)} />
-          <div className="rise absolute bottom-full left-2 z-50 mb-2 grid w-[min(22rem,calc(100vw-1rem))] grid-cols-8 gap-0.5 rounded-2xl border border-stroke bg-[#1b1834]/95 p-2 shadow-2xl shadow-black/60 backdrop-blur-xl md:left-4">
+          <div className="rise absolute bottom-full left-2 z-50 mb-2 grid w-[min(22rem,calc(100vw-1rem))] grid-cols-8 gap-0.5 rounded-2xl border border-stroke bg-surface-2/95 p-2 shadow-2xl shadow-black/60 backdrop-blur-xl md:left-4">
             {EMOJI.map((e) => (
               <button key={e} onClick={() => addEmoji(e)} className="grid aspect-square place-items-center rounded-lg text-2xl transition hover:scale-110 hover:bg-white/10">{e}</button>
             ))}
@@ -376,7 +376,7 @@ export function Composer({ chatId, reply, onCancelReply, replyName, onSend, voic
         <div className="mb-1.5 flex items-center gap-2 px-2 text-xs text-mute">
           <Wand2 size={13} className="shrink-0 text-emerald-300" />
           <span className="min-w-0 flex-1 truncate">
-            {drafted ? 'Reem wrote this for you — read it before you send.' : 'Reem tidied this up — check it before you send.'}
+            {drafted ? 'Riley wrote this for you — read it before you send.' : 'Riley tidied this up — check it before you send.'}
           </span>
           <button onClick={undo} className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium text-emerald-300 hover:bg-white/10">
             <Undo2 size={13} /> Undo
@@ -399,7 +399,7 @@ export function Composer({ chatId, reply, onCancelReply, replyName, onSend, voic
             className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 leading-snug outline-none placeholder:text-mute/70" />
           {chatId && <button onClick={tidy} disabled={tidying}
             aria-label={text.trim() ? 'Help me say this' : 'Write a reply for me'}
-            title={text.trim() ? 'Help me say this — Reem tidies up your notes' : 'Write a reply for me — Reem drafts one from the chat'}
+            title={text.trim() ? 'Help me say this — Riley tidies up your notes' : 'Write a reply for me — Riley drafts one from the chat'}
             className={`grid size-11 shrink-0 place-items-center rounded-full transition hover:text-emerald-300 disabled:opacity-40 ${
               tidying ? 'animate-pulse text-emerald-300' : 'text-mute'}`}>
             <Wand2 size={19} />
@@ -664,7 +664,7 @@ export default function MessengerChat({ chat, dm, onBack, onInfo, voiceEnabled }
     const el = document.getElementById(`dm-${id}`);
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.animate([{ background: 'rgb(255 255 255 / 0.12)' }, { background: 'transparent' }], { duration: 1400 });
+    el.animate([{ background: 'color-mix(in srgb, var(--color-white) 12%, transparent)' }, { background: 'transparent' }], { duration: 1400 });
   };
 
   // ---------- sending ----------
@@ -734,7 +734,7 @@ export default function MessengerChat({ chat, dm, onBack, onInfo, voiceEnabled }
     <div className="relative flex h-full min-h-0 flex-col"
       onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }}
       onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)} onDrop={drop}>
-      <header className="z-10 flex items-center gap-2 border-b border-white/[0.06] bg-[#13112a]/85 px-2 pb-2 pt-safe backdrop-blur-xl md:px-4">
+      <header className="z-10 flex items-center gap-2 border-b border-white/[0.06] bg-bar/85 px-2 pb-2 pt-safe backdrop-blur-xl md:px-4">
         <button onClick={onBack} aria-label="Back to chats" className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
           <ChevronLeft size={24} />
         </button>
@@ -763,7 +763,7 @@ export default function MessengerChat({ chat, dm, onBack, onInfo, voiceEnabled }
         {messages === null && <p className="py-10 text-center text-sm text-mute">Loading…</p>}
         {more && <p className="py-3 text-center text-xs text-mute">Loading earlier messages…</p>}
         {messages?.length === 0 && (
-          <div className="mx-auto mt-16 flex max-w-xs flex-col items-center gap-3 rounded-3xl border border-white/[0.06] bg-[#1b1834]/80 px-6 py-6 text-center shadow-xl backdrop-blur">
+          <div className="mx-auto mt-16 flex max-w-xs flex-col items-center gap-3 rounded-3xl border border-white/[0.06] bg-surface-2/80 px-6 py-6 text-center shadow-xl backdrop-blur">
             <PersonAvatar id={chat.kind === 'group' ? chat.id : chat.peerId} name={chat.name} size={64} group={chat.kind === 'group'} />
             <p className="text-sm text-mute">Say hello to {chat.kind === 'group' ? 'the topic' : chat.name.split(' ')[0]}</p>
             <span className="text-4xl">👋</span>
@@ -782,12 +782,12 @@ export default function MessengerChat({ chat, dm, onBack, onInfo, voiceEnabled }
             <div key={m.nonce || m.id} id={typeof m.id === 'number' ? `dm-${m.id}` : undefined} className="rounded-xl">
               {newDay && (
                 <div className="sticky top-2 z-[5] my-3 flex justify-center">
-                  <span className="rounded-full border border-white/[0.06] bg-[#1b1834]/90 px-3.5 py-1 text-xs font-medium text-mute shadow-md backdrop-blur">{dayLabel(m.createdAt)}</span>
+                  <span className="rounded-full border border-white/[0.06] bg-surface-2/90 px-3.5 py-1 text-xs font-medium text-mute shadow-md backdrop-blur">{dayLabel(m.createdAt)}</span>
                 </div>
               )}
               {m.kind === 'system' ? (
                 <div className="my-2 flex justify-center">
-                  <span className="max-w-[85%] rounded-full bg-[#1b1834]/80 px-3.5 py-1 text-center text-xs text-mute backdrop-blur">{m.body}</span>
+                  <span className="max-w-[85%] rounded-full bg-surface-2/80 px-3.5 py-1 text-center text-xs text-mute backdrop-blur">{m.body}</span>
                 </div>
               ) : (
                 <Bubble m={withName} mine={mine} first={first} others={others}
@@ -802,7 +802,7 @@ export default function MessengerChat({ chat, dm, onBack, onInfo, voiceEnabled }
 
       {!atBottom && (
         <button onClick={toBottom} aria-label="Jump to the latest message"
-          className="absolute bottom-24 right-4 grid size-11 place-items-center rounded-full border border-white/10 bg-[#1b1834]/95 text-txt shadow-xl backdrop-blur md:right-8">
+          className="absolute bottom-24 right-4 grid size-11 place-items-center rounded-full border border-white/10 bg-surface-2/95 text-txt shadow-xl backdrop-blur md:right-8">
           <ArrowDown size={20} />
           {below > 0 && <span className="absolute -top-1.5 -right-1 grid min-w-5 place-items-center rounded-full bg-emerald-500 px-1 text-[11px] font-semibold">{below}</span>}
         </button>
@@ -815,7 +815,7 @@ export default function MessengerChat({ chat, dm, onBack, onInfo, voiceEnabled }
           onReply={() => { setReply(menu.m); setMenu(null); }} onCopy={() => copy(menu.m)} onDelete={() => remove(menu.m)} />
       )}
       {viewing && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setViewing(null)}>
+        <div className="on-dark fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setViewing(null)}>
           <img src={viewing} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
           <a href={`${viewing}?download=1`} onClick={(e) => e.stopPropagation()} aria-label="Download"
             className="absolute right-16 top-[max(env(safe-area-inset-top),16px)] grid size-10 place-items-center rounded-full bg-white/10 text-white"><Download size={20} /></a>
