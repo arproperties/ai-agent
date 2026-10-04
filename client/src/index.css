@@ -133,6 +133,10 @@ body::after, .sky::after {
 }
 
 @layer base {
+  /* No browser up/down arrows on a number field: an amount is typed, not stepped. */
+  input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   html, body, #root { height: 100%; }
   body {
     background: var(--color-bg);

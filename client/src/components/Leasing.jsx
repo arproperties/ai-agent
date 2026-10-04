@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, Upload, LayoutGrid, List } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, Upload, LayoutGrid, List, BedDouble, BedSingle, Lock } from 'lucide-react';
 import { api } from '../lib/api';
-import { money as aed, currency } from '../lib/region';
+import { money as aed, currency, region } from '../lib/region';
 import Page from './Page';
 import Select from './Select';
 import DateRange from './DateRange';
+import Pager, { usePaged } from './Pager';
 import BookingDocs from './BookingDocs';
 import ServiceList, { REPEAT } from './ServiceList';
+import SourceList from './SourceList';
 import BookingPayments from './BookingPayments';
 import ImportBookings from './ImportBookings';
 import LeasingOverview, { LeasingBuildings } from './LeasingOverview';
@@ -16,8 +18,8 @@ import LeasingAlerts from './LeasingAlerts';
 // Leasing: bookings of units and the tenants who make them. Anyone signed in can use it.
 // The server is server/leasing.js; the units come from Properties.
 
-const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
-const SELECT = `${FIELD} bg-surface`;
+const FIELD = 'w-full rounded-xl border border-stroke bg-white/[0.03] px-3.5 py-2.5 outline-none focus:border-p1/70'; // a fainter fill than `glass`, so a form full of them stays quiet
+const SELECT = FIELD; // the same see-through field as a typed one; the list it opens has its own background
 const PRIMARY = 'flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white disabled:opacity-60';
 const GHOST = 'flex items-center gap-1.5 rounded-full border border-stroke/70 px-3 py-1.5 text-xs text-mute hover:bg-white/5 hover:text-txt';
 const STAGE = {
@@ -48,6 +50,16 @@ const Section = ({ title, extra, children }) => (
     <div className="grid gap-3 sm:grid-cols-2">{children}</div>
   </section>
 );
+/** A named part of a step, with a line above it to set it apart from the part before; `extra` sits beside its title. */
+const Group = ({ title, hint, extra, children }) => (
+  <div className="border-t border-stroke/60 pt-4 first:border-0 first:pt-0 sm:col-span-2">
+    <div className="mb-2.5 flex flex-wrap items-center gap-2.5">
+      <p className="text-sm font-medium">{title}{hint && <span className="font-normal text-mute"> · {hint}</span>}</p>
+      {extra}
+    </div>
+    {children}
+  </div>
+);
 const Row = ({ k, children, strong }) => (
   <div className={`flex items-baseline justify-between gap-3 ${strong ? 'font-medium' : ''}`}>
     <span className={strong ? '' : 'text-mute'}>{k}</span><span className="text-right tabular-nums">{children}</span>
@@ -67,16 +79,36 @@ function plan(v) {
   while (addMonths(v.start_date, months) < v.end_date) months++;
   const step = STEP[v.payment_frequency] || months;
   const payments = Math.ceil(months / step);
-  const monthly = Number(v.rent_amount || 0) / (v.rent_period === 'year' ? 12 : 1);
+  // The discount comes off the rent as it was entered; the tax is on the rent after it and on the other charges, never the deposit.
+  const rent = Number(v.rent_amount || 0);
+  const off = Math.min(rent, v.discount_type === 'percent' ? (rent * Number(v.discount_value || 0)) / 100 : Number(v.discount_value || 0));
+  const per = v.rent_period === 'year' ? 12 : 1;
+  const monthly = (rent - off) / per;
+  const rate = Number(v.tax_percent || 0) / 100;
   const deposit = Number(v.security_deposit || 0);
   const fees = v.fees.filter((f) => Number(f.amount) > 0);
   const firstRent = monthly * Math.min(step, months);
+  const firstFees = fees.reduce((t, f) => t + Number(f.amount), 0);
+  const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? payments : 1), 0);
+  const firstTax = (firstRent + firstFees) * rate;
+  const tax = (monthly * months + allFees) * rate;
   return {
-    payments, firstRent, deposit, fees,
-    first: firstRent + deposit + fees.reduce((t, f) => t + Number(f.amount), 0),
-    total: monthly * months + deposit + fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? payments : 1), 0),
+    payments, firstRent, deposit, fees, firstTax, tax, discount: (off / per) * months,
+    // The deposit is held for the tenant and given back, so it is never part of what the stay costs.
+    charges: firstRent + firstFees + firstTax,
+    first: firstRent + deposit + firstFees + firstTax,
+    total: monthly * months + allFees + tax,
   };
 }
+/** Two or three choices side by side, one of them on. */
+const Pick = ({ value, onPick, options }) => (
+  <span className="flex shrink-0 rounded-full border border-stroke p-0.5">
+    {options.map(([k, l]) => (
+      <button key={k} type="button" onClick={() => onPick(k)} aria-pressed={value === k}
+        className={`rounded-full px-3 py-1.5 text-xs ${value === k ? 'bg-p1/20 text-p1' : 'text-mute hover:text-txt'}`}>{l}</button>
+    ))}
+  </span>
+);
 
 /** New booking, or editing one: a whole page, like registering a company. */
 function BookingForm({ start, preset, onDone, onCancel }) {
@@ -88,8 +120,12 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [v, setV] = useState({
     start_date: init.start_date || '', end_date: init.end_date || '', unit_id: init.unit_id || '',
     rent_amount: start?.rent_amount ?? '', rent_period: start?.rent_period || 'month', payment_frequency: start?.payment_frequency || 'monthly',
-    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [],
+    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], source: start?.source || '',
+    discount_type: start?.discount_type || 'percent', discount_value: start?.discount_value ?? '', discount_note: start?.discount_note || '',
+    // A new booking starts with the region's usual tax; one being edited keeps what it has. Empty is no tax.
+    tax_percent: start ? start.tax_percent ?? '' : region().tax_percent || '',
   });
+  const taxName = region().tax_name;
   const [units, setUnits] = useState(null);
   const [tenantMode, setTenantMode] = useState(start ? 'existing' : 'new');
   const [tenants, setTenants] = useState([]);
@@ -97,13 +133,15 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [tenant, setTenant] = useState({ full_name: '', phone: '', email: '', emirates_id_no: '', nationality: '' });
   const [services, setServices] = useState([]); // the saved extra services the other charges are picked from
   const [listOpen, setListOpen] = useState(false);
+  const [sources, setSources] = useState([]); // where tenants come from: one list for the whole app
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [step, setStep] = useState(0); // which of STEPS is on screen
   const [far, setFar] = useState(start ? STEPS.length - 1 : 0); // the furthest step reached
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
 
-  useEffect(() => { api.get('/properties/companies').then(setCompanies).catch(() => {}); api.get('/leasing/tenants').then(setTenants).catch(() => {}); }, []);
+  useEffect(() => { api.get('/properties/companies').then(setCompanies).catch(() => {}); api.get('/leasing/tenants').then(setTenants).catch(() => {}); api.get('/leasing/sources').then(setSources).catch(() => {}); }, []);
   // The other charges are picked from the services of the building the booking is in.
   useEffect(() => {
     if (!buildingId) return setServices([]);
@@ -131,6 +169,15 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     } catch (err) { setError(err.message); setBusy(false); }
   };
 
+  // A source typed in that is not on the list is saved to it there and then, for every booking after this one.
+  const makeSource = async (name) => {
+    try {
+      const made = await api.post('/leasing/sources', { name });
+      setSources((list) => [...list, made].sort((a, b) => a.name.localeCompare(b.name)));
+      setV((now) => ({ ...now, source: made.name }));
+    } catch (err) { setError(err.message); }
+  };
+
   // The unit already booked by this very booking counts as free while editing it.
   const isFree = (u) => u.free || (start && u.id === start.unit_id && u.taken_by?.ref === start.ref);
 
@@ -139,6 +186,9 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const buildingName = buildings.find((b) => String(b.id) === String(buildingId))?.name || (start && String(buildingId) === String(start.building_id) ? start.building : '');
   const tenantName = tenantMode === 'existing' ? tenants.find((t) => String(t.id) === String(tenantId))?.full_name : tenant.full_name.trim();
   const sum = datesOk && Number(v.rent_amount) > 0 ? plan(v) : null;
+  // What the discount takes off the rent as entered, shown under the discount as it is typed.
+  const rent = Number(v.rent_amount || 0);
+  const off = Math.min(rent, v.discount_type === 'percent' ? (rent * Number(v.discount_value || 0)) / 100 : Number(v.discount_value || 0));
 
   // One step at a time. A step is done once what it must have is filled in, and a later
   // step opens only when those before it are done.
@@ -148,8 +198,8 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const ready = reach(STEPS.length);
 
   return (
-    <form onSubmit={submit('confirmed')} className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-     <div className="space-y-5 rounded-2xl border border-stroke p-4 md:p-5">
+    <form onSubmit={submit('confirmed')} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+     <div className="flex flex-col gap-5 rounded-2xl border border-stroke p-4 md:p-5">
       <ol className="flex items-center gap-2 border-b border-stroke/60 pb-4">
         {STEPS.map((name, i) => (
           <li key={name} className={`flex min-w-0 items-center gap-2 ${i < STEPS.length - 1 ? 'flex-1' : ''}`}>
@@ -174,11 +224,26 @@ function BookingForm({ start, preset, onDone, onCancel }) {
           <Select value={buildingId} onChange={(e) => { setBuildingId(e.target.value); setV({ ...v, unit_id: '' }); }} required disabled={!companyId} className={SELECT}
             placeholder={companyId ? 'Choose…' : 'Choose a company first'} options={buildings.map((b) => [b.id, b.name])} />
         </Label>
-        <div className="sm:col-span-2">
+        <div>
           <span className="mb-1 block text-xs text-txt/80">Dates<span className="text-p2"> *</span><span className="text-mute"> · first night to last night</span></span>
           <DateRange from={v.start_date} to={v.end_date} onChange={(a, b) => setV((now) => ({ ...now, start_date: a, end_date: b }))}
             placeholder="Choose the first and last night" className={SELECT} wrap="w-full" />
         </div>
+        <div>
+          <span className="mb-1 flex items-baseline gap-2 text-xs text-txt/80">
+            <span>Source<span className="text-mute"> · where the tenant came from</span></span>
+            <button type="button" onClick={() => setSourcesOpen(!sourcesOpen)} className="ml-auto text-mute underline-offset-2 hover:text-txt hover:underline">{sourcesOpen ? 'Hide the list' : 'Edit the list'}</button>
+          </span>
+          <Select value={v.source} onChange={set('source')} onCreate={makeSource} className={SELECT} placeholder="Choose, or type a new one…" aria-label="Source"
+            options={[['', 'Not known'], ...new Set([...sources.map((x) => x.name), v.source].filter(Boolean))]} />
+        </div>
+        {sourcesOpen && (
+          <div className="rounded-2xl border border-stroke p-3 sm:col-span-2">
+            <p className="mb-2 text-xs text-mute">The same list for every company and building, also kept on the Sources page. Renaming a source renames it on the bookings that have it; removing one leaves those bookings as they are.</p>
+            <SourceList sources={sources} onChange={setSources} onError={setError}
+              onRenamed={(was, now) => setV((cur) => (cur.source === was ? { ...cur, source: now } : cur))} />
+          </div>
+        )}
         <div className="sm:col-span-2">
           <span className="mb-1 block text-xs text-txt/80">Unit<span className="text-p2"> *</span>
             {datesOk && <span className="text-mute"> · {nights(v.start_date, v.end_date)} nights</span>}</span>
@@ -186,16 +251,21 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             : !units ? <Loader2 size={18} className="my-3 animate-spin text-mute" />
               : units.length === 0 ? <p className="text-sm text-mute">This building has no units yet.</p>
                 : (
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
                     {units.map((u) => {
                       const free = isFree(u);
                       const on = String(v.unit_id) === String(u.id);
+                      const Bed = u.blocked ? Lock : /studio|single/i.test(u.type || '') ? BedSingle : BedDouble;
                       return (
-                        <button key={u.id} type="button" disabled={!free} onClick={() => setV({ ...v, unit_id: u.id })}
+                        <button key={u.id} type="button" disabled={!free} onClick={() => setV({ ...v, unit_id: u.id })} aria-pressed={on}
                           title={u.taken_by ? `Booked by ${u.taken_by.tenant}, ${u.taken_by.start_date} to ${u.taken_by.end_date}` : u.blocked ? 'Blocked' : ''}
-                          className={`rounded-xl border px-3 py-2 text-left text-sm transition ${on ? 'border-p1 bg-p1/15' : free ? 'border-stroke hover:border-p1/60' : 'cursor-not-allowed border-stroke/40 opacity-45'}`}>
-                          <p className="font-medium">{u.unit_no}</p>
-                          <p className="truncate text-[11px] text-mute">{free ? [u.type, u.floor && `Fl ${u.floor}`].filter(Boolean).join(' · ') || 'Free' : u.blocked ? 'Blocked' : `Taken · ${u.taken_by.tenant}`}</p>
+                          className={`flex items-center gap-2.5 rounded-xl border bg-surface p-2.5 text-left text-sm transition ${on ? 'border-p1' : free ? 'border-stroke hover:border-p1/60' : 'cursor-not-allowed border-stroke/40 opacity-45'}`}>
+                          <span className={`grid size-9 shrink-0 place-items-center rounded-lg ${on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : free ? 'bg-ok/10 text-ok' : 'bg-white/5 text-mute'}`}><Bed size={18} /></span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-medium">{u.unit_no}</span>
+                            <span className="block truncate text-[11px] text-mute">{free ? [u.type, u.floor && `Fl ${u.floor}`].filter(Boolean).join(' · ') || 'Free' : u.blocked ? 'Blocked' : `Taken · ${u.taken_by.tenant}`}</span>
+                          </span>
+                          {on && <Check size={15} className="shrink-0 text-p1" />}
                         </button>
                       );
                     })}
@@ -228,17 +298,34 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         )}
       </Section>}
 
-      {step === 2 && <Section title="Rent and charges">
-        <Label text={`Rent (${currency()})`} need><input type="number" min="0" step="any" value={v.rent_amount} onChange={set('rent_amount')} required className={FIELD} /></Label>
-        <Label text="Per">
-          <Select value={v.rent_period} onChange={set('rent_period')} className={SELECT} options={[['month', 'Month'], ['year', 'Year']]} />
-        </Label>
-        <Label text="Paid">
-          <Select value={v.payment_frequency} onChange={set('payment_frequency')} className={SELECT} options={FREQ} />
-        </Label>
-        <Label text={`Security deposit (${currency()})`}><input type="number" min="0" step="any" value={v.security_deposit} onChange={set('security_deposit')} className={FIELD} /></Label>
-        <div className="sm:col-span-2">
-          <span className="mb-1 block text-xs text-txt/80">Other charges <span className="text-mute">· from this building’s services (pet fee, parking, laundry…), charged once on the first day or with every rent payment</span></span>
+      {step === 2 && <Section title="Rent and charges" extra={(
+        <span className="ml-auto flex items-center gap-2 text-xs text-mute">Rent is
+          <Pick value={v.rent_period} onPick={(k) => setV({ ...v, rent_period: k })} options={[['month', 'A month'], ['year', 'A year']]} />
+        </span>
+      )}>
+        <Group title="Rent">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Label text={`Amount (${currency()})`} need><input type="number" min="0" step="any" value={v.rent_amount} onChange={set('rent_amount')} required className={FIELD} /></Label>
+            <Label text="Paid">
+              <Select value={v.payment_frequency} onChange={set('payment_frequency')} className={SELECT} options={FREQ} />
+            </Label>
+            <Label text={`Security deposit (${currency()})`}><input type="number" min="0" step="any" value={v.security_deposit} onChange={set('security_deposit')} placeholder="None" className={FIELD} /></Label>
+          </div>
+        </Group>
+        <Group title="Discount" hint={`off the rent per ${v.rent_period}`}
+          extra={<span className="ml-auto"><Pick value={v.discount_type} onPick={(k) => setV({ ...v, discount_type: k })} options={[['percent', 'Percent'], ['amount', currency()]]} /></span>}>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Label text={`Discount (${v.discount_type === 'percent' ? '%' : currency()})`}>
+              <input type="number" min="0" max={v.discount_type === 'percent' ? 99.99 : undefined} step="any" value={v.discount_value} onChange={set('discount_value')} placeholder="None" className={FIELD} />
+            </Label>
+            <label className="block sm:col-span-2">
+              <span className="mb-1 block text-xs text-txt/80">Reason</span>
+              <input value={v.discount_note} onChange={set('discount_note')} disabled={!Number(v.discount_value)} placeholder="e.g. early payment, long stay" className={`${FIELD} disabled:opacity-50`} />
+            </label>
+          </div>
+          {off > 0 && <p className="mt-2 text-xs text-mute">Takes {aed(off)} off, so the rent is <span className="font-medium text-txt">{aed(rent - off)}</span> a {v.rent_period}.</p>}
+        </Group>
+        <Group title="Other charges" hint="pet fee, parking, laundry…, once on the first day or with every rent payment">
           {v.fees.map((f, i) => {
             const put = (patch) => setV((now) => ({ ...now, fees: now.fees.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
             // Choosing a saved service fills in its usual price, which can still be changed for this booking.
@@ -271,11 +358,23 @@ function BookingForm({ start, preset, onDone, onCancel }) {
           </div>
           {listOpen && (
             <div className="mt-3 rounded-2xl border border-stroke p-3">
-              <p className="mb-2 text-xs text-mute">{buildingId ? 'Services of this building · the usual price fills in when one is chosen, and can still be changed on the booking.' : 'Choose the building first (step 1).'}</p>
+              <p className="mb-2 text-xs text-mute">{buildingId ? 'This building’s extra services. The usual price fills in when one is chosen, and can still be changed on the booking.' : 'Choose the building first (step 1).'}</p>
               {buildingId && <ServiceList services={services} buildingId={buildingId} onChange={setServices} onError={setError} />}
             </div>
           )}
-        </div>
+        </Group>
+        <Group title={taxName} hint="on the rent and the other charges, never on the deposit">
+          <div className="flex flex-wrap items-center gap-2">
+            <Pick value={v.tax_percent === '' ? 'none' : 'taxed'} onPick={(k) => setV({ ...v, tax_percent: k === 'none' ? '' : v.tax_percent || region().tax_percent || 5 })}
+              options={[['none', `No ${taxName}`], ['taxed', `Charge ${taxName}`]]} />
+            {v.tax_percent !== '' && (
+              <span className="flex items-center gap-2">
+                <input type="number" min="0" max="100" step="any" value={v.tax_percent} onChange={set('tax_percent')} required aria-label={`${taxName} percent`} className={`${FIELD} max-w-[6rem]`} />
+                <span className="text-sm text-mute">%</span>
+              </span>
+            )}
+          </div>
+        </Group>
       </Section>}
 
       {step === 3 && <Section title="Contract & notes">
@@ -283,7 +382,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         <Label text="Notes" wide><textarea value={v.notes} onChange={set('notes')} rows={3} className={`${FIELD} resize-none`} /></Label>
       </Section>}
 
-      <div className="flex items-center justify-between gap-2 border-t border-stroke/60 pt-4">
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-stroke/60 pt-4">
         {step > 0 ? <button type="button" onClick={() => go(step - 1)} className="flex items-center gap-1 rounded-full border border-stroke px-4 py-2 text-sm hover:bg-white/5"><ChevronLeft size={16} /> Back</button> : <span />}
         {step < STEPS.length - 1
           ? <button type="button" disabled={!done[step]} onClick={(e) => e.currentTarget.form.reportValidity() && go(step + 1)} className={PRIMARY}>Next <ChevronRight size={16} /></button>
@@ -291,7 +390,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
       </div>
      </div>
 
-      <aside className="space-y-4 rounded-2xl border border-stroke p-4 text-sm md:p-5 lg:sticky lg:top-0">
+      <aside className="space-y-4 rounded-2xl border border-stroke p-4 text-sm md:p-5">
         <h2 className="text-[11px] font-medium uppercase tracking-widest text-mute">Summary</h2>
         <div>
           <p className={`text-lg font-medium ${unit ? '' : 'text-mute'}`}>{unit ? `Unit ${unit.unit_no}` : 'No unit chosen'}</p>
@@ -301,15 +400,28 @@ function BookingForm({ start, preset, onDone, onCancel }) {
           <Row k="Dates">{datesOk ? `${fmt(v.start_date)} → ${fmt(v.end_date)}` : '—'}</Row>
           {datesOk && <Row k="Stay">{nights(v.start_date, v.end_date)} nights</Row>}
           <Row k="Tenant">{tenantName || '—'}</Row>
+          {v.source && <Row k="Source">{v.source}</Row>}
         </div>
         {sum ? (
-          <div className="space-y-1.5 border-t border-stroke/60 pt-3">
-            <Row k={sum.payments > 1 ? 'First rent payment' : 'Rent'}>{aed(sum.firstRent)}</Row>
-            {sum.deposit > 0 && <Row k="Security deposit">{aed(sum.deposit)}</Row>}
-            {sum.fees.map((f, i) => <Row key={i} k={f.label || 'Other charge'}>{aed(Number(f.amount))}</Row>)}
-            <div className="border-t border-stroke/60 pt-2"><Row k="Due on the first day" strong>{aed(sum.first)}</Row></div>
-            <Row k={`Whole stay · ${sum.payments} payment${sum.payments === 1 ? '' : 's'}`}>{aed(sum.total)}</Row>
-          </div>
+          <>
+            <div className="space-y-1.5 border-t border-stroke/60 pt-3">
+              <Row k={sum.payments > 1 ? 'First rent payment' : 'Rent'}>{aed(sum.firstRent)}</Row>
+              {sum.fees.map((f, i) => <Row key={i} k={f.label || 'Other charge'}>{aed(Number(f.amount))}</Row>)}
+              {sum.firstTax > 0 && <Row k={`${taxName} ${Number(v.tax_percent)}%`}>{aed(sum.firstTax)}</Row>}
+              <Row k="Rent and charges" strong>{aed(sum.charges)}</Row>
+              {sum.discount > 0 && <Row k="Discount, already taken off">−{aed(sum.discount)}</Row>}
+              {sum.payments > 1 && <Row k={`Whole stay · ${sum.payments} payments`}>{aed(sum.total)}</Row>}
+              {sum.payments > 1 && sum.tax > 0 && <Row k={`Of which ${taxName}`}>{aed(sum.tax)}</Row>}
+            </div>
+            {/* The deposit stands apart: it is the tenant's money, held and given back at check-out. */}
+            {sum.deposit > 0 && (
+              <div className="space-y-1 border-t border-stroke/60 pt-3">
+                <Row k="Security deposit">{aed(sum.deposit)}</Row>
+                <p className="text-xs text-mute">Held for the tenant, not income. Given back at check-out.</p>
+              </div>
+            )}
+            <div className="border-t border-stroke/60 pt-3"><Row k="To collect on the first day" strong>{aed(sum.first)}</Row></div>
+          </>
         ) : <p className="border-t border-stroke/60 pt-3 text-mute">Choose the dates and enter the rent to see what is due.</p>}
 
         {error && <p className="text-bad">{error}</p>}
@@ -393,7 +505,9 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
   const act = async (fn) => { setError(''); try { await fn(); onChanged(); } catch (e) { setError(e.message); } };
   const [label, tone] = STAGE[b.stage];
   const stay = `${nights(b.start_date, b.end_date)} nights · ${b.type === 'lease' ? 'Lease' : 'Short stay'}`;
-  const rent = <>{aed(b.rent_amount)} / {b.rent_period} <span className="text-xs text-mute">· {FREQ.find(([k]) => k === b.payment_frequency)?.[1]}</span></>;
+  const terms = [FREQ.find(([k]) => k === b.payment_frequency)?.[1], b.discount_type && `${b.discount_type === 'percent' ? `${b.discount_value}%` : aed(b.discount_value)} off`,
+    b.tax_percent && `+ ${region().tax_name} ${b.tax_percent}%`].filter(Boolean).join(' · ');
+  const rent = <>{aed(b.rent_amount)} / {b.rent_period} <span className="text-xs text-mute">· {terms}</span></>;
   // What can be done to it: [icon, name, what happens, a longer hint, whether it is the dangerous one].
   const actions = [
     [Paperclip, 'Documents', onDocs, b.docs > 0 ? `${b.docs} document${b.docs === 1 ? '' : 's'}` : ''],
@@ -411,7 +525,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
     <tr className={`align-top ${fresh ? 'bg-p1/10' : ''}`}>
       <td className="px-3 py-2.5">
         <p className="font-medium">{b.tenant}{chip}</p>
-        <p className="text-xs text-mute">{b.ref}{b.tenant_phone && ` · ${b.tenant_phone}`}</p>
+        <p className="text-xs text-mute">{b.ref}{b.tenant_phone && ` · ${b.tenant_phone}`}{b.source && ` · ${b.source}`}</p>
         {b.cancel_reason && <p className="max-w-[16rem] whitespace-normal text-xs text-bad">Cancelled: {b.cancel_reason}</p>}
         {error && <p className="max-w-[16rem] whitespace-normal text-xs text-bad">{error}</p>}
       </td>
@@ -453,6 +567,12 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
           <span className="text-mute">Rent</span>
           <span className="text-right">{rent}</span>
         </div>
+        {b.source && (
+          <div className="flex justify-between gap-4 py-2">
+            <span className="text-mute">Source</span>
+            <span className="truncate text-right">{b.source}</span>
+          </div>
+        )}
         {b.cancel_reason && <p className="py-2 text-xs text-bad">Cancelled: {b.cancel_reason}</p>}
       </dl>
       {error && <p className="px-4 pb-1 text-xs text-bad">{error}</p>}
@@ -487,6 +607,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onImport }) {
   const staged = dated && (stage ? dated.filter((b) => b.stage === stage) : dated);
   const shown = staged && (sort === 'added' ? [...staged].sort((a, b) => b.id - a.id) : staged);
   const count = (k) => dated?.filter((b) => b.stage === k).length || 0;
+  const paged = usePaged(shown, [q, stage, from, to, sort].join('|')); // cards or table, a page at a time
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -512,17 +633,25 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onImport }) {
       {!shown ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
         : shown.length === 0 ? <p className="py-3 text-sm text-mute">{rows.length ? 'No bookings match.' : 'No bookings yet. Use New booking to make the first one.'}</p>
           : view === 'list' ? (
-            <div className="overflow-x-auto rounded-2xl border border-stroke">
-              <table className="w-full whitespace-nowrap text-sm">
-                <thead>
-                  <tr className={HEAD}>{['Tenant', 'Unit', 'Dates', 'Rent', 'Status', ''].map((h) => <th key={h} className={TH}>{h}</th>)}</tr>
-                </thead>
-                <tbody className="divide-y divide-stroke/60">
-                  {shown.map((b) => <BookingCard key={b.id} list b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onRenewed={onEdit} onChanged={load} />)}
-                </tbody>
-              </table>
-            </div>
-          ) : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{shown.map((b) => <BookingCard key={b.id} b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onRenewed={onEdit} onChanged={load} />)}</div>}
+            <>
+              <div className="overflow-x-auto rounded-2xl border border-stroke">
+                <table className="w-full whitespace-nowrap text-sm">
+                  <thead>
+                    <tr className={HEAD}>{['Tenant', 'Unit', 'Dates', 'Rent', 'Status', ''].map((h) => <th key={h} className={TH}>{h}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-stroke/60">
+                    {paged.rows.map((b) => <BookingCard key={b.id} list b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onRenewed={onEdit} onChanged={load} />)}
+                  </tbody>
+                </table>
+              </div>
+              <Pager {...paged.pager} />
+            </>
+          ) : (
+            <>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{paged.rows.map((b) => <BookingCard key={b.id} b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onRenewed={onEdit} onChanged={load} />)}</div>
+              <Pager {...paged.pager} />
+            </>
+          )}
     </div>
   );
 }
@@ -582,6 +711,7 @@ function Tenants() {
     </>
   );
   const open = shown?.find((t) => t.id === editing);
+  const paged = usePaged(shown, [q, from, to].join('|')); // cards or table, a page at a time
 
   return (
     <div className="space-y-4">
@@ -606,7 +736,7 @@ function Tenants() {
                 <table className="w-full whitespace-nowrap text-sm">
                   <thead><tr className={HEAD}>{['Tenant', 'Phone', 'Email', 'ID', 'Bookings', 'Added', ''].map((h) => <th key={h} className={TH}>{h}</th>)}</tr></thead>
                   <tbody className="divide-y divide-stroke/60">
-                    {shown.map((t) => (
+                    {paged.rows.map((t) => (
                       <tr key={t.id} className={t.id === editing ? 'bg-p1/10' : ''}>
                         <td className="px-3 py-2.5"><p className="font-medium">{t.full_name}</p>{t.nationality && <p className="text-xs text-mute">{t.nationality}</p>}</td>
                         {[t.phone, t.email, t.emirates_id_no].map((x, i) => <td key={i} className={`px-3 py-2.5 ${x ? '' : 'text-mute/50'}`}>{x || '—'}</td>)}
@@ -618,10 +748,12 @@ function Tenants() {
                   </tbody>
                 </table>
               </div>
+              <Pager {...paged.pager} />
             </>
           ) : (
+            <>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {shown.map((t) => (editing === t.id
+              {paged.rows.map((t) => (editing === t.id
                 ? <TenantForm key={t.id} start={t} onDone={() => { setEditing(null); load(); }} onCancel={() => setEditing(null)} />
                 : (
                   <div key={t.id} className="rounded-2xl border border-stroke">
@@ -641,6 +773,8 @@ function Tenants() {
                   </div>
                 )))}
             </div>
+            <Pager {...paged.pager} />
+            </>
           )}
     </div>
   );

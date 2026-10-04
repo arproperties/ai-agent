@@ -165,7 +165,7 @@ function Rules({ start, onSaved }) {
         })}
       </div>
       {/* Kept in view while the cards scroll, so a change is never left unsaved out of sight. */}
-      <div className="sticky bottom-3 z-10 flex items-center gap-3 rounded-2xl border border-stroke bg-surface px-4 py-3 shadow-lg">
+      <div className="sticky bottom-3 z-10 mr-16 flex items-center gap-3 rounded-2xl border border-stroke bg-surface px-4 py-3 shadow-lg">
         <p className={`min-w-0 flex-1 text-sm ${error ? 'text-bad' : note ? 'text-ok' : 'text-mute'}`}>{error || note || (dirty ? 'You have changes that are not saved.' : 'Everything is saved.')}</p>
         <button disabled={busy || !dirty} className={PRIMARY}>{busy ? 'Saving…' : 'Save rules'}</button>
       </div>

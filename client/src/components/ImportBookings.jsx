@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, Download, Loader2, Upload } from 'lucide-react';
 import { api } from '../lib/api';
+import Pager, { usePaged } from './Pager';
 
 // Bringing the office's existing spreadsheet in (master only). The sheet is saved from
 // Excel as CSV, one row per tenancy. It is checked first and every row says what is wrong
@@ -12,7 +13,7 @@ const PRIMARY = 'flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-
 const COLUMNS = [
   ['company', 'ACE Real Estate', true], ['building', 'Park Place Tower', true], ['unit_no', '304', true], ['tenant_name', 'Ahmed Al Mansoori', true],
   ['phone', '0501234567'], ['email', ''], ['emirates_id_no', '784-1990-1234567-1'], ['start_date', '2026-01-01', true], ['end_date', '2026-12-31', true],
-  ['rent_amount', '60000', true], ['rent_period', 'year'], ['payment_frequency', 'quarterly'], ['security_deposit', '5000'], ['contract_no', ''], ['rent_paid_so_far', '45000'],
+  ['rent_amount', '60000', true], ['discount', '10%'], ['tax_percent', '5'], ['rent_period', 'year'], ['payment_frequency', 'quarterly'], ['security_deposit', '5000'], ['contract_no', ''], ['rent_paid_so_far', '45000'],
 ];
 
 /** CSV text → rows of cells. Handles quoted cells, and the semicolons Excel uses in some regions. */
@@ -48,6 +49,7 @@ export default function ImportBookings({ onDone }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const paged = usePaged(rows); // the checked rows, a page at a time
 
   const read = async (file) => {
     setError(''); setCheck(null); setRows(null); setDone(false);
@@ -87,7 +89,7 @@ export default function ImportBookings({ onDone }) {
     <div className="space-y-4">
       <div className="space-y-2 rounded-2xl border border-stroke p-4 text-sm">
         <p>One row for each tenancy. Companies, buildings, units and tenants that are not in the app yet are created.</p>
-        <p className="text-mute">Columns: {COLUMNS.map(([k, , need]) => (need ? `${k}*` : k)).join(', ')}. Dates as 2026-01-01 or 01/01/2026. rent_period is month or year; payment_frequency is monthly, quarterly, every 6 months, yearly or upfront. rent_paid_so_far is the total rent already received, and is applied to the oldest months first.</p>
+        <p className="text-mute">Columns: {COLUMNS.map(([k, , need]) => (need ? `${k}*` : k)).join(', ')}. Dates as 2026-01-01 or 01/01/2026. rent_period is month or year; payment_frequency is monthly, quarterly, every 6 months, yearly or upfront. discount is a percentage (10%) or an amount off the rent (500); tax_percent is the tax on the rent, empty for none. rent_paid_so_far is the total rent already received, and is applied to the oldest months first.</p>
         <div className="flex flex-wrap gap-2 pt-1">
           <button onClick={template} className={GHOST}><Download size={14} /> Download the template</button>
           <label className={`${PRIMARY} cursor-pointer`}>
@@ -113,7 +115,8 @@ export default function ImportBookings({ onDone }) {
                 {['Row', 'Building', 'Unit', 'Tenant', 'From', 'To', 'Rent', 'Result'].map((h) => <th key={h} className="px-3 py-2.5 font-medium">{h}</th>)}
               </tr></thead>
               <tbody className="divide-y divide-stroke/60">
-                {rows.map((r, i) => {
+                {paged.rows.map((r, at) => {
+                  const i = paged.first + at; // its place in the whole sheet
                   const res = check.results[i];
                   return (
                     <tr key={i}>
@@ -127,6 +130,7 @@ export default function ImportBookings({ onDone }) {
               </tbody>
             </table>
           </div>
+          <Pager {...paged.pager} />
         </>
       )}
     </div>

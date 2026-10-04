@@ -43,7 +43,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [], fromOthers: [] }, onDueChanged, onConversation, onMenu, onHistory, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0 }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [], fromOthers: [] }, onDueChanged, onConversation, onMenu, onHistory, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, onClose, onChanged }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -152,6 +152,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         signal: ctrl.signal,
         onEvent: (event, d) => {
           if (event === 'meta') { setConvId(d.conversationId); onConversation(d.conversationId); }
+          else if (event === 'changed') onChanged?.(d); // Riley added something (a building, a booking…): the screens behind can show it
           else if (event === 'agent') { agentId = d.id; update({ agent_id: d.id, why: d.why }); }
           else if (event === 'files') { // saved attachments: link them so they can be viewed
             setMessages((m) => m.map((x) => (x.id === `u${aid}` ? { ...x, files: x.files.map((f) => ({ ...f, ...d.find((s) => s.name === f.name) })) } : x)));
@@ -209,10 +210,11 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     <div className="relative flex h-full flex-col">
       {/* header */}
       <header className="flex items-center gap-1 border-b border-stroke/60 px-2 pb-2 pt-safe md:px-4">
-        <span className="md:hidden"><IconBtn icon="menu" label="Menu" onClick={onMenu} /></span>
+        {/* Floating over another screen (the assistant button), it has no menu or chat list of its own: only a way to close it. */}
+        {!onClose && <span className="md:hidden"><IconBtn icon="menu" label="Menu" onClick={onMenu} /></span>}
         {/* On a phone the chats are a screen of their own; Team chat is in there, so its dot is here. */}
         <button onClick={onHistory} aria-label={menuBadge ? 'Chats (new messages)' : 'Chats'} title="Chats"
-          className="relative grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
+          className={`relative grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden ${onClose ? 'hidden' : ''}`}>
           <MessagesSquare size={20} />
           {menuBadge > 0 && <span className="pointer-events-none absolute right-1.5 top-1.5 size-2.5 rounded-full bg-emerald-400 ring-2 ring-bg" />}
         </button>
@@ -243,6 +245,9 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           </button>
         )}
         <IconBtn icon="edit" label="New Riley chat" onClick={onNewChat} />
+        {onClose && (
+          <button onClick={onClose} aria-label="Close" title="Close" className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><X size={20} /></button>
+        )}
       </header>
 
       {/* messages */}

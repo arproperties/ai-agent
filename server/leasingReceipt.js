@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from './db.js';
 import { bad, bookingRef, dueName, receiptNo, METHODS } from './leasing.js';
-import { cash, currencyWords } from './leasingRegion.js';
+import { cash, currencyWords, region } from './leasingRegion.js';
 
 // The receipt for one payment, as a PDF on the letterhead of the company that owns the
 // building: who paid, how much (in figures and in words), what for, how, and what is still
@@ -33,7 +33,7 @@ const longDate = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', {
 /** Everything one receipt says, read from the payment. */
 export async function receiptRow(paymentId) {
   const p = await db.prepare(`SELECT p.id, p.amount, p.method, p.reference, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, w.name AS recorded_by,
-      i.kind, i.label, i.amount AS due_amount, to_char(i.due_date, 'YYYY-MM-DD') AS due_date,
+      i.kind, i.label, i.amount AS due_amount, i.tax, b.tax_percent, to_char(i.due_date, 'YYYY-MM-DD') AS due_date,
       (SELECT coalesce(sum(x.amount), 0) FROM lease_payments x WHERE x.installment_id = i.id AND x.id <= p.id) AS paid_so_far,
       b.id AS booking_id, to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
       t.full_name AS tenant, t.phone AS tenant_phone, u.unit_no, bl.name AS building,
@@ -80,12 +80,14 @@ export async function renderReceipt(p) {
     ['Paid by', [METHODS.find(([k]) => k === p.method)?.[1], p.reference && `Ref. ${p.reference}`].filter(Boolean).join('  ·  ')],
     ['Still owed', left > 0.004 ? `${aed(left)} of ${aed(p.due_amount)}` : 'Nothing: paid in full'],
   ];
+  // On a taxed payment: how much of what was received is tax, the same share as of the amount due.
+  if (Number(p.tax) > 0) rows.splice(2, 0, [`Includes ${region().tax_name}`, `${aed((Number(p.amount) * Number(p.tax)) / Number(p.due_amount))}${p.tax_percent ? ` (${Number(p.tax_percent)}%)` : ''}`]);
   let y = 304;
   for (const [label, value] of rows) {
     put(label, L, y, { size: 9, color: grey });
     put(value, L + 90, y, { size: 10.5 });
     rule(y - 9);
-    y -= 28;
+    y -= rows.length > 6 ? 25 : 28;
   }
 
   page.drawRectangle({ x: L, y: 62, width: 190, height: 40, borderColor: ink, borderWidth: 1 });

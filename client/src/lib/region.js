@@ -1,10 +1,10 @@
 import { api } from './api';
 
-// Where the business is: its currency, time zone and phone country code, set by the master
+// Where the business is: its currency, time zone, phone country code and usual tax, set by the master
 // (server/leasingRegion.js). Read once after signing in and kept here, so any screen can
 // write an amount without asking. The UAE is the default until the server has answered.
 
-let now = { currency: 'AED', timezone: 'Asia/Dubai', phone_code: '971' };
+let now = { currency: 'AED', timezone: 'Asia/Dubai', phone_code: '971', tax_percent: 5, tax_name: 'VAT' };
 const listeners = new Set();
 const set = (r) => { now = r; listeners.forEach((fn) => fn(now)); return now; };
 

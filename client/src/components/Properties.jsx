@@ -245,6 +245,8 @@ function Level({ kind, rows, master, onOpen, onAdd, onSave, onRemove, onChanged,
 }
 
 const join = (...xs) => xs.filter(Boolean).join(' · ');
+// What a building's page is split into.
+const BUILDING_TABS = [['units', 'Units'], ['services', 'Services']];
 
 /** A building's services (pet fee, parking, laundry…): what a booking in it can be charged besides the rent. The master keeps the list. */
 function BuildingServices({ building, master }) {
@@ -254,12 +256,12 @@ function BuildingServices({ building, master }) {
     setServices(null);
     api.get(`/leasing/services?building_id=${building.id}`).then((list) => setServices(list.filter((s) => s.building_id === building.id))).catch((e) => setError(e.message));
   }, [building.id]);
-  if (!services || (!master && !services.length)) return error ? <p className="mb-4 text-sm text-bad">{error}</p> : null;
+  if (!services) return error ? <p className="text-sm text-bad">{error}</p> : <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
+  if (!master && !services.length) return <p className="py-3 text-sm text-mute">No extra services in this building yet.</p>;
   return (
-    <div className="mb-4 rounded-2xl border border-stroke p-3">
-      <p className="mb-2 text-xs text-mute">Services of this building · a booking here picks its extra charges from this list. The price can still be changed on the booking.</p>
-      {master ? <ServiceList services={services} buildingId={building.id} onChange={setServices} onError={setError} />
-        : <p className="text-sm">{services.map((s) => s.name).join(' · ')}</p>}
+    <div>
+      <p className="mb-3 text-xs text-mute">What a tenant here can be charged on top of the rent. A booking picks from this list, and can still change the price.</p>
+      <ServiceList services={services} buildingId={building.id} onChange={setServices} onError={setError} readOnly={!master} />
       {error && <p className="mt-2 text-sm text-bad">{error}</p>}
     </div>
   );
@@ -304,7 +306,8 @@ export default function PropertiesPage({ me, onBack }) {
   const [adding, setAdding] = useState(false); // the company form: a new one on the home, an edit on a company's page
   const [newBuilding, setNewBuilding] = useState(false); // the add-building form on a company's page
   const [newUnit, setNewUnit] = useState(false); // the add-unit form on a building's page
-  useEffect(() => { setAdding(false); setNewBuilding(false); setNewUnit(false); }, [at]);
+  const [tab, setTab] = useState('units'); // which part of a building's page is showing
+  useEffect(() => { setAdding(false); setNewBuilding(false); setNewUnit(false); setTab('units'); }, [at]);
 
   const url =at.level === 'companies' ? '/properties/companies' : at.level === 'company' ? `/properties/companies/${at.id}` : `/properties/buildings/${at.id}`;
   // Data is kept with the address it came from: on the render right after a tap, the old
@@ -361,8 +364,16 @@ export default function PropertiesPage({ me, onBack }) {
       <Cover row={data} master={master} onChanged={load} />
       <p className="mb-3 text-sm text-mute">{join(data.company?.name, data.area, data.emirate, data.makani_no && `Makani ${data.makani_no}`)}</p>
       <BuildingStaff building={data} master={master} onChanged={load} />
-      <BuildingServices building={data} master={master} />
-      <Level kind="unit" rows={data.list} master={master} addLabel="Add a unit" empty="No units in this building yet."
+      <div className="mb-4 flex gap-5 border-b border-stroke text-sm">
+        {BUILDING_TABS.map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 pb-2 pt-1 transition ${tab === k ? 'border-p1 text-txt' : 'border-transparent text-mute hover:text-txt'}`}>
+            {l}{k === 'units' && data.list.length > 0 && <span className="text-xs text-mute">{data.list.length}</span>}
+          </button>
+        ))}
+      </div>
+      {tab === 'services' && <BuildingServices building={data} master={master} />}
+      {tab === 'units' && <Level kind="unit" rows={data.list} master={master} addLabel="Add a unit" empty="No units in this building yet."
         line={(u) => join(u.floor && `Floor ${u.floor}`, u.type)}
         details={(u) => [['Size', u.size_sqft && `${Number(u.size_sqft).toLocaleString()} sq ft`], ['DEWA no.', u.dewa_no]]}
         stat={(u) => (
@@ -375,7 +386,7 @@ export default function PropertiesPage({ me, onBack }) {
           </div>
         )}
         addOpen={newUnit} onAddClose={() => setNewUnit(false)} onChanged={load}
-        onAdd={async (v, files) => { const u = await api.post(`/properties/buildings/${data.id}/units`, v); await sendPhotos('unit', u.id, files); load(); }} onSave={edit('units', 'unit')} onRemove={del('units')} />
+        onAdd={async (v, files) => { const u = await api.post(`/properties/buildings/${data.id}/units`, v); await sendPhotos('unit', u.id, files); load(); }} onSave={edit('units', 'unit')} onRemove={del('units')} />}
     </>
   );
 
@@ -398,7 +409,7 @@ export default function PropertiesPage({ me, onBack }) {
   const action = !master ? null
     : at.level === 'companies' ? <button onClick={() => setAdding(true)} className={PRIMARY}><Plus size={16} /> Register company</button>
       : at.level === 'company' && data && !newBuilding ? <button onClick={() => setNewBuilding(true)} className={PRIMARY}><Plus size={16} /> Add building</button>
-        : at.level === 'building' && data && !newUnit ? <button onClick={() => setNewUnit(true)} className={PRIMARY}><Plus size={16} /> Add unit</button>
+        : at.level === 'building' && data && tab === 'units' && !newUnit ? <button onClick={() => setNewUnit(true)} className={PRIMARY}><Plus size={16} /> Add unit</button>
           : null;
   return <Page title={title} action={action} onBack={back}>{body}</Page>;
 }

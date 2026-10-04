@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, closeDb, db, makeUser } from './helpers/db.js';
 import { create, setBuildingStaff, buildingStaff } from '../server/properties.js';
-import { createBooking, bookingPayments, recordPayment, payBooking, settleDeposit, bookingHistory, changeEnd, cancelBooking, getBooking } from '../server/leasing.js';
+import { createBooking, bookingPayments, recordPayment, removePayment, payBooking, settleDeposit, depositState, bookingHistory, changeEnd, cancelBooking, getBooking } from '../server/leasing.js';
 import { report } from '../server/leasingReports.js';
 import { runAlerts, saveSettings } from '../server/leasingAlerts.js';
 
@@ -68,8 +68,11 @@ test('a late fee is added once the days of grace are over, and comes off if the 
 test('a deposit given back is in the collections, the daily report and the tenant statement', async () => {
   const { staff, bk } = await tower();
   const [deposit] = await bookingPayments(bk.id, AT);
-  await recordPayment(deposit.id, { amount: 5000, method: 'cash', received_on: '2026-09-15' }, staff, AT);
+  const paid = await recordPayment(deposit.id, { amount: 5000, method: 'cash', received_on: '2026-09-15' }, staff, AT);
   await settleDeposit(bk.id, { refunded: 4000, note: 'Repainting' }, staff, AT);
+  // The payment that brought the deposit in cannot be deleted from under what was given back.
+  await assert.rejects(removePayment(paid.id, staff), /AED 4,000 of this deposit has already been given back/);
+  assert.equal((await depositState(bk.id)).held, 5000);
 
   const got = await report('collections', { from: '2026-09-01', to: AT }, AT);
   assert.deepEqual(got.rows.map((r) => [r.received_on, r.what, r.amount]), [['2026-09-15', 'Security deposit', 5000], [AT, 'Deposit returned', -4000]]);

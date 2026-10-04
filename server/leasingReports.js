@@ -71,17 +71,21 @@ function collections(s, { from, to }) {
   const end = isDate(to || '') ? to : s.today;
   if (end < start) throw bad('The end date is before the start date.');
   const got = s.pays.filter((p) => p.received_on >= start && p.received_on <= end).map((p) => ({
-    received_on: p.received_on, ...s.where(s.bookingOf.get(p.booking_id)), what: dueName(p), method: METHOD[p.method], reference: p.reference, amount: p.amount, recorded_by: p.added_by,
+    received_on: p.received_on, ...s.where(s.bookingOf.get(p.booking_id)), what: dueName(p), method: METHOD[p.method], reference: p.reference, amount: p.amount, tax: p.tax, recorded_by: p.added_by,
   }));
+  // The tax in what came in, shown only where some booking is taxed.
+  const tax = total(got, (r) => r.tax);
+  const taxName = region().tax_name;
   // A deposit given back in these dates is money out: a line of its own, with a minus.
   const back = s.refunds.filter((r) => r.on >= start && r.on <= end).map(({ on, amount, note, ...who }) => ({ received_on: on, ...who, what: 'Deposit returned', reference: note, amount: -amount }));
   const rows = [...got, ...back].sort((a, b) => (a.received_on < b.received_on ? -1 : a.received_on > b.received_on ? 1 : 0));
   const groups = (key) => [...new Set(got.map((r) => r[key]))].map((k) => fig(k, total(got.filter((r) => r[key] === k))));
   return {
     title: 'Collections', period: `${start} to ${end}`, from: start, to: end,
-    columns: [col('received_on', 'Received', 'date'), col('tenant', 'Tenant'), ...PLACE, col('what', 'For'), col('method', 'Method'), col('reference', 'Reference'), col('amount', 'Amount', 'money'), col('recorded_by', 'Recorded by')],
-    rows, total: { amount: total(rows) },
-    summary: [fig('Collected', total(got)), fig('Payments', got.length, 'int'),
+    columns: [col('received_on', 'Received', 'date'), col('tenant', 'Tenant'), ...PLACE, col('what', 'For'), col('method', 'Method'), col('reference', 'Reference'), col('amount', 'Amount', 'money'),
+      ...(tax ? [col('tax', `Of which ${taxName}`, 'money')] : []), col('recorded_by', 'Recorded by')],
+    rows, total: { amount: total(rows), ...(tax ? { tax } : {}) },
+    summary: [fig('Collected', total(got)), ...(tax ? [fig(`${taxName} collected`, tax)] : []), fig('Payments', got.length, 'int'),
       ...(back.length ? [fig('Deposits returned', -total(back)), fig('Net', total(rows))] : []), ...groups('method'), ...groups('building')],
   };
 }

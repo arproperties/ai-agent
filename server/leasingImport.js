@@ -14,7 +14,7 @@ import { makeBooking, takePayment, bookingPayments, isDate, bad, todayHere } fro
 // sheet cannot happen.
 
 export const IMPORT_COLUMNS = ['company', 'building', 'unit_no', 'tenant_name', 'phone', 'email', 'emirates_id_no', 'start_date', 'end_date',
-  'rent_amount', 'rent_period', 'payment_frequency', 'security_deposit', 'contract_no', 'rent_paid_so_far'];
+  'rent_amount', 'discount', 'tax_percent', 'rent_period', 'payment_frequency', 'security_deposit', 'contract_no', 'rent_paid_so_far'];
 const FREQ = { monthly: 'monthly', quarterly: 'quarterly', 'every 3 months': 'quarterly', every_6_months: 'every_6_months', 'every 6 months': 'every_6_months',
   yearly: 'yearly', annually: 'yearly', upfront: 'upfront', 'all upfront': 'upfront' };
 const UNDO = Symbol('undo');
@@ -48,6 +48,10 @@ async function importRow(r, by, today) {
   const payment_frequency = FREQ[str(r.payment_frequency).toLowerCase() || 'monthly'];
   if (!payment_frequency) throw bad(`Paid "${str(r.payment_frequency)}" is not one of: monthly, quarterly, every 6 months, yearly, upfront.`);
 
+  // The discount as the office writes it: "10%" is a percentage, "500" an amount off the rent.
+  const off = str(r.discount);
+  const discount = off ? { discount_type: off.endsWith('%') ? 'percent' : 'amount', discount_value: amount(off, 'Discount') } : {};
+
   const companyId = await need('company', 'prop_companies', 'name', str(r.company));
   const buildingId = await need('building', 'prop_buildings', 'name', str(r.building), 'company_id', companyId);
   const unitId = await need('unit', 'prop_units', 'unit_no', str(r.unit_no), 'building_id', buildingId);
@@ -59,6 +63,7 @@ async function importRow(r, by, today) {
   const b = await makeBooking({
     unit_id: unitId, start_date, end_date, rent_amount: amount(r.rent_amount, 'Rent'), rent_period, payment_frequency, status: 'confirmed',
     security_deposit: str(r.security_deposit) ? amount(r.security_deposit, 'Deposit') : null, contract_no: r.contract_no,
+    ...discount, tax_percent: str(r.tax_percent) ? amount(r.tax_percent, 'Tax') : null,
     ...(known ? { tenant_id: known.id } : { tenant: { full_name: str(r.tenant_name), phone: r.phone, email: r.email, emirates_id_no: eid } }),
   }, by);
 

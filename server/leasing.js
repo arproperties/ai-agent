@@ -23,6 +23,7 @@ const isTrue = (v) => v === true || v === 'true';
 const PERIODS = new Set(['month', 'year']);
 const FREQUENCIES = new Set(['monthly', 'quarterly', 'every_6_months', 'yearly', 'upfront']);
 const TYPES = new Set(['short_term', 'lease']);
+const DISCOUNTS = new Set(['percent', 'amount']);
 
 // ---------- tenants ----------
 
@@ -86,8 +87,9 @@ export async function removeTenant(id) {
 // ---------- bookings ----------
 
 const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amount, b.rent_period, b.payment_frequency,
-    b.security_deposit, b.status, b.contract_no, b.cancel_reason, b.notes, b.created_at,
-    b.fees, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
+    b.security_deposit, b.status, b.contract_no, b.source, b.cancel_reason, b.notes, b.created_at,
+    b.fees, b.discount_type, b.discount_value, b.discount_note, b.tax_percent, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
+    b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
     (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
     to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
     u.unit_no, u.floor, u.type AS unit_type, bl.id AS building_id, bl.name AS building, c.id AS company_id, c.name AS company,
@@ -106,7 +108,9 @@ export function bookingStage(b, today = todayHere()) {
   return today < b.start_date ? 'upcoming' : today > b.end_date ? 'ended' : 'active';
 }
 
-const shape = (b, today) => b && { ...b, fees: JSON.parse(b.fees || '[]'), ref: bookingRef(b), stage: bookingStage(b, today) };
+const num = (v) => (v == null ? null : Number(v));
+const shape = (b, today) => b && { ...b, fees: JSON.parse(b.fees || '[]'), discount_value: num(b.discount_value), tax_percent: num(b.tax_percent),
+  ref: bookingRef(b), stage: bookingStage(b, today) };
 
 /** A lease is a year or more (end on or after the day before the same date next year). */
 export function suggestType(start, end) {
@@ -129,7 +133,7 @@ export async function listBookings({ stage, company_id, building_id, unit_id, te
     if (v) { where.push(`${col} = ?`); args.push(Number(v)); }
   }
   if (q && String(q).trim()) {
-    where.push(`lower(concat_ws(' ', t.full_name, t.phone, t.email, u.unit_no, bl.name, c.name, b.contract_no)) LIKE ?`);
+    where.push(`lower(concat_ws(' ', t.full_name, t.phone, t.email, u.unit_no, bl.name, c.name, b.contract_no, b.source)) LIKE ?`);
     args.push(`%${String(q).trim().toLowerCase()}%`);
   }
   const rows = await db.prepare(`${BOOKING_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -160,6 +164,7 @@ function bookingFields(body = {}, { partial = false } = {}) {
   if ('payment_frequency' in body) { if (!FREQUENCIES.has(body.payment_frequency)) throw bad('Unknown payment frequency.'); out.payment_frequency = body.payment_frequency; }
   if ('type' in body && body.type) { if (!TYPES.has(body.type)) throw bad('Unknown booking type.'); out.type = body.type; }
   for (const f of ['contract_no', 'notes']) if (f in body) out[f] = text(body[f], 2000);
+  if ('source' in body) out.source = text(body.source, 60); // where the tenant came from: a name off the sources list
   // Other charges (pet fee, parking, commission, DEWA deposit…): each is due once, on the first day,
   // or, when it repeats, with every rent payment.
   if ('fees' in body) {
@@ -170,8 +175,29 @@ function bookingFields(body = {}, { partial = false } = {}) {
     if (new Set(fees.map((f) => f.label.toLowerCase())).size < fees.length) throw bad('Two other charges have the same name.');
     out.fees = JSON.stringify(fees);
   }
+  // A discount off the rent: a percentage, or an amount off the rent as it was entered. Left empty, there is none.
+  if ('discount_value' in body) {
+    const v = body.discount_value;
+    if (v === '' || v == null || Number(v) === 0) Object.assign(out, { discount_type: null, discount_value: null });
+    else {
+      if (!DISCOUNTS.has(body.discount_type)) throw bad('A discount is a percent or an amount.');
+      if (!(Number(v) > 0)) throw bad('The discount must be a number above zero.');
+      if (body.discount_type === 'percent' && Number(v) >= 100) throw bad('A discount in percent is below 100.');
+      Object.assign(out, { discount_type: body.discount_type, discount_value: Number(v) });
+    }
+  }
+  if ('discount_note' in body) out.discount_note = text(body.discount_note);
+  // Tax on the rent and the other charges. Empty or zero is a booking with no tax.
+  if ('tax_percent' in body) {
+    const v = body.tax_percent;
+    if (v !== '' && v != null && !(Number(v) >= 0 && Number(v) <= 100)) throw bad('The tax is a percentage from 0 to 100.');
+    out.tax_percent = Number(v) > 0 ? Number(v) : null;
+  }
   return out;
 }
+
+/** An amount taken off the rent has to leave some rent. */
+const mustLeaveRent = (b) => { if (b.discount_type === 'amount' && Number(b.discount_value) >= Number(b.rent_amount)) throw bad('The discount must be less than the rent.'); };
 
 /** The confirmed booking of this unit that shares a day with these dates, if any. */
 const clash = (unitId, start, end, exceptId = 0) => db.prepare(`${BOOKING_SELECT}
@@ -193,6 +219,7 @@ export const createBooking = (body = {}, by) => tx(() => makeBooking(body, by));
 /** createBooking without its own transaction, for a caller that is already in one (the importer). */
 export async function makeBooking(body = {}, by) {
   const row = bookingFields(body);
+  mustLeaveRent(row);
   if (!body.unit_id) throw bad('Choose a unit.');
   const confirm = body.status === 'confirmed';
   const tenantId = body.tenant_id ? (await getTenant(body.tenant_id)).id : (await addTenant(body.tenant || {}, by)).id;
@@ -221,12 +248,13 @@ export async function updateBooking(id, body = {}, by) {
     const start = row.start_date || old.start_date;
     const end = row.end_date || old.end_date;
     if (end < start) throw bad('The end date is before the start date.');
+    mustLeaveRent({ ...old, ...row });
     if (old.status === 'confirmed') await mustBeFree(row.unit_id || old.unit_id, start, end, old.id);
     // The schedule is rebuilt around the rows already paid, which only holds if they still fit it.
-    const fixed = ['start_date', 'rent_period', 'payment_frequency'].some((f) => f in row && row[f] !== old[f])
-      || ('rent_amount' in row && row.rent_amount !== Number(old.rent_amount));
+    const fixed = ['start_date', 'rent_period', 'payment_frequency', 'discount_type'].some((f) => f in row && row[f] !== old[f])
+      || ['rent_amount', 'discount_value', 'tax_percent'].some((f) => f in row && row[f] !== num(old[f]));
     if (fixed && await db.prepare('SELECT 1 FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id WHERE i.booking_id = ? LIMIT 1').get(old.id)) {
-      throw bad('Payments are recorded on this booking, so its start date, rent and payment frequency cannot change. Cancel it and make a new booking instead.', 409);
+      throw bad('Payments are recorded on this booking, so its start date, rent, discount, tax and payment frequency cannot change. Cancel it and make a new booking instead.', 409);
     }
     const cols = Object.keys(row);
     if (cols.length) await db.prepare(`UPDATE lease_bookings SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => row[c]), old.id);
@@ -299,7 +327,7 @@ export async function cancelBooking(id, reason, by, today = todayHere()) {
     if (!why) throw bad('Say why it is cancelled.');
     await db.prepare("UPDATE lease_bookings SET status = 'cancelled', cancel_reason = ? WHERE id = ?").run(why, b.id);
     await db.prepare('DELETE FROM lease_installments i WHERE i.booking_id = ? AND i.due_date > ? AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)').run(b.id, today);
-    await db.prepare(`UPDATE lease_installments SET amount = (SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)
+    await db.prepare(`UPDATE lease_installments SET amount = (SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id), tax = ${TAX_OF_PAID}
       WHERE booking_id = ? AND due_date > ?`).run(b.id, today);
     await logEvent(b.id, 'cancelled', why, by);
     return getBooking(id);
@@ -399,7 +427,15 @@ function addMonths(s, n) {
   const last = new Date(Date.UTC(y, m + n, 0)).getUTCDate();
   return new Date(Date.UTC(y, m - 1 + n, Math.min(d, last))).toISOString().slice(0, 10);
 }
-export const monthlyRent = (b) => Number(b.rent_amount) / (b.rent_period === 'year' ? 12 : 1);
+/** The rent as it is charged: what was entered, less the booking's discount. */
+export const netRent = (b) => {
+  const rent = Number(b.rent_amount);
+  const off = Number(b.discount_value) || 0;
+  return b.discount_type === 'percent' ? rent - (rent * off) / 100 : b.discount_type === 'amount' ? rent - off : rent;
+};
+export const monthlyRent = (b) => netRent(b) / (b.rent_period === 'year' ? 12 : 1);
+/** The tax on an amount, at the booking's rate; nothing when it has none. */
+export const taxOn = (b, amount) => money((amount * (Number(b.tax_percent) || 0)) / 100);
 /** How many months a stay covers; a part month counts as a month. An end date written as the
     same day of the month as the start (16 March to 16 March) is the whole months and no more:
     that is how a year is often written, not a thirteenth month of rent. */
@@ -412,7 +448,8 @@ function monthsOf(b) {
 export const dueName = (i) => (i.kind === 'deposit' ? 'Security deposit' : i.kind === 'fee' ? i.label : i.kind === 'late' ? `Late fee (rent due ${i.label})` : 'Rent');
 
 /** When a booking's rent falls due and how much: one row per payment, from its frequency.
-    A part month counts as a month; "upfront" is the whole stay on the first day. */
+    A part month counts as a month; "upfront" is the whole stay on the first day. The amount
+    is the rent after its discount, with the tax on it (`tax`, on a booking that is taxed). */
 export function schedule(b) {
   const months = monthsOf(b);
   const step = STEP[b.payment_frequency] || months;
@@ -420,14 +457,21 @@ export function schedule(b) {
   // Each payment is the rent up to its end less the rent up to its start, so a yearly rent that
   // does not divide by twelve still adds up to exactly itself.
   const upTo = (n) => money(monthlyRent(b) * n);
-  for (let k = 0; k < months; k += step) out.push({ due: addMonths(b.start_date, k), amount: money(upTo(Math.min(k + step, months)) - upTo(k)) });
+  for (let k = 0; k < months; k += step) {
+    const rent = money(upTo(Math.min(k + step, months)) - upTo(k));
+    const tax = taxOn(b, rent);
+    out.push({ due: addMonths(b.start_date, k), amount: money(rent + tax), ...(tax ? { tax } : {}) });
+  }
   return out;
 }
+
+// A row cut down to what was paid on it keeps the same share of tax in what is left.
+const TAX_OF_PAID = 'CASE WHEN amount > 0 THEN round(tax * (SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id) / amount, 2) ELSE 0 END';
 
 /**
  * Write a confirmed booking's schedule: the rent, then the security deposit and any other
  * charges. Those are due on the first day, except a charge that repeats, which is due with
- * every rent payment. Rows with no payment against them are rebuilt. A row with money against
+ * every rent payment. A taxed booking's rent and charges carry their tax; the deposit never does. Rows with no payment against them are rebuilt. A row with money against
  * it is kept, and owes what the terms now say (never less than it has been paid); one the
  * terms no longer ask for at all (a charge taken off, a stay cut short) owes nothing more.
  */
@@ -439,17 +483,17 @@ async function writeSchedule(b) {
   const rows = [
     ...rent.map((p) => ({ kind: 'rent', label: '', ...p })),
     ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: b.start_date, amount: Number(b.security_deposit) }] : []),
-    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => p.due) : [b.start_date]).map((due) => ({ kind: 'fee', label: f.label, due, amount: f.amount }))),
+    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => p.due) : [b.start_date]).map((due) => ({ kind: 'fee', label: f.label, due, amount: money(f.amount + taxOn(b, f.amount)), tax: taxOn(b, f.amount) }))),
   ];
   const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';
   for (const r of rows) {
-    await db.prepare(`INSERT INTO lease_installments (booking_id, kind, label, due_date, amount) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT (booking_id, kind, label, due_date) DO UPDATE SET amount = GREATEST(EXCLUDED.amount, ${paid})`).run(b.id, r.kind, r.label, r.due, r.amount);
+    await db.prepare(`INSERT INTO lease_installments (booking_id, kind, label, due_date, amount, tax) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (booking_id, kind, label, due_date) DO UPDATE SET amount = GREATEST(EXCLUDED.amount, ${paid}), tax = EXCLUDED.tax`).run(b.id, r.kind, r.label, r.due, r.amount, r.tax || 0);
   }
   const asked = new Set(rows.map((r) => `${r.kind}|${r.label}|${r.due}`));
   const have = await db.prepare("SELECT id, kind, label, to_char(due_date, 'YYYY-MM-DD') AS due FROM lease_installments WHERE booking_id = ? AND kind <> 'late'").all(b.id);
   for (const h of have) {
-    if (!asked.has(`${h.kind}|${h.label}|${h.due}`)) await db.prepare(`UPDATE lease_installments SET amount = ${paid} WHERE id = ?`).run(h.id);
+    if (!asked.has(`${h.kind}|${h.label}|${h.due}`)) await db.prepare(`UPDATE lease_installments SET amount = ${paid}, tax = ${TAX_OF_PAID} WHERE id = ?`).run(h.id);
   }
 }
 
@@ -490,7 +534,7 @@ export async function bookingPayments(bookingId, today = todayHere()) {
   await backfillSchedules();
   await applyLateFees(today);
   const b = await getBooking(bookingId);
-  const rows = await db.prepare(`SELECT id, kind, label, to_char(due_date, 'YYYY-MM-DD') AS due_date, amount FROM lease_installments WHERE booking_id = ?
+  const rows = await db.prepare(`SELECT id, kind, label, to_char(due_date, 'YYYY-MM-DD') AS due_date, amount, tax FROM lease_installments WHERE booking_id = ?
     ORDER BY due_date, (kind = 'rent'), kind, label`).all(b.id);
   const pays = await db.prepare(`SELECT p.id, p.installment_id, p.amount, p.method, p.reference, p.notes, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, w.name AS recorded_by,
       (p.file_path IS NOT NULL) AS has_file, p.file_name
@@ -501,7 +545,7 @@ export async function bookingPayments(bookingId, today = todayHere()) {
     const amount = Number(i.amount);
     const paid = total(payments);
     const status = paid >= amount ? 'paid' : i.due_date < today ? 'overdue' : paid > 0 ? 'partly_paid' : i.due_date === today ? 'due' : 'upcoming';
-    return { ...i, name: dueName(i), amount, paid, left: money(Math.max(0, amount - paid)), status, payments };
+    return { ...i, name: dueName(i), amount, tax: Number(i.tax), paid, left: money(Math.max(0, amount - paid)), status, payments };
   });
 }
 
@@ -553,7 +597,7 @@ export const payBooking = (bookingId, body = {}, by, today = todayHere(), file =
 });
 
 const getPayment = async (id) => {
-  const p = await db.prepare(`SELECT p.id, p.amount, p.file_path, p.file_name, p.file_mime, i.booking_id FROM lease_payments p
+  const p = await db.prepare(`SELECT p.id, p.amount, p.file_path, p.file_name, p.file_mime, i.booking_id, i.kind FROM lease_payments p
     JOIN lease_installments i ON i.id = p.installment_id WHERE p.id = ?`).get(Number(id) || 0);
   if (!p) throw bad('Not found', 404);
   return p;
@@ -572,6 +616,14 @@ export async function attachPaymentFile(id, file, by) {
 
 export async function removePayment(id, by) {
   const p = await getPayment(id);
+  // A deposit given back has to have come in: without the payment the books would show money returned that was never received.
+  if (p.kind === 'deposit') {
+    // Passed on at a renewal, it is given back from the booking that holds it now.
+    let holder = await getBooking(p.booking_id);
+    while (holder.deposit_passed_to) holder = await getBooking(holder.deposit_passed_to);
+    const d = await depositState(holder.id);
+    if (d.refunded != null && money(d.held - Number(p.amount)) < d.refunded) throw bad(`${cash(d.refunded)} of this deposit has already been given back. Change what was given back first.`, 409);
+  }
   await db.prepare('DELETE FROM lease_payments WHERE id = ?').run(p.id);
   if (p.file_path) rmSync(p.file_path, { force: true });
   await logEvent(p.booking_id, 'payment_deleted', cash(p.amount), by);
@@ -580,20 +632,80 @@ export async function removePayment(id, by) {
 
 // ---------- security deposit ----------
 
-/** Where a booking's deposit stands: unpaid, held, or settled (refunded, partly refunded or kept). */
+/** What has been received as deposit on this booking itself. */
+const depositPaid = async (id) => Number((await db.prepare(`SELECT coalesce(sum(p.amount), 0) AS n FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id
+  WHERE i.booking_id = ? AND i.kind = 'deposit'`).get(id)).n);
+/** The earlier bookings whose deposit was passed on to this one, each with what it brought: its own, and any passed on to it in turn. */
+async function carriedTo(id) {
+  const out = [];
+  for (const f of await db.prepare(`${BOOKING_SELECT} WHERE b.deposit_passed_to = ? ORDER BY b.id`).all(id)) {
+    out.push({ id: f.id, ref: bookingRef(f), on: f.deposit_passed_on, amount: money(await depositPaid(f.id) + total(await carriedTo(f.id))) });
+  }
+  return out;
+}
+
+/**
+ * Where a booking's deposit stands: unpaid, held, passed on, or settled (refunded, partly
+ * refunded or kept). At a renewal the deposit can be passed on to the new booking, which then
+ * holds it and gives it back: `from` is what was carried over to this booking and from where,
+ * `passed_to` the booking this one's went to. `can_pass` is the renewal it could go to, and
+ * `waiting` the deposit still held on the booking this one renews.
+ */
 export async function depositState(bookingId) {
   const b = await getBooking(bookingId);
   const amount = Number(b.security_deposit) || 0;
-  const { held } = await db.prepare(`SELECT coalesce(sum(p.amount), 0) AS held FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id
-    WHERE i.booking_id = ? AND i.kind = 'deposit'`).get(b.id);
+  const from = await carriedTo(b.id);
+  const held = money(await depositPaid(b.id) + total(from));
   const refunded = b.deposit_refunded == null ? null : Number(b.deposit_refunded);
-  const status = !amount ? 'none' : refunded == null ? (Number(held) > 0 ? 'held' : 'unpaid') : refunded >= Number(held) ? 'refunded' : refunded > 0 ? 'partly_refunded' : 'kept';
-  return { amount, held: Number(held), refunded, note: b.deposit_note, settled_on: b.deposit_settled_on, status };
+  const to = b.deposit_passed_to ? await getBooking(b.deposit_passed_to) : null;
+  // A deposit taken off the booking after it was received is still held, and still to give back.
+  const status = to ? 'passed_on' : !amount && !held ? 'none' : refunded == null ? (held > 0 ? 'held' : 'unpaid') : refunded >= held ? 'refunded' : refunded > 0 ? 'partly_refunded' : 'kept';
+  const out = { amount, held, refunded, note: b.deposit_note, settled_on: b.deposit_settled_on, status };
+  if (from.length) out.from = from;
+  if (to) out.passed_to = { id: to.id, ref: to.ref, on: b.deposit_passed_on };
+  else if (held > 0 && refunded == null) {
+    const next = await db.prepare(`${BOOKING_SELECT} WHERE b.renewed_from = ? AND b.status <> 'cancelled' AND b.deposit_refunded IS NULL ORDER BY b.id DESC LIMIT 1`).get(b.id);
+    if (next) out.can_pass = { id: next.id, ref: bookingRef(next) };
+  }
+  if (b.renewed_from && b.deposit_refunded == null && !from.some((f) => f.id === b.renewed_from)) {
+    const prior = await db.prepare(`${BOOKING_SELECT} WHERE b.id = ? AND b.deposit_refunded IS NULL AND b.deposit_passed_to IS NULL`).get(b.renewed_from);
+    const theirs = prior ? money(await depositPaid(prior.id) + total(await carriedTo(prior.id))) : 0;
+    if (theirs > 0) out.waiting = { id: prior.id, ref: bookingRef(prior), amount: theirs };
+  }
+  return out;
 }
+
+/** At a renewal: the deposit held on this booking goes to the booking that renews it, which gives it back at its own check-out. No money moves. */
+export const passDeposit = (bookingId, by, today = todayHere()) => tx(async () => {
+  const d = await depositState(bookingId);
+  if (d.passed_to) throw bad(`This deposit was already passed on to ${d.passed_to.ref}.`, 409);
+  if (!d.held) throw bad('No deposit has been received on this booking.', 409);
+  if (d.refunded != null) throw bad('This deposit has already been given back.', 409);
+  if (!d.can_pass) throw bad('This booking has no renewal to pass the deposit on to. Renew it first.', 409);
+  const b = await getBooking(bookingId);
+  await db.prepare('UPDATE lease_bookings SET deposit_passed_to = ?, deposit_passed_on = ? WHERE id = ?').run(d.can_pass.id, today, b.id);
+  await logEvent(b.id, 'deposit_passed', `${cash(d.held)} passed on to ${d.can_pass.ref}`, by);
+  await logEvent(d.can_pass.id, 'deposit_carried', `${cash(d.held)} carried over from ${b.ref}`, by);
+  return depositState(b.id);
+});
+
+/** Undo passing it on, as long as the booking it went to has not given it back or passed it on again. */
+export const takeBackDeposit = (bookingId, by) => tx(async () => {
+  const b = await getBooking(bookingId);
+  if (!b.deposit_passed_to) throw bad('This deposit was not passed on.', 409);
+  const next = await getBooking(b.deposit_passed_to);
+  if (next.deposit_refunded != null) throw bad(`This deposit has already been given back from ${next.ref}.`, 409);
+  if (next.deposit_passed_to) throw bad(`${next.ref} has passed it on again. Undo that first.`, 409);
+  await db.prepare('UPDATE lease_bookings SET deposit_passed_to = NULL, deposit_passed_on = NULL WHERE id = ?').run(b.id);
+  await logEvent(b.id, 'deposit_back', `Passing on to ${next.ref} undone`, by);
+  await logEvent(next.id, 'deposit_back', `Deposit returned to ${b.ref}: passing on undone`, by);
+  return depositState(b.id);
+});
 
 /** At check-out: how much of the deposit went back, and why the rest was kept. */
 export async function settleDeposit(bookingId, body = {}, by, today = todayHere()) {
   const d = await depositState(bookingId);
+  if (d.passed_to) throw bad(`This deposit was passed on to ${d.passed_to.ref}. Give it back from that booking.`, 409);
   if (!d.held) throw bad('No deposit has been received on this booking.', 409);
   const refunded = Number(body.refunded);
   if (!Number.isFinite(refunded) || refunded < 0 || refunded > d.held) throw bad(`The refund is between 0 and ${cash(d.held)}.`);
@@ -668,13 +780,53 @@ async function learnPrices(fees, buildingId) {
   }
 }
 
+// ---------- sources ----------
+//
+// Where tenants come from: a walk-in, a referral, a listing site. One list for the whole app,
+// picked from on the booking form and kept on its own page. A booking keeps the name itself,
+// so removing a source here never touches a booking; renaming one renames it on the bookings
+// that have it.
+
+const sourceName = (body = {}) => {
+  const name = text(body.name, 60);
+  if (!name) throw bad('Give the source a name.');
+  return name;
+};
+const sourceTaken = (e) => (e.code === '23505' ? bad('There is already a source with that name.', 409) : e);
+
+export const listSources = () => db.prepare('SELECT id, name FROM lease_sources ORDER BY lower(name)').all();
+
+export async function addSource(body, by) {
+  try {
+    return await db.prepare('INSERT INTO lease_sources (name, created_by) VALUES (?, ?) RETURNING id, name').get(sourceName(body), by ?? null);
+  } catch (e) { throw sourceTaken(e); }
+}
+
+export async function renameSource(id, body) {
+  const name = sourceName(body);
+  return tx(async () => {
+    const old = await db.prepare('SELECT id, name FROM lease_sources WHERE id = ?').get(Number(id) || 0);
+    if (!old) throw bad('Source not found', 404);
+    try { await db.prepare('UPDATE lease_sources SET name = ? WHERE id = ?').run(name, old.id); } catch (e) { throw sourceTaken(e); }
+    await db.prepare('UPDATE lease_bookings SET source = ? WHERE lower(source) = lower(?)').run(name, old.name);
+    return { id: old.id, name };
+  });
+}
+
+export async function removeSource(id) {
+  const r = await db.prepare('DELETE FROM lease_sources WHERE id = ?').run(Number(id) || 0);
+  if (!r.changes) throw bad('Source not found', 404);
+  return { ok: true };
+}
+
 // ---------- renewal ----------
 
 /**
  * Renew a confirmed booking: a draft of the same unit, tenant and rent, starting the day
  * after this one ends and running as long. It is a draft so the new rent and dates can be
  * agreed first; the deposit is already held, so it is not asked for again, and of the other
- * charges only those that repeat (a pet fee, parking) carry on.
+ * charges only those that repeat (a pet fee, parking) carry on. The tax carries on, and so
+ * does where the tenant came from; a discount does not, being something agreed for one stay.
  */
 export async function renewBooking(id, by) {
   const b = await getBooking(id);
@@ -683,9 +835,9 @@ export async function renewBooking(id, by) {
   if (again) throw bad(`This booking already has a renewal (${bookingRef(await getBooking(again.id))}).`, 409);
   const start = iso(dayNo(b.end_date) + 1);
   const end = iso(dayNo(addMonths(start, monthsOf(b))) - 1);
-  const { id: nextId } = await db.prepare(`INSERT INTO lease_bookings (unit_id, tenant_id, type, start_date, end_date, rent_amount, rent_period, payment_frequency, fees, status, renewed_from, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?) RETURNING id`).run(b.unit_id, b.tenant_id, b.type, start, end, b.rent_amount, b.rent_period, b.payment_frequency,
-    JSON.stringify(b.fees.filter((f) => f.repeats)), b.id, by ?? null);
+  const { id: nextId } = await db.prepare(`INSERT INTO lease_bookings (unit_id, tenant_id, type, start_date, end_date, rent_amount, rent_period, payment_frequency, fees, tax_percent, source, status, renewed_from, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?) RETURNING id`).run(b.unit_id, b.tenant_id, b.type, start, end, b.rent_amount, b.rent_period, b.payment_frequency,
+    JSON.stringify(b.fees.filter((f) => f.repeats)), b.tax_percent, b.source, b.id, by ?? null);
   const next = await getBooking(nextId);
   await logEvent(b.id, 'renewed', `Renewal ${next.ref} drafted for ${start} to ${end}`, by);
   await logEvent(next.id, 'created', `Renewal of ${b.ref}, saved as a draft`, by);
@@ -710,7 +862,7 @@ export async function snapshot({ company_id, building_id } = {}, today = todayHe
     ORDER BY NULLIF(regexp_replace(floor, '\\D', '', 'g'), '')::int NULLS FIRST, floor,
       NULLIF(regexp_replace(unit_no, '\\D', '', 'g'), '')::bigint NULLS LAST, unit_no`).all()).filter((u) => buildingOf.has(u.building_id));
   const unitOf = new Map(units.map((u) => [u.id, u]));
-  const bookings = (await db.prepare(`SELECT b.id, b.unit_id, b.tenant_id, b.status, b.type, b.rent_amount, b.rent_period, b.payment_frequency, b.contract_no,
+  const bookings = (await db.prepare(`SELECT b.id, b.unit_id, b.tenant_id, b.status, b.type, b.rent_amount, b.rent_period, b.payment_frequency, b.contract_no, b.discount_type, b.discount_value,
       b.created_at, b.created_by, to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
       b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
       t.full_name AS tenant, t.email AS tenant_email, t.phone AS tenant_phone, w.name AS added_by,
@@ -726,10 +878,11 @@ export async function snapshot({ company_id, building_id } = {}, today = todayHe
 
   // Every payment due, with what has come in against it. A cancelled booking still owes what
   // had fallen due by the day it was cancelled; cancelBooking took the rest off its schedule.
-  const pays = (await db.prepare(`SELECT p.id, p.installment_id, i.booking_id, i.kind, i.label, p.amount, p.method, p.reference, p.created_at, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, w.name AS added_by
+  const pays = (await db.prepare(`SELECT p.id, p.installment_id, i.booking_id, i.kind, i.label, i.amount AS due_amount, i.tax AS due_tax, p.amount, p.method, p.reference, p.created_at, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, w.name AS added_by
     FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id LEFT JOIN users w ON w.id = p.recorded_by
     ORDER BY p.received_on, p.id`).all())
-    .filter((p) => bookingOf.has(p.booking_id)).map((p) => ({ ...p, amount: Number(p.amount) }));
+    // `tax`: the part of each payment that is tax, the same share of it as of the row it pays.
+    .filter((p) => bookingOf.has(p.booking_id)).map(({ due_amount, due_tax, ...p }) => ({ ...p, amount: Number(p.amount), tax: Number(due_tax) > 0 ? money((Number(p.amount) * Number(due_tax)) / Number(due_amount)) : 0 }));
   const paysOf = new Map();
   for (const p of pays) paysOf.set(p.installment_id, [...(paysOf.get(p.installment_id) || []), p]);
   const dues = (await db.prepare("SELECT id, booking_id, kind, label, to_char(due_date, 'YYYY-MM-DD') AS due, amount FROM lease_installments ORDER BY due_date, id").all())
@@ -864,6 +1017,11 @@ leasingRoutes.post('/services', wrap(async (req, res) => res.json(await addServi
 leasingRoutes.put('/services/:id', wrap(async (req, res) => res.json(await updateService(req.params.id, req.body))));
 leasingRoutes.delete('/services/:id', wrap(async (req, res) => res.json(await removeService(req.params.id))));
 
+leasingRoutes.get('/sources', wrap(async (req, res) => res.json(await listSources())));
+leasingRoutes.post('/sources', wrap(async (req, res) => res.json(await addSource(req.body, req.user.id))));
+leasingRoutes.put('/sources/:id', wrap(async (req, res) => res.json(await renameSource(req.params.id, req.body))));
+leasingRoutes.delete('/sources/:id', wrap(async (req, res) => res.json(await removeSource(req.params.id))));
+
 leasingRoutes.get('/overview', wrap(async (req, res) => res.json(await overview(req.query))));
 leasingRoutes.get('/available',wrap(async (req, res) => res.json(await availability(req.query.building_id, req.query.start, req.query.end))));
 leasingRoutes.get('/bookings', wrap(async (req, res) => res.json(await listBookings(req.query))));
@@ -881,6 +1039,8 @@ leasingRoutes.post('/bookings/:id/renew', wrap(async (req, res) => res.json(awai
 leasingRoutes.get('/bookings/:id/history', wrap(async (req, res) => res.json(await bookingHistory(req.params.id))));
 leasingRoutes.get('/bookings/:id/deposit', wrap(async (req, res) => res.json(await depositState(req.params.id))));
 leasingRoutes.post('/bookings/:id/deposit', wrap(async (req, res) => res.json(await settleDeposit(req.params.id, req.body, req.user.id))));
+leasingRoutes.post('/bookings/:id/deposit/pass', wrap(async (req, res) => res.json(await passDeposit(req.params.id, req.user.id))));
+leasingRoutes.delete('/bookings/:id/deposit/pass', wrap(async (req, res) => res.json(await takeBackDeposit(req.params.id, req.user.id))));
 leasingRoutes.get('/bookings/:id/payments', wrap(async (req, res) => res.json(await bookingPayments(req.params.id))));
 leasingRoutes.post('/bookings/:id/payments', upload.single('file'), wrap(async (req, res) => res.json(await payBooking(req.params.id, req.body, req.user.id, undefined, req.file))));
 leasingRoutes.post('/installments/:id/payments', upload.single('file'), wrap(async (req, res) => res.json(await recordPayment(req.params.id, req.body, req.user.id, undefined, req.file))));

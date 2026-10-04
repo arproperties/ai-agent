@@ -263,7 +263,7 @@ export async function chat(req, res) {
   const saifsys = await saifsysKit(user);
   // Doing things in saifsys (today: creating an ARS booking) — proposed here, done only from the card.
   const saifsysAct = await saifsysActionKit(user, { conversationId: convId, onCard: (b) => send('arsBooking', b) });
-  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), leasingKit(),
+  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), leasingKit(user, { onChanged: () => send('changed', { what: 'leasing' }) }),
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
     ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
@@ -293,7 +293,7 @@ export async function chat(req, res) {
 
   try {
     let prevType = null;
-    for (let turn = 0; turn < 8; turn++) {
+    for (let turn = 0; turn < 14; turn++) {
       stream = claude.messages.stream({
         model: agent.model,
         max_tokens: 16000,

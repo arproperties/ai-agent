@@ -17,11 +17,13 @@ import ResponsibilitiesPage from './components/Responsibilities';
 import PropertiesPage from './components/Properties';
 import LeasingPage from './components/Leasing';
 import RegionSettings from './components/RegionSettings';
+import SourcesPage from './components/SourcesPage';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { loadRegion, onRegion } from './lib/region';
 import { NotifyPrompt } from './components/Notifications';
 import MessageToast from './components/MessageToast';
+import Orb from './components/Orb';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
@@ -52,6 +54,8 @@ export default function App() {
   const [leasingReport, setLeasingReport] = useState('daily'); // which report is open in Leasing's Reports; the sidebar's Reports shortcuts set it
   const [leasingAlert, setLeasingAlert] = useState(''); // which kind of alert Leasing's Alerts is showing ('' is all); the sidebar's Alerts shortcuts set it
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
+  const [helper, setHelper] = useState({ open: false, key: 0, id: null }); // Riley floating over whatever screen is open: its own chat, kept while the screens change
+  const [dataKey, setDataKey] = useState(0); // goes up when Riley adds something from a chat, so the screen behind is read again
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
   const chatOpened = useCallback(() => setJumpToChat(null), []);
@@ -152,7 +156,7 @@ export default function App() {
             setPanel('leasing'); setDrawer(false);
           }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
-          onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} regionOpen={panel === 'region'} onRegion={() => { setPanel('region'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
+          onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} sourcesOpen={panel === 'sources'} onSources={() => { setPanel('sources'); setDrawer(false); }} regionOpen={panel === 'region'} onRegion={() => { setPanel('region'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
       </aside>
 
@@ -166,7 +170,7 @@ export default function App() {
                 onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} onClose={() => setHistory(false)} />
             </section>
             <section className={`${history ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
-              <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice}
+              <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice} onChanged={() => setDataKey((n) => n + 1)}
                 firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
                 due={due} onDueChanged={loadDue} onOpenLists={() => setPanel('todos')}
                 onConversation={onConversation} onMenu={() => setDrawer(true)} onHistory={() => setHistory(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />
@@ -204,9 +208,10 @@ export default function App() {
         {panel === 'meetings' && <MeetingsPage dm={dm} onOpenFiles={() => setPanel('files')} onBack={() => setPanel(null)} />}
         {panel === 'transcribe' && <TranscribePage onBack={() => setPanel(null)} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
-        {panel === 'properties' && <PropertiesPage me={me} onBack={() => setPanel(null)} />}
+        {panel === 'properties' && <PropertiesPage key={`p${dataKey}`} me={me} onBack={() => setPanel(null)} />}
+        {panel === 'sources' && <SourcesPage onBack={() => setPanel(null)} />}
         {panel === 'region' && <RegionSettings onBack={() => setPanel(null)} />}
-        {panel === 'leasing' && <LeasingPage tab={leasingTab} onTab={setLeasingTab} report={leasingReport} onReport={setLeasingReport} alert={leasingAlert} onAlert={setLeasingAlert} onBack={() => setPanel(null)} />}
+        {panel === 'leasing' && <LeasingPage key={`l${dataKey}`} tab={leasingTab} onTab={setLeasingTab} report={leasingReport} onReport={setLeasingReport} alert={leasingAlert} onAlert={setLeasingAlert} onBack={() => setPanel(null)} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
         {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}
@@ -219,6 +224,25 @@ export default function App() {
           onSaved={() => { setEditing(null); loadAgents(); }} />
       )}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
+      {/* Riley, on every screen: a small live orb in the bottom corner that opens a chat over
+          whatever is on screen. Not on the chat screens themselves, which are already that. */}
+      {agents.length > 0 && panel !== null && panel !== 'messages' && panel !== 'activity' && !editing && (
+        <>
+          {helper.open && (
+            <div className="sky fixed inset-0 z-50 flex flex-col overflow-hidden md:inset-auto md:bottom-24 md:right-5 md:h-[min(680px,calc(100dvh-7.5rem))] md:w-[420px] md:rounded-3xl md:border md:border-stroke md:shadow-2xl">
+              <Chat key={helper.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={helper.id} voiceEnabled={false}
+                expiring={[]} onOpenFiles={() => { setHelper((h) => ({ ...h, open: false })); setPanel('files'); }} onOpenLists={() => { setHelper((h) => ({ ...h, open: false })); setPanel('todos'); }}
+                onDueChanged={loadDue} onConversation={(id) => { if (id) setHelper((h) => ({ ...h, id })); loadConvs(); }}
+                onNewChat={() => setHelper({ open: true, key: Date.now(), id: null })} onClose={() => setHelper((h) => ({ ...h, open: false }))}
+                onChanged={() => setDataKey((n) => n + 1)} />
+            </div>
+          )}
+          <button onClick={() => setHelper((h) => ({ ...h, open: !h.open }))} aria-label={helper.open ? 'Close Riley' : 'Ask Riley'} title={helper.open ? 'Close' : 'Ask Riley'}
+            className={`fixed bottom-5 right-5 z-50 grid size-14 place-items-center rounded-full border border-stroke bg-surface shadow-xl transition hover:scale-105 active:scale-95 ${helper.open ? 'max-md:hidden' : ''}`}>
+            <Orb state={helper.open ? 'thinking' : 'idle'} className="pointer-events-none !absolute left-1/2 top-1/2 w-[104px] -translate-x-1/2 -translate-y-1/2 scale-[0.46]" />
+          </button>
+        </>
+      )}
       <NotifyPrompt />
       <MessageToast toast={dm.toast} onClose={dm.dismissToast}
         onOpen={(id) => { dm.dismissToast(); setJumpToChat(id); setPanel('messages'); setDrawer(false); }} />

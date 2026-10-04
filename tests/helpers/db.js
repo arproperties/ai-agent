@@ -37,7 +37,7 @@ const TABLES = [
   'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs', 'saifsys_access', 'saifsys_action_access', 'ars_booking_requests',
   'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'team_reminders', 'team_reminder_people', 'reminder_suggestions', 'suggestion_scans',
   'responsibilities', 'responsibility_proposals', 'hr_links',
-  'prop_companies', 'prop_buildings', 'prop_units', 'prop_documents', 'prop_photos', 'prop_unit_photos', 'lease_tenants', 'lease_bookings', 'lease_documents', 'lease_installments', 'lease_payments', 'lease_settings', 'lease_alerts_sent', 'lease_events', 'lease_services', 'prop_building_staff', 'lease_tenant_notices',
+  'prop_companies', 'prop_buildings', 'prop_units', 'prop_documents', 'prop_photos', 'prop_unit_photos', 'lease_tenants', 'lease_bookings', 'lease_documents', 'lease_installments', 'lease_payments', 'lease_settings', 'lease_alerts_sent', 'lease_events', 'lease_services', 'lease_sources', 'prop_building_staff', 'lease_tenant_notices',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

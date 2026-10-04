@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Banknote, CalendarCheck, CalendarClock, DoorOpen, Download, FileText, Hourglass, Loader2, Printer, Table2 } from 'lucide-react';
 import { api } from '../lib/api';
 import Select from './Select';
+import Pager, { usePaged } from './Pager';
 
 // Leasing reports: the day's report, rent roll, overdue by age, collections, expiring leases, vacant units and
 // a tenant's statement. The server (server/leasingReports.js) sends every one in the same
@@ -106,6 +107,8 @@ export default function LeasingReports({ name = 'daily', onName: setName, onPay 
   }, [name, f.company_id, f.building_id, f.from, f.to, f.days, f.tenant_id, f.day]);
 
   const hasTotal = r && Object.keys(r.total).length > 0;
+  // The screen shows a page at a time; the total row, Excel and the printer still cover every row.
+  const paged = usePaged(r?.rows, [name, ...Object.values(f)].join('|'));
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-1.5 text-xs">
@@ -172,8 +175,8 @@ export default function LeasingReports({ name = 'daily', onName: setName, onPay 
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stroke/60">
-                    {r.rows.map((row, i) => (
-                      <tr key={i} onClick={row.booking_id && onPay ? () => onPay(row.booking_id) : undefined}
+                    {paged.rows.map((row, i) => (
+                      <tr key={paged.first + i} onClick={row.booking_id && onPay ? () => onPay(row.booking_id) : undefined}
                         title={row.booking_id && onPay ? 'Open this booking’s payments' : undefined}
                         className={row.booking_id && onPay ? 'cursor-pointer hover:bg-white/[0.04]' : ''}>
                         {r.columns.map((c) => <td key={c.key} className={`px-3 py-2 ${right(c.kind) ? 'text-right tabular-nums' : ''}`}>{show(row[c.key], c.kind) || <span className="text-mute/50">—</span>}</td>)}
@@ -190,6 +193,7 @@ export default function LeasingReports({ name = 'daily', onName: setName, onPay 
                 </table>
               </div>
             )}
+            <Pager {...paged.pager} />
             <p className="text-xs text-mute">{r.rows.length} row{r.rows.length === 1 ? '' : 's'} · amounts in {r.currency}</p>
           </div>
         )}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, BellRing, CalendarDays, ClipboardList, Eye, Globe, Landmark, LayoutDashboard, MessagesSquare, Search, Users } from 'lucide-react';
+import { BarChart3, BellRing, CalendarDays, ClipboardList, Eye, Globe, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Search, Users } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
 import { AGENT_COLORS } from './Avatar';
@@ -36,7 +36,7 @@ function Place({ Ico, color, label, hint, here, onClick, badge = 0 }) {
   );
 }
 
-export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, dutiesOpen, onDuties, propertiesOpen, onProperties, chatsOpen, unreadMessages = 0, onChats, leasingOpen, leasingTab, onLeasing, onEditAgent, onFiles, onMemory, onEmail, onPeople, regionOpen, onRegion, onActivity, onLogout, onClose }) {
+export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, dutiesOpen, onDuties, propertiesOpen, onProperties, chatsOpen, unreadMessages = 0, onChats, leasingOpen, leasingTab, onLeasing, onEditAgent, onFiles, onMemory, onEmail, onPeople, sourcesOpen, onSources, regionOpen, onRegion, onActivity, onLogout, onClose }) {
   // Only shown once somebody has actually looked at this account, so it is silent for
   // anyone nobody inspects - and impossible to miss for anyone who is.
   const [watched, setWatched] = useState(0);
@@ -57,6 +57,7 @@ export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodo
     { Ico: BellRing, color: 'from-orange-400 to-red-500 shadow-red-500/30', label: 'Alerts', hint: alerts.count ? `${alerts.count} need${alerts.count === 1 ? 's' : ''} attention` : 'Nothing needs attention',
       here: leasingOpen && leasingTab === 'alerts', onClick: () => onLeasing('alerts'), badge: alerts.count },
     { Ico: Landmark, color: 'slate', label: 'Properties', hint: 'Companies, buildings, units, documents', here: propertiesOpen, onClick: onProperties },
+    { Ico: Megaphone, color: 'from-emerald-400 to-teal-600 shadow-emerald-500/30', label: 'Sources', hint: 'Where tenants come from', here: sourcesOpen, onClick: onSources },
     // The business's currency, time zone and phone country code: the master's to set.
     user.role === 'master' && { Ico: Globe, color: 'from-indigo-400 to-purple-600 shadow-indigo-500/30', label: 'Region', hint: 'Currency, time zone, phone code', here: regionOpen, onClick: onRegion },
   ].filter(Boolean);

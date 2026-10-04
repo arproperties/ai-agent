@@ -1194,6 +1194,8 @@ await db.exec(`
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_refunded NUMERIC;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_note TEXT;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_settled_on DATE;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_passed_to INTEGER REFERENCES lease_bookings(id) ON DELETE SET NULL;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_passed_on DATE;
   CREATE TABLE IF NOT EXISTS lease_events (
     id SERIAL PRIMARY KEY,
     booking_id INTEGER NOT NULL REFERENCES lease_bookings(id) ON DELETE CASCADE,
@@ -1236,3 +1238,36 @@ await db.exec(`
   DROP INDEX IF EXISTS idx_lease_services_name;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_services_place ON lease_services(coalesce(building_id, 0), lower(name));
 `);
+
+// A booking's discount and tax. The discount comes off the rent as it was entered (so off the
+// month, or off the year): a percentage, or an amount. The tax is a percentage on the rent
+// after its discount and on the other charges, never on the deposit; none at all is NULL.
+//   lease_installments.tax: how much of a row's amount is tax, kept so a receipt can say so.
+await db.exec(`
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS discount_type TEXT;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS discount_value NUMERIC;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS discount_note TEXT;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS tax_percent NUMERIC;
+  ALTER TABLE lease_installments ADD COLUMN IF NOT EXISTS tax NUMERIC NOT NULL DEFAULT 0;
+`);
+
+// Where a booking's tenant came from (a walk-in, a referral, a listing site…). lease_sources is
+// the one list for the whole app, picked from on the booking form; a booking keeps the name
+// itself, so removing a source from the list never touches a booking. A list made for the
+// first time starts with the usual ones, which can be renamed or removed like any other.
+const hadSources = (await db.prepare("SELECT to_regclass('lease_sources') AS t").get()).t;
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lease_sources (
+    id SERIAL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_sources_name ON lease_sources(lower(name));
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS source TEXT;
+`);
+if (!hadSources) {
+  for (const name of ['Walk-in', 'Referral', 'Existing tenant', 'Agent / broker', 'Airbnb', 'Booking.com', 'Property Finder', 'Bayut', 'Dubizzle', 'Instagram', 'Facebook', 'WhatsApp', 'Website']) {
+    await db.prepare('INSERT INTO lease_sources (name) VALUES (?) ON CONFLICT DO NOTHING').run(name);
+  }
+}

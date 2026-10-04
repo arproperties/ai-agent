@@ -2,15 +2,16 @@ import { Router } from 'express';
 import { db } from './db.js';
 import { requireMaster } from './auth.js';
 
-// Where the business is: its currency, its time zone and its phone country code. It began
+// Where the business is: its currency, its time zone, its phone country code and its tax. It began
 // in the UAE, which is still the default; the master changes it here and everything in
 // properties and leasing follows — what "today" is, when the quiet hours fall, the currency
-// on screens, receipts and reminders, and how a local phone number is dialled for WhatsApp.
+// on screens, receipts and reminders, how a local phone number is dialled for WhatsApp, and
+// the tax a new booking starts with (each booking can still have another rate, or none).
 //
 // It is one setting for the whole app (lease_settings, key 'region'), kept in memory so
 // that "what is today's date" can be answered without a query each time.
 
-const DEFAULT = { currency: 'AED', timezone: 'Asia/Dubai', phone_code: '971' };
+const DEFAULT = { currency: 'AED', timezone: 'Asia/Dubai', phone_code: '971', tax_percent: 5, tax_name: 'VAT' };
 // What a currency's whole and hundredth are called, for the amount in words on a receipt.
 const WORDS = {
   AED: ['Dirhams', 'Fils'], USD: ['Dollars', 'Cents'], CAD: ['Dollars', 'Cents'], EUR: ['Euros', 'Cents'], GBP: ['Pounds', 'Pence'],
@@ -37,6 +38,14 @@ export async function saveRegion(body = {}) {
   if ('phone_code' in body) {
     next.phone_code = String(body.phone_code ?? '').replace(/\D/g, '');
     if (!/^\d{1,4}$/.test(next.phone_code)) throw bad('The phone country code is one to four digits, like 971 or 1.');
+  }
+  if ('tax_percent' in body) {
+    next.tax_percent = Number(body.tax_percent ?? 0);
+    if (!(next.tax_percent >= 0 && next.tax_percent <= 100)) throw bad('The tax is a percentage from 0 to 100.');
+  }
+  if ('tax_name' in body) {
+    next.tax_name = String(body.tax_name ?? '').trim().slice(0, 20);
+    if (!next.tax_name) throw bad('Say what the tax is called, like VAT or Sales tax.');
   }
   await db.prepare("INSERT INTO lease_settings (key, value) VALUES ('region', ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value").run(JSON.stringify(next));
   now = next;
