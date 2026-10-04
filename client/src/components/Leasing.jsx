@@ -290,7 +290,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         ) : (
           <>
             <Label text="Full name" need wide><input value={tenant.full_name} onChange={(e) => setTenant({ ...tenant, full_name: e.target.value })} required placeholder="As on the ID or passport" className={FIELD} /></Label>
-            <Label text="Phone"><input type="tel" value={tenant.phone} onChange={(e) => setTenant({ ...tenant, phone: e.target.value })} placeholder="+971 5…" className={FIELD} /></Label>
+            <Label text="Phone" need><input type="tel" value={tenant.phone} onChange={(e) => setTenant({ ...tenant, phone: e.target.value })} required placeholder="+971 5…" className={FIELD} /></Label>
             <Label text="Email"><input type="email" value={tenant.email} onChange={(e) => setTenant({ ...tenant, email: e.target.value })} className={FIELD} /></Label>
             <Label text="ID no."><input value={tenant.emirates_id_no} onChange={(e) => setTenant({ ...tenant, emirates_id_no: e.target.value })} className={FIELD} /></Label>
             <Label text="Nationality"><input value={tenant.nationality} onChange={(e) => setTenant({ ...tenant, nationality: e.target.value })} className={FIELD} /></Label>
@@ -668,7 +668,7 @@ function TenantForm({ start, onDone, onCancel }) {
     <form onSubmit={save} className="space-y-3 rounded-2xl border border-p1/40 p-4 md:col-span-2 xl:col-span-3">
       <div className="grid gap-3 sm:grid-cols-2">
         <Label text="Full name" need wide><input value={v.full_name || ''} onChange={set('full_name')} required className={FIELD} /></Label>
-        <Label text="Phone"><input value={v.phone || ''} onChange={set('phone')} className={FIELD} /></Label>
+        <Label text="Phone" need><input value={v.phone || ''} onChange={set('phone')} required className={FIELD} /></Label>
         <Label text="Email"><input type="email" value={v.email || ''} onChange={set('email')} className={FIELD} /></Label>
         <Label text="ID no."><input value={v.emirates_id_no || ''} onChange={set('emirates_id_no')} className={FIELD} /></Label>
         <Label text="ID expiry"><input type="date" value={v.emirates_id_expiry || ''} onChange={set('emirates_id_expiry')} className={FIELD} /></Label>

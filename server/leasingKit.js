@@ -1,12 +1,12 @@
 import { db } from './db.js';
 import { create } from './properties.js';
-import { availability, todayHere, listServices, addService, addTenant, createBooking, updateBooking, confirmBooking, getBooking, listBookings, bookingPayments, total } from './leasing.js';
+import { availability, todayHere, listServices, addService, listSources, addSource, addTenant, createBooking, updateBooking, confirmBooking, getBooking, listBookings, bookingPayments, total } from './leasing.js';
 import { report } from './leasingReports.js';
 import { cash, region } from './leasingRegion.js';
 
 // Riley's hands in leasing. She reads any report, a tenant's account and which units are
 // free, and she sets things up from the conversation: a company, its buildings and units, a
-// building's services, a tenant, a booking. So a whole tenancy can be made without leaving
+// building's services, a tenant, a booking (with where the tenant came from). So a whole tenancy can be made without leaving
 // the chat, and whatever is missing on the way (the building, the service) is made there too.
 //
 // She does what the person asking could do on the screens and no more: only the master adds
@@ -54,12 +54,12 @@ export const LEASING_TOOLS = [
   },
   {
     name: 'leasing_list',
-    description: 'What is already set up: the companies, the buildings (of one company or all), the units or the services of a building, tenants by name, or the bookings (drafts included) with their references and charges. '
+    description: 'What is already set up: the companies, the buildings (of one company or all), the units or the services of a building, tenants by name, the sources (where tenants come from: one list for the whole app), or the bookings (drafts included) with their references and charges. '
       + 'Check here before adding anything, so nothing is made twice. Read-only.',
     input_schema: {
       type: 'object',
       properties: {
-        what: { type: 'string', enum: ['companies', 'buildings', 'units', 'services', 'tenants', 'bookings'] },
+        what: { type: 'string', enum: ['companies', 'buildings', 'units', 'services', 'tenants', 'sources', 'bookings'] },
         company: { ...str, description: 'buildings: only this company.' },
         building: { ...str, description: 'units and services: which building (required for those). bookings: only this building.' },
         search: { ...str, description: 'tenants: part of a name, phone or email. bookings: part of the tenant, unit or building name.' },
@@ -101,12 +101,12 @@ export const LEASING_TOOLS = [
   },
   {
     name: 'leasing_add_tenant',
-    description: `Add a tenant (a person or a company that rents). Check leasing_list tenants first: an existing tenant is used, not added again. ${ASK}`,
+    description: `Add a tenant (a person or a company that rents), with a contact number. Check leasing_list tenants first: an existing tenant is used, not added again. ${ASK}`,
     input_schema: {
       type: 'object',
       properties: { full_name: str, phone: str, email: str, id_no: { ...str, description: 'Emirates ID or other ID number' }, nationality: str, is_company: { type: 'boolean' },
         same_name_is_someone_else: { type: 'boolean', description: 'Only when a tenant of this name exists and the user has said this is a different person.' } },
-      required: ['full_name'],
+      required: ['full_name', 'phone'],
     },
   },
   {
@@ -126,8 +126,9 @@ export const LEASING_TOOLS = [
         security_deposit: { type: 'number' },
         discount_percent: { type: 'number', description: 'A discount off the rent, in percent. Only when the user gives one.' },
         discount_amount: { type: 'number', description: 'A discount as an amount off rent_amount (off the month, or off the year). Give this or discount_percent, never both.' }, discount_note: { ...str, description: 'Why the discount was given.' },
-        tax_percent: { type: 'number', description: 'Tax (VAT) on the rent and the charges, in percent; the deposit is never taxed. Only when the user says the booking is taxed: left out, it has no tax.' },
+        tax_percent: { type: 'number', description: "Tax (VAT) on the rent and the charges, in percent; the deposit is never taxed. Left out, the booking gets the region's usual tax, as the booking form does: say so in the answer. 0 only when the user says there is no tax." },
         charges: { type: 'array', maxItems: 10, items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: with every rent payment. false: once.' } }, required: ['name', 'amount'] } },
+        source: { ...str, description: 'Where the tenant came from (walk-in, referral, a listing site…), as in leasing_list sources. Only when the user says; a new one is added to that list.' },
         contract_no: str, notes: str,
         confirm: { type: 'boolean', description: 'true only when the user has said to confirm. Default false: a draft.' },
       },
@@ -136,7 +137,7 @@ export const LEASING_TOOLS = [
   },
   {
     name: 'leasing_change_booking',
-    description: 'Change a booking that already exists, by its reference: its dates, rent, discount, tax, deposit, unit, or its extra charges. Give only what changes; the rest stays. '
+    description: 'Change a booking that already exists, by its reference: its dates, rent, discount, tax, deposit, unit, source, or its extra charges. Give only what changes; the rest stays. '
       + `Use this, not leasing_add_booking, whenever the user corrects or adds to a booking already made. It does not confirm a draft. ${ASK}`,
     input_schema: {
       type: 'object',
@@ -153,6 +154,7 @@ export const LEASING_TOOLS = [
         set_charges: { type: 'array', maxItems: 10, description: 'Charges to add, or to re-price if the booking already has one of that name. The others stay as they are.',
           items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: with every rent payment. false: once.' } }, required: ['name', 'amount'] } },
         remove_charges: { type: 'array', items: str, description: 'Names of charges to take off the booking.' },
+        source: { ...str, description: 'Where the tenant came from, as in leasing_list sources; a new one is added to that list. Empty takes it off.' },
         contract_no: str, notes: str,
       },
       required: ['booking'],
@@ -191,6 +193,12 @@ function terms(input) {
   if (input.tax_percent != null) out.tax_percent = input.tax_percent;
   return out;
 }
+/** A source as the list has it, however it was typed; `fresh` when the list does not have it yet. */
+async function sourceOf(name) {
+  const typed = String(name ?? '').trim();
+  const has = typed && (await listSources()).find((s) => s.name.toLowerCase() === typed.toLowerCase());
+  return { name: has ? has.name : typed, fresh: !!typed && !has };
+}
 const discountLine = (b) => (b.discount_type ? `discount ${b.discount_type === 'percent' ? `${b.discount_value}%` : cash(b.discount_value)}${b.discount_note ? ` (${b.discount_note})` : ''}` : '');
 const taxLine = (b) => (b.tax_percent ? `${region().tax_name} ${b.tax_percent}%` : '');
 
@@ -199,7 +207,8 @@ const chargesLine = (fees) => (fees.length ? fees.map((f) => `${f.label} ${cash(
 /** A booking in one line, as Riley is told it. */
 const bookingLine = (b) => `${b.ref} (${b.stage}): ${b.tenant}, unit ${b.unit_no}, ${b.building}, ${b.start_date} to ${b.end_date}, `
   + `${cash(b.rent_amount)} per ${b.rent_period}, paid ${b.payment_frequency.replace(/_/g, ' ')}; deposit ${b.security_deposit == null ? 'none' : cash(b.security_deposit)}; charges: ${chargesLine(b.fees)}`
-  + (b.discount_type || b.tax_percent ? `; ${discountLine(b) || 'discount none'}; ${taxLine(b) || `${region().tax_name} none`}` : '');
+  + (b.discount_type || b.tax_percent ? `; ${discountLine(b) || 'discount none'}; ${taxLine(b) || `${region().tax_name} none`}` : '')
+  + (b.source ? `; source: ${b.source}` : '');
 
 /** A report as plain text: its headline figures, then a line per row. */
 function asText(r, limit = 80) {
@@ -251,6 +260,10 @@ const reads = {
       const live = rows.filter((b) => b.status !== 'cancelled').slice(0, 50);
       return live.length ? live.map((b) => `- ${bookingLine(b)}`).join('\n') : none('bookings');
     }
+    if (input.what === 'sources') {
+      const rows = await listSources();
+      return rows.length ? `Sources:\n${rows.map((s) => `- ${s.name}`).join('\n')}` : none('sources');
+    }
     if (!input.building) throw new Error('Say which building.');
     const b = await find('prop_buildings', 'building', input.building);
     if (input.what === 'services') {
@@ -261,7 +274,7 @@ const reads = {
       const rows = await db.prepare('SELECT unit_no, floor, type, blocked FROM prop_units WHERE building_id = ? ORDER BY unit_no').all(b.id);
       return rows.length ? `${b.name} has ${rows.length} unit${rows.length === 1 ? '' : 's'}: ${rows.map((u) => `${u.unit_no}${u.type ? ` (${u.type})` : ''}${u.blocked ? ' blocked' : ''}`).join(', ')}` : `${b.name} has no units yet.`;
     }
-    throw new Error('Unknown list. Use one of: companies, buildings, units, services, tenants, bookings.');
+    throw new Error('Unknown list. Use one of: companies, buildings, units, services, tenants, sources, bookings.');
   },
 };
 
@@ -302,6 +315,7 @@ const writes = (user) => {
       if (same && !input.same_name_is_someone_else) {
         throw new Error(`There is already a tenant named ${same.full_name}${same.phone ? ` (${same.phone})` : ''}. Use them for the booking, or ask the user whether this is a different person.`);
       }
+      if (!String(input.phone || '').trim()) throw new Error("A tenant needs a contact number. Ask the user for it.");
       const t = await addTenant({ full_name: input.full_name, phone: input.phone, email: input.email, emirates_id_no: input.id_no, nationality: input.nationality, kind: input.is_company ? 'company' : 'person' }, user.id);
       return `Tenant added: ${[t.full_name, t.phone, t.email].filter(Boolean).join(' · ')}.`;
     },
@@ -324,17 +338,21 @@ const writes = (user) => {
         if (!c?.name || known.has(String(c.name).trim().toLowerCase())) continue;
         added.push((await addService({ name: c.name, amount: c.amount, repeats: !!c.repeats, building_id: b.id }, user.id)).name);
       }
+      const source = input.source != null ? await sourceOf(input.source) : null;
       const made = await createBooking({
         unit_id: unit.id, tenant_id: tenant.id, start_date: input.start_date, end_date: input.end_date, rent_amount: input.rent_amount,
         rent_period: input.rent_period || 'month', payment_frequency: input.payment_frequency || 'monthly', security_deposit: input.security_deposit ?? null,
         fees: charges.map((c) => ({ label: c.name, amount: c.amount, repeats: !!c.repeats })), contract_no: input.contract_no, notes: input.notes,
-        ...terms(input), status: input.confirm ? 'confirmed' : 'draft',
+        // Like the booking form, a new booking starts with the region's usual tax unless another rate, or none, is given.
+        tax_percent: region().tax_percent, ...terms(input), ...(source ? { source: source.name } : {}), status: input.confirm ? 'confirmed' : 'draft',
       }, user.id);
+      if (source?.fresh) await addSource({ name: source.name }, user.id).catch(() => {});
       return [
         `Booking ${made.ref} ${made.status === 'confirmed' ? 'CONFIRMED' : 'saved as a DRAFT (not confirmed: the unit is not held yet)'}: ${made.tenant}, unit ${made.unit_no}, ${made.building}, ${made.start_date} to ${made.end_date}, `
-          + `${[`${cash(made.rent_amount)} per ${made.rent_period}`, `paid ${made.payment_frequency.replace(/_/g, ' ')}`, discountLine(made), taxLine(made)].filter(Boolean).join(', ')}.`,
+          + `${[`${cash(made.rent_amount)} per ${made.rent_period}`, `paid ${made.payment_frequency.replace(/_/g, ' ')}`, discountLine(made), taxLine(made) || `no ${region().tax_name}`, made.source && `source ${made.source}`].filter(Boolean).join(', ')}.`,
         made.status === 'confirmed' ? await scheduleLine(made.id) : '',
         added.length ? `Added to ${b.name}'s services: ${added.join(', ')}.` : '',
+        source?.fresh ? `Added to the sources list: ${source.name}.` : '',
       ].filter(Boolean).join('\n');
     },
     leasing_change_booking: async (input) => {
@@ -357,8 +375,11 @@ const writes = (user) => {
         body.fees = [...old.fees.filter((f) => !drop.has(key(f.label)) && !set.some((c) => key(c.name) === key(f.label))),
           ...set.map((c) => ({ label: c.name, amount: c.amount, repeats: !!c.repeats }))];
       }
+      const source = input.source != null ? await sourceOf(input.source) : null;
+      if (source) body.source = source.name;
       if (!Object.keys(body).length) throw new Error('Say what to change.');
       const now = await updateBooking(old.id, body, user.id);
+      if (source?.fresh) await addSource({ name: source.name }, user.id).catch(() => {});
       const known = new Set((await listServices(old.building_id)).map((s) => s.name.toLowerCase()));
       for (const c of set) {
         if (!known.has(key(c.name))) added.push((await addService({ name: c.name, amount: c.amount, repeats: !!c.repeats, building_id: old.building_id }, user.id)).name);
@@ -367,6 +388,7 @@ const writes = (user) => {
         `Booking changed, still ${now.status === 'confirmed' ? 'CONFIRMED' : 'a DRAFT (not confirmed)'}. It is now: ${bookingLine(now)}.`,
         now.status === 'confirmed' ? await scheduleLine(now.id) : '',
         added.length ? `Added to ${now.building}'s services: ${added.join(', ')}.` : '',
+        source?.fresh ? `Added to the sources list: ${source.name}.` : '',
       ].filter(Boolean).join('\n');
     },
     leasing_confirm_booking: async (input) => {

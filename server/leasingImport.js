@@ -41,7 +41,7 @@ async function need(kind, table, nameCol, name, parentCol, parentId) {
 }
 
 async function importRow(r, by, today) {
-  for (const f of ['company', 'building', 'unit_no', 'tenant_name']) if (!str(r[f])) throw bad(`${f.replace(/_/g, ' ')} is missing.`);
+  for (const f of ['company', 'building', 'unit_no', 'tenant_name', 'phone']) if (!str(r[f])) throw bad(`${f.replace(/_/g, ' ')} is missing.`);
   const start_date = date(r.start_date, 'Start date');
   const end_date = date(r.end_date, 'End date');
   const rent_period = /year|annual/i.test(str(r.rent_period)) ? 'year' : 'month';

@@ -12,7 +12,7 @@ const GHOST = 'flex items-center gap-1.5 rounded-full border border-stroke/70 px
 const PRIMARY = 'flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2 text-sm font-medium text-white disabled:opacity-60';
 const COLUMNS = [
   ['company', 'ACE Real Estate', true], ['building', 'Park Place Tower', true], ['unit_no', '304', true], ['tenant_name', 'Ahmed Al Mansoori', true],
-  ['phone', '0501234567'], ['email', ''], ['emirates_id_no', '784-1990-1234567-1'], ['start_date', '2026-01-01', true], ['end_date', '2026-12-31', true],
+  ['phone', '0501234567', true], ['email', ''], ['emirates_id_no', '784-1990-1234567-1'], ['start_date', '2026-01-01', true], ['end_date', '2026-12-31', true],
   ['rent_amount', '60000', true], ['discount', '10%'], ['tax_percent', '5'], ['rent_period', 'year'], ['payment_frequency', 'quarterly'], ['security_deposit', '5000'], ['contract_no', ''], ['rent_paid_so_far', '45000'],
 ];
 

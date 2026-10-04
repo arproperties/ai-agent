@@ -249,6 +249,8 @@ test('import: checked first, all or nothing, with what is missing created', asyn
   const check = await importBookings([row()], { by: staff, today: AT });
   assert.deepEqual([check.imported, check.failed, check.results[0].ok, await count()], [false, 0, true, 0], 'a check keeps nothing');
 
+  assert.equal((await importBookings([row({ phone: ' ' })], { by: staff, today: AT })).results[0].error, 'phone is missing.', 'a tenant has a contact number');
+
   const bad = await importBookings([row(), row({ unit_no: '202', start_date: 'soon' }), row({ tenant_name: 'Lina' })], { commit: true, by: staff, today: AT });
   assert.deepEqual([bad.imported, bad.failed, await count()], [false, 2, 0], 'one bad row and nothing is kept');
   assert.match(bad.results[1].error, /Start date is missing or not a date/);
@@ -303,9 +305,9 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
 
   // A draft unless told to confirm; a charge the building does not list yet is added to its list on the way.
   const booking = { building: 'Marina', unit_no: '101', tenant: 'Sara', start_date: '2026-11-01', end_date: '2027-10-31', rent_amount: 60000, rent_period: 'year',
-    security_deposit: 5000, charges: [{ name: 'Parking', amount: 300, repeats: true }, { name: 'Pet fee', amount: 800 }] };
+    security_deposit: 5000, tax_percent: 0, charges: [{ name: 'Parking', amount: 300, repeats: true }, { name: 'Pet fee', amount: 800 }] };
   const draft = await says('leasing_add_booking', booking);
-  assert.match(draft, /^Booking BK-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, AED 60,000 per year, paid monthly\.\nAdded to Marina Tower's services: Pet fee\.$/);
+  assert.match(draft, /^Booking BK-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, AED 60,000 per year, paid monthly, no VAT\.\nAdded to Marina Tower's services: Pet fee\.$/);
   assert.match(await says('leasing_list', { what: 'services', building: 'Marina' }), /- Parking: AED 300, with every rent payment\n- Pet fee: AED 800, once/);
   // Asked for again, the same stay is not made twice: the draft is changed, and keeps the charges it had.
   const again = await ask('leasing_add_booking', { ...booking, charges: [{ name: 'Laundry', amount: 20, repeats: true }] });
@@ -320,11 +322,20 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   assert.match((await ask('leasing_add_booking', { ...booking, unit_no: '999' })).content, /has no unit "999"/);
   assert.equal(changed, 9, 'each thing added is told to the screen behind; what failed is not');
 
+  // Like the form, a new booking starts with the region's usual tax; where the tenant came from is kept, and a new source joins the list.
+  const { tax_percent, ...untaxed } = booking;
+  assert.match(await says('leasing_add_booking', { ...untaxed, unit_no: '102', charges: [], source: 'Airbnb' }), /paid monthly, VAT 5%, source Airbnb\.\nAdded to the sources list: Airbnb\.$/);
+  assert.equal(await says('leasing_list', { what: 'sources' }), 'Sources:\n- Airbnb');
+  assert.match(await says('leasing_change_booking', { booking: 'BK-2026-0002', source: 'airbnb', notes: 'Called' }), /VAT 5%; source: Airbnb\.$/, 'a source is taken as the list has it, and not added twice');
+  assert.match(await says('leasing_change_booking', { booking: 'BK-2026-0002', source: '' }), /VAT 5%\.$/);
+
   // Somebody who is not the master can book and add a tenant, not add property.
   const staff = leasingKit({ id: staffId, role: 'user' });
   const no = await staff.run({ id: 't', name: 'leasing_add_company', input: { name: 'Other' } });
   assert.deepEqual([no.is_error, no.content], [true, 'Only the master can add a company. Tell the user to ask them.']);
-  assert.ok(!(await staff.run({ id: 't', name: 'leasing_add_tenant', input: { full_name: 'Omar' } })).is_error);
+  const bare = await staff.run({ id: 't', name: 'leasing_add_tenant', input: { full_name: 'Omar' } });
+  assert.deepEqual([bare.is_error, bare.content], [true, 'A tenant needs a contact number. Ask the user for it.']);
+  assert.ok(!(await staff.run({ id: 't', name: 'leasing_add_tenant', input: { full_name: 'Omar', phone: '0507654321' } })).is_error);
 });
 
 test('currency, time zone and phone code follow the region the master sets', async () => {

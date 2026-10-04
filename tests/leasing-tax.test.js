@@ -121,7 +121,7 @@ test('the usual tax and what it is called are part of the region', async () => {
 
 test('the import sheet and Riley can both set a discount and the tax', async () => {
   const { staff, c } = await tower();
-  const row = { company: 'ace', building: 'Tower', unit_no: '201', tenant_name: 'Omar', start_date: '2026-09-01', end_date: '2026-10-31', rent_amount: '4,000', discount: '10%', tax_percent: '5' };
+  const row = { company: 'ace', building: 'Tower', unit_no: '201', tenant_name: 'Omar', phone: '0501112222', start_date: '2026-09-01', end_date: '2026-10-31', rent_amount: '4,000', discount: '10%', tax_percent: '5' };
   const done = await importBookings([row, { ...row, unit_no: '202', discount: '500', tax_percent: '' }], { commit: true, by: staff, today: AT });
   assert.deepEqual([done.imported, done.failed], [true, 0], JSON.stringify(done.results));
   const [a, b] = (await listBookings({ company_id: c.id })).sort((x, y) => x.id - y.id);
