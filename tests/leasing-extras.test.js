@@ -71,7 +71,7 @@ test('extra services: a saved list, charged once or with every rent payment', as
   await assert.rejects(addService({ name: 'Parking', amount: -5 }, staff), /above zero/);
   const parking = await addService({ name: 'Parking', amount: 300, repeats: true }, staff);
   const pet = await addService({ name: 'Pet fee' }, staff); // made from the booking form: no price yet
-  await assert.rejects(addService({ name: 'pet FEE' }, staff), /already a service with that name/);
+  await assert.rejects(addService({ name: 'pet FEE' }, staff), /already has a service with that name/);
   assert.deepEqual((await listServices()).map((s) => [s.name, s.amount, s.repeats]), [['Parking', 300, true], ['Pet fee', null, false]]);
 
   const bk = await createBooking(sara(u1.id, { fees: [{ label: 'Parking', amount: 250, repeats: true }, { label: 'Pet fee', amount: 800 }] }), staff);
@@ -84,10 +84,30 @@ test('extra services: a saved list, charged once or with every rent payment', as
   assert.deepEqual(next.fees, [{ label: 'Parking', amount: 250, repeats: true }], 'only a charge that repeats carries on into the renewal');
 
   assert.equal((await updateService(pet.id, { name: 'Pets', amount: '' })).amount, null);
-  await assert.rejects(updateService(pet.id, { name: 'parking' }), /already a service with that name/);
+  await assert.rejects(updateService(pet.id, { name: 'parking' }), /already has a service with that name/);
   await removeService(parking.id);
   await assert.rejects(removeService(parking.id), /Service not found/);
   assert.deepEqual((await bookingPayments(bk.id, AT)).map((r) => r.name), ['Parking', 'Pet fee', 'Rent', 'Parking', 'Rent'], 'a booking keeps its charges when the list changes');
+});
+
+test('each building has its own services and prices; a booking learns the price in its own building', async () => {
+  const { staff, c, b, u1 } = await tower();
+  const marina = await create('building', { name: 'Marina' }, c.id);
+  const here = await addService({ name: 'Parking', amount: 300, repeats: true, building_id: b.id }, staff);
+  const there = await addService({ name: 'Parking', amount: 500, repeats: true, building_id: marina.id }, staff);
+  await addService({ name: 'Pet fee', building_id: marina.id }, staff);
+  const pet = await addService({ name: 'Pet fee', building_id: b.id }, staff);
+  await assert.rejects(addService({ name: 'parking', building_id: b.id }, staff), /already has a service with that name/);
+  await assert.rejects(addService({ name: 'Gym', building_id: 9999 }, staff), /Building not found/);
+
+  assert.deepEqual((await listServices(b.id)).map((s) => [s.name, s.amount, s.building_id]), [['Parking', 300, b.id], ['Pet fee', null, b.id]]);
+  assert.deepEqual((await listServices(marina.id)).map((s) => [s.name, s.amount]), [['Parking', 500], ['Pet fee', null]]);
+  assert.equal((await listServices()).length, 4);
+
+  // A booking in Tower charges a pet fee: Tower's list learns the price, Marina's does not.
+  await createBooking(sara(u1.id, { fees: [{ label: 'Pet fee', amount: 800 }] }), staff);
+  assert.deepEqual([(await listServices(b.id)).find((s) => s.id === pet.id).amount, (await listServices(marina.id)).find((s) => s.name === 'Pet fee').amount], [800, null]);
+  assert.deepEqual([here.building_id, there.building_id], [b.id, marina.id]);
 });
 
 test('renewal, history, the receipt and the reminder to the tenant', async () => {

@@ -1211,7 +1211,6 @@ await db.exec(`
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at BIGINT DEFAULT ${NOW}
   );
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_services_name ON lease_services(lower(name));
 `);
 
 // Who looks after a building (they get its leasing alerts, with whoever made the booking and
@@ -1227,4 +1226,13 @@ await db.exec(`
     day        DATE NOT NULL,
     PRIMARY KEY (booking_id, day)
   );
+`);
+
+// A service belongs to a building: each building has its own list and its own prices, and a
+// booking picks from the list of the building it is in. (One with no building is offered in
+// all of them.) So a name is taken once per building, not once for everything.
+await db.exec(`
+  ALTER TABLE lease_services ADD COLUMN IF NOT EXISTS building_id INTEGER REFERENCES prop_buildings(id) ON DELETE CASCADE;
+  DROP INDEX IF EXISTS idx_lease_services_name;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_services_place ON lease_services(coalesce(building_id, 0), lower(name));
 `);

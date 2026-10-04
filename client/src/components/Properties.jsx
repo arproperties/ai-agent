@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import Page from './Page';
 import Select from './Select';
 import CompanyDocs from './CompanyDocs';
+import ServiceList from './ServiceList';
 import { Cover, Logo, CardCover, UnitPhotos } from './PropertyPhoto';
 
 // Companies → buildings → units. Everyone can look; only the master adds, edits or removes.
@@ -245,6 +246,25 @@ function Level({ kind, rows, master, onOpen, onAdd, onSave, onRemove, onChanged,
 
 const join = (...xs) => xs.filter(Boolean).join(' · ');
 
+/** A building's services (pet fee, parking, laundry…): what a booking in it can be charged besides the rent. The master keeps the list. */
+function BuildingServices({ building, master }) {
+  const [services, setServices] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setServices(null);
+    api.get(`/leasing/services?building_id=${building.id}`).then((list) => setServices(list.filter((s) => s.building_id === building.id))).catch((e) => setError(e.message));
+  }, [building.id]);
+  if (!services || (!master && !services.length)) return error ? <p className="mb-4 text-sm text-bad">{error}</p> : null;
+  return (
+    <div className="mb-4 rounded-2xl border border-stroke p-3">
+      <p className="mb-2 text-xs text-mute">Services of this building · a booking here picks its extra charges from this list. The price can still be changed on the booking.</p>
+      {master ? <ServiceList services={services} buildingId={building.id} onChange={setServices} onError={setError} />
+        : <p className="text-sm">{services.map((s) => s.name).join(' · ')}</p>}
+      {error && <p className="mt-2 text-sm text-bad">{error}</p>}
+    </div>
+  );
+}
+
 /** Who looks after a building: they get its leasing alerts. Everyone sees the names; the master picks them. */
 function BuildingStaff({ building, master, onChanged }) {
   const [users, setUsers] = useState(null); // everybody, once the master opens the picker
@@ -341,6 +361,7 @@ export default function PropertiesPage({ me, onBack }) {
       <Cover row={data} master={master} onChanged={load} />
       <p className="mb-3 text-sm text-mute">{join(data.company?.name, data.area, data.emirate, data.makani_no && `Makani ${data.makani_no}`)}</p>
       <BuildingStaff building={data} master={master} onChanged={load} />
+      <BuildingServices building={data} master={master} />
       <Level kind="unit" rows={data.list} master={master} addLabel="Add a unit" empty="No units in this building yet."
         line={(u) => join(u.floor && `Floor ${u.floor}`, u.type)}
         details={(u) => [['Size', u.size_sqft && `${Number(u.size_sqft).toLocaleString()} sq ft`], ['DEWA no.', u.dewa_no]]}

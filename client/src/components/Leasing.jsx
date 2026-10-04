@@ -6,6 +6,7 @@ import Page from './Page';
 import Select from './Select';
 import DateRange from './DateRange';
 import BookingDocs from './BookingDocs';
+import ServiceList, { REPEAT } from './ServiceList';
 import BookingPayments from './BookingPayments';
 import ImportBookings from './ImportBookings';
 import LeasingOverview, { LeasingBuildings } from './LeasingOverview';
@@ -24,7 +25,6 @@ const STAGE = {
   ended: ['Ended', 'bg-white/5 text-mute'], cancelled: ['Cancelled', 'bg-bad/15 text-bad'],
 };
 const STEPS = ['Where and when', 'Tenant', 'Rent and charges', 'Contract & notes']; // the booking form, a step at a time
-const REPEAT = [['once', 'Once, on the first day'], ['every', 'With every rent payment']];
 const FREQ = [['monthly', 'Monthly'], ['quarterly', 'Every 3 months'], ['every_6_months', 'Every 6 months'], ['yearly', 'Yearly'], ['upfront', 'All upfront']];
 
 const fmt = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -78,38 +78,6 @@ function plan(v) {
   };
 }
 
-/**
- * The saved extra services (pet fee, parking…): rename, reprice or remove them. A booking
- * keeps its own copy of what it charges, so nothing done here changes a booking.
- */
-function ServiceList({ services, onChange, onError }) {
-  const save = async (s, patch) => {
-    try { const now = await api.put(`/leasing/services/${s.id}`, patch); onChange(services.map((x) => (x.id === s.id ? now : x))); } catch (e) { onError(e.message); }
-  };
-  // Enter saves the field (by leaving it) rather than submitting the booking around it.
-  const done = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } };
-  const remove = async (s) => {
-    if (!confirm(`Remove ${s.name} from the list? Bookings that already charge it keep it.`)) return;
-    try { await api.del(`/leasing/services/${s.id}`); onChange(services.filter((x) => x.id !== s.id)); } catch (e) { onError(e.message); }
-  };
-  return (
-    <div className="mt-3 space-y-2 rounded-2xl border border-stroke p-3">
-      <p className="text-xs text-mute">Saved services · the usual price fills in when one is chosen, and can still be changed on the booking.</p>
-      {services.length === 0 && <p className="text-sm text-mute">None yet. Add a charge and type a new name to save the first one.</p>}
-      {services.map((s) => (
-        <div key={s.id} className="flex flex-wrap items-center gap-2">
-          <input defaultValue={s.name} onKeyDown={done} onBlur={(e) => e.target.value.trim() !== s.name && save(s, { name: e.target.value })} aria-label="Service" className={`${FIELD} min-w-[11rem] flex-1`} />
-          <input type="number" min="0" step="any" defaultValue={s.amount ?? ''} onKeyDown={done} onBlur={(e) => Number(e.target.value || 0) !== Number(s.amount || 0) && save(s, { amount: e.target.value })}
-            placeholder={currency()} aria-label="Usual price" className={`${FIELD} max-w-[9rem]`} />
-          <Select value={s.repeats ? 'every' : 'once'} onChange={(e) => save(s, { repeats: e.target.value === 'every' })} options={REPEAT} aria-label="How often" className={SELECT} wrap="w-56" />
-          <button type="button" onClick={() => remove(s)} aria-label={`Remove ${s.name}`} title="Remove from the list"
-            className="grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 /** New booking, or editing one: a whole page, like registering a company. */
 function BookingForm({ start, preset, onDone, onCancel }) {
   const init = start || preset || {}; // preset: a new booking begun from the calendar
@@ -135,7 +103,12 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
 
-  useEffect(() => { api.get('/properties/companies').then(setCompanies).catch(() => {}); api.get('/leasing/tenants').then(setTenants).catch(() => {}); api.get('/leasing/services').then(setServices).catch(() => {}); }, []);
+  useEffect(() => { api.get('/properties/companies').then(setCompanies).catch(() => {}); api.get('/leasing/tenants').then(setTenants).catch(() => {}); }, []);
+  // The other charges are picked from the services of the building the booking is in.
+  useEffect(() => {
+    if (!buildingId) return setServices([]);
+    api.get(`/leasing/services?building_id=${buildingId}`).then(setServices).catch(() => {});
+  }, [buildingId]);
   useEffect(() => {
     if (!companyId) return setBuildings([]);
     api.get(`/properties/companies/${companyId}`).then((c) => setBuildings(c.list)).catch(() => setBuildings([]));
@@ -265,7 +238,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         </Label>
         <Label text={`Security deposit (${currency()})`}><input type="number" min="0" step="any" value={v.security_deposit} onChange={set('security_deposit')} className={FIELD} /></Label>
         <div className="sm:col-span-2">
-          <span className="mb-1 block text-xs text-txt/80">Other charges <span className="text-mute">· pet fee, parking, commission, DEWA deposit… charged once on the first day, or with every rent payment</span></span>
+          <span className="mb-1 block text-xs text-txt/80">Other charges <span className="text-mute">· from this building’s services (pet fee, parking, laundry…), charged once on the first day or with every rent payment</span></span>
           {v.fees.map((f, i) => {
             const put = (patch) => setV((now) => ({ ...now, fees: now.fees.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
             // Choosing a saved service fills in its usual price, which can still be changed for this booking.
@@ -276,7 +249,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             // A new name is saved to the list there and then, so nobody has to leave the booking to add it.
             const make = async (name) => {
               try {
-                const s = await api.post('/leasing/services', { name, amount: f.amount, repeats: !!f.repeats });
+                const s = await api.post('/leasing/services', { name, amount: f.amount, repeats: !!f.repeats, building_id: buildingId });
                 setServices((list) => [...list, s].sort((a, b) => a.name.localeCompare(b.name)));
                 put({ label: s.name });
               } catch (err) { setError(err.message); }
@@ -294,9 +267,14 @@ function BookingForm({ start, preset, onDone, onCancel }) {
           })}
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => setV({ ...v, fees: [...v.fees, { label: '', amount: '' }] })} className={GHOST}><Plus size={13} /> Add a charge</button>
-            <button type="button" onClick={() => setListOpen(!listOpen)} className={GHOST}><Pencil size={13} /> {listOpen ? 'Hide the saved services' : 'Edit the saved services'}</button>
+            <button type="button" onClick={() => setListOpen(!listOpen)} className={GHOST}><Pencil size={13} /> {listOpen ? 'Hide this building’s services' : 'Edit this building’s services'}</button>
           </div>
-          {listOpen && <ServiceList services={services} onChange={setServices} onError={setError} />}
+          {listOpen && (
+            <div className="mt-3 rounded-2xl border border-stroke p-3">
+              <p className="mb-2 text-xs text-mute">{buildingId ? 'Services of this building · the usual price fills in when one is chosen, and can still be changed on the booking.' : 'Choose the building first (step 1).'}</p>
+              {buildingId && <ServiceList services={services} buildingId={buildingId} onChange={setServices} onError={setError} />}
+            </div>
+          )}
         </div>
       </Section>}
 

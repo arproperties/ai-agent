@@ -205,7 +205,7 @@ export async function makeBooking(body = {}, by) {
     .run(...cols.map((c) => full[c]));
   const made = await getBooking(id);
   if (confirm) await writeSchedule(made);
-  await learnPrices(made.fees);
+  await learnPrices(made.fees, made.building_id);
   await logEvent(id, 'created', confirm ? 'Confirmed straight away' : 'Saved as a draft', by);
   return made;
 }
@@ -232,7 +232,7 @@ export async function updateBooking(id, body = {}, by) {
     if (cols.length) await db.prepare(`UPDATE lease_bookings SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => row[c]), old.id);
     const now = await getBooking(id);
     if (now.status === 'confirmed') await writeSchedule(now);
-    if ('fees' in row) await learnPrices(now.fees);
+    if ('fees' in row) await learnPrices(now.fees, now.building_id);
     const same = (c) => (c === 'fees' ? row.fees === JSON.stringify(old.fees) : String(row[c] ?? '') === String(old[c] ?? '') || (row[c] != null && Number(row[c]) === Number(old[c])));
     const changed = cols.filter((c) => !same(c)).map((c) => c.replace(/_id$/, '').replace(/_/g, ' '));
     if (changed.length) await logEvent(old.id, 'changed', changed.join(', '), by);
@@ -607,7 +607,7 @@ export async function settleDeposit(bookingId, body = {}, by, today = todayHere(
 // ---------- extra services ----------
 //
 // The list a booking's other charges are picked from: pet fee, parking, cleaning, anything.
-// A booking keeps its own copy of the name and the price, so changing or removing a service
+// Each building has its own list, with its own prices. A booking keeps its own copy of the name and the price, so changing or removing a service
 // here never touches a booking.
 
 function serviceFields(body = {}, { partial = false } = {}) {
@@ -620,17 +620,19 @@ function serviceFields(body = {}, { partial = false } = {}) {
     out.amount = v === '' || v == null ? null : money(Number(v));
   }
   if ('repeats' in body) out.repeats = isTrue(body.repeats);
+  if ('building_id' in body) out.building_id = Number(body.building_id) || null;
   return out;
 }
 
 const serviceRow = (s) => ({ ...s, amount: s.amount == null ? null : Number(s.amount) });
-const taken = (e) => (e.code === '23505' ? bad('There is already a service with that name.', 409) : e);
+const taken = (e) => (e.code === '23505' ? bad('This building already has a service with that name.', 409) : e.code === '23503' ? bad('Building not found', 404) : e);
 
 /** The saved services, by name. `amount` is the usual price (null: none yet); one that `repeats` is charged with every rent payment. */
-export const listServices = async () => (await db.prepare('SELECT id, name, amount, repeats FROM lease_services ORDER BY lower(name)').all()).map(serviceRow);
+export const listServices = async (buildingId) => (await db.prepare('SELECT id, name, amount, repeats, building_id FROM lease_services ORDER BY lower(name)').all())
+  .filter((s) => !buildingId || s.building_id == null || s.building_id === Number(buildingId)).map(serviceRow);
 
 const getService = async (id) => {
-  const s = await db.prepare('SELECT id, name, amount, repeats FROM lease_services WHERE id = ?').get(Number(id) || 0);
+  const s = await db.prepare('SELECT id, name, amount, repeats, building_id FROM lease_services WHERE id = ?').get(Number(id) || 0);
   if (!s) throw bad('Service not found', 404);
   return serviceRow(s);
 };
@@ -660,9 +662,9 @@ export async function removeService(id) {
 }
 
 /** A service added while making a booking has no usual price yet: the first booking to charge it sets one. */
-async function learnPrices(fees) {
+async function learnPrices(fees, buildingId) {
   for (const f of fees) {
-    await db.prepare('UPDATE lease_services SET amount = ?, repeats = ? WHERE lower(name) = lower(?) AND amount IS NULL').run(f.amount, !!f.repeats, f.label);
+    await db.prepare('UPDATE lease_services SET amount = ?, repeats = ? WHERE lower(name) = lower(?) AND amount IS NULL AND (building_id = ? OR building_id IS NULL)').run(f.amount, !!f.repeats, f.label, buildingId);
   }
 }
 
@@ -857,7 +859,7 @@ leasingRoutes.post('/tenants', wrap(async (req, res) => res.json(await addTenant
 leasingRoutes.put('/tenants/:id', wrap(async (req, res) => res.json(await updateTenant(req.params.id, req.body))));
 leasingRoutes.delete('/tenants/:id', wrap(async (req, res) => res.json(await removeTenant(req.params.id))));
 
-leasingRoutes.get('/services', wrap(async (req, res) => res.json(await listServices())));
+leasingRoutes.get('/services', wrap(async (req, res) => res.json(await listServices(req.query.building_id))));
 leasingRoutes.post('/services', wrap(async (req, res) => res.json(await addService(req.body, req.user.id))));
 leasingRoutes.put('/services/:id', wrap(async (req, res) => res.json(await updateService(req.params.id, req.body))));
 leasingRoutes.delete('/services/:id', wrap(async (req, res) => res.json(await removeService(req.params.id))));
