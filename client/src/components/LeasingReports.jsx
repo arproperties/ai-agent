@@ -9,10 +9,18 @@ import Pager, { usePaged } from './Pager';
 // shape (columns, rows, a total row and a few headline figures), so one table draws them
 // all, and the same rows go out to Excel (a CSV file) or to the printer (save as PDF there).
 
-const FIELD = 'glass rounded-xl px-3.5 py-2 text-sm outline-none focus:border-p1/70';
+const FIELD = 'glass h-10 w-full rounded-xl px-3.5 text-sm outline-none focus:border-p1/70';
 const SELECT = `${FIELD} bg-surface`;
-const WRAP = 'min-w-0 flex-1 basis-[40%] sm:min-w-[12rem] sm:flex-none sm:basis-auto';
-const GHOST = 'flex items-center gap-1.5 rounded-full border border-stroke/70 px-3.5 py-2 text-xs text-mute hover:bg-white/5 hover:text-txt disabled:opacity-50';
+/** One filter: a small label over its field, so every field in the row reads and lines up the same. */
+function Filter({ label, wide, children }) {
+  return (
+    <div className={`min-w-0 ${wide ? 'col-span-2 sm:w-80' : 'sm:w-52'}`}>
+      <p className="mb-1 text-[11px] uppercase tracking-wider text-mute">{label}</p>
+      {children}
+    </div>
+  );
+}
+const GHOST ='flex items-center gap-1.5 rounded-full border border-stroke/70 px-3.5 py-2 text-xs text-mute hover:bg-white/5 hover:text-txt disabled:opacity-50';
 // Each report: its key on the server, its name, what it is, then how the sidebar draws its
 // shortcut (icon, colour, and a name short enough to sit under the disc).
 export const REPORTS = [
@@ -111,42 +119,53 @@ export default function LeasingReports({ name = 'daily', onName: setName, onPay 
   const paged = usePaged(r?.rows, [name, ...Object.values(f)].join('|'));
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-1.5 text-xs">
-        {REPORTS.map(([k, l]) => (
-          <button key={k} onClick={() => setName(k)} className={`rounded-full px-3 py-1.5 ${name === k ? 'bg-p1/20 text-p1' : 'text-mute hover:bg-white/5 hover:text-txt'}`}>{l}</button>
+      <div className="flex gap-5 overflow-x-auto border-b border-stroke text-sm">
+        {REPORTS.map(([k, l, , Icon]) => (
+          <button key={k} onClick={() => setName(k)}
+            className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 pb-2 pt-1 transition ${name === k ? 'border-p1 text-txt' : 'border-transparent text-mute hover:text-txt'}`}>
+            <Icon size={15} className={name === k ? 'text-p1' : ''} />{l}
+          </button>
         ))}
       </div>
-      <p className="text-sm text-mute">{REPORTS.find(([k]) => k === name)[2]}</p>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {name === 'statement' ? (
-          <Select value={f.tenant_id} onChange={set('tenant_id')} aria-label="Tenant" className={SELECT} wrap={WRAP} placeholder="Choose a tenant…"
-            options={tenants.map((t) => [t.id, [t.full_name, t.phone].filter(Boolean).join(' · ')])} />
-        ) : (
-          <>
-            <Select value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value, building_id: '' })} aria-label="Company" className={SELECT} wrap={WRAP}
-              options={[['', 'All companies'], ...companies.map((c) => [c.id, c.name])]} />
-            <Select value={f.building_id} onChange={set('building_id')} aria-label="Building" className={SELECT} wrap={WRAP} disabled={!f.company_id}
-              options={[['', f.company_id ? 'All buildings' : 'Choose a company first'], ...buildings.map((b) => [b.id, b.name])]} />
-          </>
-        )}
-        {name === 'daily' && r && <input type="date" aria-label="Day" value={f.day || r.day || ''} max={r.generated} onChange={set('day')} className={FIELD} />}
-        {name === 'collections' && r && (
-          <>
-            <input type="date" aria-label="From" value={f.from || r.from || ''} max={f.to || r.to} onChange={set('from')} className={FIELD} />
-            <input type="date" aria-label="To" value={f.to || r.to || ''} min={f.from || r.from} onChange={set('to')} className={FIELD} />
-          </>
-        )}
-        {name === 'expiring' && (
-          <div className="flex rounded-full border border-stroke p-0.5 text-xs">
-            {['30', '60', '90'].map((d) => (
-              <button key={d} onClick={() => setF({ ...f, days: d })} className={`rounded-full px-3 py-1.5 ${f.days === d ? 'bg-p1/20 text-p1' : 'text-mute hover:text-txt'}`}>{d} days</button>
-            ))}
-          </div>
-        )}
-        <div className="ml-auto flex gap-2">
-          <button disabled={!r} onClick={() => toExcel(r)} className={GHOST}><Download size={14} /> Excel</button>
-          <button disabled={!r} onClick={() => toPrinter(r)} className={GHOST}><Printer size={14} /> Print / PDF</button>
+      <div className="space-y-3 rounded-2xl border border-stroke p-3 sm:p-4">
+        <p className="text-sm text-mute">{REPORTS.find(([k]) => k === name)[2]}</p>
+        <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap">
+          {name === 'statement' ? (
+            <Filter label="Tenant" wide>
+              <Select value={f.tenant_id} onChange={set('tenant_id')} aria-label="Tenant" className={SELECT} placeholder="Choose a tenant…"
+                options={tenants.map((t) => [t.id, [t.full_name, t.phone].filter(Boolean).join(' · ')])} />
+            </Filter>
+          ) : (
+            <>
+              <Filter label="Company">
+                <Select value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value, building_id: '' })} aria-label="Company" className={SELECT}
+                  options={[['', 'All companies'], ...companies.map((c) => [c.id, c.name])]} />
+              </Filter>
+              <Filter label="Building">
+                <Select value={f.building_id} onChange={set('building_id')} aria-label="Building" className={SELECT} disabled={!f.company_id}
+                  options={[['', f.company_id ? 'All buildings' : 'Choose a company first'], ...buildings.map((b) => [b.id, b.name])]} />
+              </Filter>
+            </>
+          )}
+          {name === 'daily' && r && (
+            <Filter label="Day"><input type="date" aria-label="Day" value={f.day || r.day || ''} max={r.generated} onChange={set('day')} className={FIELD} /></Filter>
+          )}
+          {name === 'collections' && r && (
+            <>
+              <Filter label="From"><input type="date" aria-label="From" value={f.from || r.from || ''} max={f.to || r.to} onChange={set('from')} className={FIELD} /></Filter>
+              <Filter label="To"><input type="date" aria-label="To" value={f.to || r.to || ''} min={f.from || r.from} onChange={set('to')} className={FIELD} /></Filter>
+            </>
+          )}
+          {name === 'expiring' && (
+            <Filter label="Ending within" wide>
+              <div className="glass flex h-10 rounded-xl p-1 text-sm">
+                {['30', '60', '90'].map((d) => (
+                  <button key={d} onClick={() => setF({ ...f, days: d })} className={`flex-1 rounded-lg ${f.days === d ? 'bg-p1/20 text-p1' : 'text-mute hover:text-txt'}`}>{d} days</button>
+                ))}
+              </div>
+            </Filter>
+          )}
         </div>
       </div>
 
@@ -154,9 +173,15 @@ export default function LeasingReports({ name = 'daily', onName: setName, onPay 
       {waiting ? <p className="rounded-2xl border border-dashed border-stroke px-4 py-6 text-center text-sm text-mute">Choose a tenant to see their statement.</p>
         : !r ? (busy && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />) : (
           <div className={`space-y-4 transition-opacity ${busy ? 'opacity-60' : ''}`}>
-            <div className="flex flex-wrap items-baseline justify-between gap-x-4">
-              <h2 className="text-lg font-light">{r.title}</h2>
-              <p className="text-xs text-mute">{r.subtitle} · as of {date(r.generated)}</p>
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <div className="min-w-0">
+                <h2 className="text-lg font-light">{r.title}</h2>
+                <p className="text-xs text-mute">{r.subtitle} · as of {date(r.generated)}</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => toExcel(r)} className={GHOST}><Download size={14} /> Excel</button>
+                <button onClick={() => toPrinter(r)} className={GHOST}><Printer size={14} /> Print / PDF</button>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               {r.summary.map((s) => (
