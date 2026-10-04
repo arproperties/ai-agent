@@ -38,6 +38,9 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'You live inside a personal AI app with long-term memory and a knowledge base made from files the user shared. ' +
       'Use them naturally — do not explain these mechanics unless asked. When you use the knowledge base, mention the file name. ' +
       'If the answer is not in the knowledge base or memory, say so instead of guessing. Format replies in Markdown.',
+    // Said once for every toolkit: a reply that only says "done" changes nothing, and reads exactly like one that did.
+    'Nothing is added, changed, confirmed, booked or sent by saying so: it happens only when you call its tool in this same reply and the tool answers without an error. ' +
+      'Never say something is done from memory of the conversation. If the tool was not called, or it failed, say that plainly.',
     // Every feature adds its own paragraph below, and a passing "be concise" got drowned out:
     // length gets a rule of its own, near the top, where it is still read.
     `Keep replies short: a few short lines in plain words, read on a phone. Lead with the answer and skip preamble, recaps and closing offers. ` +
@@ -149,7 +152,7 @@ export function withCacheMark(convo) {
 }
 
 async function recentMessages(conversationId) {
-  const rows = (await db.prepare(`SELECT m.role, m.content, m.files, m.agent_id, a.name agent_name FROM messages m
+  const rows = (await db.prepare(`SELECT m.role, m.content, m.files, m.tools, m.agent_id, a.name agent_name FROM messages m
     LEFT JOIN agents a ON a.id = m.agent_id WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 20`).all(conversationId)).reverse();
   while (rows[0]?.role === 'assistant') rows.shift(); // must start with a user turn
   return rows;
@@ -159,12 +162,34 @@ async function recentMessages(conversationId) {
 // message: later turns can still answer "what did he say about Friday?".
 const voiceNote = (name, text) => `<voice_note name="${name}">\n${text || '(no speech was heard)'}\n</voice_note>`;
 
-const toClaude = (rows) => rows.map((r) => {
+// What is kept of one tool call, to be replayed on later turns. A report or an email body
+// can run to pages, and every later message would pay for it again: enough is kept to show
+// what was done and how it came out.
+const KEEP_INPUT = 2000;
+const KEEP_RESULT = 800;
+export function toolNote(block, result) {
+  const said = typeof result.content === 'string' ? result.content : (result.content || []).map((c) => c.text || '').join('\n');
+  return {
+    id: block.id, name: block.name, input: JSON.stringify(block.input || {}).length > KEEP_INPUT ? {} : block.input || {},
+    result: said.length > KEEP_RESULT ? `${said.slice(0, KEEP_RESULT)}…` : said, error: !!result.is_error,
+  };
+}
+
+// An earlier reply goes back with the tool calls it made. Sent as words alone, a conversation
+// reads as if "Done ✅" were how things get done, and the next reply says a booking is
+// confirmed without confirming it.
+export const toClaude = (rows) => rows.flatMap((r) => {
   const files = JSON.parse(r.files);
   const names = files.map((f) => f.name);
   const notes = files.filter((f) => f.kind === 'audio').map((f) => voiceNote(f.name, f.transcript));
   const content = [r.content, names.length && `[Attached: ${names.join(', ')}]`, ...notes].filter(Boolean).join('\n\n');
-  return { role: r.role, content };
+  const tools = r.role === 'assistant' ? JSON.parse(r.tools || '[]') : [];
+  if (!tools.length) return [{ role: r.role, content }];
+  return [
+    { role: 'assistant', content: tools.map((t) => ({ type: 'tool_use', id: t.id, name: t.name, input: t.input })) },
+    { role: 'user', content: tools.map((t) => ({ type: 'tool_result', tool_use_id: t.id, content: t.result, is_error: t.error })) },
+    { role: 'assistant', content },
+  ];
 });
 
 // Attachments are read in full for this turn, stored in the user's library, and organised in the background
@@ -287,6 +312,7 @@ export async function chat(req, res) {
   let stream;
   const cited = new Map(); // pages the reply explicitly cites
   const searched = new Map(); // pages returned by searches (fallback: the newer search tool often returns no citations)
+  const ran = []; // this turn's tool calls, kept with the reply so later turns see what was really done
   const convo = [...toClaude(prior), { role: 'user', content: [...blocks, { type: 'text', text: text || 'Please review the attached file(s).' }] }];
   const emit = (t) => { reply += t; send('delta', { text: t }); };
   res.on('close', () => { if (!finished) stream?.abort(); });
@@ -325,7 +351,9 @@ export async function chat(req, res) {
         const calls = msg.content.filter((b) => b.type === 'tool_use');
         // An unknown name cannot happen — the model only sees tools we listed — but if it
         // did, the first kit answers with "Unknown tool" rather than the turn dying here.
-        convo.push({ role: 'user', content: await Promise.all(calls.map((b) => (kitFor(b.name) ?? kits[0]).run(b))) });
+        const results = await Promise.all(calls.map((b) => (kitFor(b.name) ?? kits[0]).run(b)));
+        ran.push(...calls.map((b, i) => toolNote(b, results[i])));
+        convo.push({ role: 'user', content: results });
         continue;
       }
       if (msg.stop_reason !== 'pause_turn') break;
@@ -344,8 +372,8 @@ export async function chat(req, res) {
   const sources = (cited.size ? [...cited.values()] : [...searched.values()].sort((a, b) => official(a) - official(b))).slice(0, 6);
   if (sources.length) send('sources', sources);
   if (reply) {
-    ({ id: messageId } = await db.prepare('INSERT INTO messages (conversation_id, agent_id, role, content, sources) VALUES (?, ?, ?, ?, ?) RETURNING id')
-      .run(convId, agent.id, 'assistant', reply.trim(), JSON.stringify(sources)));
+    ({ id: messageId } = await db.prepare('INSERT INTO messages (conversation_id, agent_id, role, content, sources, tools) VALUES (?, ?, ?, ?, ?, ?) RETURNING id')
+      .run(convId, agent.id, 'assistant', reply.trim(), JSON.stringify(sources), JSON.stringify(ran)));
   }
   await db.prepare('UPDATE conversations SET updated_at = extract(epoch from now()) WHERE id = ?').run(convId);
   if (!res.writableEnded) { send('done', { messageId, userMessageId }); res.end(); }

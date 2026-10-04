@@ -269,6 +269,9 @@ await db.exec(`
   ALTER TABLE users     ADD COLUMN IF NOT EXISTS disabled   BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE users     ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 
+  -- The tool calls a reply made (name, input, how it came out), replayed to the model on later turns.
+  ALTER TABLE messages  ADD COLUMN IF NOT EXISTS tools TEXT DEFAULT '[]';
+
   -- Sharing is per-item and opt-in. Denormalised onto chunks for the same reason
   -- agent_id already is: recall() must filter without joining documents.
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS shared BOOLEAN NOT NULL DEFAULT false;
