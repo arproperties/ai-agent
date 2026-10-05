@@ -861,6 +861,8 @@ await db.exec(`
 //   remind_at: NULL means "as soon as they tap Send".
 //   everyone: remembered so the card can say "Everyone" rather than a list of twenty names.
 //   team_reminder_people: one row per person it went to, and each person's own tick.
+//   team_reminder_photos: pictures sent along with it. path is the reminder's own copy of
+//     the bytes, under data/reminder-files, not the sender's Shelf file.
 await db.exec(`
   CREATE TABLE IF NOT EXISTS team_reminders (
     id SERIAL PRIMARY KEY,
@@ -884,6 +886,14 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_team_rem_sender ON team_reminders(sender_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_team_rem_waiting ON team_reminders(remind_at) WHERE status = 'scheduled';
   CREATE INDEX IF NOT EXISTS idx_team_rem_people ON team_reminder_people(user_id, done);
+  CREATE TABLE IF NOT EXISTS team_reminder_photos (
+    id SERIAL PRIMARY KEY,
+    reminder_id INTEGER NOT NULL REFERENCES team_reminders(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    path TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_team_rem_photos ON team_reminder_photos(reminder_id);
 `);
 
 // Reminders Reem thinks someone might want — the tables behind server/suggestions.js.

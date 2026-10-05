@@ -7,7 +7,7 @@ import Orb from './Orb';
 import Avatar from './Avatar';
 import Message from './Message';
 import DraftCard from './DraftCard';
-import TeamReminderCard from './TeamReminderCard';
+import TeamReminderCard, { ReminderPhotos } from './TeamReminderCard';
 import ResponsibilityCard from './ResponsibilityCard';
 import InventoryCard from './InventoryCard';
 import BookingCard from './BookingCard';
@@ -299,6 +299,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 <span className="min-w-0 flex-1">
                   <b className="block text-sm font-medium">{r.text}</b>
                   <span className="block truncate text-xs text-mute">From {r.sender_name}</span>
+                  <ReminderPhotos photos={r.photos} className="mt-2" />
                 </span>
                 <button onClick={() => api.post(`/team-reminders/inbox/${r.id}/done`).then(onDueChanged).catch((e) => flash(e.message))}
                   className="flex shrink-0 items-center gap-1 rounded-full border border-stroke px-3 py-1.5 text-xs hover:border-ok/60 hover:text-ok">
