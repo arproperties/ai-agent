@@ -219,6 +219,31 @@ async function readAttachments(user, convId, files, send, team) {
   return { blocks, meta };
 }
 
+// Asked again before it was answered — the reply was slow, stopped or lost, so the same
+// words were sent a second time. That is one question, not two: it is kept once, and the
+// reply that does come answers it. Only plain words count; a file is never folded away.
+const REPEAT_S = 10 * 60;
+export async function saveQuestion(convId, text, files) {
+  const last = await db.prepare(`SELECT id, role, content, files, extract(epoch from now()) - created_at age
+    FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1`).get(convId);
+  if (text && !files.length && last?.role === 'user' && last.content === text && last.files === '[]' && last.age < REPEAT_S) {
+    return { id: last.id, repeat: true };
+  }
+  const { id } = await db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?) RETURNING id')
+    .run(convId, 'user', text, JSON.stringify(files));
+  return { id, repeat: false };
+}
+
+/**
+ * One message out of a Reem chat, for the person whose chat it is. Only the message goes:
+ * a file it brought stays on the Shelf, and the agent no longer sees those words.
+ */
+export async function deleteMessage(userId, id) {
+  const r = await db.prepare(`DELETE FROM messages m USING conversations c
+    WHERE c.id = m.conversation_id AND m.id = ? AND c.user_id = ?`).run(Number(id) || 0, userId);
+  return r.changes > 0;
+}
+
 export async function chat(req, res) {
   const user = req.user;
   const team = await chatAgents(user);
@@ -282,8 +307,8 @@ export async function chat(req, res) {
   if (picked.length) send('status', { label: picked.length > 1 ? 'Reading the chats you brought in…' : 'Reading the chat you brought in…' });
   const { chats: carried, added } = await carry(user, convId, picked);
   if (carried.length) send('carried', carried.map(({ id, title }) => ({ id, title })));
-  const { id: userMessageId } = await db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?) RETURNING id')
-    .run(convId, 'user', text, JSON.stringify(savedFiles));
+  const { id: userMessageId, repeat } = await saveQuestion(convId, text, savedFiles);
+  if (repeat) send('repeat', { userMessageId }); // the app shows it once too
   if (added.length) await noteCarried(userMessageId, added);
 
   // 3. Stream the reply (with web search, and email tools when a mailbox is connected).
@@ -293,7 +318,8 @@ export async function chat(req, res) {
   let stream;
   const cited = new Map(); // pages the reply explicitly cites
   const searched = new Map(); // pages returned by searches (fallback: the newer search tool often returns no citations)
-  const convo = [...toClaude(prior), { role: 'user', content: [...blocks, { type: 'text', text: text || 'Please review the attached file(s).' }] }];
+  // A repeat is already the last of the earlier turns: it is not said to the agent twice.
+  const convo = [...toClaude(repeat ? prior.slice(0, -1) : prior), { role: 'user', content: [...blocks, { type: 'text', text: text || 'Please review the attached file(s).' }] }];
   const emit = (t) => { reply += t; send('delta', { text: t }); };
   res.on('close', () => { if (!finished) stream?.abort(); });
 

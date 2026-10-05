@@ -150,6 +150,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     let reply = '';
     let agentId = null;
     let savedId = null; // the row id the server gave the reply, sent when sharing it
+    let failed = false; // an error is already on the bubble
+    let acted = false; // a card was put in the chat, which is an answer in itself
     try {
       await streamChat(form, {
         signal: ctrl.signal,
@@ -159,21 +161,27 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           else if (event === 'files') { // saved attachments: link them so they can be viewed
             setMessages((m) => m.map((x) => (x.id === `u${aid}` ? { ...x, files: x.files.map((f) => ({ ...f, ...d.find((s) => s.name === f.name) })) } : x)));
           }
+          else if (event === 'repeat') {
+            // The same question, asked again before it was answered: it stays on screen once,
+            // as the server keeps it once, and the reply lands under the first asking.
+            setMessages((m) => m.filter((x) => x.id !== `u${aid}`)
+              .map((x) => (x.role === 'user' && x.content === text && !x.saved ? { ...x, saved: d.userMessageId } : x)));
+          }
           else if (event === 'carried') setCarrying(d.map((c) => c.title));
           else if (event === 'status') setStatus(d.label);
           else if (event === 'notice') flash(d.message);
-          else if (event === 'error') update({ error: d.message });
+          else if (event === 'error') { failed = true; update({ error: d.message }); }
           else if (event === 'sources') update({ sources: d });
           else if (event === 'done') {
             savedId = d.messageId;
             // their own message gets its saved id too, so it can be made into a PDF
             if (d.userMessageId) setMessages((m) => m.map((x) => (x.id === `u${aid}` ? { ...x, saved: d.userMessageId } : x)));
           }
-          else if (event === 'teamReminder') { setReminders((rs) => [...rs.filter((x) => x.id !== d.id), d]); toBottom(); }
-          else if (event === 'responsibility') { setDuties((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
-          else if (event === 'inventoryAdd') { setStock((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
-          else if (event === 'arsBooking') { setBookings((bs) => [...bs.filter((x) => x.id !== d.id), d]); toBottom(); }
-          else if (event === 'draft') { setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'teamReminder') { acted = true; setReminders((rs) => [...rs.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'responsibility') { acted = true; setDuties((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'inventoryAdd') { acted = true; setStock((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'arsBooking') { acted = true; setBookings((bs) => [...bs.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'draft') { acted = true; setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'delta') {
             if (!reply) setOrb('speaking');
             setStatus('');
@@ -184,8 +192,12 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         },
       });
     } catch (e) {
-      if (e.name !== 'AbortError') update({ error: e.message });
+      if (e.name !== 'AbortError') { failed = true; update({ error: e.message }); }
     }
+    // A turn that ends with no words used to leave the three dots bouncing for good, which
+    // reads as "still coming" and gets the question asked again. Say what happened instead.
+    if (!reply && !failed && acted) setMessages((m) => m.filter((x) => x.id !== aid));
+    else if (!reply && !failed) update({ error: ctrl.signal.aborted ? 'Stopped before a reply came.' : 'No reply came through. Please ask again.' });
     update({ streaming: false, saved: savedId });
     // "…convert into pdf": the reply is the PDF's content, so open it straight away.
     if (!voice && savedId && /\bpdf\b/i.test(text) && /<!--\s*doc\s*-->/i.test(reply)) setPdfOf({ id: savedId, content: reply });
@@ -193,6 +205,17 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     onConversation(null);
     if (voice && reply) say(reply, aid, agentId);
     return { reply, agentId }; // live voice mode reads the reply out itself
+  };
+
+  // Delete, as in WhatsApp: the one message goes, here and on the server, and the agent
+  // no longer has it. Only a saved message: one still on its way has no row to remove.
+  const removeMessage = async (m) => {
+    if (!confirm(m.role === 'user' ? 'Delete this message?' : 'Delete this reply?')) return;
+    try {
+      await api.del(`/messages/${savedIdOf(m)}`);
+      if (voice.id === m.id) stopSpeaking();
+      setMessages((list) => list.filter((x) => x.id !== m.id));
+    } catch (e) { flash(e.message); }
   };
 
   const lastAgent = byId[[...messages].reverse().find((m) => m.agent_id)?.agent_id];
@@ -371,6 +394,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 voice={voice.id === m.id ? voice.state : 'idle'} onStopSpeak={stopSpeaking}
                 onSpeak={() => say(m.content, m.id, m.agent_id)}
                 onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined}
+                onDelete={savedIdOf(m) && !m.streaming ? () => removeMessage(m) : undefined}
                 onPdf={savedIdOf(m) && m.content && !(m.role === 'assistant' && lastDrawing(m.content)) ? () => setPdfOf({ id: savedIdOf(m), content: m.content, own: m.role === 'user' }) : undefined} />
             ))}
             {drafts.map((d) => (

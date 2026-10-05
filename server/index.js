@@ -8,7 +8,7 @@ import { spoken, prepare, cachedPath, claim, streamTo } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, canUseAgent, isMaster } from './access.js';
-import { chat } from './chat.js';
+import { deleteMessage, chat } from './chat.js';
 import { addMemory } from './knowledge.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
@@ -184,6 +184,11 @@ app.delete('/api/conversations/:id', wrap(async (req, res) => {
 }));
 
 app.post('/api/chat', upload.array('files', 10), wrap(chat));
+// One message taken out of a Reem chat, as in WhatsApp: a voice note said wrong, or a reply not worth keeping.
+app.delete('/api/messages/:id', wrap(async (req, res) => {
+  if (!await deleteMessage(req.user.id, req.params.id)) return notFound(res);
+  res.json({ ok: true });
+}));
 
 // ---------- files: ?agent=<id> for one agent's shelf, otherwise everything this user owns ----------
 const docOut = ({ path, hash, user_id, ...d }) => ({ ...d, tags: JSON.parse(d.tags || '[]') });

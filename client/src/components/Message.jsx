@@ -88,7 +88,7 @@ function Reply({ content, savedId }) {
 
 // savedId: the reply's row, which the PDF and AutoCAD files are made from. drawingFrom: the
 // latest drawing up to this reply, for a reply that hands it over as a file.
-export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile, onShare, onPdf, savedId, drawingFrom }) {
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile, onShare, onPdf, onDelete, savedId, drawingFrom }) {
   const [copied, setCopied] = useState(false);
 
   if (msg.role === 'user') {
@@ -109,9 +109,15 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
           </div>
         )}
         {/* Their own text as a PDF: word for word, no model involved. */}
-        {(onPdf || msg.created_at) && (
+        {(onPdf || onDelete || msg.created_at) && (
           <div className="mt-1 flex min-h-8 items-center justify-end text-mute">
             <Time ts={msg.created_at} />
+            {onDelete && (
+              <button onClick={onDelete} aria-label="Delete message" title="Delete message"
+                className="grid size-8 place-items-center rounded-full hover:bg-white/10 hover:text-bad">
+                <Icon name="trash" size={16} />
+              </button>
+            )}
             {onPdf && (
               <button onClick={onPdf} aria-label="Make a PDF" title="Make a PDF"
                 className="grid size-8 place-items-center rounded-full hover:bg-white/10">
@@ -201,6 +207,12 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
             <button onClick={onPdf} aria-label="Make a PDF" title="Make a PDF"
               className="grid size-8 place-items-center rounded-full hover:bg-white/10">
               <Icon name="pdf" size={16} />
+            </button>
+          )}
+          {onDelete && (
+            <button onClick={onDelete} aria-label="Delete message" title="Delete message"
+              className="grid size-8 place-items-center rounded-full hover:bg-white/10 hover:text-bad">
+              <Icon name="trash" size={16} />
             </button>
           )}
           <Time ts={msg.created_at} />
