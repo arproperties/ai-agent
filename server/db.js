@@ -1268,3 +1268,47 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_inventory_proposals_chat ON inventory_proposals(user_id, conversation_id, id);
   ALTER TABLE inventory_proposals ADD COLUMN IF NOT EXISTS site_id INTEGER;
 `);
+
+// Recurring payments: money that should come in every month from something in a building
+// (a shop's rent, the washing machine in Ayla) - see server/recurringPayments.js.
+//   recurring_payments: the entry, made once. site_id is the saifsys building id, like the
+//     inventory; site_name is kept beside it so a line still reads right after the building
+//     is unticked on the Buildings screen. day is the day of the month its line is created.
+//   recurring_payment_dues: one month's line of one entry, pending until marked paid.
+//     amount is the entry's amount on the day the line was made, so a later change to the
+//     entry never rewrites a month already asked for. One line per entry per month, by
+//     the unique index, so the creator can run as often as it likes.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_payments (
+    id SERIAL PRIMARY KEY,
+    site_id   INTEGER NOT NULL,
+    site_name TEXT NOT NULL,
+    unit  TEXT,
+    title TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    day    INTEGER NOT NULL CHECK (day BETWEEN 1 AND 31),
+    auto_create BOOLEAN NOT NULL DEFAULT true,
+    first_month TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT true,
+    notes TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_recurring_payments_site ON recurring_payments(site_id);
+
+  CREATE TABLE IF NOT EXISTS recurring_payment_dues (
+    id SERIAL PRIMARY KEY,
+    payment_id INTEGER NOT NULL REFERENCES recurring_payments(id) ON DELETE CASCADE,
+    month    TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid')),
+    paid_at BIGINT,
+    paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_payment_dues_month ON recurring_payment_dues(payment_id, month);
+  CREATE INDEX IF NOT EXISTS idx_recurring_payment_dues_by_month ON recurring_payment_dues(month);
+`);

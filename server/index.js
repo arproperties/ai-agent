@@ -26,6 +26,7 @@ import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
+import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
 import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
@@ -49,6 +50,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; checked by its one-time state
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
+app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api/outlook', outlookRoutes);
 app.use('/api/imap', imapRoutes);
@@ -71,6 +73,7 @@ app.use('/api/responsibilities', responsibilityRoutes); // who looks after what;
 app.use('/api/checklists', checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
+app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
@@ -383,6 +386,7 @@ app.listen(PORT, '0.0.0.0', () => {
   startReminders();
   startTenantCare(); // does nothing until the Tenant care inbox is connected
   startBuildings(); // buzzes a building's administrator when a staff job needs them
+  startRecurringPayments(); // creates each recurring payment's line on its day of the month
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));
