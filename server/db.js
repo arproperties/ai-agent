@@ -1271,18 +1271,26 @@ await db.exec(`
 
 // Recurring payments: money that should come in every month from something in a building
 // (a shop's rent, the washing machine in Ayla) - see server/recurringPayments.js.
-//   recurring_payments: the entry, made once. site_id is the saifsys building id, like the
-//     inventory; site_name is kept beside it so a line still reads right after the building
-//     is unticked on the Buildings screen. day is the day of the month its line is created.
+//   recurring_buildings: the module's own buildings, typed by the accountants. Nothing to
+//     do with the Buildings screen, the inventory or the saifsys building list.
+//   recurring_payments: the entry, made once, in one of those buildings. day is the day of
+//     the month its line is created.
 //   recurring_payment_dues: one month's line of one entry, pending until marked paid.
 //     amount is the entry's amount on the day the line was made, so a later change to the
 //     entry never rewrites a month already asked for. One line per entry per month, by
 //     the unique index, so the creator can run as often as it likes.
 await db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_buildings (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_buildings_name ON recurring_buildings(lower(name));
+
   CREATE TABLE IF NOT EXISTS recurring_payments (
     id SERIAL PRIMARY KEY,
-    site_id   INTEGER NOT NULL,
-    site_name TEXT NOT NULL,
+    building_id INTEGER NOT NULL REFERENCES recurring_buildings(id),
     unit  TEXT,
     title TEXT NOT NULL,
     amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
@@ -1296,7 +1304,24 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW},
     updated_at BIGINT DEFAULT ${NOW}
   );
-  CREATE INDEX IF NOT EXISTS idx_recurring_payments_site ON recurring_payments(site_id);
+
+  -- Entries made while a building was a saifsys building (site_id, site_name): each name
+  -- becomes a building of the module's own, once, and the old columns go.
+  ALTER TABLE recurring_payments ADD COLUMN IF NOT EXISTS building_id INTEGER REFERENCES recurring_buildings(id);
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'recurring_payments' AND column_name = 'site_name') THEN
+      INSERT INTO recurring_buildings (name)
+        SELECT min(site_name) FROM recurring_payments GROUP BY lower(site_name)
+        ON CONFLICT DO NOTHING;
+      UPDATE recurring_payments p SET building_id = b.id FROM recurring_buildings b
+        WHERE p.building_id IS NULL AND lower(b.name) = lower(p.site_name);
+      ALTER TABLE recurring_payments ALTER COLUMN building_id SET NOT NULL;
+      DROP INDEX IF EXISTS idx_recurring_payments_site;
+      ALTER TABLE recurring_payments DROP COLUMN site_id, DROP COLUMN site_name;
+    END IF;
+  END $$;
+  CREATE INDEX IF NOT EXISTS idx_recurring_payments_building ON recurring_payments(building_id);
 
   CREATE TABLE IF NOT EXISTS recurring_payment_dues (
     id SERIAL PRIMARY KEY,

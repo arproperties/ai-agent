@@ -42,6 +42,7 @@ export function fromSaifsys(req, res, next) {
     }
     if (user.disabled) return res.status(403).json({ error: 'This Reem account has been disabled', code: 'disabled' });
     req.user = user;
+    req.fromSaifsys = true; // saifsys has already decided this person may open the screen
     next();
   }, next);
 }

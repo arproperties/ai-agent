@@ -1,27 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, makeUser, closeDb, db } from './helpers/db.js';
-import { saveBuilding } from '../server/buildings.js';
 import {
   dueDate, createDuePayments, listEntries, listDues, saveEntry, setActive, deleteEntry, createNow, setPaid,
+  listBuildings, saveBuilding, deleteBuilding,
 } from '../server/recurringPayments.js';
 
 test.after(() => closeDb());
 
-// A stand-in for saifsys: only its building list is asked for, when an entry on the Buildings screen is saved.
-const SITES = [{ id: 1, name: 'Ayla Residence' }, { id: 3, name: 'Gents Camp' }, { id: 4, name: 'Ladies Camp' }];
-const ask = async (module, action) => {
-  if (module === 'operations' && action === 'buildings') return { ok: true, buildings: SITES };
-  throw new Error(`unexpected ${module}/${action}`);
-};
-
+// The module's own buildings: Ayla Residence is 1, Gents Camp 2, Ladies Camp 3.
 async function setup() {
   await reset();
   const master = { id: await makeUser('Owner'), role: 'master' };
   const jessa = { id: await makeUser('Jessa'), role: 'user' };
   const sabha = { id: await makeUser('Sabha'), role: 'user' };
-  await saveBuilding(master, null, { name: 'Ayla', admin_id: jessa.id, sites: [1] }, ask);
-  await saveBuilding(master, null, { name: 'Camps', admin_id: sabha.id, sites: [3, 4] }, ask);
+  for (const name of ['Ayla Residence', 'Gents Camp', 'Ladies Camp']) await saveBuilding(master, null, { name });
   return { master, jessa, sabha };
 }
 
@@ -131,8 +124,8 @@ test('a line is marked paid with who and when, and can go back to pending', asyn
 test('a month is listed with its totals, by building and by status', async () => {
   const { master } = await setup();
   await saveEntry(master, null, washer, '2026-10-05');
-  await saveEntry(master, null, { title: 'Shop 3 rent', building_id: 3, unit: 'Shop 3', amount: 2500.5, day: 1, first_month: '2026-09' }, '2026-10-05');
-  await saveEntry(master, null, { title: 'Shop 4 rent', building_id: 3, unit: 'Shop 4', amount: 1000, day: 2, first_month: '2026-10' }, '2026-10-05');
+  await saveEntry(master, null, { title: 'Shop 3 rent', building_id: 2, unit: 'Shop 3', amount: 2500.5, day: 1, first_month: '2026-09' }, '2026-10-05');
+  await saveEntry(master, null, { title: 'Shop 4 rent', building_id: 2, unit: 'Shop 4', amount: 1000, day: 2, first_month: '2026-10' }, '2026-10-05');
 
   const all = await listDues(master, {}, '2026-10-05');
   assert.equal(all.month, '2026-10');
@@ -141,7 +134,7 @@ test('a month is listed with its totals, by building and by status', async () =>
   assert.deepEqual(all.totals, { pending: 3650.5, paid: 0, pending_count: 3, paid_count: 0 });
 
   await setPaid(master, all.dues[0].id, true);
-  const camp = await listDues(master, { building: '3', status: 'pending' }, '2026-10-05');
+  const camp = await listDues(master, { building: '2', status: 'pending' }, '2026-10-05');
   assert.deepEqual(camp.dues.map((d) => d.title), ['Shop 4 rent']);
   assert.deepEqual(camp.totals, { pending: 1000, paid: 2500.5, pending_count: 1, paid_count: 1 }, 'the totals are the building\'s, whatever status is looked at');
   assert.deepEqual((await listDues(master, { month: '2026-09' }, '2026-10-05')).dues.map((d) => d.title), ['Shop 3 rent']);
@@ -165,25 +158,51 @@ test('an entry with payments is paused, not deleted', async () => {
   assert.deepEqual((await listEntries(jessa, '2026-10-05')).entries.map((e) => e.title), ['Washing machine rent']);
 });
 
-test('each person has only their own buildings', async () => {
+test('the buildings are the module\'s own: added, renamed, and deleted only when empty', async () => {
+  const { master, jessa } = await setup();
+  const shop = await saveBuilding(jessa, null, { name: '  Al  Noor shops ' });
+  assert.deepEqual(shop, { id: 4, name: 'Al Noor shops', entries: 0 });
+  await assert.rejects(saveBuilding(jessa, null, { name: ' ' }), /Give the building a name/);
+  await assert.rejects(saveBuilding(jessa, null, { name: 'al noor SHOPS' }), /already in the list/);
+  await assert.rejects(saveBuilding(jessa, 1, { name: 'Gents Camp' }), /already in the list/);
+  assert.equal((await saveBuilding(jessa, shop.id, { name: 'al noor shops' })).name, 'al noor shops', 'its own name in other capitals is a rename');
+  assert.equal(await saveBuilding(jessa, 999, { name: 'Nowhere' }), null);
+
+  // A rename shows on the entries and on the lines already made.
+  await saveEntry(jessa, null, washer, '2026-10-05');
+  assert.equal((await saveBuilding(master, 1, { name: 'Ayla' })).entries, 1);
+  assert.equal((await listEntries(jessa, '2026-10-05')).entries[0].building.name, 'Ayla');
+  assert.equal((await listDues(jessa, {}, '2026-10-05')).dues[0].building.name, 'Ayla');
+  assert.deepEqual((await listBuildings()).map((b) => b.name), ['al noor shops', 'Ayla', 'Gents Camp', 'Ladies Camp']);
+
+  await assert.rejects(deleteBuilding(jessa, 1), /has 1 entry/);
+  assert.deepEqual(await deleteBuilding(jessa, shop.id), { ok: true });
+  assert.equal(await deleteBuilding(jessa, shop.id), null);
+});
+
+test('a building typed on the entry form is made there, or found if it is already in the list', async () => {
+  const { jessa } = await setup();
+  const fresh = await saveEntry(jessa, null, { ...washer, building_id: '', new_building: ' Corniche  Tower ' }, '2026-10-01');
+  assert.deepEqual(fresh.building, { id: 4, name: 'Corniche Tower' });
+  const found = await saveEntry(jessa, null, { ...washer, building_id: '', new_building: 'gents camp' }, '2026-10-01');
+  assert.deepEqual(found.building, { id: 2, name: 'Gents Camp' });
+  assert.equal((await listBuildings()).length, 4);
+  await assert.rejects(saveEntry(jessa, null, { ...washer, building_id: '' }, '2026-10-01'), /Pick the building/);
+});
+
+test('everyone let in sees and changes all of it', async () => {
   const { master, jessa, sabha } = await setup();
   const ayla = await saveEntry(jessa, null, washer, '2026-10-05');
-  const camp = await saveEntry(sabha, null, { ...washer, title: 'Shop 3 rent', building_id: 3 }, '2026-10-05');
-  const stranger = { id: await makeUser('Stranger'), role: 'user' };
+  const camp = await saveEntry(sabha, null, { ...washer, title: 'Shop 3 rent', building_id: 2 }, '2026-10-05');
 
-  assert.deepEqual((await listEntries(jessa, '2026-10-05')).buildings, [{ id: 1, name: 'Ayla Residence' }]);
-  assert.deepEqual((await listEntries(jessa, '2026-10-05')).entries.map((e) => e.id), [ayla.id]);
-  assert.deepEqual((await listDues(sabha, {}, '2026-10-05')).dues.map((d) => d.title), ['Shop 3 rent']);
+  assert.deepEqual((await listEntries(jessa, '2026-10-05')).buildings.map((b) => b.name), ['Ayla Residence', 'Gents Camp', 'Ladies Camp']);
+  assert.deepEqual((await listEntries(jessa, '2026-10-05')).entries.map((e) => e.id), [ayla.id, camp.id]);
+  assert.equal((await listDues(sabha, {}, '2026-10-05')).dues.length, 2);
   assert.equal((await listDues(master, {}, '2026-10-05')).dues.length, 2);
-  assert.deepEqual(await listDues(stranger, {}, '2026-10-05'), { month: '2026-10', buildings: [], units: [], dues: [], totals: { pending: 0, paid: 0, pending_count: 0, paid_count: 0 } });
 
-  // Somebody else's entry and line are simply not there.
-  const [campDue] = (await listDues(sabha, {}, '2026-10-05')).dues;
-  await assert.rejects(saveEntry(jessa, null, { ...washer, building_id: 3 }, '2026-10-05'), /Pick the building/);
-  assert.equal(await saveEntry(jessa, camp.id, washer, '2026-10-05'), null);
-  assert.equal(await setActive(jessa, camp.id, false), null);
-  assert.equal(await deleteEntry(jessa, camp.id), null);
-  assert.equal(await createNow(jessa, camp.id), null);
-  assert.equal(await setPaid(jessa, campDue.id, true), null);
-  assert.equal((await setPaid(master, campDue.id, true)).status, 'paid');
+  const [campDue] = (await listDues(sabha, { building: '2' }, '2026-10-05')).dues;
+  assert.equal((await setPaid(jessa, campDue.id, true)).paid_by, 'Jessa');
+  assert.equal((await setActive(jessa, camp.id, false)).active, false);
+  assert.equal(await setPaid(jessa, 999, true), null);
+  assert.equal(await setActive(jessa, 999, false), null);
 });

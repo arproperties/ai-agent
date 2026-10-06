@@ -40,7 +40,7 @@ const TABLES = [
   'checklists', 'checklist_items', 'checklist_runs', 'checklist_run_items',
   'buildings', 'building_sites', 'building_staff', 'building_jobs_seen',
   'inventory_areas', 'inventory_items', 'inventory_log', 'inventory_proposals',
-  'recurring_payments', 'recurring_payment_dues',
+  'recurring_buildings', 'recurring_payments', 'recurring_payment_dues',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { db } from './db.js';
-import { keptBuildings } from './inventory.js';
 
 // Recurring payments: money that should come in every month from something in a building -
 // a shop's rent in the camp, the washing machine in Ayla.
@@ -10,11 +9,14 @@ import { keptBuildings } from './inventory.js';
 // created on that day, pending, and somebody marks it paid when the money is in. It is a
 // list to chase, nothing more: no invoice, nothing posted to the accounts.
 //
-// A building is one real saifsys building, the same as in the inventory, and the same
-// people see it: the master every building, an administrator the saifsys buildings ticked
-// on the entries they run. Reem keeps all of it; the saifsys Recurring Payments screens
-// only show it, through the door in server/fromSaifsys.js.
+// The module stands on its own. Its buildings are its own list, typed here - not the
+// Buildings screen, not the inventory, not the saifsys building list - and nothing else
+// reads them. It is the accountants' list: whoever saifsys lets open its Recurring
+// Payments screens sees and changes all of it (a role tick there), and in Reem itself
+// only the master. Reem keeps all of it; the saifsys screens only show it, through the
+// door in server/fromSaifsys.js.
 
+const MAX_NAME = 80;
 const MAX_TITLE = 120;
 const MAX_UNIT = 80;
 const MAX_NOTES = 500;
@@ -64,56 +66,83 @@ export async function createDuePayments(now = today(), entryId = null) {
   return made;
 }
 
+// ---------- the buildings ----------
+
+/** The module's own buildings, by name, each with how many entries it has. */
+export const listBuildings = async () => (await db.prepare(`SELECT b.id, b.name,
+    (SELECT count(*)::int FROM recurring_payments p WHERE p.building_id = b.id) AS entries
+  FROM recurring_buildings b ORDER BY lower(b.name), b.id`).all());
+
+const buildingOf = async (id) => (await db.prepare('SELECT id, name FROM recurring_buildings WHERE id = ?').get(Number(id) || 0)) || null;
+const buildingNamed = async (name) => (await db.prepare('SELECT id, name FROM recurring_buildings WHERE lower(name) = lower(?)').get(name)) || null;
+
+/** Add a building (id null) or rename one. A name is there once, whatever its capitals. null: no such building. */
+export async function saveBuilding(user, id, input) {
+  const old = id === null ? null : await buildingOf(id);
+  if (id !== null && !old) return null;
+  const name = line(input?.name, MAX_NAME);
+  if (!name) throw bad('Give the building a name');
+  const same = await buildingNamed(name);
+  if (same && same.id !== old?.id) throw bad(`"${same.name}" is already in the list`, 409);
+  if (old) await db.prepare('UPDATE recurring_buildings SET name = ? WHERE id = ?').run(name, old.id);
+  const savedId = old?.id ?? (await db.prepare('INSERT INTO recurring_buildings (name, created_by) VALUES (?, ?) RETURNING id').run(name, user.id)).id;
+  return (await listBuildings()).find((b) => b.id === savedId);
+}
+
+/** Only a building with no entries can go. */
+export async function deleteBuilding(user, id) {
+  const b = (await listBuildings()).find((x) => x.id === Number(id));
+  if (!b) return null;
+  if (b.entries > 0) throw bad(`"${b.name}" has ${b.entries} ${b.entries === 1 ? 'entry' : 'entries'}, so it cannot be deleted. Move or delete those first.`, 409);
+  await db.prepare('DELETE FROM recurring_buildings WHERE id = ?').run(b.id);
+  return { ok: true };
+}
+
 // ---------- reading ----------
 
-const kept = async (user) => (await keptBuildings(user)).map((b) => ({ id: b.id, name: b.name }));
+const picks = async () => (await listBuildings()).map((b) => ({ id: b.id, name: b.name }));
 
-const ENTRY = `SELECT p.*, (SELECT count(*)::int FROM recurring_payment_dues d WHERE d.payment_id = p.id) AS payments,
+const ENTRY = `SELECT p.*, b.name AS building_name, (SELECT count(*)::int FROM recurring_payment_dues d WHERE d.payment_id = p.id) AS payments,
     EXISTS (SELECT 1 FROM recurring_payment_dues d WHERE d.payment_id = p.id AND d.month = ?) AS has_this_month
-  FROM recurring_payments p`;
+  FROM recurring_payments p JOIN recurring_buildings b ON b.id = p.building_id`;
 const DUE = `SELECT d.id, d.payment_id, d.month, d.due_date, d.amount, d.status, d.paid_at, u.name AS paid_by,
-    p.title, p.unit, p.site_id, p.site_name
-  FROM recurring_payment_dues d JOIN recurring_payments p ON p.id = d.payment_id LEFT JOIN users u ON u.id = d.paid_by`;
+    p.title, p.unit, p.building_id, b.name AS building_name
+  FROM recurring_payment_dues d JOIN recurring_payments p ON p.id = d.payment_id JOIN recurring_buildings b ON b.id = p.building_id
+  LEFT JOIN users u ON u.id = d.paid_by`;
 
 const shapeEntry = (p) => ({
-  id: p.id, title: p.title, building: { id: p.site_id, name: p.site_name }, unit: p.unit, amount: p.amount, day: p.day,
+  id: p.id, title: p.title, building: { id: p.building_id, name: p.building_name }, unit: p.unit, amount: p.amount, day: p.day,
   auto_create: p.auto_create, first_month: p.first_month, active: p.active, notes: p.notes,
   payments: p.payments, has_this_month: p.has_this_month,
 });
 const shapeDue = (d) => ({
-  id: d.id, entry_id: d.payment_id, month: d.month, title: d.title, building: { id: d.site_id, name: d.site_name }, unit: d.unit,
+  id: d.id, entry_id: d.payment_id, month: d.month, title: d.title, building: { id: d.building_id, name: d.building_name }, unit: d.unit,
   due_date: d.due_date, amount: d.amount, status: d.status, paid_at: d.paid_at, paid_by: d.paid_by,
 });
 
-/** The entry, if it is in a building this person keeps. */
-async function entryOf(user, id, now = today()) {
-  const p = await db.prepare(`${ENTRY} WHERE p.id = ?`).get(now.slice(0, 7), Number(id) || 0);
-  return p && (await kept(user)).some((b) => b.id === p.site_id) ? p : null;
-}
+const entryOf = async (user, id, now = today()) => (await db.prepare(`${ENTRY} WHERE p.id = ?`).get(now.slice(0, 7), Number(id) || 0)) || null;
 
-/** Every entry in the buildings this person keeps, and those buildings to pick from. */
+/** Every entry, and the buildings to pick from. */
 export async function listEntries(user, now = today()) {
-  const buildings = await kept(user);
-  const rows = await db.prepare(`${ENTRY} WHERE p.site_id = ANY(?::int[]) ORDER BY lower(p.site_name), lower(p.title), p.id`)
-    .all(now.slice(0, 7), buildings.map((b) => b.id));
-  return { month: now.slice(0, 7), buildings, entries: rows.map(shapeEntry) };
+  const rows = await db.prepare(`${ENTRY} ORDER BY lower(b.name), lower(p.title), p.id`).all(now.slice(0, 7));
+  return { month: now.slice(0, 7), buildings: await picks(), entries: rows.map(shapeEntry) };
 }
 
 /**
- * One month's lines in this person's buildings, with what is still pending and what has
+ * One month's lines, with what is still pending and what has
  * been paid. The totals are the month's (and the building's and the shop or unit's, when
  * one is picked), whatever status is being looked at. No month said = this month.
  * units: every shop or unit typed on an entry of the buildings looked at, to pick from.
  */
 export async function listDues(user, query = {}, now = today()) {
-  const buildings = await kept(user);
+  const buildings = await picks();
   const month = MONTH.test(query.month || '') ? query.month : now.slice(0, 7);
   const one = Number(query.building) || 0;
   const ids = buildings.map((b) => b.id).filter((id) => !one || id === one);
   const unit = line(query.unit, MAX_UNIT).toLowerCase();
-  const units = (await db.prepare(`SELECT min(unit) AS unit FROM recurring_payments WHERE site_id = ANY(?::int[]) AND unit IS NOT NULL
+  const units = (await db.prepare(`SELECT min(unit) AS unit FROM recurring_payments WHERE building_id = ANY(?::int[]) AND unit IS NOT NULL
     GROUP BY lower(unit) ORDER BY lower(unit)`).all(ids)).map((r) => r.unit);
-  const rows = (await db.prepare(`${DUE} WHERE d.month = ? AND p.site_id = ANY(?::int[]) ORDER BY d.due_date, lower(p.title), d.id`).all(month, ids))
+  const rows = (await db.prepare(`${DUE} WHERE d.month = ? AND p.building_id = ANY(?::int[]) ORDER BY d.due_date, lower(p.title), d.id`).all(month, ids))
     .map(shapeDue).filter((d) => !unit || (d.unit || '').toLowerCase() === unit);
   const of = (status) => rows.filter((d) => d.status === status);
   const sum = (list) => Math.round(list.reduce((t, d) => t + d.amount, 0) * 100) / 100;
@@ -132,8 +161,10 @@ export async function listDues(user, query = {}, now = today()) {
 async function readEntry(user, input, now) {
   const title = line(input?.title, MAX_TITLE);
   if (!title) throw bad('Give the entry a title, like Washing machine rent');
-  const building = (await kept(user)).find((b) => b.id === Number(input.building_id));
-  if (!building) throw bad('Pick the building from the list');
+  // A name typed on the form is a building too: the one already called that, or a new one.
+  const typed = line(input.new_building, MAX_NAME);
+  const building = typed ? (await buildingNamed(typed)) || (await saveBuilding(user, null, { name: typed })) : await buildingOf(input.building_id);
+  if (!building) throw bad('Pick the building from the list, or type a new one');
   const amount = Math.round(Number(input.amount) * 100) / 100;
   if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT) throw bad('The amount must be a number more than 0');
   const day = Number(input.day);
@@ -143,7 +174,7 @@ async function readEntry(user, input, now) {
   // A typo in the year must not create years of payments nobody is owed.
   if (first < `${Number(now.slice(0, 4)) - 3}${now.slice(4, 7)}`) throw bad('The first month cannot be more than three years back');
   return {
-    title, site_id: building.id, site_name: building.name, unit: line(input.unit, MAX_UNIT) || null, amount, day,
+    title, building_id: building.id, unit: line(input.unit, MAX_UNIT) || null, amount, day,
     auto_create: input.auto_create === undefined ? true : !!input.auto_create,
     first_month: first, notes: String(input.notes ?? '').trim().slice(0, MAX_NOTES) || null,
   };
@@ -159,14 +190,14 @@ export async function saveEntry(user, id, input, now = today()) {
   const old = id === null ? null : await entryOf(user, id, now);
   if (id !== null && !old) return null;
   const f = await readEntry(user, input || {}, now);
-  const values = [f.site_id, f.site_name, f.unit, f.title, f.amount, f.day, f.auto_create, f.first_month, f.notes, user.id];
+  const values = [f.building_id, f.unit, f.title, f.amount, f.day, f.auto_create, f.first_month, f.notes, user.id];
   let entryId = old?.id;
   if (old) {
-    await db.prepare(`UPDATE recurring_payments SET site_id = ?, site_name = ?, unit = ?, title = ?, amount = ?, day = ?, auto_create = ?,
+    await db.prepare(`UPDATE recurring_payments SET building_id = ?, unit = ?, title = ?, amount = ?, day = ?, auto_create = ?,
       first_month = ?, notes = ?, updated_by = ?, updated_at = ${NOW} WHERE id = ?`).run(...values, old.id);
   } else {
-    entryId = (await db.prepare(`INSERT INTO recurring_payments (site_id, site_name, unit, title, amount, day, auto_create, first_month, notes, updated_by, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(...values, user.id)).id;
+    entryId = (await db.prepare(`INSERT INTO recurring_payments (building_id, unit, title, amount, day, auto_create, first_month, notes, updated_by, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(...values, user.id)).id;
   }
   await createDuePayments(now, entryId);
   return shapeEntry(await entryOf(user, entryId, now));
@@ -205,7 +236,7 @@ export async function createNow(user, id, now = today()) {
 /** Mark a line paid, with who and when, or put it back to pending. */
 export async function setPaid(user, dueId, paid) {
   const d = await db.prepare(`${DUE} WHERE d.id = ?`).get(Number(dueId) || 0);
-  if (!d || !(await kept(user)).some((b) => b.id === d.site_id)) return null;
+  if (!d) return null;
   await db.prepare(`UPDATE recurring_payment_dues SET status = ?, paid_at = ${paid ? NOW : 'NULL'}, paid_by = ? WHERE id = ?`)
     .run(paid ? 'paid' : 'pending', paid ? user.id : null, d.id);
   return shapeDue(await db.prepare(`${DUE} WHERE d.id = ?`).get(d.id));
@@ -232,6 +263,10 @@ export const recurringPaymentRoutes = Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const send = (res, row) => (row ? res.json(row) : res.status(404).json({ error: 'Not found' }));
 
+// The accountants come in from saifsys, which has checked their role. Signed in to Reem itself, it is the master's.
+recurringPaymentRoutes.use((req, res, next) => (req.fromSaifsys || req.user?.role === 'master'
+  ? next() : res.status(403).json({ error: 'Recurring Payments is opened from saifsys' })));
+
 recurringPaymentRoutes.get('/', wrap(async (req, res) => res.json(await listDues(req.user, req.query))));
 recurringPaymentRoutes.get('/entries', wrap(async (req, res) => res.json(await listEntries(req.user))));
 recurringPaymentRoutes.post('/entries', wrap(async (req, res) => res.json(await saveEntry(req.user, null, req.body))));
@@ -241,3 +276,7 @@ recurringPaymentRoutes.post('/entries/:id/active', wrap(async (req, res) => send
 recurringPaymentRoutes.post('/entries/:id/dues', wrap(async (req, res) => send(res, await createNow(req.user, req.params.id))));
 recurringPaymentRoutes.post('/dues/:id/paid', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, true))));
 recurringPaymentRoutes.post('/dues/:id/pending', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, false))));
+recurringPaymentRoutes.get('/buildings', wrap(async (req, res) => res.json({ buildings: await listBuildings() })));
+recurringPaymentRoutes.post('/buildings', wrap(async (req, res) => res.json(await saveBuilding(req.user, null, req.body))));
+recurringPaymentRoutes.put('/buildings/:id', wrap(async (req, res) => send(res, await saveBuilding(req.user, req.params.id, req.body))));
+recurringPaymentRoutes.delete('/buildings/:id', wrap(async (req, res) => send(res, await deleteBuilding(req.user, req.params.id))));
