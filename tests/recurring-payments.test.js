@@ -93,6 +93,12 @@ test('a paused entry and one that does not create its own are left alone', async
   const due = await createNow(jessa, byHand.id, '2026-12-20');
   assert.deepEqual([due.month, due.due_date, due.status, due.title], ['2026-12', '2026-12-05', 'pending', 'Parking']);
   await assert.rejects(createNow(jessa, byHand.id, '2026-12-20'), /already there/);
+
+  // An invoice entered late keeps its own date, even one before the entry's start.
+  const old = await createNow(jessa, byHand.id, '2026-12-20', '2026-09-28');
+  assert.deepEqual([old.month, old.due_date], ['2026-09', '2026-09-28']);
+  await assert.rejects(createNow(jessa, byHand.id, '2026-12-20', '2026-09-03'), /already has a payment for 2026-09/);
+  await assert.rejects(createNow(jessa, byHand.id, '2026-12-20', '28/09/2026'), /date of the payment/);
   await setActive(jessa, byHand.id, false, '2026-12-20');
   await assert.rejects(createNow(jessa, byHand.id, '2027-01-02'), /is paused/);
 });
@@ -115,17 +121,22 @@ test('a line is marked paid with who and when, and can go back to pending', asyn
   const [due] = (await listDues(jessa, {}, '2026-10-05')).dues;
   assert.deepEqual({ ...due }, {
     id: due.id, entry_id: e.id, month: '2026-10', title: 'Washing machine rent', building: { id: 1, name: 'Ayla Residence' }, unit: 'Laundry room',
-    due_date: '2026-10-05', amount: 150, status: 'pending', paid_at: null, paid_by: null, account: null, attachment: false,
+    due_date: '2026-10-05', amount: 150, status: 'pending', paid_at: null, paid_on: null, paid_by: null, account: null, attachment: false,
   });
   await assert.rejects(setPaid(jessa, due.id, true), /Pick the account/);
   await assert.rejects(setPaid(jessa, due.id, true, { account_id: 99 }), /Pick the account/);
-  const paid = await setPaid(jessa, due.id, true, { account_id: 2 });
+  const paid = await setPaid(jessa, due.id, true, { account_id: 2 }, '2026-10-07');
   assert.equal(paid.status, 'paid');
   assert.deepEqual(paid.account, { id: 2, name: 'Cash to Mr Tauqeer' });
+  assert.equal(paid.paid_on, '2026-10-07', 'no date said = today');
+  // The day it was received can be picked: the money came on the 3rd and is written down later.
+  assert.equal((await setPaid(jessa, due.id, true, { account_id: 2, paid_on: '2026-10-03' }, '2026-10-07')).paid_on, '2026-10-03');
+  await assert.rejects(setPaid(jessa, due.id, true, { account_id: 2, paid_on: '3/10/2026' }), /date the money was received/);
+  assert.equal((await getAccount(jessa, 2)).movements[0].date, '2026-10-03');
   assert.equal(paid.paid_by, 'Jessa');
   assert.ok(paid.paid_at > 0);
   const back = await setPaid(jessa, due.id, false);
-  assert.deepEqual([back.status, back.paid_at, back.paid_by, back.account], ['pending', null, null, null]);
+  assert.deepEqual([back.status, back.paid_at, back.paid_on, back.paid_by, back.account], ['pending', null, null, null, null]);
 });
 
 test('a month is listed with its totals, by building and by status', async () => {

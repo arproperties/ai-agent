@@ -55,8 +55,8 @@ export const dueDate = (month, day) => {
 
 // ---------- the creator ----------
 
-const insertDue = (entry, month) => db.prepare(`INSERT INTO recurring_payment_dues (payment_id, month, due_date, amount)
-  VALUES (?, ?, ?, ?) ON CONFLICT (payment_id, month) DO NOTHING RETURNING id`).run(entry.id, month, dueDate(month, entry.day), entry.amount);
+const insertDue = (entry, month, date = dueDate(month, entry.day)) => db.prepare(`INSERT INTO recurring_payment_dues (payment_id, month, due_date, amount)
+  VALUES (?, ?, ?, ?) ON CONFLICT (payment_id, month) DO NOTHING RETURNING id`).run(entry.id, month, date, entry.amount);
 
 /**
  * Create every line whose day has come and that is not there yet: for each active entry
@@ -115,7 +115,7 @@ const picks = async () => (await listBuildings()).map((b) => ({ id: b.id, name: 
 const ENTRY = `SELECT p.*, b.name AS building_name, (SELECT count(*)::int FROM recurring_payment_dues d WHERE d.payment_id = p.id) AS payments,
     EXISTS (SELECT 1 FROM recurring_payment_dues d WHERE d.payment_id = p.id AND d.month = ?) AS has_this_month
   FROM recurring_payments p JOIN recurring_buildings b ON b.id = p.building_id`;
-const DUE = `SELECT d.id, d.payment_id, d.month, d.due_date, d.amount, d.status, d.paid_at, u.name AS paid_by,
+const DUE = `SELECT d.id, d.payment_id, d.month, d.due_date, d.amount, d.status, d.paid_at, d.paid_on, u.name AS paid_by,
     d.account_id, a.name AS account_name, d.attachment, p.title, p.unit, p.building_id, b.name AS building_name
   FROM recurring_payment_dues d JOIN recurring_payments p ON p.id = d.payment_id JOIN recurring_buildings b ON b.id = p.building_id
   LEFT JOIN users u ON u.id = d.paid_by LEFT JOIN recurring_accounts a ON a.id = d.account_id`;
@@ -127,7 +127,7 @@ const shapeEntry = (p) => ({
 });
 const shapeDue = (d) => ({
   id: d.id, entry_id: d.payment_id, month: d.month, title: d.title, building: { id: d.building_id, name: d.building_name }, unit: d.unit,
-  due_date: d.due_date, amount: d.amount, status: d.status, paid_at: d.paid_at, paid_by: d.paid_by,
+  due_date: d.due_date, amount: d.amount, status: d.status, paid_at: d.paid_at, paid_on: d.paid_on, paid_by: d.paid_by,
   account: d.account_id ? { id: d.account_id, name: d.account_name } : null, attachment: !!d.attachment,
 });
 
@@ -232,15 +232,21 @@ export async function deleteEntry(user, id) {
   return { ok: true };
 }
 
-/** This month's line, made by hand: for an entry that does not create its own, or ahead of its day. */
-export async function createNow(user, id, now = today()) {
+/**
+ * A line made by hand: for an entry that does not create its own, or ahead of its day.
+ * No date said: this month's, on the entry's day. A date said (an invoice entered late,
+ * with its old date): that month's line, dated that day, even before the entry's start.
+ */
+export async function createNow(user, id, now = today(), date = null) {
   const p = await entryOf(user, id, now);
   if (!p) return null;
-  const month = now.slice(0, 7);
+  const on = String(date ?? '').trim();
+  if (on && !DATE.test(on)) throw bad('Pick the date of the payment');
+  const month = (on || now).slice(0, 7);
   if (!p.active) throw bad(`"${p.title}" is paused. Resume it first.`, 409);
-  if (month < p.first_month) throw bad(`"${p.title}" starts in a later month.`, 409);
-  const { id: dueId } = await insertDue(p, month);
-  if (!dueId) throw bad("This month's payment is already there.", 409);
+  if (!on && month < p.first_month) throw bad(`"${p.title}" starts in a later month.`, 409);
+  const { id: dueId } = await insertDue(p, month, on || undefined);
+  if (!dueId) throw bad(on ? `"${p.title}" already has a payment for ${month}.` : "This month's payment is already there.", 409);
   return shapeDue(await db.prepare(`${DUE} WHERE d.id = ?`).get(dueId));
 }
 
@@ -249,20 +255,23 @@ const dueOf = async (id) => (await db.prepare(`${DUE} WHERE d.id = ?`).get(Numbe
 /** One line, and the accounts to pick from when it is marked paid. */
 export async function getDue(user, dueId) {
   const d = await dueOf(dueId);
-  return d && { due: shapeDue(d), accounts: await accountPicks() };
+  return d && { today: today(), due: shapeDue(d), accounts: await accountPicks() };
 }
 
 /**
- * Mark a line paid - who, when, and the account the money went into - or put it back to
- * pending, which takes the money out of that account again. Its file stays either way.
+ * Mark a line paid - who, the account the money went into, and the day it was received
+ * (paid_on; none said = today) - or put it back to pending, which takes the money out of
+ * that account again. Its file stays either way.
  */
-export async function setPaid(user, dueId, paid, input = {}) {
+export async function setPaid(user, dueId, paid, input = {}, now = today()) {
   const d = await dueOf(dueId);
   if (!d) return null;
   const account = paid ? await accountOf(input?.account_id) : null;
   if (paid && !account) throw bad('Pick the account the money went into');
-  await db.prepare(`UPDATE recurring_payment_dues SET status = ?, paid_at = ${paid ? NOW : 'NULL'}, paid_by = ?, account_id = ? WHERE id = ?`)
-    .run(paid ? 'paid' : 'pending', paid ? user.id : null, account?.id ?? null, d.id);
+  const on = paid ? String(input?.paid_on ?? '').trim() || now : null;
+  if (paid && !DATE.test(on)) throw bad('Pick the date the money was received');
+  await db.prepare(`UPDATE recurring_payment_dues SET status = ?, paid_at = ${paid ? NOW : 'NULL'}, paid_on = ?, paid_by = ?, account_id = ? WHERE id = ?`)
+    .run(paid ? 'paid' : 'pending', on, paid ? user.id : null, account?.id ?? null, d.id);
   return shapeDue(await dueOf(d.id));
 }
 
@@ -311,7 +320,7 @@ export async function getAccount(user, id) {
   const account = (await listAccounts()).find((a) => a.id === Number(id));
   if (!account) return null;
   const paid = (await db.prepare(`${DUE} WHERE d.account_id = ? AND d.status = 'paid'`).all(account.id)).map((d) => ({
-    kind: 'payment', id: d.id, at: Number(d.paid_at), date: new Date((Number(d.paid_at) + OFFSET) * 1000).toISOString().slice(0, 10),
+    kind: 'payment', id: d.id, at: Number(d.paid_at), date: d.paid_on,
     text: [d.title, d.building_name, d.unit, d.month].filter(Boolean).join(' · '), amount: d.amount, by: d.paid_by, attachment: !!d.attachment,
   }));
   const moved = (await db.prepare(`${TRANSFER} WHERE ? IN (t.from_account_id, t.to_account_id)`).all(account.id)).map((t) => {
@@ -425,7 +434,7 @@ recurringPaymentRoutes.post('/entries', wrap(async (req, res) => res.json(await 
 recurringPaymentRoutes.put('/entries/:id', wrap(async (req, res) => send(res, await saveEntry(req.user, req.params.id, req.body))));
 recurringPaymentRoutes.delete('/entries/:id', wrap(async (req, res) => send(res, await deleteEntry(req.user, req.params.id))));
 recurringPaymentRoutes.post('/entries/:id/active', wrap(async (req, res) => send(res, await setActive(req.user, req.params.id, req.body?.active))));
-recurringPaymentRoutes.post('/entries/:id/dues', wrap(async (req, res) => send(res, await createNow(req.user, req.params.id))));
+recurringPaymentRoutes.post('/entries/:id/dues', wrap(async (req, res) => send(res, await createNow(req.user, req.params.id, today(), req.body?.date))));
 recurringPaymentRoutes.get('/dues/:id', wrap(async (req, res) => send(res, await getDue(req.user, req.params.id))));
 recurringPaymentRoutes.post('/dues/:id/paid', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, true, req.body))));
 recurringPaymentRoutes.post('/dues/:id/pending', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, false))));

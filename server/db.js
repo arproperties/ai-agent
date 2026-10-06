@@ -1342,6 +1342,8 @@ await db.exec(`
 // "Bank"), a free list typed by the accountants and used nowhere else.
 //   recurring_accounts: the list.
 //   recurring_payment_dues.account_id: the account a paid line's money went into;
+//     paid_on is the day it was received (picked, so it can be an earlier day than the
+//     one it was written down on, which is paid_at);
 //     attachment is the file kept with it (a receipt), a path under data/recurring.
 //   recurring_transfers: money handed from one account to another, with its own file.
 // An account holds what was paid into it, plus what was transferred in, less what was
@@ -1357,6 +1359,9 @@ await db.exec(`
 
   ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES recurring_accounts(id);
   ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS attachment TEXT;
+  ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS paid_on TEXT;
+  UPDATE recurring_payment_dues SET paid_on = to_char(to_timestamp(paid_at + 4 * 3600) AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+    WHERE status = 'paid' AND paid_on IS NULL AND paid_at IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_recurring_payment_dues_account ON recurring_payment_dues(account_id);
 
   CREATE TABLE IF NOT EXISTS recurring_transfers (
