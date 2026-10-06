@@ -1,5 +1,9 @@
 import { Router } from 'express';
+import multer from 'multer';
+import { mkdirSync, rmSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { db } from './db.js';
+import { DATA_DIR } from './config.js';
 
 // Recurring payments: money that should come in every month from something in a building -
 // a shop's rent in the camp, the washing machine in Ayla.
@@ -7,7 +11,11 @@ import { db } from './db.js';
 // An entry is made once: a title, the building, the shop or unit or whatever it is (typed,
 // not picked), the amount, and the day of the month. From then on a line for that month is
 // created on that day, pending, and somebody marks it paid when the money is in. It is a
-// list to chase, nothing more: no invoice, nothing posted to the accounts.
+// list to chase: no invoice, nothing posted to the company's accounts.
+//
+// Where the money is, is the module's own too: a free list of accounts ("Cash to Mr
+// Tauqeer", "Bank"). Marking a line paid says which account the money went into; a
+// transfer hands money from one account to another; both can carry a file (a receipt).
 //
 // The module stands on its own. Its buildings are its own list, typed here - not the
 // Buildings screen, not the inventory, not the saifsys building list - and nothing else
@@ -22,10 +30,12 @@ const MAX_UNIT = 80;
 const MAX_NOTES = 500;
 const MAX_AMOUNT = 100_000_000;
 const NOW = 'extract(epoch from now())::bigint';
+const DIR = `${DATA_DIR}/recurring`;
 
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
 const line = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+const money = (n) => Math.round(Number(n) * 100) / 100;
 
 // ---------- days and months ----------
 
@@ -106,9 +116,9 @@ const ENTRY = `SELECT p.*, b.name AS building_name, (SELECT count(*)::int FROM r
     EXISTS (SELECT 1 FROM recurring_payment_dues d WHERE d.payment_id = p.id AND d.month = ?) AS has_this_month
   FROM recurring_payments p JOIN recurring_buildings b ON b.id = p.building_id`;
 const DUE = `SELECT d.id, d.payment_id, d.month, d.due_date, d.amount, d.status, d.paid_at, u.name AS paid_by,
-    p.title, p.unit, p.building_id, b.name AS building_name
+    d.account_id, a.name AS account_name, d.attachment, p.title, p.unit, p.building_id, b.name AS building_name
   FROM recurring_payment_dues d JOIN recurring_payments p ON p.id = d.payment_id JOIN recurring_buildings b ON b.id = p.building_id
-  LEFT JOIN users u ON u.id = d.paid_by`;
+  LEFT JOIN users u ON u.id = d.paid_by LEFT JOIN recurring_accounts a ON a.id = d.account_id`;
 
 const shapeEntry = (p) => ({
   id: p.id, title: p.title, building: { id: p.building_id, name: p.building_name }, unit: p.unit, amount: p.amount, day: p.day,
@@ -118,6 +128,7 @@ const shapeEntry = (p) => ({
 const shapeDue = (d) => ({
   id: d.id, entry_id: d.payment_id, month: d.month, title: d.title, building: { id: d.building_id, name: d.building_name }, unit: d.unit,
   due_date: d.due_date, amount: d.amount, status: d.status, paid_at: d.paid_at, paid_by: d.paid_by,
+  account: d.account_id ? { id: d.account_id, name: d.account_name } : null, attachment: !!d.attachment,
 });
 
 const entryOf = async (user, id, now = today()) => (await db.prepare(`${ENTRY} WHERE p.id = ?`).get(now.slice(0, 7), Number(id) || 0)) || null;
@@ -233,14 +244,155 @@ export async function createNow(user, id, now = today()) {
   return shapeDue(await db.prepare(`${DUE} WHERE d.id = ?`).get(dueId));
 }
 
-/** Mark a line paid, with who and when, or put it back to pending. */
-export async function setPaid(user, dueId, paid) {
-  const d = await db.prepare(`${DUE} WHERE d.id = ?`).get(Number(dueId) || 0);
-  if (!d) return null;
-  await db.prepare(`UPDATE recurring_payment_dues SET status = ?, paid_at = ${paid ? NOW : 'NULL'}, paid_by = ? WHERE id = ?`)
-    .run(paid ? 'paid' : 'pending', paid ? user.id : null, d.id);
-  return shapeDue(await db.prepare(`${DUE} WHERE d.id = ?`).get(d.id));
+const dueOf = async (id) => (await db.prepare(`${DUE} WHERE d.id = ?`).get(Number(id) || 0)) || null;
+
+/** One line, and the accounts to pick from when it is marked paid. */
+export async function getDue(user, dueId) {
+  const d = await dueOf(dueId);
+  return d && { due: shapeDue(d), accounts: await accountPicks() };
 }
+
+/**
+ * Mark a line paid - who, when, and the account the money went into - or put it back to
+ * pending, which takes the money out of that account again. Its file stays either way.
+ */
+export async function setPaid(user, dueId, paid, input = {}) {
+  const d = await dueOf(dueId);
+  if (!d) return null;
+  const account = paid ? await accountOf(input?.account_id) : null;
+  if (paid && !account) throw bad('Pick the account the money went into');
+  await db.prepare(`UPDATE recurring_payment_dues SET status = ?, paid_at = ${paid ? NOW : 'NULL'}, paid_by = ?, account_id = ? WHERE id = ?`)
+    .run(paid ? 'paid' : 'pending', paid ? user.id : null, account?.id ?? null, d.id);
+  return shapeDue(await dueOf(d.id));
+}
+
+// ---------- the accounts ----------
+
+const BALANCE = `(COALESCE((SELECT sum(d.amount) FROM recurring_payment_dues d WHERE d.account_id = a.id AND d.status = 'paid'), 0)
+    + COALESCE((SELECT sum(t.amount) FROM recurring_transfers t WHERE t.to_account_id = a.id), 0)
+    - COALESCE((SELECT sum(t.amount) FROM recurring_transfers t WHERE t.from_account_id = a.id), 0))::float8`;
+const USED = `(EXISTS (SELECT 1 FROM recurring_payment_dues d WHERE d.account_id = a.id)
+    OR EXISTS (SELECT 1 FROM recurring_transfers t WHERE a.id IN (t.from_account_id, t.to_account_id)))`;
+
+/** The module's own accounts, by name, each with what it holds and whether anything was ever put through it. */
+export const listAccounts = async () => (await db.prepare(`SELECT a.id, a.name, ${BALANCE} AS balance, ${USED} AS used
+  FROM recurring_accounts a ORDER BY lower(a.name), a.id`).all()).map((a) => ({ ...a, balance: money(a.balance) }));
+
+const accountPicks = async () => (await listAccounts()).map((a) => ({ id: a.id, name: a.name }));
+const accountOf = async (id) => (await db.prepare('SELECT id, name FROM recurring_accounts WHERE id = ?').get(Number(id) || 0)) || null;
+
+/** Add an account (id null) or rename one. A name is there once, whatever its capitals. null: no such account. */
+export async function saveAccount(user, id, input) {
+  const old = id === null ? null : await accountOf(id);
+  if (id !== null && !old) return null;
+  const name = line(input?.name, MAX_NAME);
+  if (!name) throw bad('Give the account a name, like Cash to Mr Tauqeer');
+  const same = await db.prepare('SELECT id, name FROM recurring_accounts WHERE lower(name) = lower(?)').get(name);
+  if (same && same.id !== old?.id) throw bad(`"${same.name}" is already in the list`, 409);
+  if (old) await db.prepare('UPDATE recurring_accounts SET name = ? WHERE id = ?').run(name, old.id);
+  const savedId = old?.id ?? (await db.prepare('INSERT INTO recurring_accounts (name, created_by) VALUES (?, ?) RETURNING id').run(name, user.id)).id;
+  return (await listAccounts()).find((a) => a.id === savedId);
+}
+
+/** Only an account nothing ever went through can go. */
+export async function deleteAccount(user, id) {
+  const a = (await listAccounts()).find((x) => x.id === Number(id));
+  if (!a) return null;
+  if (a.used) throw bad(`"${a.name}" has payments or transfers, so it cannot be deleted.`, 409);
+  await db.prepare('DELETE FROM recurring_accounts WHERE id = ?').run(a.id);
+  return { ok: true };
+}
+
+/**
+ * One account and everything that went through it, newest first: payments received and
+ * transfers in (amount above 0), transfers out (below 0).
+ */
+export async function getAccount(user, id) {
+  const account = (await listAccounts()).find((a) => a.id === Number(id));
+  if (!account) return null;
+  const paid = (await db.prepare(`${DUE} WHERE d.account_id = ? AND d.status = 'paid'`).all(account.id)).map((d) => ({
+    kind: 'payment', id: d.id, at: Number(d.paid_at), date: new Date((Number(d.paid_at) + OFFSET) * 1000).toISOString().slice(0, 10),
+    text: [d.title, d.building_name, d.unit, d.month].filter(Boolean).join(' · '), amount: d.amount, by: d.paid_by, attachment: !!d.attachment,
+  }));
+  const moved = (await db.prepare(`${TRANSFER} WHERE ? IN (t.from_account_id, t.to_account_id)`).all(account.id)).map((t) => {
+    const out = t.from_account_id === account.id;
+    return {
+      kind: 'transfer', id: t.id, at: Number(t.created_at), date: t.date,
+      text: (out ? `Transfer to ${t.to_name}` : `Transfer from ${t.from_name}`) + (t.notes ? ` · ${t.notes}` : ''),
+      amount: out ? -t.amount : t.amount, by: t.by, attachment: !!t.attachment,
+    };
+  });
+  const movements = [...paid, ...moved].sort((x, y) => y.date.localeCompare(x.date) || y.at - x.at || y.id - x.id);
+  return { account, movements };
+}
+
+// ---------- the transfers ----------
+
+const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const TRANSFER = `SELECT t.id, t.from_account_id, f.name AS from_name, t.to_account_id, o.name AS to_name, t.amount, t.date, t.notes,
+    t.attachment, t.created_at, u.name AS by
+  FROM recurring_transfers t JOIN recurring_accounts f ON f.id = t.from_account_id JOIN recurring_accounts o ON o.id = t.to_account_id
+  LEFT JOIN users u ON u.id = t.created_by`;
+const shapeTransfer = (t) => ({
+  id: t.id, from: { id: t.from_account_id, name: t.from_name }, to: { id: t.to_account_id, name: t.to_name },
+  amount: t.amount, date: t.date, notes: t.notes, by: t.by, attachment: !!t.attachment,
+});
+
+/** Every transfer, newest first, and the accounts with what each holds. */
+export async function listTransfers() {
+  const rows = await db.prepare(`${TRANSFER} ORDER BY t.date DESC, t.id DESC`).all();
+  return { today: today(), accounts: await listAccounts(), transfers: rows.map(shapeTransfer) };
+}
+
+/**
+ * Money handed from one account to another. Nothing stops an account going below zero:
+ * these are the accountants' own books, and cash may have been there before the list was.
+ */
+export async function addTransfer(user, input, now = today()) {
+  const from = await accountOf(input?.from_id);
+  const to = await accountOf(input?.to_id);
+  if (!from) throw bad('Pick the account the money comes from');
+  if (!to) throw bad('Pick the account the money goes to');
+  if (from.id === to.id) throw bad('Pick two different accounts');
+  const amount = money(input.amount);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT) throw bad('The amount must be a number more than 0');
+  const date = String(input.date ?? '').trim() || now;
+  if (!DATE.test(date)) throw bad('Pick the date of the transfer');
+  const { id } = await db.prepare(`INSERT INTO recurring_transfers (from_account_id, to_account_id, amount, date, notes, created_by)
+    VALUES (?, ?, ?, ?, ?, ?) RETURNING id`).run(from.id, to.id, amount, date, String(input.notes ?? '').trim().slice(0, MAX_NOTES) || null, user.id);
+  return shapeTransfer(await db.prepare(`${TRANSFER} WHERE t.id = ?`).get(id));
+}
+
+/** A transfer made by mistake: gone, with its file, and both accounts are as they were. */
+export async function deleteTransfer(user, id) {
+  const t = await db.prepare('SELECT id, attachment FROM recurring_transfers WHERE id = ?').get(Number(id) || 0);
+  if (!t) return null;
+  await db.prepare('DELETE FROM recurring_transfers WHERE id = ?').run(t.id);
+  dropFile(t.attachment);
+  return { ok: true };
+}
+
+// ---------- the files ----------
+
+const FILE_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
+const FILE_OF = { due: 'recurring_payment_dues', transfer: 'recurring_transfers' };
+const dropFile = (path) => { if (path) rmSync(path, { force: true }); };
+
+/** Keep a file with a paid line (kind 'due') or a transfer; a new one replaces the old. null: no such line. */
+export async function setAttachment(user, kind, id, file) {
+  const row = await db.prepare(`SELECT id, attachment FROM ${FILE_OF[kind]} WHERE id = ?`).get(Number(id) || 0);
+  if (!row) return null;
+  const ext = FILE_TYPES[file?.mimetype];
+  if (!ext || !file.buffer?.length) throw bad('The attachment must be a picture (JPG, PNG) or a PDF');
+  mkdirSync(DIR, { recursive: true });
+  const path = `${DIR}/${kind}-${row.id}-${Date.now()}.${ext}`;
+  await writeFile(path, file.buffer);
+  await db.prepare(`UPDATE ${FILE_OF[kind]} SET attachment = ? WHERE id = ?`).run(path, row.id);
+  dropFile(row.attachment);
+  return { ok: true };
+}
+
+export const attachmentPath = async (kind, id) => (await db.prepare(`SELECT attachment FROM ${FILE_OF[kind]} WHERE id = ?`).get(Number(id) || 0))?.attachment || null;
 
 // ---------- the timer ----------
 
@@ -274,9 +426,35 @@ recurringPaymentRoutes.put('/entries/:id', wrap(async (req, res) => send(res, aw
 recurringPaymentRoutes.delete('/entries/:id', wrap(async (req, res) => send(res, await deleteEntry(req.user, req.params.id))));
 recurringPaymentRoutes.post('/entries/:id/active', wrap(async (req, res) => send(res, await setActive(req.user, req.params.id, req.body?.active))));
 recurringPaymentRoutes.post('/entries/:id/dues', wrap(async (req, res) => send(res, await createNow(req.user, req.params.id))));
-recurringPaymentRoutes.post('/dues/:id/paid', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, true))));
+recurringPaymentRoutes.get('/dues/:id', wrap(async (req, res) => send(res, await getDue(req.user, req.params.id))));
+recurringPaymentRoutes.post('/dues/:id/paid', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, true, req.body))));
 recurringPaymentRoutes.post('/dues/:id/pending', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, false))));
 recurringPaymentRoutes.get('/buildings', wrap(async (req, res) => res.json({ buildings: await listBuildings() })));
 recurringPaymentRoutes.post('/buildings', wrap(async (req, res) => res.json(await saveBuilding(req.user, null, req.body))));
 recurringPaymentRoutes.put('/buildings/:id', wrap(async (req, res) => send(res, await saveBuilding(req.user, req.params.id, req.body))));
 recurringPaymentRoutes.delete('/buildings/:id', wrap(async (req, res) => send(res, await deleteBuilding(req.user, req.params.id))));
+
+recurringPaymentRoutes.get('/accounts', wrap(async (req, res) => res.json({ accounts: await listAccounts() })));
+recurringPaymentRoutes.post('/accounts', wrap(async (req, res) => res.json(await saveAccount(req.user, null, req.body))));
+recurringPaymentRoutes.get('/accounts/:id', wrap(async (req, res) => send(res, await getAccount(req.user, req.params.id))));
+recurringPaymentRoutes.put('/accounts/:id', wrap(async (req, res) => send(res, await saveAccount(req.user, req.params.id, req.body))));
+recurringPaymentRoutes.delete('/accounts/:id', wrap(async (req, res) => send(res, await deleteAccount(req.user, req.params.id))));
+
+recurringPaymentRoutes.get('/transfers', wrap(async (req, res) => res.json(await listTransfers())));
+recurringPaymentRoutes.post('/transfers', wrap(async (req, res) => res.json(await addTransfer(req.user, req.body))));
+recurringPaymentRoutes.delete('/transfers/:id', wrap(async (req, res) => send(res, await deleteTransfer(req.user, req.params.id))));
+
+// The file of a paid line or of a transfer. The upload is called "photo" because that is
+// the name saifsys's line to Reem sends every file under (see binv_reem there).
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
+for (const [kind, at] of [['due', '/dues/:id/attachment'], ['transfer', '/transfers/:id/attachment']]) {
+  recurringPaymentRoutes.post(at, upload.single('photo'), wrap(async (req, res) => {
+    if (!req.file) throw bad('No file came through');
+    send(res, await setAttachment(req.user, kind, req.params.id, req.file));
+  }));
+  recurringPaymentRoutes.get(at, wrap(async (req, res) => {
+    const path = await attachmentPath(kind, req.params.id);
+    if (!path) return res.status(404).json({ error: 'Not found' });
+    res.set('Cache-Control', 'private, max-age=3600').set('X-Content-Type-Options', 'nosniff').sendFile(path);
+  }));
+}

@@ -1337,3 +1337,40 @@ await db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_payment_dues_month ON recurring_payment_dues(payment_id, month);
   CREATE INDEX IF NOT EXISTS idx_recurring_payment_dues_by_month ON recurring_payment_dues(month);
 `);
+
+// Recurring payments, where the money is: the module's own accounts ("Cash to Mr Tauqeer",
+// "Bank"), a free list typed by the accountants and used nowhere else.
+//   recurring_accounts: the list.
+//   recurring_payment_dues.account_id: the account a paid line's money went into;
+//     attachment is the file kept with it (a receipt), a path under data/recurring.
+//   recurring_transfers: money handed from one account to another, with its own file.
+// An account holds what was paid into it, plus what was transferred in, less what was
+// transferred out. Nothing is stored for that; it is added up when asked.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_accounts (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_accounts_name ON recurring_accounts(lower(name));
+
+  ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES recurring_accounts(id);
+  ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS attachment TEXT;
+  CREATE INDEX IF NOT EXISTS idx_recurring_payment_dues_account ON recurring_payment_dues(account_id);
+
+  CREATE TABLE IF NOT EXISTS recurring_transfers (
+    id SERIAL PRIMARY KEY,
+    from_account_id INTEGER NOT NULL REFERENCES recurring_accounts(id),
+    to_account_id   INTEGER NOT NULL REFERENCES recurring_accounts(id),
+    amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    date TEXT NOT NULL,
+    notes TEXT,
+    attachment TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    CHECK (from_account_id <> to_account_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_recurring_transfers_from ON recurring_transfers(from_account_id);
+  CREATE INDEX IF NOT EXISTS idx_recurring_transfers_to ON recurring_transfers(to_account_id);
+`);
