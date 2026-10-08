@@ -4,7 +4,7 @@ import { reset, closeDb, db } from './helpers/db.js';
 import { create, update } from '../server/properties.js';
 import { report } from '../server/leasingReports.js';
 import { listAlerts } from '../server/leasingAlerts.js';
-import { addTenant, removeTenant, listTenants, createBooking, updateBooking, confirmBooking, cancelBooking, removeBooking,
+import { addTenant, removeTenant, listTenants, createBooking, createBookingWithDocs, updateBooking, confirmBooking, cancelBooking, removeBooking,
   listBookings, availability, suggestType, bookingStage, bookingDocs, addBookingDoc, removeBookingDoc, overview, schedule, bookingPayments, recordPayment, removePayment } from '../server/leasing.js';
 
 test.after(() => closeDb());
@@ -26,6 +26,20 @@ test('a lease is a year or more; the stage comes from the dates', () => {
   assert.equal(bookingStage(b, '2026-11-30'), 'active');
   assert.equal(bookingStage(b, '2026-12-01'), 'ended');
   assert.equal(bookingStage({ ...b, status: 'draft' }, '2026-11-05'), 'draft');
+});
+
+test('a booking made on the form is not saved without the driver license and the proof of employment', async () => {
+  const { u1 } = await units();
+  const scan = (name) => [{ buffer: Buffer.from(name), originalname: `${name}.pdf`, mimetype: 'application/pdf' }];
+  const body = stay(u1.id, '2026-11-01', '2026-11-30', { status: 'confirmed' });
+  await assert.rejects(createBookingWithDocs(body, {}), /Attach the tenant's Driver License and Proof of Employment/);
+  await assert.rejects(createBookingWithDocs(body, { driver_license: scan('dl') }), /Attach the tenant's Proof of Employment\./);
+  assert.equal((await listBookings()).length, 0, 'nothing is saved by a refusal');
+
+  const bk = await createBookingWithDocs(body, { driver_license: scan('dl'), proof_of_employment: scan('job') });
+  assert.equal(bk.status, 'confirmed');
+  assert.deepEqual((await bookingDocs(bk.id)).map((d) => [d.title, d.file_name, d.has_file]),
+    [['Driver License', 'dl.pdf', true], ['Proof of Employment', 'job.pdf', true]]);
 });
 
 test('a unit is never confirmed twice for the same day', async () => {

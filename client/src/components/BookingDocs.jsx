@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Loader2, Paperclip, Plus, Trash2, FileText } from 'lucide-react';
 import { api } from '../lib/api';
+import { usDateOf } from '../lib/usFormat';
 
 // What is kept with one booking: the signed contract, the tenant's ID and passport, payment
 // slips. Named freely; the usual names are offered as you type. The server is the booking
 // documents part of server/leasing.js.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
-const USUAL = ['Signed contract', 'Ejari', 'ID', 'Passport', 'Visa', 'Trade License', 'Payment slip'];
+// What every booking must have, each as a file: [the upload's field, the document's name]. The same list as REQUIRED_DOCS in server/leasing.js.
+export const REQUIRED = [['driver_license', 'Driver License'], ['proof_of_employment', 'Proof of Employment']];
+const USUAL = [...REQUIRED.map(([, name]) => name), 'Signed contract', 'Ejari', 'ID', 'Passport', 'Visa', 'Trade License', 'Payment slip'];
 
-const when = (ts) => new Date(Number(ts)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+const when = usDateOf;
 
 export default function BookingDocs({ booking }) {
   const [docs, setDocs] = useState(null);
@@ -43,8 +46,19 @@ export default function BookingDocs({ booking }) {
     try { await api.del(`/leasing/docs/${d.id}`); load(); } catch (e) { setError(e.message); }
   };
 
+  // A booking made before these were asked for, or one whose copy was deleted, says so until the file is attached.
+  const missing = docs ? REQUIRED.map(([, name]) => name).filter((name) => !docs.some((d) => d.has_file && d.title.trim().toLowerCase() === name.toLowerCase())) : [];
+
   return (
     <div className="space-y-4">
+      {missing.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
+          <span>Missing: {missing.join(' and ')}.</span>
+          {missing.map((name) => (
+            <button key={name} type="button" onClick={() => setTitle(name)} className="rounded-full border border-bad/40 px-3 py-1 text-xs hover:bg-bad/10">Add {name}</button>
+          ))}
+        </div>
+      )}
       <div className="rounded-2xl border border-stroke">
         {!docs ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
           : docs.length === 0 ? <p className="px-4 py-4 text-sm text-mute">Nothing attached yet. Add the contract and the tenant's ID below.</p> : (

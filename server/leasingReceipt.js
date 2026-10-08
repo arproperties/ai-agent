@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db } from './db.js';
 import { bad, bookingRef, dueName, receiptNo, METHODS } from './leasing.js';
 import { cash, currencyWords, region } from './leasingRegion.js';
+import { usDate, usPhone } from './usFormat.js';
 
 // The receipt for one payment, as a PDF on the letterhead of the company that owns the
 // building: who paid, how much (in figures and in words), what for, how, and what is still
@@ -28,7 +29,7 @@ export function inWords(amount) {
 // The built-in PDF fonts only know Western letters; anything else would stop the page being made.
 const plain = (v) => String(v ?? '').replace(/[–—]/g, '-').replace(/[^\x20-\x7E -ÿ]/g, '?');
 const aed = (n) => cash(n, { exact: true });
-const longDate = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const longDate = usDate;
 
 /** Everything one receipt says, read from the payment. */
 export async function receiptRow(paymentId) {
@@ -37,7 +38,7 @@ export async function receiptRow(paymentId) {
       (SELECT coalesce(sum(x.amount), 0) FROM lease_payments x WHERE x.installment_id = i.id AND x.id <= p.id) AS paid_so_far,
       b.id AS booking_id, to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
       t.full_name AS tenant, t.phone AS tenant_phone, u.unit_no, bl.name AS building,
-      c.name AS company, c.trn, c.trade_license_no, c.address, c.phone, c.email
+      c.name AS company, c.trn, c.trade_license_no, concat_ws(', ', c.address, c.city, nullif(concat_ws(' ', c.state, c.zip), '')) AS address, c.phone, c.email
     FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id JOIN lease_bookings b ON b.id = i.booking_id
     JOIN lease_tenants t ON t.id = b.tenant_id JOIN prop_units u ON u.id = b.unit_id JOIN prop_buildings bl ON bl.id = u.building_id
     JOIN prop_companies c ON c.id = bl.company_id LEFT JOIN users w ON w.id = p.recorded_by WHERE p.id = ?`).get(Number(paymentId) || 0);
@@ -64,8 +65,8 @@ export async function renderReceipt(p) {
 
   // Letterhead: the company on the left, the receipt's number and date on the right.
   put(p.company, L, 372, { size: 16, f: bold });
-  put([p.address, p.phone, p.email].filter(Boolean).join('  ·  '), L, 356, { size: 8.5, color: grey });
-  put([p.trn && `TRN ${p.trn}`, p.trade_license_no && `Licence ${p.trade_license_no}`].filter(Boolean).join('  ·  '), L, 344, { size: 8.5, color: grey });
+  put([p.address, usPhone(p.phone), p.email].filter(Boolean).join('  ·  '), L, 356, { size: 8.5, color: grey });
+  put([p.trn && `TRN ${p.trn}`, p.trade_license_no && `EIN ${p.trade_license_no}`].filter(Boolean).join('  ·  '), L, 344, { size: 8.5, color: grey });
   put('RECEIPT', R, 372, { size: 16, f: bold, right: true });
   put(receiptNo(p), R, 356, { size: 10, right: true });
   put(longDate(p.received_on), R, 344, { size: 8.5, color: grey, right: true });
@@ -73,7 +74,7 @@ export async function renderReceipt(p) {
 
   const left = Number(p.due_amount) - Number(p.paid_so_far);
   const rows = [
-    ['Received from', [p.tenant, p.tenant_phone].filter(Boolean).join('  ·  ')],
+    ['Received from', [p.tenant, usPhone(p.tenant_phone)].filter(Boolean).join('  ·  ')],
     ['The sum of', inWords(Number(p.amount))],
     ['For', `${dueName(p)} due ${longDate(p.due_date)}`],
     ['Property', `Unit ${p.unit_no}, ${p.building}  ·  ${bookingRef({ id: p.booking_id, start_date: p.start_date })}  ·  ${longDate(p.start_date)} to ${longDate(p.end_date)}`],

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { ArrowRight, Banknote, Copy, FileText, Loader2, Mail, MessageCircle, Paperclip, Plus, Trash2, Undo2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { money as aed, currency, today, region } from '../lib/region';
+import { usDate as fmt, usPhone } from '../lib/usFormat';
+import DateField from './DateField';
 
 // One booking's money: each payment due (rent, the security deposit, other charges) and what
 // has been received against it. Money arrives outside the app (bank transfer, cash or card)
@@ -25,8 +27,7 @@ const EVENT = {
   deposit_passed: 'Deposit passed on', deposit_carried: 'Deposit carried over', deposit_back: 'Deposit pass-on undone',
 };
 
-const fmt = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-const stamp = (secs) => new Date(Number(secs) * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const stamp = (secs) => new Date(Number(secs) * 1000).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 /** Recording money against one payment due, or (with `url`) against the booking as a whole,
     where it is spread over what is owed oldest first. The amount starts at what is still owed. */
@@ -58,7 +59,7 @@ function PayForm({ row, url = `/leasing/installments/${row.id}/payments`, onDone
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Amount received ({currency()})</span>
           <input type="number" min="0" max={row.left} step="any" value={v.amount} onChange={set('amount')} required className={FIELD} /></label>
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Received on</span>
-          <input type="date" value={v.received_on} onChange={set('received_on')} max={today()} required className={FIELD} /></label>
+          <DateField value={v.received_on} onChange={set('received_on')} max={today()} required className={FIELD} /></label>
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Reference</span>
           <input value={v.reference} onChange={set('reference')} placeholder={v.method === 'cash' ? 'Receipt no.' : v.method === 'card' ? 'Card slip no.' : 'Transfer ref.'} className={FIELD} /></label>
       </div>
@@ -89,7 +90,7 @@ function Remind({ row, onDone, onCancel }) {
   const mail = r.email && `mailto:${r.email}?subject=${encodeURIComponent(r.subject)}&body=${encodeURIComponent(text)}`;
   return (
     <div className="mt-3 space-y-3 rounded-xl border border-p1/40 p-3">
-      <p className="text-xs text-mute">To {r.tenant}{r.phone && ` · ${r.phone}`}{r.email && ` · ${r.email}`}. Nothing is sent until you press send in WhatsApp or your email.</p>
+      <p className="text-xs text-mute">To {r.tenant}{r.phone && ` · ${usPhone(r.phone)}`}{r.email && ` · ${r.email}`}. Nothing is sent until you press send in WhatsApp or your email.</p>
       <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} className={`${FIELD} resize-none text-sm`} />
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex flex-wrap justify-end gap-2">

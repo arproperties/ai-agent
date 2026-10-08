@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, Upload, LayoutGrid, List, BedDouble, BedSingle, Lock } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, Upload, LayoutGrid, List, BedDouble, BedSingle, Lock, History } from 'lucide-react';
 import { api } from '../lib/api';
 import { money as aed, currency, region } from '../lib/region';
+import { usDate as fmt, usPhone } from '../lib/usFormat';
 import Page from './Page';
 import Select from './Select';
 import DateRange from './DateRange';
+import DateField from './DateField';
+import PhoneField from './PhoneField';
 import Pager, { usePaged } from './Pager';
-import BookingDocs from './BookingDocs';
+import BookingDocs, { REQUIRED } from './BookingDocs';
 import ServiceList, { REPEAT } from './ServiceList';
 import SourceList from './SourceList';
 import BookingPayments from './BookingPayments';
@@ -14,6 +17,7 @@ import ImportBookings from './ImportBookings';
 import LeasingOverview, { LeasingBuildings } from './LeasingOverview';
 import LeasingReports from './LeasingReports';
 import LeasingAlerts from './LeasingAlerts';
+import TenantHistory from './TenantHistory';
 
 // Leasing: bookings of units and the tenants who make them. Anyone signed in can use it.
 // The server is server/leasing.js; the units come from Properties.
@@ -29,7 +33,6 @@ const STAGE = {
 const STEPS = ['Where and when', 'Tenant', 'Rent and charges', 'Contract & notes']; // the booking form, a step at a time
 const FREQ = [['monthly', 'Monthly'], ['quarterly', 'Every 3 months'], ['every_6_months', 'Every 6 months'], ['yearly', 'Yearly'], ['upfront', 'All upfront']];
 
-const fmt = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 const nights = (a, b) => Math.round((new Date(`${b}T00:00:00`) - new Date(`${a}T00:00:00`)) / 86400000) + 1;
 
 function Label({ text, need, children, wide }) {
@@ -120,7 +123,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [v, setV] = useState({
     start_date: init.start_date || '', end_date: init.end_date || '', unit_id: init.unit_id || '',
     rent_amount: start?.rent_amount ?? '', rent_period: start?.rent_period || 'month', payment_frequency: start?.payment_frequency || 'monthly',
-    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], source: start?.source || '',
+    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], source: start?.source || '', tenant_energy_account: !!start?.tenant_energy_account,
     discount_type: start?.discount_type || 'percent', discount_value: start?.discount_value ?? '', discount_note: start?.discount_note || '',
     // A new booking starts with the region's usual tax; one being edited keeps what it has. Empty is no tax.
     tax_percent: start ? start.tax_percent ?? '' : region().tax_percent || '',
@@ -131,6 +134,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [tenants, setTenants] = useState([]);
   const [tenantId, setTenantId] = useState(start?.tenant_id || '');
   const [tenant, setTenant] = useState({ full_name: '', phone: '', email: '', emirates_id_no: '', nationality: '' });
+  const [files, setFiles] = useState({}); // the documents a new booking must come with (REQUIRED), by field
   const [services, setServices] = useState([]); // the saved extra services the other charges are picked from
   const [listOpen, setListOpen] = useState(false);
   const [sources, setSources] = useState([]); // where tenants come from: one list for the whole app
@@ -165,7 +169,11 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     setError('');
     const body = { ...v, ...(tenantMode === 'existing' ? { tenant_id: tenantId } : { tenant }) };
     try {
-      onDone(start ? await api.put(`/leasing/bookings/${start.id}`, body) : await api.post('/leasing/bookings', { ...body, status }));
+      if (start) return onDone(await api.put(`/leasing/bookings/${start.id}`, body));
+      const form = new FormData();
+      form.append('booking', JSON.stringify({ ...body, status }));
+      for (const [f] of REQUIRED) form.append(f, files[f]);
+      onDone(await api.upload('/leasing/bookings', form));
     } catch (err) { setError(err.message); setBusy(false); }
   };
 
@@ -192,7 +200,8 @@ function BookingForm({ start, preset, onDone, onCancel }) {
 
   // One step at a time. A step is done once what it must have is filled in, and a later
   // step opens only when those before it are done.
-  const done = [!!v.unit_id, tenantMode === 'existing' ? !!tenantId : !!tenant.full_name.trim(), v.rent_amount !== '', true];
+  const filed = !!start || REQUIRED.every(([f]) => files[f]); // a booking being edited already has its documents, or shows them as missing
+  const done = [!!v.unit_id, (tenantMode === 'existing' ? !!tenantId : !!tenant.full_name.trim()) && filed, v.rent_amount !== '', true];
   const reach = (i) => done.slice(0, i).every(Boolean);
   const go = (i) => { setStep(i); setFar((f) => Math.max(f, i)); };
   const ready = reach(STEPS.length);
@@ -285,17 +294,25 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         {tenantMode === 'existing' ? (
           <div className="sm:col-span-2">
             <Select value={tenantId} onChange={(e) => setTenantId(e.target.value)} required className={SELECT} placeholder="Choose a tenant…"
-              options={tenants.map((t) => [t.id, [t.full_name, t.phone, t.emirates_id_no].filter(Boolean).join(' · ')])} />
+              options={tenants.map((t) => [t.id, [t.full_name, usPhone(t.phone), t.emirates_id_no].filter(Boolean).join(' · ')])} />
           </div>
         ) : (
           <>
             <Label text="Full name" need wide><input value={tenant.full_name} onChange={(e) => setTenant({ ...tenant, full_name: e.target.value })} required placeholder="As on the ID or passport" className={FIELD} /></Label>
-            <Label text="Phone" need><input type="tel" value={tenant.phone} onChange={(e) => setTenant({ ...tenant, phone: e.target.value })} required placeholder="+971 5…" className={FIELD} /></Label>
+            <Label text="Phone" need><PhoneField value={tenant.phone} onChange={(e) => setTenant({ ...tenant, phone: e.target.value })} required className={FIELD} /></Label>
             <Label text="Email"><input type="email" value={tenant.email} onChange={(e) => setTenant({ ...tenant, email: e.target.value })} className={FIELD} /></Label>
             <Label text="ID no."><input value={tenant.emirates_id_no} onChange={(e) => setTenant({ ...tenant, emirates_id_no: e.target.value })} className={FIELD} /></Label>
             <Label text="Nationality"><input value={tenant.nationality} onChange={(e) => setTenant({ ...tenant, nationality: e.target.value })} className={FIELD} /></Label>
           </>
         )}
+        {!start && REQUIRED.map(([f, name]) => (
+          <Label key={f} text={name} need>
+            <span className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-stroke px-3.5 py-2.5 text-sm text-mute hover:bg-white/5">
+              <Paperclip size={15} className="shrink-0" /> <span className={`truncate ${files[f] ? 'text-txt' : ''}`}>{files[f] ? files[f].name : 'Attach the scan (PDF or photo)'}</span>
+              <input type="file" accept="application/pdf,image/*,.doc,.docx" className="hidden" onChange={(e) => e.target.files?.[0] && setFiles((now) => ({ ...now, [f]: e.target.files[0] }))} />
+            </span>
+          </Label>
+        ))}
       </Section>}
 
       {step === 2 && <Section title="Rent and charges" extra={(
@@ -379,6 +396,11 @@ function BookingForm({ start, preset, onDone, onCancel }) {
 
       {step === 3 && <Section title="Contract & notes">
         <Label text="Contract / Ejari no." wide><input value={v.contract_no} onChange={set('contract_no')} className={FIELD} /></Label>
+        <Group title="Energy account" hint="electricity and water for this stay">
+          <Pick value={v.tenant_energy_account ? 'tenant' : 'company'} onPick={(k) => setV({ ...v, tenant_energy_account: k === 'tenant' })}
+            options={[['company', 'On the company’s account'], ['tenant', 'Tenant’s own account']]} />
+          {v.tenant_energy_account && <p className="mt-2 text-xs text-mute">The unit’s energy account number is hidden while this tenant is in it, and shown again once the unit is vacant.</p>}
+        </Group>
         <Label text="Notes" wide><textarea value={v.notes} onChange={set('notes')} rows={3} className={`${FIELD} resize-none`} /></Label>
       </Section>}
 
@@ -481,7 +503,7 @@ function ChangeEnd({ booking: b, onPay, onDone }) {
   return (
     <form onSubmit={save} className="max-w-xl space-y-4 rounded-3xl border border-stroke p-5 md:p-7">
       <label className="block"><span className="mb-1 block text-xs text-txt/80">New end date (the last day of the stay)</span>
-        <input type="date" value={end} min={b.start_date} onChange={(e) => setEnd(e.target.value)} required className={FIELD} /></label>
+        <DateField value={end} min={b.start_date} onChange={(e) => setEnd(e.target.value)} required className={FIELD} /></label>
       <p className="text-sm text-mute">
         {end === b.end_date ? 'Pick a later date to extend the stay, or an earlier one if the stay is shorter than was booked.'
           : longer ? 'Longer: the unit must be free for the extra days, and the extra rent is added to the payments.'
@@ -512,7 +534,16 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
   const actions = [
     [Paperclip, 'Documents', onDocs, b.docs > 0 ? `${b.docs} document${b.docs === 1 ? '' : 's'}` : ''],
     b.status !== 'draft' && [Banknote, 'Payments', onPay],
-    b.status === 'confirmed' && [RefreshCw, 'Renew', async () => { setError(''); try { onRenewed(await api.post(`/leasing/bookings/${b.id}/renew`)); } catch (e) { setError(e.message); } },
+    b.status === 'confirmed' && [RefreshCw, 'Renew', async () => {
+      setError('');
+      try {
+        // The tenant's record first, so nobody is renewed without it being seen.
+        const { summary: r } = await api.get(`/leasing/tenants/${b.tenant_id}/history`);
+        const record = [r.late && `${r.late} late rent payment${r.late === 1 ? '' : 's'}`, r.complaints && `${r.complaints} complaint${r.complaints === 1 ? '' : 's'} (${r.complaints_open} open)`].filter(Boolean);
+        if (record.length && !confirm(`${b.tenant}'s record: ${record.join(', ')}. Renew anyway?`)) return;
+        onRenewed(await api.post(`/leasing/bookings/${b.id}/renew`));
+      } catch (e) { setError(e.message); }
+    },
       'Draft the next booking: same unit, tenant and rent, starting the day after this one ends'],
     b.status === 'confirmed' && [CalendarDays, 'Change end date', onEnd, 'The tenant stays longer, or the stay is shorter than was booked'],
     b.status === 'draft' && [Check, 'Confirm', () => act(() => api.post(`/leasing/bookings/${b.id}/confirm`))],
@@ -525,7 +556,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
     <tr className={`align-top ${fresh ? 'bg-p1/10' : ''}`}>
       <td className="px-3 py-2.5">
         <p className="font-medium">{b.tenant}{chip}</p>
-        <p className="text-xs text-mute">{b.ref}{b.tenant_phone && ` · ${b.tenant_phone}`}{b.source && ` · ${b.source}`}</p>
+        <p className="text-xs text-mute">{b.ref}{b.tenant_phone && ` · ${usPhone(b.tenant_phone)}`}{b.source && ` · ${b.source}`}</p>
         {b.cancel_reason && <p className="max-w-[16rem] whitespace-normal text-xs text-bad">Cancelled: {b.cancel_reason}</p>}
         {error && <p className="max-w-[16rem] whitespace-normal text-xs text-bad">{error}</p>}
       </td>
@@ -552,7 +583,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
       <div className="flex items-start gap-3 px-4 pt-4">
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">{b.tenant}{chip}</p>
-          <p className="truncate text-xs text-mute">{b.ref}{b.tenant_phone && ` · ${b.tenant_phone}`}</p>
+          <p className="truncate text-xs text-mute">{b.ref}{b.tenant_phone && ` · ${usPhone(b.tenant_phone)}`}</p>
         </div>
         <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs ${tone}`}>{label}</span>
       </div>
@@ -668,10 +699,10 @@ function TenantForm({ start, onDone, onCancel }) {
     <form onSubmit={save} className="space-y-3 rounded-2xl border border-p1/40 p-4 md:col-span-2 xl:col-span-3">
       <div className="grid gap-3 sm:grid-cols-2">
         <Label text="Full name" need wide><input value={v.full_name || ''} onChange={set('full_name')} required className={FIELD} /></Label>
-        <Label text="Phone" need><input value={v.phone || ''} onChange={set('phone')} required className={FIELD} /></Label>
+        <Label text="Phone" need><PhoneField value={v.phone || ''} onChange={set('phone')} required className={FIELD} /></Label>
         <Label text="Email"><input type="email" value={v.email || ''} onChange={set('email')} className={FIELD} /></Label>
         <Label text="ID no."><input value={v.emirates_id_no || ''} onChange={set('emirates_id_no')} className={FIELD} /></Label>
-        <Label text="ID expiry"><input type="date" value={v.emirates_id_expiry || ''} onChange={set('emirates_id_expiry')} className={FIELD} /></Label>
+        <Label text="ID expiry"><DateField value={v.emirates_id_expiry || ''} onChange={set('emirates_id_expiry')} className={FIELD} /></Label>
         <Label text="Passport no."><input value={v.passport_no || ''} onChange={set('passport_no')} className={FIELD} /></Label>
         <Label text="Nationality"><input value={v.nationality || ''} onChange={set('nationality')} className={FIELD} /></Label>
         <Label text="Notes" wide><textarea value={v.notes || ''} onChange={set('notes')} rows={2} className={`${FIELD} resize-none`} /></Label>
@@ -685,7 +716,7 @@ function TenantForm({ start, onDone, onCancel }) {
   );
 }
 
-function Tenants() {
+function Tenants({ onHistory }) {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);
@@ -706,6 +737,7 @@ function Tenants() {
   const initials = (t) => t.full_name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('');
   const tools = (t) => (
     <>
+      <button onClick={() => onHistory(t)} aria-label="History" title="History: late rent, complaints, maintenance" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><History size={15} /></button>
       <button onClick={() => setEditing(t.id)} aria-label="Edit" title="Edit" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>
       <button onClick={() => remove(t)} aria-label="Delete" title="Delete" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
     </>
@@ -739,7 +771,7 @@ function Tenants() {
                     {paged.rows.map((t) => (
                       <tr key={t.id} className={t.id === editing ? 'bg-p1/10' : ''}>
                         <td className="px-3 py-2.5"><p className="font-medium">{t.full_name}</p>{t.nationality && <p className="text-xs text-mute">{t.nationality}</p>}</td>
-                        {[t.phone, t.email, t.emirates_id_no].map((x, i) => <td key={i} className={`px-3 py-2.5 ${x ? '' : 'text-mute/50'}`}>{x || '—'}</td>)}
+                        {[usPhone(t.phone), t.email, t.emirates_id_no].map((x, i) => <td key={i} className={`px-3 py-2.5 ${x ? '' : 'text-mute/50'}`}>{x || '—'}</td>)}
                         <td className="px-3 py-2.5">{t.bookings}</td>
                         <td className="px-3 py-2.5 text-mute">{fmt(added(t))}</td>
                         <td className="px-2 py-1.5"><div className="flex justify-end">{tools(t)}</div></td>
@@ -766,7 +798,7 @@ function Tenants() {
                       <div className="-mr-1.5 flex shrink-0">{tools(t)}</div>
                     </div>
                     <dl className="mx-4 my-3 divide-y divide-stroke/60 border-t border-stroke text-sm">
-                      {[['Phone', t.phone], ['Email', t.email], ['ID', t.emirates_id_no], ['Added', fmt(added(t))]].map(([l, x]) => (
+                      {[['Phone', usPhone(t.phone)], ['Email', t.email], ['ID', t.emirates_id_no], ['Added', fmt(added(t))]].map(([l, x]) => (
                         <div key={l} className="flex gap-4 py-2"><dt className="shrink-0 text-mute">{l}</dt><dd className={`min-w-0 flex-1 truncate text-right ${x ? '' : 'text-mute/50'}`}>{x || '—'}</dd></div>
                       ))}
                     </dl>
@@ -979,6 +1011,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
     );
   }
 
+  if (form?.historyOf) return <TenantHistory tenant={form.historyOf} onBack={close} onPay={pay} />;
   if (form?.importing) return (
     <Page title="Import bookings" onBack={close}>
       <ImportBookings onDone={() => { setTab('bookings'); close(); }} />
@@ -1009,7 +1042,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
     </Page>
   );
   if (tab === 'calendar') return <Page title="Calendar" onBack={onBack} action={add}><Calendar key={key} onEdit={(b) => setForm(b)} onNew={(preset) => setForm({ preset })} /></Page>;
-  if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants /></Page>;
+  if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants onHistory={(t) => setForm({ historyOf: t })} /></Page>;
   if (tab === 'reports') return <Page title="Reports" onBack={onBack}><LeasingReports key={key} name={report} onName={onReport} onPay={pay} /></Page>;
   if (tab === 'alerts') return <Page title="Alerts" onBack={onBack}><LeasingAlerts key={key} rule={alert} onRule={onAlert} onOpen={openAlert} /></Page>;
 

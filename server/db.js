@@ -1057,6 +1057,22 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_prop_documents ON prop_documents(company_id, lower(title));
 `);
 
+// The day a company was registered, as YYYY-MM-DD. Kept as text so it reads back as written.
+await db.exec(`ALTER TABLE prop_companies ADD COLUMN IF NOT EXISTS registration_date TEXT;`);
+
+// Where a company is: its address column is the street line, and these finish it. The state is two letters (TX).
+await db.exec(`
+  ALTER TABLE prop_companies ADD COLUMN IF NOT EXISTS city TEXT;
+  ALTER TABLE prop_companies ADD COLUMN IF NOT EXISTS state TEXT;
+  ALTER TABLE prop_companies ADD COLUMN IF NOT EXISTS zip TEXT;
+`);
+
+// A building's city and ZIP code. Its state is kept in the emirate column, as two letters (TX).
+await db.exec(`
+  ALTER TABLE prop_buildings ADD COLUMN IF NOT EXISTS city TEXT;
+  ALTER TABLE prop_buildings ADD COLUMN IF NOT EXISTS zip TEXT;
+`);
+
 // Leasing: the people and companies who rent units, and their bookings. A booking is any
 // stay, a month or a five-year lease alike; its rent is set here, never on the unit.
 //   status: draft (holds nothing) → confirmed (the unit is taken for those dates), or
@@ -1268,6 +1284,45 @@ await db.exec(`
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_sources_name ON lease_sources(lower(name));
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS source TEXT;
+`);
+// Who the energy (electricity and water) bill of a booked unit goes to. false: the company's
+// account, the one whose number is kept on the unit. true: the tenant has opened an account
+// of their own, so the unit's number is not shown while they are in it.
+await db.exec('ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS tenant_energy_account BOOLEAN NOT NULL DEFAULT false');
+
+// A tenant's record beyond the money: complaints made about them (noise, parking…) and
+// maintenance done for them, typed in by staff. Late rent is not here: it is worked out from
+// the schedule and its payments (leasingHistory.js).
+//   kind: complaint | maintenance. category: a free word for it (Noise, AC…).
+//   booking_id: the booking the tenant was in that day, so the entry carries the unit.
+//   resolved_on: NULL while it is open.
+//   lease_tenant_log_files: what is attached to an entry (photos, the invoice), any number.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lease_tenant_log (
+    id SERIAL PRIMARY KEY,
+    tenant_id   INTEGER NOT NULL REFERENCES lease_tenants(id) ON DELETE CASCADE,
+    booking_id  INTEGER REFERENCES lease_bookings(id) ON DELETE SET NULL,
+    kind        TEXT NOT NULL,
+    category    TEXT,
+    detail      TEXT NOT NULL,
+    reported_by TEXT,
+    happened_on DATE NOT NULL,
+    resolved_on DATE,
+    resolution  TEXT,
+    created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_tenant_log ON lease_tenant_log(tenant_id, happened_on);
+  CREATE TABLE IF NOT EXISTS lease_tenant_log_files (
+    id SERIAL PRIMARY KEY,
+    log_id      INTEGER NOT NULL REFERENCES lease_tenant_log(id) ON DELETE CASCADE,
+    file_path   TEXT NOT NULL,
+    file_name   TEXT,
+    file_mime   TEXT,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_tenant_log_files ON lease_tenant_log_files(log_id);
 `);
 if (!hadSources) {
   for (const name of ['Walk-in', 'Referral', 'Existing tenant', 'Agent / broker', 'Airbnb', 'Booking.com', 'Property Finder', 'Bayut', 'Dubizzle', 'Instagram', 'Facebook', 'WhatsApp', 'Website']) {

@@ -188,7 +188,7 @@ test('renewal, history, the receipt and the reminder to the tenant', async () =>
   const [sep] = await bookingPayments(bk.id, AT);
 
   const r = await tenantReminder(sep.id, AT);
-  assert.match(r.message, /^Dear Sara, rent of AED 4,500 for unit 101, Tower was due on 15 September 2026 and is now 25 days late\./);
+  assert.match(r.message, /^Dear Sara, rent of AED 4,500 for unit 101, Tower was due on 09\/15\/2026 and is now 25 days late\./);
   assert.ok(r.whatsapp.startsWith('https://wa.me/971501234567?text=Dear%20Sara'));
   assert.ok(r.mailto.startsWith('mailto:sara@example.com?subject=Overdue'));
   await saveWording({ overdue: 'Hello {tenant}, {amount} is late for {unit}. {nonsense}' });
@@ -299,9 +299,9 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   assert.match(await says('leasing_add_units', { building: 'marina', units: [{ unit_no: '101', type: '1BR' }, { unit_no: '102' }, { unit_no: '101' }] }),
     /^2 units added to Marina Tower: 101, 102\.\nNot added: 101: That unit number already exists/);
   assert.match(await says('leasing_add_service', { building: 'Marina Tower', name: 'Parking', amount: 300, repeats: true }), /Parking, AED 300, charged with every rent payment/);
-  assert.equal(await says('leasing_add_tenant', { full_name: 'Sara Khan', phone: '0501234567' }), 'Tenant added: Sara Khan · 0501234567.');
+  assert.equal(await says('leasing_add_tenant', { full_name: 'Sara Khan', phone: '0501234567' }), 'Tenant added: Sara Khan · 050-123-4567.');
   const twice = await ask('leasing_add_tenant', { full_name: 'sara khan' });
-  assert.deepEqual([twice.is_error, /already a tenant named Sara Khan \(0501234567\)/.test(twice.content)], [true, true]);
+  assert.deepEqual([twice.is_error, /already a tenant named Sara Khan \(050-123-4567\)/.test(twice.content)], [true, true]);
 
   // A draft unless told to confirm; a charge the building does not list yet is added to its list on the way.
   const booking = { building: 'Marina', unit_no: '101', tenant: 'Sara', start_date: '2026-11-01', end_date: '2027-10-31', rent_amount: 60000, rent_period: 'year',

@@ -40,7 +40,7 @@ test('reports: rent roll, aging, collections, expiring, vacancy and a tenant sta
   assert.deepEqual(day.summary.slice(0, 5).map((x) => x.value), [0, 0, 15000, 15000, 1]);
   const fifth = await report('daily', { day: '2026-10-05' }, AT);
   assert.deepEqual(fifth.rows.map((r) => [r.what, r.tenant, r.detail, r.amount, r.by]), [['Payment received', 'Sara', 'Rent · Bank transfer · TT-1', 2000, 'Staff']]);
-  assert.equal(fifth.subtitle, 'All companies · 2026-10-05');
+  assert.equal(fifth.subtitle, 'All companies · 10/05/2026');
   await assert.rejects(report('daily', { day: '2026-10-11' }, AT), /has not happened yet/);
 
   const roll = await report('rent-roll', {}, AT);

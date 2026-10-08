@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { usDate } from '../lib/usFormat';
 
 // One picker for a range of dates. It opens two months, side by side where there is room
 // and one above the other on a phone; the first tap is the start, the second
@@ -12,7 +13,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react';
 
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const day = (s) => new Date(`${s}T00:00:00`);
-const short = (s, year) => day(s).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(year && { year: 'numeric' }) });
+const short = (s, year) => (year ? usDate(s) : usDate(s).slice(0, 5)); // MM/DD/YYYY, or MM/DD where the year is said once
 const PRESETS = [
   ['This month', (t) => [new Date(t.getFullYear(), t.getMonth(), 1), new Date(t.getFullYear(), t.getMonth() + 1, 0)]],
   ['Last month', (t) => [new Date(t.getFullYear(), t.getMonth() - 1, 1), new Date(t.getFullYear(), t.getMonth(), 0)]],

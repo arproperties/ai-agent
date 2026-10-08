@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Building2, DoorOpen, Loader2, Pencil, Trash2, ChevronRight, ChevronDown, FileText, Paperclip, Plus, Search } from 'lucide-react';
 import { photoUrl } from './PropertyPhoto';
 import { api } from '../lib/api';
+import { usDate as fmt, usPhone, usAddress } from '../lib/usFormat';
+import DateField from './DateField';
 import Sheet from './Sheet';
 
 // The Properties home: one card per company, with its details, its documents (each with
@@ -13,7 +15,6 @@ const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p
 const DOT = { valid: 'bg-ok', due: 'bg-warn', expired: 'bg-bad', on_file: 'bg-mute' };
 const CHIP = { valid: 'bg-ok/10 text-ok', due: 'bg-warn/10 text-warn', expired: 'bg-bad/10 text-bad', on_file: 'bg-white/10 text-txt/80' };
 
-const fmt = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 const daysLeft = (d) => Math.round((new Date(`${d}T00:00:00`) - new Date(new Date().toDateString())) / 86400000);
 // "ACE Real Estate L.L.C" → "AR": the first letters of the first two real words.
 const initials = (name) => (name.match(/[A-Za-z0-9؀-ۿ]+/g) || ['?'])
@@ -53,8 +54,8 @@ function DocForm({ companyId, title, start, onDone, onCancel }) {
       <input value={v.title} onChange={set('title')} required placeholder="Document name, e.g. Trade License *" className={FIELD} autoFocus={!title && !start} />
       <input value={v.number} onChange={set('number')} placeholder="Number / reference" className={FIELD} />
       <div className="grid grid-cols-2 gap-2">
-        <label className="text-xs text-mute">Issue date<input type="date" value={v.issue_date} onChange={set('issue_date')} className={`${FIELD} mt-1`} /></label>
-        <label className="text-xs text-mute">Expiry date<input type="date" value={v.expiry_date} onChange={set('expiry_date')} className={`${FIELD} mt-1`} /></label>
+        <label className="text-xs text-mute">Issue date<DateField value={v.issue_date} onChange={set('issue_date')} className={FIELD} wrap="mt-1" /></label>
+        <label className="text-xs text-mute">Expiry date<DateField value={v.expiry_date} onChange={set('expiry_date')} className={FIELD} wrap="mt-1" /></label>
       </div>
       <p className="px-1 text-xs text-mute">Leave expiry empty for documents that do not expire (e.g. MOA).</p>
       <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-stroke px-3.5 py-2.5 text-sm text-mute hover:bg-white/5">
@@ -132,7 +133,7 @@ const TABS = [['info', 'Info'], ['docs', 'Documents'], ['props', 'Properties']];
 function Card({ c, master, onOpen, onDoc }) {
   const [tab, setTab] = useState('info');
   const tone = c.expired ? 'bad' : c.due ? 'warn' : null;
-  const info = [['Trade licence', c.trade_license_no], ['TRN', c.trn], ['Phone', c.phone], ['Email', c.email], ['Address', c.address], ['Notes', c.notes]];
+  const info = [['EIN', c.trade_license_no], ['Other tax ID', c.trn], ['Registered', c.registration_date && fmt(c.registration_date)], ['Phone', usPhone(c.phone)], ['Email', c.email], ['Address', usAddress(c.address, c.city, c.state, c.zip)], ['Notes', c.notes]];
 
   return (
     <div className="flex flex-col rounded-2xl border border-stroke">
@@ -143,7 +144,7 @@ function Card({ c, master, onOpen, onDoc }) {
         </button>
         <div className="min-w-0 flex-1">
           <button onClick={onOpen} className="block max-w-full truncate text-left font-medium hover:text-p1">{c.name}</button>
-          <p className="truncate text-xs text-mute">{c.address || 'No address yet'}</p>
+          <p className="truncate text-xs text-mute">{usAddress(c.address, c.city, c.state, c.zip) || 'No address yet'}</p>
         </div>
       </div>
 

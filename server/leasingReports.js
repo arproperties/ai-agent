@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db } from './db.js';
 import { snapshot, bookingRef, dayNo, total, todayHere, isDate, bad, dueName, METHODS, AGING } from './leasing.js';
 import { region, dayOf, cash } from './leasingRegion.js';
+import { usDate, usPhone } from './usFormat.js';
 
 // Leasing reports. Each one is the same shape, so the screen draws, exports and prints any
 // of them the same way: { title, subtitle, columns, rows, total, summary }.
@@ -22,7 +23,7 @@ const fig = (label, value, kind = 'money') => ({ label, value, kind });
 function rentRoll(s) {
   const rows = s.rows.map((u) => {
     const b = s.bookingOf.get(u.booking_id);
-    return { company: u.company, building: u.building, unit_no: u.unit_no, type: u.type, status: STATUS[u.status], tenant: u.tenant, phone: b?.tenant_phone,
+    return { company: u.company, building: u.building, unit_no: u.unit_no, type: u.type, status: STATUS[u.status], tenant: u.tenant, phone: usPhone(b?.tenant_phone),
       rent: u.rent ?? null, frequency: b && FREQ[b.payment_frequency], start_date: b?.start_date, end_date: b?.end_date, contract_no: b?.contract_no, owed: u.owed ?? null, booking_id: u.booking_id };
   });
   const open = rows.filter((r) => r.status !== 'Blocked').length;
@@ -48,7 +49,7 @@ function aging(s) {
     if (!p.left || p.due >= s.today) continue;
     const age = s.T - dayNo(p.due);
     const b = s.bookingOf.get(p.booking_id);
-    const r = by.get(p.booking_id) || by.set(p.booking_id, { tenant: p.tenant, tenant_id: b.tenant_id, phone: b.tenant_phone, company: p.company, building: p.building, unit_no: p.unit_no,
+    const r = by.get(p.booking_id) || by.set(p.booking_id, { tenant: p.tenant, tenant_id: b.tenant_id, phone: usPhone(b.tenant_phone), company: p.company, building: p.building, unit_no: p.unit_no,
       b0: 0, b1: 0, b2: 0, b3: 0, owed: 0, days: 0, booking_id: p.booking_id }).get(p.booking_id);
     const band = `b${AGING.findIndex(([, from, to]) => age >= from && age <= to)}`;
     r[band] = total([r[band], p.left], (x) => x);
@@ -81,7 +82,7 @@ function collections(s, { from, to }) {
   const rows = [...got, ...back].sort((a, b) => (a.received_on < b.received_on ? -1 : a.received_on > b.received_on ? 1 : 0));
   const groups = (key) => [...new Set(got.map((r) => r[key]))].map((k) => fig(k, total(got.filter((r) => r[key] === k))));
   return {
-    title: 'Collections', period: `${start} to ${end}`, from: start, to: end,
+    title: 'Collections', period: `${usDate(start)} to ${usDate(end)}`, from: start, to: end,
     columns: [col('received_on', 'Received', 'date'), col('tenant', 'Tenant'), ...PLACE, col('what', 'For'), col('method', 'Method'), col('reference', 'Reference'), col('amount', 'Amount', 'money'),
       ...(tax ? [col('tax', `Of which ${taxName}`, 'money')] : []), col('recorded_by', 'Recorded by')],
     rows, total: { amount: total(rows), ...(tax ? { tax } : {}) },
@@ -95,7 +96,7 @@ function expiring(s, { days }) {
   const within = [30, 60, 90].includes(Number(days)) ? Number(days) : 90;
   const rows = s.rows.filter((u) => u.days_left <= within).sort((a, b) => a.days_left - b.days_left).map((u) => {
     const b = s.bookingOf.get(u.booking_id);
-    return { tenant: u.tenant, phone: b.tenant_phone, company: u.company, building: u.building, unit_no: u.unit_no, kind: b.type === 'lease' ? 'Lease' : 'Short stay',
+    return { tenant: u.tenant, phone: usPhone(b.tenant_phone), company: u.company, building: u.building, unit_no: u.unit_no, kind: b.type === 'lease' ? 'Lease' : 'Short stay',
       end_date: b.end_date, days_left: u.days_left, rent: u.rent, renewal: u.renewal, booking_id: u.booking_id };
   });
   const open = rows.filter((r) => r.renewal === 'Not renewed');
@@ -141,7 +142,7 @@ async function statement(s, { tenant_id }) {
   const rows = lines.map(({ order, ...l }) => { balance = total([balance, l.charge || 0, -(l.payment || 0)], (x) => x); return { ...l, balance }; });
   const next = s.dues.find((p) => mine(p) && p.left > 0 && p.due > s.today);
   return {
-    title: `Statement · ${t.full_name}`, period: `to ${s.today}`, tenant: [t.full_name, t.phone, t.email].filter(Boolean).join(' · '),
+    title: `Statement · ${t.full_name}`, period: `to ${usDate(s.today)}`, tenant: [t.full_name, usPhone(t.phone), t.email].filter(Boolean).join(' · '),
     columns: [col('date', 'Date', 'date'), col('description', 'Details'), col('ref', 'Booking'), col('charge', 'Due', 'money'), col('payment', 'Paid', 'money'), col('balance', 'Balance', 'money')],
     rows, total: { charge: total(rows, (r) => r.charge || 0), payment: total(rows, (r) => r.payment || 0), balance },
     summary: [fig('Due to date', total(rows, (r) => r.charge || 0)), fig('Paid', total(rows, (r) => r.payment || 0)), fig('Balance owed', balance),
@@ -173,7 +174,7 @@ async function daily(s, { day }) {
     ...back.map(({ on: day, amount, note, ...who }) => ({ what: 'Deposit returned', ...who, detail: note, amount: -amount })),
   ];
   return {
-    title: 'Daily report', period: on, day: on,
+    title: 'Daily report', period: usDate(on), day: on,
     columns: [col('what', 'What'), col('tenant', 'Tenant'), ...PLACE, col('detail', 'Details'), col('amount', 'Amount', 'money'), col('by', 'By')],
     rows, total: {},
     summary: [fig('Collected', total(paid)), fig('Payments', paid.length, 'int'), fig('Fell due', total(due)), fig('Of that, unpaid', total(due, (p) => p.left)),

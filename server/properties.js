@@ -6,6 +6,7 @@ import { db } from './db.js';
 import { requireMaster } from './auth.js';
 import { DATA_DIR } from './config.js';
 import { todayHere } from './leasingRegion.js';
+import { usPhone, usEin, einProblem, emailProblem, zipProblem } from './usFormat.js';
 
 // Properties: the companies of the group, their buildings, and each building's units.
 // Everyone signed in can read them; only the master adds, changes or removes. A company
@@ -16,9 +17,12 @@ const bad = (message, status = 400) => Object.assign(new Error(message), { statu
 // The fields each one keeps, and what kind of value each is. Anything else sent is ignored.
 const KINDS = {
   company: { table: 'prop_companies', parent: null, need: 'name',
-    fields: { name: 'text', trade_license_no: 'text', trn: 'text', phone: 'text', email: 'text', address: 'text', notes: 'text' } },
+    fields: { name: 'text', trade_license_no: 'text', trn: 'text', registration_date: 'date', phone: 'text', email: 'text', address: 'text', city: 'text', state: 'text', zip: 'text', notes: 'text' },
+    // How a value is kept, and what is wrong with one (in words, or '' when nothing is).
+    tidy: { trade_license_no: usEin, state: (v) => v.toUpperCase() },
+    checks: { trade_license_no: einProblem, email: emailProblem, zip: zipProblem, state: (v) => (/^[A-Z]{2}$/.test(v) ? '' : 'State is two letters, like TX.') } },
   building: { table: 'prop_buildings', parent: 'company_id', need: 'name',
-    fields: { name: 'text', emirate: 'text', area: 'text', address: 'text', plot_no: 'text', makani_no: 'text', notes: 'text' } },
+    fields: { name: 'text', emirate: 'text', city: 'text', zip: 'text', area: 'text', address: 'text', plot_no: 'text', makani_no: 'text', notes: 'text' } },
   unit: { table: 'prop_units', parent: 'building_id', need: 'unit_no',
     fields: { unit_no: 'text', floor: 'text', type: 'text', size_sqft: 'number', furnished: 'bool',
       dewa_no: 'text', blocked: 'bool', notes: 'text' } },
@@ -34,9 +38,33 @@ function clean(kind, body = {}) {
       if (v === '' || v == null) out[f] = null;
       else if (!Number.isFinite(Number(v)) || Number(v) < 0) throw bad(`${f.replace(/_/g, ' ')} must be a number.`);
       else out[f] = Number(v);
-    } else out[f] = String(v ?? '').trim().slice(0, 500) || null;
+    } else if (type === 'date') {
+      const d = String(v ?? '').trim();
+      if (d && !isDate(d)) throw bad(`${f.replace(/_/g, ' ')} is not a date.`);
+      out[f] = d || null;
+    } else {
+      const s = String(v ?? '').trim().slice(0, 500);
+      out[f] = (s && KINDS[kind].tidy?.[f] ? KINDS[kind].tidy[f](s) : s) || null;
+    }
   }
   return out;
+}
+
+/**
+ * Refuse a value that is not what its field holds (an EIN, an email, a ZIP code…). One that
+ * is already kept (`was`) is not questioned, so an old row can still be edited around it.
+ */
+function check(kind, row, was = {}) {
+  for (const [f, problem] of Object.entries(KINDS[kind].checks || {})) {
+    if (row[f] && row[f] !== was[f] && problem(row[f])) throw bad(problem(row[f]));
+  }
+}
+
+// Two companies may not share a name, whatever its capitals. `id` is the one being edited.
+async function oneName(row, id = 0) {
+  if (row.name && await db.prepare('SELECT 1 FROM prop_companies WHERE lower(name) = lower(?) AND id <> ?').get(row.name, Number(id))) {
+    throw bad('A company with that name already exists.', 409);
+  }
 }
 
 const dupe = (e, kind) => {
@@ -48,6 +76,8 @@ export async function create(kind, body, parentId, by) {
   const k = KINDS[kind];
   const row = clean(kind, body);
   if (!row[k.need]) throw bad(`${k.need === 'name' ? 'Name' : 'Unit number'} is required.`);
+  check(kind, row);
+  if (kind === 'company') await oneName(row);
   if (k.parent) {
     const ptable = kind === 'building' ? 'prop_companies' : 'prop_buildings';
     if (!(await db.prepare(`SELECT 1 FROM ${ptable} WHERE id = ?`).get(Number(parentId)))) throw bad('Not found', 404);
@@ -66,6 +96,8 @@ export async function update(kind, id, body) {
   const k = KINDS[kind];
   const row = clean(kind, body);
   if (k.need in row && !row[k.need]) throw bad(`${k.need === 'name' ? 'Name' : 'Unit number'} is required.`);
+  if (k.checks) check(kind, row, (await db.prepare(`SELECT * FROM ${k.table} WHERE id = ?`).get(Number(id))) || {});
+  if (kind === 'company') await oneName(row, id);
   const cols = Object.keys(row);
   if (cols.length) {
     try {
@@ -109,16 +141,18 @@ export const listBuildings = (companyId) => db.prepare(`
 
 // Units in floor then number order, the way they read on a building's board (2, 10, 101…).
 // Each with today's confirmed booking, if any (today where the business is), so the card can say who is in it.
-export const listUnits = (buildingId) => db.prepare(`
-  SELECT u.*, cur.tenant AS current_tenant, cur.end_date AS current_until,
+// energy_on_tenant: that tenant has an energy account of their own, so the unit's own number (dewa_no,
+// the company's account) is not shown until the unit is vacant or on the company's account again.
+export const listUnits = (buildingId, today = todayHere()) => db.prepare(`
+  SELECT u.*, cur.tenant AS current_tenant, cur.end_date AS current_until, coalesce(cur.tenant_energy_account, false) AS energy_on_tenant,
     (SELECT coalesce(array_agg(p.id ORDER BY p.id), '{}') FROM prop_unit_photos p WHERE p.unit_id = u.id) AS photos FROM prop_units u
-  LEFT JOIN LATERAL (SELECT t.full_name AS tenant, to_char(b.end_date, 'YYYY-MM-DD') AS end_date FROM lease_bookings b
+  LEFT JOIN LATERAL (SELECT t.full_name AS tenant, to_char(b.end_date, 'YYYY-MM-DD') AS end_date, b.tenant_energy_account FROM lease_bookings b
     JOIN lease_tenants t ON t.id = b.tenant_id
     WHERE b.unit_id = u.id AND b.status = 'confirmed' AND ?::date BETWEEN b.start_date AND b.end_date
     LIMIT 1) cur ON true
   WHERE building_id = ?
   ORDER BY NULLIF(regexp_replace(floor, '\\D', '', 'g'), '')::int NULLS FIRST, floor,
-    NULLIF(regexp_replace(unit_no, '\\D', '', 'g'), '')::bigint NULLS LAST, unit_no`).all(todayHere(), Number(buildingId));
+    NULLIF(regexp_replace(unit_no, '\\D', '', 'g'), '')::bigint NULLS LAST, unit_no`).all(today, Number(buildingId));
 
 // One company or building, with when its picture last changed (null when it has none).
 /** The people who look after a building: its leasing alerts go to them. */

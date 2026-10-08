@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db, tx } from './db.js';
 import { requireMaster } from './auth.js';
 import { create } from './properties.js';
+import { usPhone } from './usFormat.js';
 import { makeBooking, takePayment, bookingPayments, isDate, bad, todayHere } from './leasing.js';
 
 // Bringing the office's existing spreadsheet in: one row per tenancy, with the company,
@@ -58,7 +59,7 @@ async function importRow(r, by, today) {
   // The same person twice in the sheet (two units) is one tenant: matched on Emirates ID, else on name and phone.
   const eid = str(r.emirates_id_no);
   const known = eid ? await db.prepare('SELECT id FROM lease_tenants WHERE emirates_id_no = ?').get(eid)
-    : await db.prepare("SELECT id FROM lease_tenants WHERE lower(full_name) = lower(?) AND coalesce(phone, '') = ?").get(str(r.tenant_name), str(r.phone));
+    : await db.prepare("SELECT id FROM lease_tenants WHERE lower(full_name) = lower(?) AND coalesce(phone, '') IN (?, ?)").get(str(r.tenant_name), str(r.phone), usPhone(str(r.phone)));
 
   const b = await makeBooking({
     unit_id: unitId, start_date, end_date, rent_amount: amount(r.rent_amount, 'Rent'), rent_period, payment_frequency, status: 'confirmed',

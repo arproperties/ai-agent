@@ -39,7 +39,7 @@ test('one payment can cover several months: it goes against what is owed, oldest
 
 test('a late fee is added once the days of grace are over, and comes off if the money had come in time', async () => {
   const { staff, bk } = await tower();
-  await assert.rejects(saveSettings({ latefee: { on: true } }), /an amount, a share of the rent, or both/);
+  await assert.rejects(saveSettings({ latefee: { on: true } }), /an amount or a percent of the rent/);
   const cfg = await saveSettings({ latefee: { on: true, days: 5, amount: 100, percent: 2 } }, '2026-09-01');
   assert.deepEqual(cfg.latefee, { on: true, days: 5, amount: 100, percent: 2, since: '2026-09-01' });
 

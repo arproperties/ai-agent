@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { create } from './properties.js';
 import { availability, todayHere, listServices, addService, listSources, addSource, addTenant, createBooking, updateBooking, confirmBooking, getBooking, listBookings, bookingPayments, total } from './leasing.js';
 import { report } from './leasingReports.js';
+import { tenantHistory } from './leasingHistory.js';
 import { cash, region } from './leasingRegion.js';
 
 // Riley's hands in leasing. She reads any report, a tenant's account and which units are
@@ -53,6 +54,12 @@ export const LEASING_TOOLS = [
     },
   },
   {
+    name: 'leasing_tenant_history',
+    description: "What kind of tenant someone has been: each rent that came in late (how many days, and any late fee), the complaints made about them (noise, parking…) "
+      + 'and the maintenance done for them, with what is still open. Use it when asked whether to renew or trust a tenant. Read-only.',
+    input_schema: { type: 'object', properties: { tenant: { type: 'string', description: "The tenant's name, or part of it." } }, required: ['tenant'] },
+  },
+  {
     name: 'leasing_list',
     description: 'What is already set up: the companies, the buildings (of one company or all), the units or the services of a building, tenants by name, the sources (where tenants come from: one list for the whole app), or the bookings (drafts included) with their references and charges. '
       + 'Check here before adding anything, so nothing is made twice. Read-only.',
@@ -70,12 +77,12 @@ export const LEASING_TOOLS = [
   {
     name: 'leasing_add_company',
     description: `Add a company (a landlord of the group) to Properties. Master only. ${ASK}`,
-    input_schema: { type: 'object', properties: { name: str, trade_license_no: str, trn: str, phone: str, email: str, address: str }, required: ['name'] },
+    input_schema: { type: 'object', properties: { name: str, trade_license_no: str, trn: str, registration_date: { ...str, description: 'The day the company was registered, YYYY-MM-DD.' }, phone: str, email: str, address: { ...str, description: 'The street line only.' }, city: str, state: { ...str, description: 'The US state, as two letters, e.g. TX.' }, zip: { ...str, description: 'ZIP code.' } }, required: ['name'] },
   },
   {
     name: 'leasing_add_building',
     description: `Add a building under a company that exists (add the company first if it does not). Master only. ${ASK}`,
-    input_schema: { type: 'object', properties: { company: str, name: str, emirate: str, area: str, address: str }, required: ['company', 'name'] },
+    input_schema: { type: 'object', properties: { company: str, name: str, address: str, city: str, emirate: { ...str, description: 'The US state, as two letters, e.g. TX.' }, zip: { ...str, description: 'ZIP code.' }, area: str }, required: ['company', 'name'] },
   },
   {
     name: 'leasing_add_units',
@@ -129,6 +136,7 @@ export const LEASING_TOOLS = [
         tax_percent: { type: 'number', description: "Tax (VAT) on the rent and the charges, in percent; the deposit is never taxed. Left out, the booking gets the region's usual tax, as the booking form does: say so in the answer. 0 only when the user says there is no tax." },
         charges: { type: 'array', maxItems: 10, items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: with every rent payment. false: once.' } }, required: ['name', 'amount'] } },
         source: { ...str, description: 'Where the tenant came from (walk-in, referral, a listing site…), as in leasing_list sources. Only when the user says; a new one is added to that list.' },
+        tenant_energy_account: { type: 'boolean', description: "true when the tenant has an energy (electricity and water) account in their own name; false when the bill is on the company's account. Only when the user says." },
         contract_no: str, notes: str,
         confirm: { type: 'boolean', description: 'true only when the user has said to confirm. Default false: a draft.' },
       },
@@ -155,6 +163,7 @@ export const LEASING_TOOLS = [
           items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: with every rent payment. false: once.' } }, required: ['name', 'amount'] } },
         remove_charges: { type: 'array', items: str, description: 'Names of charges to take off the booking.' },
         source: { ...str, description: 'Where the tenant came from, as in leasing_list sources; a new one is added to that list. Empty takes it off.' },
+        tenant_energy_account: { type: 'boolean', description: "true when the tenant has an energy (electricity and water) account in their own name; false when the bill is on the company's account. Only when the user says." },
         contract_no: str, notes: str,
       },
       required: ['booking'],
@@ -208,7 +217,8 @@ const chargesLine = (fees) => (fees.length ? fees.map((f) => `${f.label} ${cash(
 const bookingLine = (b) => `${b.ref} (${b.stage}): ${b.tenant}, unit ${b.unit_no}, ${b.building}, ${b.start_date} to ${b.end_date}, `
   + `${cash(b.rent_amount)} per ${b.rent_period}, paid ${b.payment_frequency.replace(/_/g, ' ')}; deposit ${b.security_deposit == null ? 'none' : cash(b.security_deposit)}; charges: ${chargesLine(b.fees)}`
   + (b.discount_type || b.tax_percent ? `; ${discountLine(b) || 'discount none'}; ${taxLine(b) || `${region().tax_name} none`}` : '')
-  + (b.source ? `; source: ${b.source}` : '');
+  + (b.source ? `; source: ${b.source}` : '')
+  + (b.tenant_energy_account ? "; energy on the tenant's own account" : '');
 
 /** A report as plain text: its headline figures, then a line per row. */
 function asText(r, limit = 80) {
@@ -231,6 +241,19 @@ const reads = {
     return asText(await report(REPORT[input.report], q));
   },
   leasing_tenant_statement: async (input) => asText(await report('statement', { tenant_id: (await find('lease_tenants', 'tenant', input.tenant)).id })),
+  leasing_tenant_history: async (input) => {
+    const h = await tenantHistory((await find('lease_tenants', 'tenant', input.tenant)).id);
+    const s = h.summary;
+    const where = (i) => (i.ref ? ` [${i.ref}, unit ${i.unit_no}, ${i.building}]` : '');
+    const line = (i) => (i.type === 'late'
+      ? `- ${i.date} Late rent: ${cash(i.amount)} due, ${i.paid_on ? `paid in full on ${i.paid_on}, ${i.days_late} days late` : `${cash(i.left)} still owed, ${i.days_late} days late so far`}${i.fee ? `, late fee ${cash(i.fee)}` : ''}${where(i)}`
+      : `- ${i.date} ${i.type === 'complaint' ? 'Complaint' : 'Maintenance'}${i.category ? ` (${i.category})` : ''}, ${i.resolved_on ? `resolved ${i.resolved_on}${i.resolution ? ` (${i.resolution})` : ''}` : 'open'}: ${i.detail}${where(i)}`);
+    return [
+      `History · ${h.tenant.full_name} (as of ${todayHere()})`,
+      `Late rent: ${s.late} (${s.late_unpaid} still unpaid, ${s.late_days} days late on average, late fees ${cash(s.late_fees)}) | Complaints: ${s.complaints} (${s.complaints_open} open) | Maintenance: ${s.maintenance} (${s.maintenance_open} open)`,
+      h.items.length ? h.items.slice(0, 80).map(line).join('\n') : 'Nothing on record: no late rent, no complaints, no maintenance.',
+    ].join('\n');
+  },
   leasing_free_units: async (input) => {
     const b = await find('prop_buildings', 'building', input.building);
     const units = await availability(b.id, input.start_date, input.end_date);
@@ -342,7 +365,7 @@ const writes = (user) => {
       const made = await createBooking({
         unit_id: unit.id, tenant_id: tenant.id, start_date: input.start_date, end_date: input.end_date, rent_amount: input.rent_amount,
         rent_period: input.rent_period || 'month', payment_frequency: input.payment_frequency || 'monthly', security_deposit: input.security_deposit ?? null,
-        fees: charges.map((c) => ({ label: c.name, amount: c.amount, repeats: !!c.repeats })), contract_no: input.contract_no, notes: input.notes,
+        fees: charges.map((c) => ({ label: c.name, amount: c.amount, repeats: !!c.repeats })), contract_no: input.contract_no, notes: input.notes, tenant_energy_account: input.tenant_energy_account === true,
         // Like the booking form, a new booking starts with the region's usual tax unless another rate, or none, is given.
         tax_percent: region().tax_percent, ...terms(input), ...(source ? { source: source.name } : {}), status: input.confirm ? 'confirmed' : 'draft',
       }, user.id);
@@ -358,7 +381,7 @@ const writes = (user) => {
     leasing_change_booking: async (input) => {
       const old = await getBooking(bookingId(input.booking));
       const body = terms(input);
-      for (const f of ['start_date', 'end_date', 'rent_amount', 'rent_period', 'payment_frequency', 'security_deposit', 'contract_no', 'notes']) if (input[f] != null) body[f] = input[f];
+      for (const f of ['start_date', 'end_date', 'rent_amount', 'rent_period', 'payment_frequency', 'security_deposit', 'contract_no', 'notes', 'tenant_energy_account']) if (input[f] != null) body[f] = input[f];
       if (input.unit_no) {
         const unit = await db.prepare('SELECT id FROM prop_units WHERE building_id = ? AND lower(unit_no) = lower(?)').get(old.building_id, String(input.unit_no).trim());
         if (!unit) throw new Error(`${old.building} has no unit "${input.unit_no}". Look at leasing_list units.`);
@@ -407,7 +430,7 @@ async function scheduleLine(bookingId) {
 }
 
 const STATUS = {
-  leasing_free_units: 'Checking which units are free…', leasing_tenant_statement: "Looking at the tenant's account…", leasing_list: 'Looking at what is set up…',
+  leasing_free_units: 'Checking which units are free…', leasing_tenant_statement: "Looking at the tenant's account…", leasing_tenant_history: "Looking at the tenant's history…", leasing_list: 'Looking at what is set up…',
   leasing_add_company: 'Adding the company…', leasing_add_building: 'Adding the building…', leasing_add_units: 'Adding the units…', leasing_add_service: 'Adding the service…',
   leasing_add_tenant: 'Adding the tenant…', leasing_add_booking: 'Making the booking…', leasing_change_booking: 'Changing the booking…', leasing_confirm_booking: 'Confirming the booking…',
 };

@@ -98,13 +98,17 @@ const Field = ({ label, children }) => (
 
 /** The master's rules: a card to each, its switch at the top and what it goes by underneath. */
 function Rules({ start, onSaved }) {
-  const [v, setV] = useState(start);
+  // The late fee is one or the other, a fixed amount or a share of the rent: rules saved with both keep the amount.
+  const [feeBy, setFeeBy] = useState(start.latefee.percent > 0 && !(start.latefee.amount > 0) ? 'percent' : 'amount');
+  const [v, setV] = useState(() => (start.latefee.amount > 0 && start.latefee.percent > 0 ? { ...start, latefee: { ...start.latefee, percent: 0 } } : start));
   const [saved, setSaved] = useState(start);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const dirty = JSON.stringify(v) !== JSON.stringify(saved);
   const put = (rule, field) => (x) => { setNote(''); setV({ ...v, [rule]: { ...v[rule], [field]: x } }); };
+  const setFee = (by) => (x) => { setNote(''); setV({ ...v, latefee: { ...v.latefee, amount: 0, percent: 0, [by]: x } }); };
+  const pickFee = (by) => { if (by !== feeBy) { setFeeBy(by); setFee(by)(0); } };
   const num = (rule, field, label, max, unit = 'days', min = 0) => <Num value={v[rule][field]} onChange={put(rule, field)} min={min} max={max} unit={unit} label={label} />;
   const days = (rule, field, label, desc) => <Days value={v[rule][field]} onChange={put(rule, field)} label={label} desc={desc} />;
   const save = async (e) => {
@@ -130,8 +134,17 @@ function Rules({ start, onSaved }) {
     ['contract', 'No contract on file', FileWarning, 'A confirmed booking still has no contract attached.', [['Notify after', num('contract', 'days', 'Days without a contract', 60)]]],
     ['latefee', 'Late fee', Coins, 'Added to the booking when rent is still not paid after the days of grace. Only rent falling due from the day you switch this on.', [
       ['Days of grace after the due date', num('latefee', 'days', 'Days of grace', 60)],
-      ['Fixed fee', num('latefee', 'amount', 'Late fee amount', 1000000, currency())],
-      ['Plus this share of the rent', num('latefee', 'percent', 'Late fee share of the rent', 100, '%')],
+      ['Charge', (
+        <div className="flex gap-1 rounded-full border border-stroke p-0.5 text-sm">
+          {[['amount', 'Fixed amount'], ['percent', '% of the rent']].map(([k, l]) => (
+            <button key={k} type="button" onClick={() => pickFee(k)} aria-pressed={feeBy === k}
+              className={`rounded-full px-3 py-1.5 ${feeBy === k ? 'bg-p1/20 text-p1' : 'text-mute hover:text-txt'}`}>{l}</button>
+          ))}
+        </div>
+      )],
+      feeBy === 'percent'
+        ? ['Percent of the late rent', <Num value={v.latefee.percent} onChange={setFee('percent')} min={0} max={100} unit="%" label="Late fee percent of the rent" />]
+        : ['Fee', <Num value={v.latefee.amount} onChange={setFee('amount')} min={0} max={1000000} unit={currency()} label="Late fee amount" />],
     ]],
     ['tenant', 'Email the tenant automatically', Mail, 'On the due date and on the overdue days above, the reminder is emailed to the tenant by itself, in your wording. Tenants with no email get nothing; WhatsApp still needs a person to press send.', []],
     ['quiet', 'Quiet hours', Moon, 'No phone notification between these hours, in the time zone set under Region. What is held back goes when they end.', [

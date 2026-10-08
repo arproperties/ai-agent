@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, makeUser, closeDb } from './helpers/db.js';
 import { create, update, remove, listCompanies, listBuildings, listUnits } from '../server/properties.js';
+import { createBooking, updateBooking } from '../server/leasing.js';
 
 test.after(() => closeDb());
 
@@ -13,7 +14,8 @@ test('company → building → unit, with counts and no duplicates', async () =>
   await assert.rejects(create('company', { name: 'ACE Real Estate' }), /already exists/);
   await assert.rejects(create('company', { name: '  ' }), /Name is required/);
 
-  const b = await create('building', { name: 'Park Place', emirate: 'Dubai' }, c.id);
+  const b = await create('building', { name: 'Park Place', city: ' Austin ', emirate: 'TX', zip: '78701' }, c.id);
+  assert.deepEqual([b.city, b.emirate, b.zip], ['Austin', 'TX', '78701']);
   await assert.rejects(create('building', { name: 'X' }, 999), /Not found/);
   for (const [unit_no, floor] of [['101', '1'], ['12', 'G'], ['201', '2'], ['102', '1']]) await create('unit', { unit_no, floor, size_sqft: '750' }, b.id);
   await assert.rejects(create('unit', { unit_no: '101' }, b.id), /already exists in this building/);
@@ -26,6 +28,30 @@ test('company → building → unit, with counts and no duplicates', async () =>
   assert.equal((await listBuildings(c.id))[0].units, 4);
 });
 
+test('a company: EIN, email, address and name are checked, and what was already kept is not questioned', async () => {
+  await reset();
+  const c = await create('company', { name: 'ACE Real Estate', trade_license_no: '123456789', trn: ' 100 ', email: 'info@ace.com', address: '1 Main St', city: ' Austin ', state: 'tx', zip: '78701' });
+  assert.deepEqual([c.trade_license_no, c.trn, c.city, c.state, c.zip], ['12-3456789', '100', 'Austin', 'TX', '78701']);
+
+  await assert.rejects(create('company', { name: 'ace real estate' }), /already exists/, 'the same name in other capitals');
+  await assert.rejects(create('company', { name: 'B', trade_license_no: '12-345' }), /nine digits/);
+  await assert.rejects(create('company', { name: 'B', email: 'info@ace' }), /email/);
+  await assert.rejects(create('company', { name: 'B', zip: '787' }), /five digits/);
+  await assert.rejects(create('company', { name: 'B', state: 'Texas' }), /two letters/);
+  assert.equal((await listCompanies()).length, 1, 'nothing refused was kept');
+
+  const b = await create('company', { name: 'B' });
+  await assert.rejects(update('company', b.id, { name: 'ACE REAL ESTATE' }), /already exists/);
+  assert.equal((await update('company', c.id, { name: 'Ace Real Estate' })).name, 'Ace Real Estate', 'its own name, in other capitals');
+
+  // A licence number kept before EINs were checked can stay while the rest is edited.
+  const { db } = await import('../server/db.js');
+  await db.prepare('UPDATE prop_companies SET trade_license_no = ? WHERE id = ?').run('CN-1234', b.id);
+  assert.equal((await update('company', b.id, { trade_license_no: 'CN-1234', notes: 'old' })).notes, 'old');
+  await assert.rejects(update('company', b.id, { trade_license_no: 'CN-99' }), /nine digits/);
+  assert.equal((await update('company', b.id, { trade_license_no: '' })).trade_license_no, null);
+});
+
 test('edit, and removal only once emptied', async () => {
   await reset();
   const c = await create('company', { name: 'A' });
@@ -33,6 +59,9 @@ test('edit, and removal only once emptied', async () => {
   const u = await create('unit', { unit_no: '1' }, b.id);
 
   assert.equal((await update('unit', u.id, { furnished: true, size_sqft: 900 })).furnished, true);
+  assert.equal((await update('company', c.id, { registration_date: '2019-03-14' })).registration_date, '2019-03-14');
+  await assert.rejects(update('company', c.id, { registration_date: '14/03/2019' }), /registration date is not a date/);
+  assert.equal((await update('company', c.id, { registration_date: '' })).registration_date, null);
   await assert.rejects(update('unit', 999, { floor: '1' }), /Not found/);
   await assert.rejects(remove('company', c.id), /Remove its buildings first/);
   await assert.rejects(remove('building', b.id), /Remove its units first/);
@@ -132,4 +161,26 @@ test('a unit has several photos, in the order they were added, and they go with 
   await drop('unit', u.id);
   assert.equal(existsSync(kept), false);
   await assert.rejects(getUnitPhoto(two.id), /Not found/);
+});
+
+test("a unit's energy account number is hidden while its tenant has their own account", async () => {
+  await reset();
+  const me = await makeUser('Owner');
+  const c = await create('company', { name: 'ACE' }, null, me);
+  const b = await create('building', { name: 'Tower' }, c.id);
+  const u = await create('unit', { unit_no: '101', dewa_no: 'EA-555' }, b.id);
+  const shown = async (day) => { const [x] = await listUnits(b.id, day); return [x.dewa_no, x.energy_on_tenant]; };
+  assert.deepEqual(await shown('2026-10-10'), ['EA-555', false], 'vacant: the company pays');
+
+  const stay = { unit_id: u.id, start_date: '2026-10-01', end_date: '2026-10-31', rent_amount: 4500, status: 'confirmed', tenant: { full_name: 'Sara', phone: '050 123 4567' } };
+  const bk = await createBooking(stay, me);
+  assert.equal(bk.tenant_energy_account, false);
+  assert.deepEqual(await shown('2026-10-10'), ['EA-555', false], 'a tenant on the company account');
+
+  assert.equal((await updateBooking(bk.id, { tenant_energy_account: true }, me)).tenant_energy_account, true);
+  assert.deepEqual(await shown('2026-10-10'), ['EA-555', true], 'the tenant has their own account');
+  assert.deepEqual(await shown('2026-11-01'), ['EA-555', false], 'vacant again once the stay is over');
+
+  await updateBooking(bk.id, { notes: 'Late check-in' }, me);
+  assert.deepEqual(await shown('2026-10-10'), ['EA-555', true], 'another change leaves it as it was');
 });

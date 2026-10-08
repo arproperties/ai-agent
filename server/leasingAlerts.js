@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { requireMaster } from './auth.js';
 import { snapshot, dayNo, total, todayHere, bad, dueName, logEvent } from './leasing.js';
 import { region, hourHere, dayOf, cash } from './leasingRegion.js';
+import { usDate } from './usFormat.js';
 
 // Leasing alerts: what needs somebody's attention today, and the buzz that says so.
 //
@@ -55,7 +56,7 @@ export async function saveSettings(body = {}, today = todayHere()) {
   const pick = (k, f, read) => (body[k] && f in body[k] ? read(body[k][f]) : now[k][f]);
   const fee = { on: on('latefee'), days: pick('latefee', 'days', (v) => whole(v, 60, 'Days of grace')), amount: pick('latefee', 'amount', (v) => whole(v, 1000000, 'The late fee')),
     percent: pick('latefee', 'percent', (v) => whole(v, 100, 'The share of the rent')) };
-  if (fee.on && !(fee.amount > 0 || fee.percent > 0)) throw bad('Give the late fee an amount, a share of the rent, or both.');
+  if (fee.on && !(fee.amount > 0 || fee.percent > 0)) throw bad('Give the late fee an amount or a percent of the rent.');
   // Only rent falling due from the day the fee is switched on is charged.
   const since = fee.on ? (now.latefee.on && now.latefee.since) || today : null;
   const next = {
@@ -290,7 +291,7 @@ export async function tenantReminder(installmentId, today = todayHere()) {
   if (left <= 0.004) throw bad('This one is already paid in full.', 409);
   const late = dayNo(today) - dayNo(i.due_date);
   const words = { tenant: i.tenant, what: dueName(i).toLowerCase(), amount: aed(left), unit: i.unit_no, building: i.building, company: i.company,
-    due_date: new Date(`${i.due_date}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }), days_late: Math.max(0, late) };
+    due_date: usDate(i.due_date), days_late: Math.max(0, late) };
   const message = (await getWording())[late > 0 ? 'overdue' : 'due'].replace(/\{(\w+)\}/g, (all, k) => (k in words ? words[k] : all));
   const subject = `${late > 0 ? 'Overdue' : 'Reminder'}: ${dueName(i).toLowerCase()} for unit ${i.unit_no}, ${i.building}`;
   const number = whatsappNumber(i.phone);

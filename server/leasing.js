@@ -1,10 +1,12 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { rmSync } from 'node:fs';
 import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
 import { saveFile, sendDoc, upload } from './properties.js';
 import { requireMaster } from './auth.js';
 import { todayHere, cash } from './leasingRegion.js';
+import { usPhone } from './usFormat.js';
 
 export { todayHere };
 
@@ -33,6 +35,7 @@ const TENANT_COLS = `id, kind, full_name, nationality, emirates_id_no, passport_
 function tenantFields(body = {}, { partial = false } = {}) {
   const out = {};
   for (const f of ['full_name', 'nationality', 'emirates_id_no', 'passport_no', 'phone', 'email', 'notes']) if (f in body) out[f] = text(body[f]);
+  if (out.phone) out.phone = usPhone(out.phone);
   if ('kind' in body) out.kind = body.kind === 'company' ? 'company' : 'person';
   if ('emirates_id_expiry' in body) {
     const v = String(body.emirates_id_expiry ?? '').trim();
@@ -87,7 +90,7 @@ export async function removeTenant(id) {
 // ---------- bookings ----------
 
 const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amount, b.rent_period, b.payment_frequency,
-    b.security_deposit, b.status, b.contract_no, b.source, b.cancel_reason, b.notes, b.created_at,
+    b.security_deposit, b.status, b.contract_no, b.source, b.tenant_energy_account, b.cancel_reason, b.notes, b.created_at,
     b.fees, b.discount_type, b.discount_value, b.discount_note, b.tax_percent, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
     (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
@@ -165,7 +168,8 @@ function bookingFields(body = {}, { partial = false } = {}) {
   if ('type' in body && body.type) { if (!TYPES.has(body.type)) throw bad('Unknown booking type.'); out.type = body.type; }
   for (const f of ['contract_no', 'notes']) if (f in body) out[f] = text(body[f], 2000);
   if ('source' in body) out.source = text(body.source, 60); // where the tenant came from: a name off the sources list
-  // Other charges (pet fee, parking, commission, DEWA deposit…): each is due once, on the first day,
+  if ('tenant_energy_account' in body) out.tenant_energy_account = isTrue(body.tenant_energy_account); // the energy bill is in the tenant's own name
+  // Other charges (pet fee, parking, commission, energy deposit…): each is due once, on the first day,
   // or, when it repeats, with every rent payment.
   if ('fees' in body) {
     const list = (Array.isArray(body.fees) ? body.fees : []).filter((f) => f && (f.label || f.amount));
@@ -215,6 +219,20 @@ async function mustBeFree(unitId, start, end, exceptId) {
 
 /** A new booking, as a draft or straight to confirmed. A new tenant can come with it. */
 export const createBooking = (body = {}, by) => tx(() => makeBooking(body, by));
+
+/** What a booking made on the booking form must come with, each as a file: [the upload's field, the document's name]. */
+export const REQUIRED_DOCS = [['driver_license', 'Driver License'], ['proof_of_employment', 'Proof of Employment']];
+
+/** A booking made on the booking form: it is not saved without each of REQUIRED_DOCS, which are kept with it. */
+export async function createBookingWithDocs(body = {}, files = {}, by) {
+  const missing = REQUIRED_DOCS.filter(([f]) => !files?.[f]?.[0]).map(([, name]) => name);
+  if (missing.length) throw bad(`Attach the tenant's ${missing.join(' and ')}.`);
+  return tx(async () => {
+    const made = await makeBooking(body, by);
+    for (const [f, title] of REQUIRED_DOCS) await addBookingDoc(made.id, { title }, files[f][0], by);
+    return getBooking(made.id);
+  });
+}
 
 /** createBooking without its own transaction, for a caller that is already in one (the importer). */
 export async function makeBooking(body = {}, by) {
@@ -511,7 +529,7 @@ async function backfillSchedules() {
  * the rule was switched on is charged, so old arrears are not all fined at once. A fee put
  * on because a payment was written down late, when the money had come in time, comes off again.
  */
-async function applyLateFees(today) {
+export async function applyLateFees(today) {
   const row = await db.prepare("SELECT value FROM lease_settings WHERE key = 'alerts'").get();
   const rule = row && JSON.parse(row.value).latefee;
   if (!rule?.on || !(rule.amount > 0 || rule.percent > 0)) return;
@@ -854,7 +872,7 @@ export async function renewBooking(id, by) {
 export async function snapshot({ company_id, building_id } = {}, today = todayHere()) {
   await backfillSchedules();
   await applyLateFees(today);
-  const every = await db.prepare(`SELECT bl.id, bl.name, bl.area, bl.emirate, c.id AS company_id, c.name AS company
+  const every = await db.prepare(`SELECT bl.id, bl.name, bl.area, bl.city, bl.emirate, c.id AS company_id, c.name AS company
     FROM prop_buildings bl JOIN prop_companies c ON c.id = bl.company_id ORDER BY c.name, bl.name`).all();
   const list = every.filter((b) => (!company_id || b.company_id === Number(company_id)) && (!building_id || b.id === Number(building_id)));
   const buildingOf = new Map(list.map((b) => [b.id, b]));
@@ -989,7 +1007,7 @@ export async function overview({ company_id, building_id, months } = {}, today =
       const mine = rows.filter((u) => u.building_id === b.id);
       const open = mine.filter((u) => u.status !== 'blocked').length;
       const floors = [...new Set(mine.map((u) => u.floor))].reverse(); // top floor first
-      return { id: b.id, name: b.name, area: [b.area, b.emirate].filter(Boolean).join(', '), company: b.company, total: mine.length,
+      return { id: b.id, name: b.name, area: [b.area, b.city, b.emirate].filter(Boolean).join(', '), company: b.company, total: mine.length,
         vacant: mine.filter((u) => u.status === 'vacant').length,
         occupancy: open ? mine.filter((u) => u.tenant).length / open : 0,
         floors: floors.map((f) => mine.filter((u) => u.floor === f)) };
@@ -1006,6 +1024,13 @@ export async function overview({ company_id, building_id, months } = {}, today =
 
 export const leasingRoutes = Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+// A new booking comes as a form: its details as JSON in `booking`, beside the files it must have.
+const bookingFiles = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: REQUIRED_DOCS.length } })
+  .fields(REQUIRED_DOCS.map(([name]) => ({ name, maxCount: 1 })));
+const sentBooking = (req) => {
+  if (!req.is('multipart/form-data')) return req.body;
+  try { return JSON.parse(req.body.booking); } catch { throw bad('The booking details did not arrive.'); }
+};
 
 leasingRoutes.get('/tenants', wrap(async (req, res) => res.json(await listTenants(req.query.q))));
 leasingRoutes.post('/tenants', wrap(async (req, res) => res.json(await addTenant(req.body, req.user.id))));
@@ -1026,7 +1051,7 @@ leasingRoutes.get('/overview', wrap(async (req, res) => res.json(await overview(
 leasingRoutes.get('/available',wrap(async (req, res) => res.json(await availability(req.query.building_id, req.query.start, req.query.end))));
 leasingRoutes.get('/bookings', wrap(async (req, res) => res.json(await listBookings(req.query))));
 leasingRoutes.get('/bookings/:id', wrap(async (req, res) => res.json(await getBooking(req.params.id))));
-leasingRoutes.post('/bookings', wrap(async (req, res) => res.json(await createBooking(req.body, req.user.id))));
+leasingRoutes.post('/bookings', bookingFiles, wrap(async (req, res) => res.json(await createBookingWithDocs(sentBooking(req), req.files, req.user.id))));
 leasingRoutes.put('/bookings/:id', wrap(async (req, res) => res.json(await updateBooking(req.params.id, req.body, req.user.id))));
 leasingRoutes.post('/bookings/:id/confirm', wrap(async (req, res) => res.json(await confirmBooking(req.params.id, req.user.id))));
 leasingRoutes.post('/bookings/:id/end', wrap(async (req, res) => res.json(await changeEnd(req.params.id, req.body?.end_date, req.user.id))));

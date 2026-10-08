@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Banknote, CalendarCheck, CalendarClock, DoorOpen, Download, FileText, Hourglass, Loader2, Printer, Table2 } from 'lucide-react';
 import { api } from '../lib/api';
 import Select from './Select';
+import DateField from './DateField';
+import { usDate, usPhone } from '../lib/usFormat';
 import Pager, { usePaged } from './Pager';
 
 // Leasing reports: the day's report, rent roll, overdue by age, collections, expiring leases, vacant units and
@@ -33,7 +35,7 @@ export const REPORTS = [
   ['statement', 'Tenant statement', 'One tenant: rent due, payments and the balance. Print it to send to them.', FileText, 'rose', 'Statement'],
 ];
 
-const date = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+const date = usDate;
 const num = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
 /** A value as it reads on screen and on paper. */
 function show(v, kind) {
@@ -52,7 +54,7 @@ function toExcel(r) {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = [
-    [r.title], [r.subtitle], [`As of ${r.generated}, amounts in ${r.currency}`], [],
+    [r.title], [r.subtitle], [`As of ${date(r.generated)}, amounts in ${r.currency}`], [],
     r.columns.map((c) => c.label),
     ...r.rows.map((row) => r.columns.map((c) => row[c.key])),
     ...(Object.keys(r.total).length ? [r.columns.map((c, i) => (c.key in r.total ? r.total[c.key] : i === 0 ? 'Total' : ''))] : []),
@@ -134,7 +136,7 @@ export default function LeasingReports({ name = 'daily', onName: setName, onPay 
           {name === 'statement' ? (
             <Filter label="Tenant" wide>
               <Select value={f.tenant_id} onChange={set('tenant_id')} aria-label="Tenant" className={SELECT} placeholder="Choose a tenant…"
-                options={tenants.map((t) => [t.id, [t.full_name, t.phone].filter(Boolean).join(' · ')])} />
+                options={tenants.map((t) => [t.id, [t.full_name, usPhone(t.phone)].filter(Boolean).join(' · ')])} />
             </Filter>
           ) : (
             <>
@@ -149,12 +151,12 @@ export default function LeasingReports({ name = 'daily', onName: setName, onPay 
             </>
           )}
           {name === 'daily' && r && (
-            <Filter label="Day"><input type="date" aria-label="Day" value={f.day || r.day || ''} max={r.generated} onChange={set('day')} className={FIELD} /></Filter>
+            <Filter label="Day"><DateField aria-label="Day" value={f.day || r.day || ''} max={r.generated} onChange={set('day')} className={FIELD} /></Filter>
           )}
           {name === 'collections' && r && (
             <>
-              <Filter label="From"><input type="date" aria-label="From" value={f.from || r.from || ''} max={f.to || r.to} onChange={set('from')} className={FIELD} /></Filter>
-              <Filter label="To"><input type="date" aria-label="To" value={f.to || r.to || ''} min={f.from || r.from} onChange={set('to')} className={FIELD} /></Filter>
+              <Filter label="From"><DateField aria-label="From" value={f.from || r.from || ''} max={f.to || r.to} onChange={set('from')} className={FIELD} /></Filter>
+              <Filter label="To"><DateField aria-label="To" value={f.to || r.to || ''} min={f.from || r.from} onChange={set('to')} className={FIELD} /></Filter>
             </>
           )}
           {name === 'expiring' && (
