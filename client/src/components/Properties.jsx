@@ -228,14 +228,14 @@ function Form({ kind, start, onSave, onCancel, bare, saveLabel = 'Save' }) {
   const CARD = 'rounded-2xl border border-stroke/60 bg-white/[0.03] p-4 md:p-5';
 
   return (
-    <form onSubmit={submit} noValidate className={bare ? 'space-y-4' : 'space-y-4 rounded-2xl border border-stroke/60 bg-white/[0.03] p-4'}>
+    <form onSubmit={submit} noValidate className={bare ? 'grid gap-4 lg:grid-cols-2' : 'space-y-4 rounded-2xl border border-stroke/60 bg-white/[0.03] p-4'}>
       {FORMS[kind].map(([section, fs, about, Ico], si) => (!bare ? (
         <fieldset key={section}>
           {section && <legend className="mb-2 text-[11px] font-medium uppercase tracking-widest text-mute">{section}</legend>}
           {grid(fs, si)}
         </fieldset>
       ) : !section ? (
-        <div key={section} className={`${CARD} flex items-start gap-4`}>
+        <div key={section} className={`${CARD} flex items-start gap-4 lg:col-span-2`}>
           <LogoField files={files} onChange={setFiles} current={photoUrl('companies', start)} />
           <div className="min-w-0 flex-1">
             {grid(fs, si)}
@@ -255,7 +255,7 @@ function Form({ kind, start, onSave, onCancel, bare, saveLabel = 'Save' }) {
         </section>
       )))}
       {!bare && <PhotoField kind={kind} files={files} onChange={setFiles} replacing={!!start} />}
-      <div className={`flex flex-wrap items-center justify-end gap-2 ${bare ? 'pt-1' : 'border-t border-stroke/60 pt-3'}`}>
+      <div className={`flex flex-wrap items-center justify-end gap-2 ${bare ? 'pt-1 lg:col-span-2' : 'border-t border-stroke/60 pt-3'}`}>
         {error && <p className="mr-auto text-sm text-bad">{error}</p>}
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
         <button disabled={busy} className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2 text-sm font-medium text-white disabled:opacity-60">
@@ -518,7 +518,7 @@ export default function PropertiesPage({ me, onBack }) {
       : async (v, files) => { const c = await api.post('/properties/companies', v); await sendPhotos('company', c.id, files); setAdding(false); setAt({ level: 'company', id: c.id }); };
     return (
       <Page title={editing ? `Edit ${editing.name}` : 'Register company'} onBack={() => setAdding(false)}>
-        <div className="mx-auto max-w-3xl">
+        <div>
           <Form kind="company" start={editing} onSave={save} onCancel={() => setAdding(false)} bare saveLabel={editing ? 'Save changes' : 'Register company'} />
         </div>
       </Page>
