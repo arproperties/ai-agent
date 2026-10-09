@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { reset, closeDb, db, makeUser } from './helpers/db.js';
 import { create } from '../server/properties.js';
 import { existsSync } from 'node:fs';
-import { createBooking, updateBooking, bookingPayments, recordPayment, removePayment, attachPaymentFile, overview, depositState, settleDeposit, passDeposit, takeBackDeposit, removeBooking, renewBooking, bookingHistory, listBookings, listServices, addService, updateService, removeService, listSources, addSource, renameSource, removeSource } from '../server/leasing.js';
+import { addTenant, changeEnd, createBooking, updateBooking, bookingPayments, recordPayment, removePayment, attachPaymentFile, overview, depositState, settleDeposit, passDeposit, takeBackDeposit, removeBooking, renewBooking, bookingHistory, listBookings, listServices, addService, updateService, removeService, listSources, addSource, renameSource, removeSource } from '../server/leasing.js';
 import { receiptRow, renderReceipt, inWords } from '../server/leasingReceipt.js';
 import { tenantReminder, noteReminder, saveWording, whatsappNumber } from '../server/leasingAlerts.js';
 import { leasingKit } from '../server/leasingKit.js';
@@ -276,11 +276,11 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   const twice = await ask('leasing_add_tenant', { full_name: 'sara khan' });
   assert.deepEqual([twice.is_error, /already a tenant named Sara Khan \(050-123-4567\)/.test(twice.content)], [true, true]);
 
-  // A draft unless told to confirm; a charge the building does not list yet is added to its list on the way.
+  // Always a draft, as on the form; a charge the building does not list yet is added to its list on the way.
   const booking = { building: 'Marina', unit_no: '101', tenant: 'Sara', start_date: '2026-11-01', end_date: '2027-10-31', rent_amount: 60000, rent_period: 'year',
     security_deposit: 5000, tax_percent: 0, charges: [{ name: 'Parking', amount: 300, repeats: true }, { name: 'Pet fee', amount: 800 }] };
   const draft = await says('leasing_add_booking', booking);
-  assert.match(draft, /^Lease LS-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, AED 60,000 per year, paid monthly, no VAT\.\nAdded to Marina Tower's services: Pet fee\.$/);
+  assert.match(draft, /^Lease LS-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, AED 60,000 per year, paid monthly, no VAT\.\nAdded to Marina Tower's services: Pet fee\.\nStill to do: the move-in inspection, after which the lease is confirmed; and, on the screens, attach the tenant's Driver License and Proof of Employment .*$/);
   assert.match(await says('leasing_list', { what: 'services', building: 'Marina' }), /- Parking: AED 300, with every rent payment\n- Pet fee: AED 800, once/);
   // Asked for again, the same stay is not made twice: the draft is changed, and keeps the charges it had.
   const again = await ask('leasing_add_booking', { ...booking, charges: [{ name: 'Laundry', amount: 20, repeats: true }] });
@@ -288,16 +288,19 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0001', set_charges: [{ name: 'Laundry', amount: 20, repeats: true }] }),
     /^Lease changed, still a DRAFT .*charges: Parking AED 300 with every rent payment, Pet fee AED 800 once, Laundry AED 20 with every rent payment\.\nAdded to Marina Tower's services: Laundry\.$/);
   assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0001', remove_charges: ['laundry'] }), /charges: Parking AED 300 with every rent payment, Pet fee AED 800 once\.$/);
-  assert.match(await says('leasing_list', { what: 'bookings', search: 'sara' }), /^- LS-2026-0001 \(draft\): Sara Khan, unit 101, Marina Tower/);
+  assert.match(await says('leasing_list', { what: 'bookings', search: 'sara' }), /^- LS-2026-0001 \(draft, move-in inspection not done\): Sara Khan, unit 101, Marina Tower/);
+  // As on the screens, it is not confirmed before the tenant is inspected in: she writes that down as she is told it.
+  const tooSoon = await ask('leasing_confirm_booking', { booking: 'LS-2026-0001' });
+  assert.deepEqual([tooSoon.is_error, /^Do the move-in inspection first, then confirm the lease\. Ask the user how they found the unit and write it down with leasing_record_inspection/.test(tooSoon.content)], [true, true]);
+  assert.match(await says('leasing_record_inspection', { building: 'Marina', unit_no: '101', kind: 'move_in', everything_else: 'good' }), /^Move-in inspection of unit 101, Marina Tower for LS-2026-0001 \(Sara Khan\), dated .*: finished\./);
+  assert.match(await says('leasing_list', { what: 'bookings', search: 'sara' }), /^- LS-2026-0001 \(draft, move-in inspection done\)/);
   assert.match(await says('leasing_confirm_booking', { booking: 'LS-2026-0001' }), /is confirmed: Sara Khan, unit 101.*\nPayment schedule: 26 payments, AED 69,400 in all; AED 11,100 is due on the first day\./s);
-  const clash = await ask('leasing_add_booking', { ...booking, confirm: true });
-  assert.deepEqual([clash.is_error, /already leased by Sara Khan/.test(clash.content)], [true, true]);
   assert.match((await ask('leasing_add_booking', { ...booking, unit_no: '999' })).content, /has no unit "999"/);
-  assert.equal(changed, 9, 'each thing added is told to the screen behind; what failed is not');
+  assert.equal(changed, 10, 'each thing added is told to the screen behind; what failed is not');
 
   // Like the form, a new booking starts with the region's usual tax; where the tenant came from is kept, and a new source joins the list.
   const { tax_percent, ...untaxed } = booking;
-  assert.match(await says('leasing_add_booking', { ...untaxed, unit_no: '102', charges: [], source: 'Airbnb' }), /paid monthly, VAT 5%, source Airbnb\.\nAdded to the sources list: Airbnb\.$/);
+  assert.match(await says('leasing_add_booking', { ...untaxed, unit_no: '102', charges: [], source: 'Airbnb' }), /paid monthly, VAT 5%, source Airbnb\.\nAdded to the sources list: Airbnb\.\nStill to do: the move-in inspection/);
   assert.equal(await says('leasing_list', { what: 'sources' }), 'Sources:\n- Airbnb');
   assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: 'airbnb', notes: 'Called' }), /VAT 5%; source: Airbnb\.$/, 'a source is taken as the list has it, and not added twice');
   assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: '' }), /VAT 5%\.$/);
@@ -309,6 +312,58 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   const bare = await staff.run({ id: 't', name: 'leasing_add_tenant', input: { full_name: 'Omar' } });
   assert.deepEqual([bare.is_error, bare.content], [true, 'A tenant needs a contact number. Ask the user for it.']);
   assert.ok(!(await staff.run({ id: 't', name: 'leasing_add_tenant', input: { full_name: 'Omar', phone: '0507654321' } })).is_error);
+});
+
+test('Riley follows a unit round its inspections: what is next, who still has it, and when it can be leased', async () => {
+  const { staff, u1 } = await tower();
+  const plus = (days) => new Date(Date.parse(`${todayHere()}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+  await addTenant({ full_name: 'Sara', phone: '0501234567' }, staff);
+  const kit = leasingKit({ id: staff, role: 'user' });
+  const ask = (name, input) => kit.run({ id: 't', name, input });
+  const says = async (name, input) => { const r = await ask(name, input); assert.ok(!r.is_error, r.content); return r.content; };
+  const unit = () => says('leasing_unit_inspections', { building: 'Tower', unit_no: '101' });
+  const units = () => says('leasing_list', { what: 'units', building: 'Tower' });
+
+  assert.match(await units(), /^Tower has 1 unit \(today is .*\):\n- 101: empty$/);
+  assert.match(await unit(), /No lease now or to come\.\nNext: the make-ready: the work on the empty unit before it is let\.\nNo inspection or make-ready has been written down yet\.$/);
+
+  // Asked to confirm it in one go, she still makes a draft: the tenant is not inspected in yet.
+  const made = await says('leasing_add_booking', { building: 'Tower', unit_no: '101', tenant: 'Sara', start_date: plus(-30), end_date: plus(300), rent_amount: 4500, confirm: true });
+  assert.match(made, /^Lease LS-\d+-0001 saved as a DRAFT/);
+  const ref = made.match(/LS-\d+-\d+/)[0];
+  assert.match(await unit(), new RegExp(`Its lease: ${ref} \\(draft, move-in inspection not done\\): Sara.*\\nNext: the move-in inspection of ${ref} \\(Sara\\), which is late: the lease has started\\. The lease is confirmed after it\\.`));
+  assert.equal((await ask('leasing_confirm_booking', { booking: ref })).is_error, true);
+  // The move-in is told to her in two goes: the kitchen first, which does not finish it, then the rest. Only what is said is rated.
+  const record = (input) => says('leasing_record_inspection', { building: 'Tower', unit_no: '101', ...input });
+  const begun = await record({ kind: 'move_in', notes: 'Keys: 2', areas: [{ area: 'kitchen', condition: 'good', note: 'New hob' }, { area: 'Balcony', condition: 'fair' }] });
+  assert.match(begun, new RegExp(`^Move-in inspection of unit 101, Tower for ${ref} \\(Sara\\), dated ${todayHere()}: NOT finished\\. Still to look at: Entrance & doors, Living room, Bedrooms, .*Keys & remotes\\.\\nIt says: Kitchen: good \\(New hob\\); Balcony: fair\\.\\nNext: the move-in inspection of`));
+  assert.equal((await ask('leasing_confirm_booking', { booking: ref })).is_error, true, 'begun is not done');
+  const wrong = await ask('leasing_record_inspection', { building: 'Tower', unit_no: '101', kind: 'move_in', everything_else: 'done' });
+  assert.deepEqual([wrong.is_error, wrong.content], [true, 'A move-in inspection is rated good or fair or damaged, not "done".']);
+  assert.match(await record({ kind: 'move_in', everything_else: 'good' }), new RegExp(`: finished\\.\\nIt says: Entrance & doors: good; Living room: good; Kitchen: good \\(New hob\\); .*Balcony: fair\\.\\nNext: confirming ${ref} \\(Sara\\): the move-in inspection is done\\. Confirm it only when the user says to\\.`));
+  assert.match(await unit(), new RegExp(`Next: confirming ${ref} \\(Sara\\): the move-in inspection is done\\.\\nInspections, newest first:\\n- .* Move-in inspection, Sara \\[${ref}\\], finished, by Staff: .*Kitchen: good \\(New hob\\); .*Balcony: fair\\. Notes: Keys: 2$`));
+  assert.match(await says('leasing_confirm_booking', { booking: ref }), /is confirmed: Sara, unit 101/);
+  assert.match(await units(), new RegExp(`- 101: leased to Sara until ${plus(300)}$`));
+
+  // She leaves early. Until she is inspected out the unit is hers: not free, and not to be leased, whatever the dates say.
+  await changeEnd(1, plus(-1), staff);
+  assert.match(await units(), new RegExp(`- 101: lease ended ${plus(-1)}, not vacant until Sara's move-out inspection is done$`));
+  assert.match(await says('leasing_free_units', { building: 'Tower', start_date: plus(1), end_date: plus(30) }),
+    new RegExp(`0 of 1 units free\\.\\n- Unit 101: not vacant: Sara's lease ended ${plus(-1)} and the move-out inspection is not done \\(${ref}\\)$`));
+  const held = new RegExp(`\\nListed as vacant, but not to be leased yet \\(the move-out inspection is not done\\):\\n- Unit 101, Tower: Sara, lease ended ${plus(-1)}$`);
+  assert.match(await says('leasing_report', { report: 'vacant_units' }), held);
+  assert.match(await unit(), /Next: the move-out inspection of LS-\d+-0001 \(Sara\), which is late/);
+
+  // Her move-out looks at what her move-in looked at (the balcony too), and frees the unit; then the make-ready, job by job.
+  assert.match(await record({ kind: 'move_out', areas: [{ area: 'Kitchen', condition: 'damaged', note: 'Worktop burnt' }], everything_else: 'good' }), /: finished\.\nIt says: .*Kitchen: damaged \(Worktop burnt\); .*Balcony: good\.\nNext: the make-ready/);
+  assert.match(await unit(), /Next: the make-ready.*\n- .* Move-out inspection, Sara \[LS-\d+-0001\], finished, by Staff: .*Kitchen: damaged \(Worktop burnt\).*\n- .* Move-in inspection, Sara/s);
+  assert.match(await units(), /- 101: empty, to be made ready$/);
+  assert.match(await record({ kind: 'make_ready', areas: [{ area: 'Cleaning', condition: 'done' }] }), /^Make-ready of unit 101, Tower, dated .*: NOT finished\. Still to do: Painting, Repairs, AC service, Pest control, Locks & keys\./);
+  assert.match(await record({ kind: 'make_ready', everything_else: 'done' }), /: finished\.\n.*\nNext: nothing: it is made ready, and waits for a lease\./);
+  assert.match(await units(), /- 101: empty$/);
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM prop_inspections').get()).n, 3, 'each was carried on, not written twice');
+  assert.doesNotMatch(await says('leasing_report', { report: 'vacant_units' }), /not to be leased yet/);
+  assert.match(await says('leasing_free_units', { building: 'Tower', start_date: plus(1), end_date: plus(30) }), /1 of 1 units free/);
 });
 
 test('currency, time zone and phone code follow the region the master sets', async () => {

@@ -14,12 +14,17 @@ import { bad, isDate, bookingRef, todayHere, getBooking, confirmBooking } from '
 //
 // They come in that order, lease after lease: the make-ready while the unit is empty, the
 // move-in of the lease's draft, the move-out when the tenant leaves, and the make-ready again.
-// A lease made on the form is confirmed only once its move-in inspection is done (a renewal is
-// not asked: the tenant is already in; Riley confirms without one), and the unit
+// A lease, made on the form or by Riley in the chat, is confirmed only once its move-in inspection
+// is done (a renewal is not asked: the tenant is already in), and the unit
 // is not vacant again until the move-out inspection (HELD, server/properties.js).
 // A move-in or move-out can be saved part done and finished later (`complete` says which).
 
 export const KINDS = { make_ready: ['done', 'pending'], move_in: ['good', 'fair', 'damaged'], move_out: ['good', 'fair', 'damaged'] };
+// What a new one starts with, as the inspection screen lists them (client/src/components/Inspections.jsx).
+export const USUAL_AREAS = {
+  make_ready: ['Cleaning', 'Painting', 'Repairs', 'AC service', 'Pest control', 'Locks & keys'],
+  inspect: ['Entrance & doors', 'Living room', 'Kitchen', 'Bedrooms', 'Bathrooms', 'Walls & paint', 'Floors', 'Windows & blinds', 'AC & heating', 'Appliances', 'Lights & electrical', 'Plumbing', 'Keys & remotes'],
+};
 const NAME = { make_ready: 'make-ready', move_in: 'move-in inspection', move_out: 'move-out inspection' };
 const PICTURE = /^image\/(png|jpe?g|webp|gif)$/;
 const PHOTO_DIR = `${DATA_DIR}/properties/inspections`;
@@ -192,7 +197,7 @@ export async function unitInspections(unitId, bookingId, today = todayHere()) {
   return { unit, lease, next: nextStep(list, lease, today), needs_make_ready: needsMakeReady(list), list };
 }
 
-/** A draft made on the form is confirmed once its move-in inspection is done; a renewal is not asked. */
+/** A draft is confirmed once its move-in inspection is done; a renewal is not asked. The form and Riley both confirm through here. */
 export async function confirmInspected(id, by) {
   const b = await getBooking(id);
   if (b.status === 'draft' && !b.renewed_from && !b.moved_in) throw bad('Do the move-in inspection first, then confirm the lease.', 409);

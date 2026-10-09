@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, closeDb, makeUser } from './helpers/db.js';
 import { create } from '../server/properties.js';
-import { createBooking, updateBooking, bookingPayments, recordPayment, renewBooking, addTenant, monthlyRent, money, total } from '../server/leasing.js';
+import { createBooking, updateBooking, listBookings, bookingPayments, recordPayment, renewBooking, addTenant, monthlyRent, money, total } from '../server/leasing.js';
+import { addInspection } from '../server/inspections.js';
 import { receiptRow, renderReceipt } from '../server/leasingReceipt.js';
 import { report } from '../server/leasingReports.js';
 import { leasingKit } from '../server/leasingKit.js';
@@ -125,10 +126,15 @@ test('Riley can set a discount and the tax', async () => {
   const kit = leasingKit({ id: boss, role: 'master' });
   const ask = (name, input) => kit.run({ id: 't', name, input });
   const made = await ask('leasing_add_booking', { building: 'Tower', unit_no: '101', tenant: 'Omar', start_date: '2026-11-01', end_date: '2026-12-31', rent_amount: 4500,
-    discount_percent: 10, discount_note: 'Second unit', tax_percent: 5, confirm: true });
+    discount_percent: 10, discount_note: 'Second unit', tax_percent: 5 });
   assert.ok(!made.is_error, made.content);
-  assert.match(made.content, /AED 4,500 per month, paid monthly, discount 10% \(Second unit\), VAT 5%\.\nPayment schedule: 2 payments, AED 8,505 in all/);
-  const changed = await ask('leasing_change_booking', { booking: made.content.match(/LS-\d+-\d+/)[0], discount_amount: 500, tax_percent: 0 });
+  assert.match(made.content, /AED 4,500 per month, paid monthly, discount 10% \(Second unit\), VAT 5%\./);
+  // Confirmed once the tenant is inspected in, as on the screens.
+  const ref = made.content.match(/LS-\d+-\d+/)[0];
+  const lease = (await listBookings())[0];
+  await addInspection(lease.unit_id, { kind: 'move_in', booking_id: lease.id, items: [{ area: 'Kitchen', condition: 'good' }] }, staff);
+  assert.match((await ask('leasing_confirm_booking', { booking: ref })).content, /is confirmed.*\nPayment schedule: 2 payments, AED 8,505 in all/s);
+  const changed = await ask('leasing_change_booking', { booking: ref, discount_amount: 500, tax_percent: 0 });
   assert.ok(!changed.is_error, changed.content);
   assert.match(changed.content, /discount AED 500 \(Second unit\); VAT none\.\nPayment schedule: 2 payments, AED 8,000 in all/);
 });
