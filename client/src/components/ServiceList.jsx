@@ -32,7 +32,7 @@ export default function ServiceList({ services, buildingId, onChange, onError, r
     setBusy(false);
   };
   const remove = async (s) => {
-    if (!confirm(`Remove ${s.name} from the list? Bookings that already charge it keep it.`)) return;
+    if (!confirm(`Remove ${s.name} from the list? Leases that already charge it keep it.`)) return;
     try { await api.del(`/leasing/services/${s.id}`); onChange(services.filter((x) => x.id !== s.id)); } catch (e) { onError(e.message); }
   };
   // This list can sit inside the booking form, so it is not a form itself: Enter saves the service, not the booking.
@@ -79,7 +79,7 @@ export default function ServiceList({ services, buildingId, onChange, onError, r
                   <p className="truncate text-sm font-medium">{s.name}</p>
                   <p className="truncate text-xs text-mute">{s.repeats ? 'With every rent payment' : 'Once, on the first day'}</p>
                 </div>
-                <span className={`shrink-0 text-sm ${Number(s.amount) ? '' : 'text-mute'}`}>{Number(s.amount) ? money(s.amount) : 'Price set on the booking'}</span>
+                <span className={`shrink-0 text-sm ${Number(s.amount) ? '' : 'text-mute'}`}>{Number(s.amount) ? money(s.amount) : 'Price set on the lease'}</span>
                 {!readOnly && <div className="-mr-1.5 flex shrink-0">
                   <button type="button" onClick={() => open(s)} aria-label={`Edit ${s.name}`} title="Edit" className={`${ICON} hover:text-txt`}><Pencil size={15} /></button>
                   <button type="button" onClick={() => remove(s)} aria-label={`Remove ${s.name}`} title="Remove from the list" className={`${ICON} hover:text-bad`}><Trash2 size={15} /></button>

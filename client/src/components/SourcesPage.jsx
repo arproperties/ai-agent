@@ -16,7 +16,7 @@ export default function SourcesPage({ onBack }) {
   return (
     <Page title="Sources" onBack={onBack}>
       <div className="space-y-4 rounded-3xl border border-stroke p-5 md:p-7">
-        <p className="text-sm text-mute">Where tenants come from: a walk-in, a referral, a listing site. One list for every company and building; a booking picks its source from it. Renaming a source renames it on the bookings that have it; removing one leaves those bookings as they are.</p>
+        <p className="text-sm text-mute">Where tenants come from: a walk-in, a referral, a listing site. One list for every company and building; a lease picks its source from it. Renaming a source renames it on the leases that have it; removing one leaves those leases as they are.</p>
         {error && <p className="text-sm text-bad">{error}</p>}
         {sources ? <SourceList sources={sources} onChange={setSources} onError={setError} />
           : !error && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />}

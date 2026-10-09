@@ -41,7 +41,7 @@ export default function RegionSettings({ onBack }) {
           <label className="block"><span className="mb-1 block text-xs text-txt/80">Usual tax (%)</span>
             <input type="number" min="0" max="100" step="any" value={v.tax_percent} onChange={put('tax_percent')} placeholder="0" className={FIELD} /></label>
         </div>
-        <p className="text-xs text-mute">The usual tax is what a new booking starts with, on its rent and other charges (never on the deposit). Each booking can have another rate, or none. Leave it at 0 if bookings are not usually taxed.</p>
+        <p className="text-xs text-mute">The usual tax is what a new lease starts with, on its rent and other charges (never on the deposit). Each lease can have another rate, or none. Leave it at 0 if leases are not usually taxed.</p>
         <p className="text-xs text-mute">Changing the currency relabels the amounts; it does not convert them.</p>
         <div className="flex items-center justify-end gap-3 border-t border-stroke/60 pt-3">
           {error && <p className="mr-auto text-sm text-bad">{error}</p>}

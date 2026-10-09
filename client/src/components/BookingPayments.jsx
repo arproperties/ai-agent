@@ -20,9 +20,9 @@ const STATUS = {
   paid: ['Paid', 'bg-ok/15 text-ok'], partly_paid: ['Part paid', 'bg-warn/15 text-warn'], overdue: ['Overdue', 'bg-bad/15 text-bad'],
   due: ['Due today', 'bg-p1/20 text-p1'], upcoming: ['Upcoming', 'bg-white/10 text-txt/80'], waived: ['Cancelled', 'bg-white/5 text-mute'],
 };
-const DEPOSIT = { unpaid: 'Not received yet', held: 'Held', refunded: 'Given back in full', partly_refunded: 'Partly given back', kept: 'Kept, nothing given back', passed_on: 'Passed on to the renewal', none: 'None on this booking' };
+const DEPOSIT = { unpaid: 'Not received yet', held: 'Held', refunded: 'Given back in full', partly_refunded: 'Partly given back', kept: 'Kept, nothing given back', passed_on: 'Passed on to the renewal', none: 'None on this lease' };
 const EVENT = {
-  created: 'Booking made', confirmed: 'Confirmed', changed: 'Changed', cancelled: 'Cancelled', payment: 'Payment recorded', payment_deleted: 'Payment deleted',
+  created: 'Lease made', confirmed: 'Confirmed', changed: 'Changed', cancelled: 'Cancelled', payment: 'Payment recorded', payment_deleted: 'Payment deleted',
   document: 'Document added', document_removed: 'Document removed', renewed: 'Renewed', deposit: 'Deposit settled', reminder: 'Reminder',
   deposit_passed: 'Deposit passed on', deposit_carried: 'Deposit carried over', deposit_back: 'Deposit pass-on undone',
 };
@@ -129,13 +129,13 @@ function Deposit({ bookingId, d, onDone, children }) {
           <p className={HEAD}>Security deposit</p>
           <p className="mt-1 text-sm">{aed(Math.max(d.amount, d.from ? d.held : 0))} · {DEPOSIT[d.status]}{d.status === 'held' && d.held < d.amount && ` (${aed(d.held)} received)`}</p>
           {d.from?.map((f) => <p key={f.id} className="text-xs text-mute">{aed(f.amount)} carried over from {f.ref} on {fmt(f.on)}.</p>)}
-          {d.waiting && <p className="text-xs text-mute">{aed(d.waiting.amount)} is held on {d.waiting.ref}, the booking this one renews.</p>}
-          {d.passed_to ? <p className="text-xs text-mute">Passed on to {d.passed_to.ref} on {fmt(d.passed_to.on)}. It is held and given back from that booking.</p>
+          {d.waiting && <p className="text-xs text-mute">{aed(d.waiting.amount)} is held on {d.waiting.ref}, the lease this one renews.</p>}
+          {d.passed_to ? <p className="text-xs text-mute">Passed on to {d.passed_to.ref} on {fmt(d.passed_to.on)}. It is held and given back from that lease.</p>
             : d.status === 'none' ? null
             : d.refunded == null ? <p className="text-xs text-mute">Held for the tenant, not income. Given back at check-out.</p>
             : <p className="text-xs text-mute">{aed(d.refunded)} given back of {aed(d.held)} on {fmt(d.settled_on)}{d.held > d.refunded && ` · ${aed(d.held - d.refunded)} kept`}{d.note && ` · ${d.note}`}</p>}
         </div>
-        {d.waiting && <button onClick={() => pass(d.waiting.id)} className={GHOST}><ArrowRight size={13} /> Bring it over to this booking</button>}
+        {d.waiting && <button onClick={() => pass(d.waiting.id)} className={GHOST}><ArrowRight size={13} /> Bring it over to this lease</button>}
         {d.can_pass && !open && <button onClick={() => pass(bookingId)} className={GHOST}><ArrowRight size={13} /> Pass on to {d.can_pass.ref}</button>}
         {d.passed_to && <button onClick={() => pass(bookingId, true)} className={GHOST}><Undo2 size={13} /> Undo</button>}
         {d.held > 0 && !d.passed_to && !open && <button onClick={() => setOpen(true)} className={GHOST}><Undo2 size={13} /> {d.refunded == null ? 'Give back deposit' : 'Change'}</button>}
@@ -256,7 +256,7 @@ export default function BookingPayments({ booking }) {
           </div>
         ))}
       <div className="rounded-2xl border border-stroke">
-        {dues.length === 0 ? <p className="px-4 py-4 text-sm text-mute">No rent or charges are due on this booking.</p>
+        {dues.length === 0 ? <p className="px-4 py-4 text-sm text-mute">No rent or charges are due on this lease.</p>
           : <div className="divide-y divide-stroke/60">{dues.map(line)}</div>}
       </div>
 

@@ -71,7 +71,7 @@ test('at a renewal the deposit is passed on to the new booking, which gives it b
   assert.equal((await bookingHistory(b.id))[0].detail, `AED 5,000 carried over from ${a.ref}`);
   assert.deepEqual((await bookingPayments(a.id, AT)).map((r) => [r.name, r.paid, r.status]).slice(0, 1), [['Security deposit', 5000, 'paid']], 'no money moved: the payment stays where it was received');
   await assert.rejects(passDeposit(a.id, staff, AT), /already passed on/);
-  await assert.rejects(settleDeposit(a.id, { refunded: 5000 }, staff, AT), new RegExp(`passed on to ${b.ref}. Give it back from that booking`));
+  await assert.rejects(settleDeposit(a.id, { refunded: 5000 }, staff, AT), new RegExp(`passed on to ${b.ref}. Give it back from that lease`));
 
   // Undone, and done again; then given back from the renewal, after which neither can be undone.
   assert.equal((await takeBackDeposit(a.id, staff)).status, 'held');
@@ -232,7 +232,7 @@ test('renewal, history, the receipt and the reminder to the tenant', async () =>
   const next = await renewBooking(bk.id, staff);
   assert.deepEqual([next.status, next.start_date, next.end_date, next.renewed_from, Number(next.rent_amount), next.unit_id], ['draft', '2026-11-15', '2027-01-14', bk.id, 4500, u1.id]);
   await assert.rejects(renewBooking(bk.id, staff), /already has a renewal/);
-  await assert.rejects(renewBooking(next.id, staff), /Only a confirmed booking/);
+  await assert.rejects(renewBooking(next.id, staff), /Only a confirmed lease/);
 
   await updateBooking(bk.id, { notes: 'Called twice' }, staff);
   assert.deepEqual((await bookingHistory(bk.id)).map((e) => [e.kind, e.by]),
@@ -254,7 +254,7 @@ test('import: checked first, all or nothing, with what is missing created', asyn
   const bad = await importBookings([row(), row({ unit_no: '202', start_date: 'soon' }), row({ tenant_name: 'Lina' })], { commit: true, by: staff, today: AT });
   assert.deepEqual([bad.imported, bad.failed, await count()], [false, 2, 0], 'one bad row and nothing is kept');
   assert.match(bad.results[1].error, /Start date is missing or not a date/);
-  assert.match(bad.results[2].error, /already booked by Omar/);
+  assert.match(bad.results[2].error, /already leased by Omar/);
 
   const done = await importBookings([row(), row({ unit_no: '202', tenant_name: 'Omar', rent_paid_so_far: '' })], { commit: true, by: staff, today: AT });
   assert.deepEqual([done.imported, done.failed, await count()], [true, 0, 2]);
@@ -307,18 +307,18 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   const booking = { building: 'Marina', unit_no: '101', tenant: 'Sara', start_date: '2026-11-01', end_date: '2027-10-31', rent_amount: 60000, rent_period: 'year',
     security_deposit: 5000, tax_percent: 0, charges: [{ name: 'Parking', amount: 300, repeats: true }, { name: 'Pet fee', amount: 800 }] };
   const draft = await says('leasing_add_booking', booking);
-  assert.match(draft, /^Booking BK-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, AED 60,000 per year, paid monthly, no VAT\.\nAdded to Marina Tower's services: Pet fee\.$/);
+  assert.match(draft, /^Lease LS-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, AED 60,000 per year, paid monthly, no VAT\.\nAdded to Marina Tower's services: Pet fee\.$/);
   assert.match(await says('leasing_list', { what: 'services', building: 'Marina' }), /- Parking: AED 300, with every rent payment\n- Pet fee: AED 800, once/);
   // Asked for again, the same stay is not made twice: the draft is changed, and keeps the charges it had.
   const again = await ask('leasing_add_booking', { ...booking, charges: [{ name: 'Laundry', amount: 20, repeats: true }] });
-  assert.deepEqual([again.is_error, /already a draft for this tenant and unit: BK-2026-0001 .*leasing_change_booking/.test(again.content)], [true, true]);
-  assert.match(await says('leasing_change_booking', { booking: 'BK-2026-0001', set_charges: [{ name: 'Laundry', amount: 20, repeats: true }] }),
-    /^Booking changed, still a DRAFT .*charges: Parking AED 300 with every rent payment, Pet fee AED 800 once, Laundry AED 20 with every rent payment\.\nAdded to Marina Tower's services: Laundry\.$/);
-  assert.match(await says('leasing_change_booking', { booking: 'BK-2026-0001', remove_charges: ['laundry'] }), /charges: Parking AED 300 with every rent payment, Pet fee AED 800 once\.$/);
-  assert.match(await says('leasing_list', { what: 'bookings', search: 'sara' }), /^- BK-2026-0001 \(draft\): Sara Khan, unit 101, Marina Tower/);
-  assert.match(await says('leasing_confirm_booking', { booking: 'BK-2026-0001' }), /is confirmed: Sara Khan, unit 101.*\nPayment schedule: 26 payments, AED 69,400 in all; AED 11,100 is due on the first day\./s);
+  assert.deepEqual([again.is_error, /already a draft for this tenant and unit: LS-2026-0001 .*leasing_change_booking/.test(again.content)], [true, true]);
+  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0001', set_charges: [{ name: 'Laundry', amount: 20, repeats: true }] }),
+    /^Lease changed, still a DRAFT .*charges: Parking AED 300 with every rent payment, Pet fee AED 800 once, Laundry AED 20 with every rent payment\.\nAdded to Marina Tower's services: Laundry\.$/);
+  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0001', remove_charges: ['laundry'] }), /charges: Parking AED 300 with every rent payment, Pet fee AED 800 once\.$/);
+  assert.match(await says('leasing_list', { what: 'bookings', search: 'sara' }), /^- LS-2026-0001 \(draft\): Sara Khan, unit 101, Marina Tower/);
+  assert.match(await says('leasing_confirm_booking', { booking: 'LS-2026-0001' }), /is confirmed: Sara Khan, unit 101.*\nPayment schedule: 26 payments, AED 69,400 in all; AED 11,100 is due on the first day\./s);
   const clash = await ask('leasing_add_booking', { ...booking, confirm: true });
-  assert.deepEqual([clash.is_error, /already booked by Sara Khan/.test(clash.content)], [true, true]);
+  assert.deepEqual([clash.is_error, /already leased by Sara Khan/.test(clash.content)], [true, true]);
   assert.match((await ask('leasing_add_booking', { ...booking, unit_no: '999' })).content, /has no unit "999"/);
   assert.equal(changed, 9, 'each thing added is told to the screen behind; what failed is not');
 
@@ -326,8 +326,8 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   const { tax_percent, ...untaxed } = booking;
   assert.match(await says('leasing_add_booking', { ...untaxed, unit_no: '102', charges: [], source: 'Airbnb' }), /paid monthly, VAT 5%, source Airbnb\.\nAdded to the sources list: Airbnb\.$/);
   assert.equal(await says('leasing_list', { what: 'sources' }), 'Sources:\n- Airbnb');
-  assert.match(await says('leasing_change_booking', { booking: 'BK-2026-0002', source: 'airbnb', notes: 'Called' }), /VAT 5%; source: Airbnb\.$/, 'a source is taken as the list has it, and not added twice');
-  assert.match(await says('leasing_change_booking', { booking: 'BK-2026-0002', source: '' }), /VAT 5%\.$/);
+  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: 'airbnb', notes: 'Called' }), /VAT 5%; source: Airbnb\.$/, 'a source is taken as the list has it, and not added twice');
+  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: '' }), /VAT 5%\.$/);
 
   // Somebody who is not the master can book and add a tenant, not add property.
   const staff = leasingKit({ id: staffId, role: 'user' });

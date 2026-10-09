@@ -26,7 +26,7 @@ const GHOST ='flex items-center gap-1.5 rounded-full border border-stroke/70 px-
 // Each report: its key on the server, its name, what it is, then how the sidebar draws its
 // shortcut (icon, colour, and a name short enough to sit under the disc).
 export const REPORTS = [
-  ['daily', 'Daily report', 'One day: the money that came in, what fell due, move-ins and move-outs, bookings made and cancelled.', CalendarCheck, 'violet', 'Daily'],
+  ['daily', 'Daily report', 'One day: the money that came in, what fell due, move-ins and move-outs, leases made and cancelled.', CalendarCheck, 'violet', 'Daily'],
   ['rent-roll', 'Rent roll', 'Every unit: who is in it, the rent, the contract dates and what is overdue.', Table2, 'blue', 'Rent roll'],
   ['aging', 'Overdue by age', 'What each tenant owes, by how long it has been waiting.', Hourglass, 'from-orange-400 to-red-500 shadow-red-500/30', 'Overdue'],
   ['collections', 'Collections', 'Payments received between two dates, by method and by building.', Banknote, 'teal', 'Collected'],
@@ -204,7 +204,7 @@ export default function LeasingReports({ name = 'daily', onName: setName, onPay 
                   <tbody className="divide-y divide-stroke/60">
                     {paged.rows.map((row, i) => (
                       <tr key={paged.first + i} onClick={row.booking_id && onPay ? () => onPay(row.booking_id) : undefined}
-                        title={row.booking_id && onPay ? 'Open this booking’s payments' : undefined}
+                        title={row.booking_id && onPay ? 'Open this lease’s payments' : undefined}
                         className={row.booking_id && onPay ? 'cursor-pointer hover:bg-white/[0.04]' : ''}>
                         {r.columns.map((c) => <td key={c.key} className={`px-3 py-2 ${right(c.kind) ? 'text-right tabular-nums' : ''}`}>{show(row[c.key], c.kind) || <span className="text-mute/50">—</span>}</td>)}
                       </tr>

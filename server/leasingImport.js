@@ -71,7 +71,7 @@ async function importRow(r, by, today) {
   // Rent already received goes against the schedule oldest first, as the office would have applied it.
   let paid = str(r.rent_paid_so_far) ? amount(r.rent_paid_so_far, 'Rent paid so far') : 0;
   const rent = (await bookingPayments(b.id, today)).filter((i) => i.kind === 'rent');
-  if (paid > rent.reduce((t, i) => t + i.amount, 0) + 0.004) throw bad('Rent paid so far is more than the whole rent of this booking.');
+  if (paid > rent.reduce((t, i) => t + i.amount, 0) + 0.004) throw bad('Rent paid so far is more than the whole rent of this lease.');
   for (const i of rent) {
     if (paid <= 0.004) break;
     const part = Math.min(paid, i.amount);

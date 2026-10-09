@@ -26,7 +26,7 @@ const RULE = {
   ending: ['Leases ending', CalendarDays], contract: ['No contract', FileWarning], eid: ['ID expiry', CreditCard],
 };
 const LEVEL = { bad: 'bg-bad/15 text-bad', warn: 'bg-warn/15 text-warn', info: 'bg-p3/15 text-p3' };
-const DOES = { pay: 'Record payment', docs: 'Add the contract', booking: 'Open booking', tenants: 'Open tenants' };
+const DOES = { pay: 'Record payment', docs: 'Add the contract', booking: 'Open lease', tenants: 'Open tenants' };
 
 function Switch({ on, onChange, label }) {
   return (
@@ -131,8 +131,8 @@ function Rules({ start, onSaved }) {
     ['eid', 'ID expiring', CreditCard, 'A tenant’s ID is about to run out.', [['Notify this long before', num('eid', 'days', 'Days before the ID expires', 180)]]],
     ['due', 'Rent due today', Banknote, 'A notification on the day rent is due.', []],
     ['summary', 'Morning summary', BellRing, 'One line to the master each morning: what is due today and what is overdue.', []],
-    ['contract', 'No contract on file', FileWarning, 'A confirmed booking still has no contract attached.', [['Notify after', num('contract', 'days', 'Days without a contract', 60)]]],
-    ['latefee', 'Late fee', Coins, 'Added to the booking when rent is still not paid after the days of grace. Only rent falling due from the day you switch this on.', [
+    ['contract', 'No contract on file', FileWarning, 'A confirmed lease still has no contract attached.', [['Notify after', num('contract', 'days', 'Days without a contract', 60)]]],
+    ['latefee', 'Late fee', Coins, 'Added to the lease when rent is still not paid after the days of grace. Only rent falling due from the day you switch this on.', [
       ['Days of grace after the due date', num('latefee', 'days', 'Days of grace', 60)],
       ['Charge', (
         <div className="flex gap-1 rounded-full border border-stroke p-0.5 text-sm">
@@ -199,7 +199,7 @@ function Wording({ start }) {
   return (
     <form onSubmit={save} className="space-y-3">
       <p className={HEAD}>Reminder to the tenant</p>
-      <p className="text-xs text-mute">Used by “Remind tenant” on a booking’s payments. These are filled in for you: {'{tenant} {what} {amount} {due_date} {days_late} {unit} {building} {company}'}.</p>
+      <p className="text-xs text-mute">Used by “Remind tenant” on a lease’s payments. These are filled in for you: {'{tenant} {what} {amount} {due_date} {days_late} {unit} {building} {company}'}.</p>
       <div className="grid gap-3 sm:grid-cols-2">
         {[['due', 'Before or on the due date'], ['overdue', 'When it is overdue']].map(([k, l]) => (
           <label key={k} className={`${CARD} block`}>

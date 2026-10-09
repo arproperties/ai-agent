@@ -121,7 +121,7 @@ export async function remove(kind, id) {
     const r = await db.prepare(`DELETE FROM ${KINDS[kind].table} WHERE id = ?`).run(Number(id));
     if (!r.changes) throw bad('Not found', 404);
   } catch (e) {
-    if (e.code === '23503') throw bad({ company: 'Remove its buildings first.', building: 'Remove its units first.', unit: 'This unit has bookings. Cancel or delete them first.' }[kind], 409);
+    if (e.code === '23503') throw bad({ company: 'Remove its buildings first.', building: 'Remove its units first.', unit: 'This unit has leases. Cancel or delete them first.' }[kind], 409);
     throw e;
   }
   for (const f of files) rmSync(f, { force: true });

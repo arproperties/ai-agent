@@ -135,7 +135,7 @@ test('the import sheet and Riley can both set a discount and the tax', async () 
     discount_percent: 10, discount_note: 'Second unit', tax_percent: 5, confirm: true });
   assert.ok(!made.is_error, made.content);
   assert.match(made.content, /AED 4,500 per month, paid monthly, discount 10% \(Second unit\), VAT 5%\.\nPayment schedule: 2 payments, AED 8,505 in all/);
-  const changed = await ask('leasing_change_booking', { booking: made.content.match(/BK-\d+-\d+/)[0], discount_amount: 500, tax_percent: 0 });
+  const changed = await ask('leasing_change_booking', { booking: made.content.match(/LS-\d+-\d+/)[0], discount_amount: 500, tax_percent: 0 });
   assert.ok(!changed.is_error, changed.content);
   assert.match(changed.content, /discount AED 500 \(Second unit\); VAT none\.\nPayment schedule: 2 payments, AED 8,000 in all/);
 });

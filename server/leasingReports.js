@@ -118,7 +118,7 @@ function vacancy(s) {
   const known = rows.filter((r) => r.days_vacant != null);
   return {
     title: 'Vacant units',
-    columns: [...PLACE, col('type', 'Type'), col('floor', 'Floor'), col('vacant_since', 'Empty since', 'date'), col('days_vacant', 'Days empty', 'int'), col('next_from', 'Next booking', 'date'), col('next_tenant', 'Next tenant')],
+    columns: [...PLACE, col('type', 'Type'), col('floor', 'Floor'), col('vacant_since', 'Empty since', 'date'), col('days_vacant', 'Days empty', 'int'), col('next_from', 'Next lease', 'date'), col('next_tenant', 'Next tenant')],
     rows, total: {},
     summary: [fig('Vacant', rows.length, 'int'), fig('Never let', rows.length - known.length, 'int'), fig('Blocked', s.rows.filter((u) => u.status === 'blocked').length, 'int'),
       fig('Average days empty', known.length ? Math.round(known.reduce((t, r) => t + r.days_vacant, 0) / known.length) : 0, 'int')],
@@ -143,7 +143,7 @@ async function statement(s, { tenant_id }) {
   const next = s.dues.find((p) => mine(p) && p.left > 0 && p.due > s.today);
   return {
     title: `Statement · ${t.full_name}`, period: `to ${usDate(s.today)}`, tenant: [t.full_name, usPhone(t.phone), t.email].filter(Boolean).join(' · '),
-    columns: [col('date', 'Date', 'date'), col('description', 'Details'), col('ref', 'Booking'), col('charge', 'Due', 'money'), col('payment', 'Paid', 'money'), col('balance', 'Balance', 'money')],
+    columns: [col('date', 'Date', 'date'), col('description', 'Details'), col('ref', 'Lease'), col('charge', 'Due', 'money'), col('payment', 'Paid', 'money'), col('balance', 'Balance', 'money')],
     rows, total: { charge: total(rows, (r) => r.charge || 0), payment: total(rows, (r) => r.payment || 0), balance },
     summary: [fig('Due to date', total(rows, (r) => r.charge || 0)), fig('Paid', total(rows, (r) => r.payment || 0)), fig('Balance owed', balance),
       ...(next ? [fig(`Next due ${next.due}`, next.left)] : [])],
@@ -169,8 +169,8 @@ async function daily(s, { day }) {
     ...due.map((p) => ({ what: p.left ? 'Due, not paid' : 'Due, paid', ...of(s.bookingOf.get(p.booking_id)), detail: p.name, amount: p.amount })),
     ...s.confirmed.filter((b) => b.start_date === on).map((b) => ({ what: 'Move-in', ...of(b), detail: `until ${b.end_date}` })),
     ...s.confirmed.filter((b) => b.end_date === on).map((b) => ({ what: 'Move-out', ...of(b), detail: `since ${b.start_date}` })),
-    ...made.map((b) => ({ what: b.status === 'draft' ? 'Booking drafted' : 'Booking made', ...of(b), detail: `${b.start_date} to ${b.end_date}`, amount: Number(b.rent_amount), by: b.added_by })),
-    ...cancelled.map((e) => ({ what: 'Booking cancelled', ...of(s.bookingOf.get(e.booking_id)), detail: e.detail })),
+    ...made.map((b) => ({ what: b.status === 'draft' ? 'Lease drafted' : 'Lease made', ...of(b), detail: `${b.start_date} to ${b.end_date}`, amount: Number(b.rent_amount), by: b.added_by })),
+    ...cancelled.map((e) => ({ what: 'Lease cancelled', ...of(s.bookingOf.get(e.booking_id)), detail: e.detail })),
     ...back.map(({ on: day, amount, note, ...who }) => ({ what: 'Deposit returned', ...who, detail: note, amount: -amount })),
   ];
   return {
@@ -179,7 +179,7 @@ async function daily(s, { day }) {
     rows, total: {},
     summary: [fig('Collected', total(paid)), fig('Payments', paid.length, 'int'), fig('Fell due', total(due)), fig('Of that, unpaid', total(due, (p) => p.left)),
       fig('Move-ins', s.confirmed.filter((b) => b.start_date === on).length, 'int'), fig('Move-outs', s.confirmed.filter((b) => b.end_date === on).length, 'int'),
-      fig('Bookings made', made.length, 'int'), fig('Cancelled', cancelled.length, 'int'), ...(back.length ? [fig('Deposits returned', total(back))] : []),
+      fig('Leases made', made.length, 'int'), fig('Cancelled', cancelled.length, 'int'), ...(back.length ? [fig('Deposits returned', total(back))] : []),
       ...(on === s.today ? [fig('Overdue in all', total(s.overdue, (o) => o.owed)), fig('Vacant units', s.rows.filter((u) => u.status === 'vacant').length, 'int')] : [])],
   };
 }

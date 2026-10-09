@@ -30,7 +30,7 @@ export default function SourceList({ sources, onChange, onRenamed, onError }) {
     setBusy(false);
   };
   const remove = async (s) => {
-    if (!confirm(`Remove ${s.name} from the list? Bookings that already have it keep it.`)) return;
+    if (!confirm(`Remove ${s.name} from the list? Leases that already have it keep it.`)) return;
     try { await api.del(`/leasing/sources/${s.id}`); onChange(sources.filter((x) => x.id !== s.id)); } catch (e) { onError(e.message); }
   };
   // This list sits inside the booking form, so it is not a form itself: Enter saves the source, not the booking.

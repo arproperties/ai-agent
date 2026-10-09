@@ -26,7 +26,7 @@ async function tower() {
 
 test('one payment can cover several months: it goes against what is owed, oldest first', async () => {
   const { staff, bk } = await tower();
-  await assert.rejects(payBooking(bk.id, { amount: 20000, method: 'cash' }, staff, AT), /Only AED 14,000 is still owed on this booking/);
+  await assert.rejects(payBooking(bk.id, { amount: 20000, method: 'cash' }, staff, AT), /Only AED 14,000 is still owed on this lease/);
   await assert.rejects(payBooking(bk.id, { amount: 0, method: 'cash' }, staff, AT), /Enter the amount received/);
 
   const made = await payBooking(bk.id, { amount: 12000, method: 'transfer', received_on: '2026-10-08', reference: 'TT-7' }, staff, AT);
@@ -34,7 +34,7 @@ test('one payment can cover several months: it goes against what is owed, oldest
   assert.deepEqual((await bookingPayments(bk.id, AT)).map((r) => [r.name, r.due_date, r.paid, r.left, r.status]),
     [['Security deposit', '2026-09-15', 5000, 0, 'paid'], ['Rent', '2026-09-15', 4500, 0, 'paid'], ['Rent', '2026-10-15', 2500, 2000, 'partly_paid']]);
   await payBooking(bk.id, { amount: 2000, method: 'cash' }, staff, AT);
-  await assert.rejects(payBooking(bk.id, { amount: 1, method: 'cash' }, staff, AT), /Nothing is owed on this booking/);
+  await assert.rejects(payBooking(bk.id, { amount: 1, method: 'cash' }, staff, AT), /Nothing is owed on this lease/);
 });
 
 test('a late fee is added once the days of grace are over, and comes off if the money had come in time', async () => {
@@ -148,7 +148,7 @@ test('a stay is extended, or cut short when it was booked for too long, with pay
   // Longer again needs the unit free for the extra days.
   const u1 = (await getBooking(bk.id)).unit_id;
   await createBooking({ unit_id: u1, start_date: '2026-12-01', end_date: '2026-12-31', rent_amount: 4000, status: 'confirmed', tenant: { full_name: 'Omar' } }, staff);
-  await assert.rejects(changeEnd(bk.id, '2026-12-14', staff), /already booked by Omar/);
+  await assert.rejects(changeEnd(bk.id, '2026-12-14', staff), /already leased by Omar/);
   assert.equal((await changeEnd(bk.id, '2026-11-14', staff)).end_date, '2026-11-14');
 
   await assert.rejects(changeEnd(bk.id, '2026-11-14', staff), /already has/);
@@ -158,5 +158,5 @@ test('a stay is extended, or cut short when it was booked for too long, with pay
   await payBooking(up.id, { amount: 9000, method: 'cash' }, staff, AT);
   await assert.rejects(changeEnd(up.id, '2026-12-14', staff), /paid upfront\. Use Renew/);
   await cancelBooking(bk.id, 'Left', staff, AT);
-  await assert.rejects(changeEnd(bk.id, '2026-12-01', staff), /Only a confirmed booking/);
+  await assert.rejects(changeEnd(bk.id, '2026-12-01', staff), /Only a confirmed lease/);
 });

@@ -248,7 +248,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         </div>
         {sourcesOpen && (
           <div className="rounded-2xl border border-stroke p-3 sm:col-span-2">
-            <p className="mb-2 text-xs text-mute">The same list for every company and building, also kept on the Sources page. Renaming a source renames it on the bookings that have it; removing one leaves those bookings as they are.</p>
+            <p className="mb-2 text-xs text-mute">The same list for every company and building, also kept on the Sources page. Renaming a source renames it on the leases that have it; removing one leaves those leases as they are.</p>
             <SourceList sources={sources} onChange={setSources} onError={setError}
               onRenamed={(was, now) => setV((cur) => (cur.source === was ? { ...cur, source: now } : cur))} />
           </div>
@@ -267,7 +267,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
                       const Bed = u.blocked ? Lock : /studio|single/i.test(u.type || '') ? BedSingle : BedDouble;
                       return (
                         <button key={u.id} type="button" disabled={!free} onClick={() => setV({ ...v, unit_id: u.id })} aria-pressed={on}
-                          title={u.taken_by ? `Booked by ${u.taken_by.tenant}, ${u.taken_by.start_date} to ${u.taken_by.end_date}` : u.blocked ? 'Blocked' : ''}
+                          title={u.taken_by ? `Leased by ${u.taken_by.tenant}, ${u.taken_by.start_date} to ${u.taken_by.end_date}` : u.blocked ? 'Blocked' : ''}
                           className={`flex items-center gap-2.5 rounded-xl border bg-surface p-2.5 text-left text-sm transition ${on ? 'border-p1' : free ? 'border-stroke hover:border-p1/60' : 'cursor-not-allowed border-stroke/40 opacity-45'}`}>
                           <span className={`grid size-9 shrink-0 place-items-center rounded-lg ${on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : free ? 'bg-ok/10 text-ok' : 'bg-white/5 text-mute'}`}><Bed size={18} /></span>
                           <span className="min-w-0 flex-1">
@@ -375,7 +375,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
           </div>
           {listOpen && (
             <div className="mt-3 rounded-2xl border border-stroke p-3">
-              <p className="mb-2 text-xs text-mute">{buildingId ? 'This building’s extra services. The usual price fills in when one is chosen, and can still be changed on the booking.' : 'Choose the building first (step 1).'}</p>
+              <p className="mb-2 text-xs text-mute">{buildingId ? 'This building’s extra services. The usual price fills in when one is chosen, and can still be changed on the lease.' : 'Choose the building first (step 1).'}</p>
               {buildingId && <ServiceList services={services} buildingId={buildingId} onChange={setServices} onError={setError} />}
             </div>
           )}
@@ -449,7 +449,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         {error && <p className="text-bad">{error}</p>}
         <div className="space-y-2 pt-1">
           {start ? <button disabled={busy || !ready} className={`${PRIMARY} w-full justify-center`}>{busy ? 'Saving…' : 'Save'}</button> : <>
-            <button disabled={busy || !ready} className={`${PRIMARY} w-full justify-center`}>{busy ? 'Saving…' : 'Confirm booking'}</button>
+            <button disabled={busy || !ready} className={`${PRIMARY} w-full justify-center`}>{busy ? 'Saving…' : 'Confirm lease'}</button>
             <button type="button" disabled={busy || !ready} onClick={submit('draft')} className="w-full rounded-full border border-stroke px-4 py-2 text-sm hover:bg-white/5 disabled:opacity-50">Save as draft</button>
           </>}
           <button type="button" onClick={onCancel} className="w-full rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
@@ -493,7 +493,7 @@ function ChangeEnd({ booking: b, onPay, onDone }) {
   if (saved) return (
     <div className="max-w-xl space-y-4 rounded-3xl border border-stroke p-5 md:p-7">
       <p className="text-sm">The stay now ends on <span className="font-medium">{fmt(saved.end_date)}</span>. The payment schedule has been changed to match.</p>
-      {saved.overpaid > 0 && <p className="rounded-xl bg-warn/15 px-3.5 py-2.5 text-sm text-warn">{aed(saved.overpaid)} of rent was already paid for the time taken off. Give it back to the tenant, or keep it against what they owe. It is written in the booking’s history.</p>}
+      {saved.overpaid > 0 && <p className="rounded-xl bg-warn/15 px-3.5 py-2.5 text-sm text-warn">{aed(saved.overpaid)} of rent was already paid for the time taken off. Give it back to the tenant, or keep it against what they owe. It is written in the lease’s history.</p>}
       <div className="flex justify-end gap-2">
         <button onClick={onPay} className={GHOST}><Banknote size={13} /> See the payments</button>
         <button onClick={onDone} className={PRIMARY}><Check size={16} /> Done</button>
@@ -505,7 +505,7 @@ function ChangeEnd({ booking: b, onPay, onDone }) {
       <label className="block"><span className="mb-1 block text-xs text-txt/80">New end date (the last day of the stay)</span>
         <DateField value={end} min={b.start_date} onChange={(e) => setEnd(e.target.value)} required className={FIELD} /></label>
       <p className="text-sm text-mute">
-        {end === b.end_date ? 'Pick a later date to extend the stay, or an earlier one if the stay is shorter than was booked.'
+        {end === b.end_date ? 'Pick a later date to extend the stay, or an earlier one if the stay is shorter than was leased.'
           : longer ? 'Longer: the unit must be free for the extra days, and the extra rent is added to the payments.'
             : 'Shorter: payments not yet made for the time taken off are removed. What is due for the time actually stayed is still owed, and payments already recorded are kept.'}
       </p>
@@ -544,12 +544,12 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
         onRenewed(await api.post(`/leasing/bookings/${b.id}/renew`));
       } catch (e) { setError(e.message); }
     },
-      'Draft the next booking: same unit, tenant and rent, starting the day after this one ends'],
-    b.status === 'confirmed' && [CalendarDays, 'Change end date', onEnd, 'The tenant stays longer, or the stay is shorter than was booked'],
+      'Draft the next lease: same unit, tenant and rent, starting the day after this one ends'],
+    b.status === 'confirmed' && [CalendarDays, 'Change end date', onEnd, 'The tenant stays longer, or the stay is shorter than was leased'],
     b.status === 'draft' && [Check, 'Confirm', () => act(() => api.post(`/leasing/bookings/${b.id}/confirm`))],
     b.status !== 'cancelled' && [Pencil, 'Edit', onEdit],
     b.status === 'draft' && [Trash2, 'Delete', () => confirm('Delete this draft?') && act(() => api.del(`/leasing/bookings/${b.id}`)), '', true],
-    b.status === 'confirmed' && [X, 'Cancel booking', () => { const reason = prompt('Why is this booking cancelled? (What is already due stays owed; later payments are taken off.)'); if (reason) act(() => api.post(`/leasing/bookings/${b.id}/cancel`, { reason })); }, '', true],
+    b.status === 'confirmed' && [X, 'Cancel lease', () => { const reason = prompt('Why is this lease cancelled? (What is already due stays owed; later payments are taken off.)'); if (reason) act(() => api.post(`/leasing/bookings/${b.id}/cancel`, { reason })); }, '', true],
   ].filter(Boolean);
 
   if (list) return (
@@ -646,7 +646,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onImport }) {
           <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by tenant, phone, unit, building, company or contract no." className={`${FIELD} pl-10`} />
         </label>
-        <button onClick={onImport} title="Bring in bookings from an Excel sheet (master only)" className={`${GHOST} shrink-0 py-2.5`}><Upload size={13} /> Import</button>
+        <button onClick={onImport} title="Bring in leases from an Excel sheet (master only)" className={`${GHOST} shrink-0 py-2.5`}><Upload size={13} /> Import</button>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="flex flex-wrap gap-1.5 text-xs">
@@ -662,7 +662,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onImport }) {
       </div>
       {error && <p className="text-sm text-bad">{error}</p>}
       {!shown ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
-        : shown.length === 0 ? <p className="py-3 text-sm text-mute">{rows.length ? 'No bookings match.' : 'No bookings yet. Use New booking to make the first one.'}</p>
+        : shown.length === 0 ? <p className="py-3 text-sm text-mute">{rows.length ? 'No leases match.' : 'No leases yet. Use New lease to make the first one.'}</p>
           : view === 'list' ? (
             <>
               <div className="overflow-x-auto rounded-2xl border border-stroke">
@@ -752,7 +752,7 @@ function Tenants({ onHistory }) {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search tenants by name, phone, email, ID or passport" className={`${FIELD} pl-10`} />
       </label>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <p className="text-xs text-mute">{shown ? `${shown.length} tenant${shown.length === 1 ? '' : 's'} · ` : ''}Tenants are added from New booking.</p>
+        <p className="text-xs text-mute">{shown ? `${shown.length} tenant${shown.length === 1 ? '' : 's'} · ` : ''}Tenants are added from New lease.</p>
         <span className="ml-auto flex items-center gap-2">
           <DateRange from={from} to={to} onChange={(a, b) => { setFrom(a); setTo(b); }} placeholder="Added any date" className="glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none" />
           <ViewToggle view={view} onView={see} />
@@ -766,7 +766,7 @@ function Tenants({ onHistory }) {
               {open && <div className="grid"><TenantForm key={open.id} start={open} onDone={() => { setEditing(null); load(); }} onCancel={() => setEditing(null)} /></div>}
               <div className="overflow-x-auto rounded-2xl border border-stroke">
                 <table className="w-full whitespace-nowrap text-sm">
-                  <thead><tr className={HEAD}>{['Tenant', 'Phone', 'Email', 'ID', 'Bookings', 'Added', ''].map((h) => <th key={h} className={TH}>{h}</th>)}</tr></thead>
+                  <thead><tr className={HEAD}>{['Tenant', 'Phone', 'Email', 'ID', 'Leases', 'Added', ''].map((h) => <th key={h} className={TH}>{h}</th>)}</tr></thead>
                   <tbody className="divide-y divide-stroke/60">
                     {paged.rows.map((t) => (
                       <tr key={t.id} className={t.id === editing ? 'bg-p1/10' : ''}>
@@ -793,7 +793,7 @@ function Tenants({ onHistory }) {
                       <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-p1/15 text-sm font-semibold text-p1">{initials(t)}</div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-medium">{t.full_name}</p>
-                        <p className="truncate text-xs text-mute">{t.bookings} booking{t.bookings === 1 ? '' : 's'}{t.nationality && ` · ${t.nationality}`}</p>
+                        <p className="truncate text-xs text-mute">{t.bookings} lease{t.bookings === 1 ? '' : 's'}{t.nationality && ` · ${t.nationality}`}</p>
                       </div>
                       <div className="-mr-1.5 flex shrink-0">{tools(t)}</div>
                     </div>
@@ -903,7 +903,7 @@ function Calendar({ onEdit, onNew }) {
         {[['active', 'Active'], ['upcoming', 'Upcoming'], ['draft', 'Draft'], ['ended', 'Ended']].map(([k, l]) => (
           <span key={k} className="flex items-center gap-1.5"><span className={`h-2.5 w-5 rounded ${BAR[k]}`} />{l}</span>
         ))}
-        <span className="ml-auto">Tap an empty day to book that unit from that day</span>
+        <span className="ml-auto">Tap an empty day to lease that unit from that day</span>
       </div>
 
       {!buildingId ? <p className="py-3 text-sm text-mute">Choose a building.</p>
@@ -941,7 +941,7 @@ function Calendar({ onEdit, onNew }) {
                             const n = Math.min(s.days - 1, Math.max(0, Math.floor(((e.clientX - box.left) / box.width) * s.days)));
                             onNew({ company_id: companyId, building_id: buildingId, unit_id: u.id, start_date: iso(new Date(s.start.getFullYear(), s.start.getMonth(), s.start.getDate() + n)) });
                           }}
-                          title={u.blocked ? 'Blocked' : view === 1 ? `Book unit ${u.unit_no} from ${iso(s.start)}` : `Book unit ${u.unit_no}`}
+                          title={u.blocked ? 'Blocked' : view === 1 ? `Lease unit ${u.unit_no} from ${iso(s.start)}` : `Lease unit ${u.unit_no}`}
                           className={`h-full shrink-0 border-l border-stroke/30 ${u.blocked ? 'cursor-not-allowed bg-white/[0.04]' : 'hover:bg-p1/10'} ${view === 1 && isWeekend(s.start) ? 'bg-white/[0.03]' : ''} ${view === 1 && iso(s.start) === today ? 'bg-p1/[0.07]' : ''}`} />
                       ))}
                       {shown.filter((b) => b.unit_id === u.id).map((b) => {
@@ -969,7 +969,7 @@ function Calendar({ onEdit, onNew }) {
 // Leasing is several pages, each with its own row in the sidebar: the overview, Bookings (which
 // has the buildings beside it as a second tab), Calendar, Tenants, Reports and Alerts. Which one
 // is open is the app's to hold, as `tab`, so the sidebar can open any of them.
-const BOOKING_TABS = [['bookings', 'Bookings'], ['buildings', 'Buildings']];
+const BOOKING_TABS = [['bookings', 'Leasing'], ['buildings', 'Buildings']];
 
 export default function LeasingPage({ tab, onTab: setTab, report, onReport, alert, onAlert, onBack }) {
   const [form, setForm] = useState(null); // { preset } for a new booking, a booking being edited, { docsOf } for its documents, { payOf } for its payments, or null
@@ -1013,14 +1013,14 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
 
   if (form?.historyOf) return <TenantHistory tenant={form.historyOf} onBack={close} onPay={pay} />;
   if (form?.importing) return (
-    <Page title="Import bookings" onBack={close}>
+    <Page title="Import leases" onBack={close}>
       <ImportBookings onDone={() => { setTab('bookings'); close(); }} />
     </Page>
   );
 
   // A new booking goes on to its documents, so the contract and ID are attached while they are at hand.
   if (form) return (
-    <Page title={form.id ? `Edit ${form.ref}` : 'New booking'} onBack={() => setForm(null)}
+    <Page title={form.id ? `Edit ${form.ref}` : 'New lease'} onBack={() => setForm(null)}
       action={form.id && <button onClick={() => setForm({ docsOf: form })} className={PRIMARY}><Paperclip size={16} /> Documents</button>}>
       <BookingForm start={form.id ? form : null} preset={form.preset}
         onDone={(saved) => { setTab('bookings'); if (form.id) close(); else { setFresh(saved.id); setForm({ docsOf: saved }); } }} onCancel={() => setForm(null)} />
@@ -1028,9 +1028,9 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   );
 
   // These stand alone: their own page and title, with none of Leasing's tabs.
-  const add = <button onClick={() => setForm({ preset: null })} className={PRIMARY}><Plus size={16} /> New booking</button>;
+  const add = <button onClick={() => setForm({ preset: null })} className={PRIMARY}><Plus size={16} /> New lease</button>;
   if (tab === 'bookings' || tab === 'buildings') return (
-    <Page title="Bookings" onBack={onBack} action={add}>
+    <Page title="Leasing" onBack={onBack} action={add}>
       <div className="mb-4 flex gap-5 overflow-x-auto border-b border-stroke text-sm">
         {BOOKING_TABS.map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}

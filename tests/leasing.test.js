@@ -47,17 +47,17 @@ test('a unit is never confirmed twice for the same day', async () => {
   const first = await createBooking(stay(u1.id, '2026-11-01', '2026-11-30', { status: 'confirmed' }));
   assert.equal(first.status, 'confirmed');
   assert.equal(first.type, 'short_term');
-  assert.match(first.ref, /^BK-2026-\d{4}$/);
+  assert.match(first.ref, /^LS-2026-\d{4}$/);
 
-  await assert.rejects(createBooking(stay(u1.id, '2026-11-30', '2026-12-31', { status: 'confirmed' })), /already booked by Sara/);
+  await assert.rejects(createBooking(stay(u1.id, '2026-11-30', '2026-12-31', { status: 'confirmed' })), /already leased by Sara/);
   const next = await createBooking(stay(u1.id, '2026-12-01', '2026-12-31', { status: 'confirmed' }));
   assert.equal(next.status, 'confirmed', 'the day after the last night is free');
 
   // A draft holds nothing, and fails only when it is confirmed.
   const draft = await createBooking(stay(u1.id, '2026-11-15', '2026-11-20'));
   assert.equal(draft.status, 'draft');
-  await assert.rejects(confirmBooking(draft.id), /already booked/);
-  await assert.rejects(updateBooking(next.id, { start_date: '2026-11-25' }), /already booked/, 'moving a confirmed one is checked too');
+  await assert.rejects(confirmBooking(draft.id), /already leased/);
+  await assert.rejects(updateBooking(next.id, { start_date: '2026-11-25' }), /already leased/, 'moving a confirmed one is checked too');
 
   const free = await availability(b.id, '2026-11-10', '2026-11-12');
   assert.equal(free.find((x) => x.id === u1.id).free, false);
@@ -83,7 +83,7 @@ test('blocked units, checks on input, tenants with bookings stay', async () => {
   const bk = await createBooking({ ...stay(u1.id, '2026-11-01', '2027-10-31'), tenant_id: t.id, tenant: undefined });
   assert.equal(bk.type, 'lease');
   assert.equal((await listTenants('omar'))[0].bookings, 1);
-  await assert.rejects(removeTenant(t.id), /has bookings/);
+  await assert.rejects(removeTenant(t.id), /has leases/);
   await removeBooking(bk.id);
   await removeTenant(t.id);
 });
@@ -99,7 +99,7 @@ test('booking documents: named freely, counted on the booking, gone with a delet
   assert.equal('file_path' in contract, false, 'where the file is kept is never sent out');
   await addBookingDoc(bk.id, { title: 'Emirates ID' });
   await assert.rejects(addBookingDoc(bk.id, {}), /Give the document a name/);
-  await assert.rejects(addBookingDoc(999, { title: 'X' }), /Booking not found/);
+  await assert.rejects(addBookingDoc(999, { title: 'X' }), /Lease not found/);
 
   assert.deepEqual((await bookingDocs(bk.id)).map((d) => d.title), ['Signed contract', 'Emirates ID']);
   assert.equal((await listBookings())[0].docs, 2);

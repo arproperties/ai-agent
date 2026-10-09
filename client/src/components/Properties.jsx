@@ -380,7 +380,7 @@ function BuildingServices({ building, master }) {
   if (!master && !services.length) return <p className="py-3 text-sm text-mute">No extra services in this building yet.</p>;
   return (
     <div>
-      <p className="mb-3 text-xs text-mute">What a tenant here can be charged on top of the rent. A booking picks from this list, and can still change the price.</p>
+      <p className="mb-3 text-xs text-mute">What a tenant here can be charged on top of the rent. A lease picks from this list, and can still change the price.</p>
       <ServiceList services={services} buildingId={building.id} onChange={setServices} onError={setError} readOnly={!master} />
       {error && <p className="mt-2 text-sm text-bad">{error}</p>}
     </div>
@@ -412,7 +412,7 @@ function BuildingStaff({ building, master, onChanged }) {
           ? <button onClick={() => setUsers(null)} className="ml-auto rounded-full px-3 py-1 text-mute hover:bg-white/5 hover:text-txt">Done</button>
           : <button onClick={open} className="ml-auto rounded-full border border-stroke/70 px-3 py-1 text-mute hover:bg-white/5 hover:text-txt">Change</button>)}
       </div>
-      <p className="mt-2 text-xs text-mute">They get this building’s leasing alerts on their phone, with whoever made the booking and the master.</p>
+      <p className="mt-2 text-xs text-mute">They get this building’s leasing alerts on their phone, with whoever made the lease and the master.</p>
       {error && <p className="mt-2 text-sm text-bad">{error}</p>}
     </div>
   );
@@ -499,7 +499,7 @@ export default function PropertiesPage({ me, onBack }) {
         stat={(u) => (
           <div className="flex min-w-0 items-center gap-2">
             {u.current_tenant
-              ? <span className="truncate rounded-full bg-p1/15 px-2 py-0.5 text-[11px] text-p1" title={`Booked until ${u.current_until}`}>{u.current_tenant} · until {u.current_until}</span>
+              ? <span className="truncate rounded-full bg-p1/15 px-2 py-0.5 text-[11px] text-p1" title={`Leased until ${u.current_until}`}>{u.current_tenant} · until {u.current_until}</span>
               : !u.blocked && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">Vacant today</span>}
             {u.furnished && <span className="rounded-full bg-p3/15 px-2 py-0.5 text-[11px] text-p3">Furnished</span>}
             {u.blocked && <span className="rounded-full bg-bad/15 px-2 py-0.5 text-[11px] text-bad">Blocked</span>}

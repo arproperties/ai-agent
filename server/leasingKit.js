@@ -61,7 +61,7 @@ export const LEASING_TOOLS = [
   },
   {
     name: 'leasing_list',
-    description: 'What is already set up: the companies, the buildings (of one company or all), the units or the services of a building, tenants by name, the sources (where tenants come from: one list for the whole app), or the bookings (drafts included) with their references and charges. '
+    description: 'What is already set up: the companies, the buildings (of one company or all), the units or the services of a building, tenants by name, the sources (where tenants come from: one list for the whole app), or the leases (drafts included) with their references and charges. '
       + 'Check here before adding anything, so nothing is made twice. Read-only.',
     input_schema: {
       type: 'object',
@@ -98,7 +98,7 @@ export const LEASING_TOOLS = [
   },
   {
     name: 'leasing_add_service',
-    description: `Add an extra service to a building's list (pet fee, parking, laundry…), which its bookings can then be charged. ${ASK}`,
+    description: `Add an extra service to a building's list (pet fee, parking, laundry…), which its leases can then be charged. ${ASK}`,
     input_schema: {
       type: 'object',
       properties: { building: str, name: str, amount: { type: 'number', description: 'The usual price. Leave out if not known.' },
@@ -118,10 +118,10 @@ export const LEASING_TOOLS = [
   },
   {
     name: 'leasing_add_booking',
-    description: 'Make a NEW booking of a unit for a tenant. To change a booking that already exists, a draft included (add a charge, new dates, another rent), '
+    description: 'Make a NEW lease of a unit for a tenant. To change a lease that already exists, a draft included (add a charge, new dates, another rent), '
       + 'use leasing_change_booking: never make it again. The building, the unit and the tenant must exist: add them first in this same turn if they do not. '
       + "A charge whose name is not yet in the building's services is added to that list as it is used. "
-      + 'It is saved as a DRAFT unless the user has clearly said to confirm it; a confirmed booking takes the unit and writes the payment schedule. '
+      + 'It is saved as a DRAFT unless the user has clearly said to confirm it; a confirmed lease takes the unit and writes the payment schedule. '
       + `Afterwards say which it is, with its reference. ${ASK}`,
     input_schema: {
       type: 'object',
@@ -133,7 +133,7 @@ export const LEASING_TOOLS = [
         security_deposit: { type: 'number' },
         discount_percent: { type: 'number', description: 'A discount off the rent, in percent. Only when the user gives one.' },
         discount_amount: { type: 'number', description: 'A discount as an amount off rent_amount (off the month, or off the year). Give this or discount_percent, never both.' }, discount_note: { ...str, description: 'Why the discount was given.' },
-        tax_percent: { type: 'number', description: "Tax (VAT) on the rent and the charges, in percent; the deposit is never taxed. Left out, the booking gets the region's usual tax, as the booking form does: say so in the answer. 0 only when the user says there is no tax." },
+        tax_percent: { type: 'number', description: "Tax (VAT) on the rent and the charges, in percent; the deposit is never taxed. Left out, the lease gets the region's usual tax, as the lease form does: say so in the answer. 0 only when the user says there is no tax." },
         charges: { type: 'array', maxItems: 10, items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: with every rent payment. false: once.' } }, required: ['name', 'amount'] } },
         source: { ...str, description: 'Where the tenant came from (walk-in, referral, a listing site…), as in leasing_list sources. Only when the user says; a new one is added to that list.' },
         tenant_energy_account: { type: 'boolean', description: "true when the tenant has an energy (electricity and water) account in their own name; false when the bill is on the company's account. Only when the user says." },
@@ -145,12 +145,12 @@ export const LEASING_TOOLS = [
   },
   {
     name: 'leasing_change_booking',
-    description: 'Change a booking that already exists, by its reference: its dates, rent, discount, tax, deposit, unit, source, or its extra charges. Give only what changes; the rest stays. '
-      + `Use this, not leasing_add_booking, whenever the user corrects or adds to a booking already made. It does not confirm a draft. ${ASK}`,
+    description: 'Change a lease that already exists, by its reference: its dates, rent, discount, tax, deposit, unit, source, or its extra charges. Give only what changes; the rest stays. '
+      + `Use this, not leasing_add_booking, whenever the user corrects or adds to a lease already made. It does not confirm a draft. ${ASK}`,
     input_schema: {
       type: 'object',
       properties: {
-        booking: { ...str, description: 'The reference, like BK-2026-0007.' },
+        booking: { ...str, description: 'The reference, like LS-2026-0007.' },
         unit_no: { ...str, description: 'Move it to this unit of the same building.' },
         start_date: { ...str, description: 'YYYY-MM-DD' }, end_date: { ...str, description: 'YYYY-MM-DD, the last day of the stay' },
         rent_amount: { type: 'number' }, rent_period: { type: 'string', enum: ['month', 'year'] },
@@ -159,9 +159,9 @@ export const LEASING_TOOLS = [
         discount_percent: { type: 'number', description: 'A discount off the rent, in percent. 0 takes the discount off.' },
         discount_amount: { type: 'number', description: 'A discount as an amount off rent_amount (off the month, or off the year). Give this or discount_percent, never both. 0 takes the discount off.' }, discount_note: { ...str, description: 'Why the discount was given.' },
         tax_percent: { type: 'number', description: 'Tax (VAT) on the rent and the charges, in percent; the deposit is never taxed. 0 takes the tax off.' },
-        set_charges: { type: 'array', maxItems: 10, description: 'Charges to add, or to re-price if the booking already has one of that name. The others stay as they are.',
+        set_charges: { type: 'array', maxItems: 10, description: 'Charges to add, or to re-price if the lease already has one of that name. The others stay as they are.',
           items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: with every rent payment. false: once.' } }, required: ['name', 'amount'] } },
-        remove_charges: { type: 'array', items: str, description: 'Names of charges to take off the booking.' },
+        remove_charges: { type: 'array', items: str, description: 'Names of charges to take off the lease.' },
         source: { ...str, description: 'Where the tenant came from, as in leasing_list sources; a new one is added to that list. Empty takes it off.' },
         tenant_energy_account: { type: 'boolean', description: "true when the tenant has an energy (electricity and water) account in their own name; false when the bill is on the company's account. Only when the user says." },
         contract_no: str, notes: str,
@@ -171,8 +171,8 @@ export const LEASING_TOOLS = [
   },
   {
     name: 'leasing_confirm_booking',
-    description: 'Confirm a draft booking, by its reference (BK-2026-0007). Only when the user has said to. It takes the unit for those dates and writes the payment schedule.',
-    input_schema: { type: 'object', properties: { booking: { ...str, description: 'The reference, like BK-2026-0007.' } }, required: ['booking'] },
+    description: 'Confirm a draft lease, by its reference (LS-2026-0007). Only when the user has said to. It takes the unit for those dates and writes the payment schedule.',
+    input_schema: { type: 'object', properties: { booking: { ...str, description: 'The reference, like LS-2026-0007.' } }, required: ['booking'] },
   },
 ];
 
@@ -186,10 +186,10 @@ async function find(table, what, q) {
   throw new Error(hits.length ? `More than one ${what} matches "${q}": ${names}. Ask which one.` : `No ${what} matches "${q}". There are: ${names || 'none yet'}.`);
 }
 
-/** A booking's id from its reference (BK-2026-0007). */
+/** A booking's id from its reference (LS-2026-0007). */
 function bookingId(ref) {
   const id = Number(String(ref || '').match(/(\d+)\s*$/)?.[1]);
-  if (!id) throw new Error('Give the booking reference, like BK-2026-0007.');
+  if (!id) throw new Error('Give the lease reference, like LS-2026-0007.');
   return id;
 }
 
@@ -336,7 +336,7 @@ const writes = (user) => {
     leasing_add_tenant: async (input) => {
       const same = await db.prepare('SELECT full_name, phone FROM lease_tenants WHERE lower(full_name) = lower(?) LIMIT 1').get(String(input.full_name || '').trim());
       if (same && !input.same_name_is_someone_else) {
-        throw new Error(`There is already a tenant named ${same.full_name}${same.phone ? ` (${same.phone})` : ''}. Use them for the booking, or ask the user whether this is a different person.`);
+        throw new Error(`There is already a tenant named ${same.full_name}${same.phone ? ` (${same.phone})` : ''}. Use them for the lease, or ask the user whether this is a different person.`);
       }
       if (!String(input.phone || '').trim()) throw new Error("A tenant needs a contact number. Ask the user for it.");
       const t = await addTenant({ full_name: input.full_name, phone: input.phone, email: input.email, emirates_id_no: input.id_no, nationality: input.nationality, kind: input.is_company ? 'company' : 'person' }, user.id);
@@ -371,7 +371,7 @@ const writes = (user) => {
       }, user.id);
       if (source?.fresh) await addSource({ name: source.name }, user.id).catch(() => {});
       return [
-        `Booking ${made.ref} ${made.status === 'confirmed' ? 'CONFIRMED' : 'saved as a DRAFT (not confirmed: the unit is not held yet)'}: ${made.tenant}, unit ${made.unit_no}, ${made.building}, ${made.start_date} to ${made.end_date}, `
+        `Lease ${made.ref} ${made.status === 'confirmed' ? 'CONFIRMED' : 'saved as a DRAFT (not confirmed: the unit is not held yet)'}: ${made.tenant}, unit ${made.unit_no}, ${made.building}, ${made.start_date} to ${made.end_date}, `
           + `${[`${cash(made.rent_amount)} per ${made.rent_period}`, `paid ${made.payment_frequency.replace(/_/g, ' ')}`, discountLine(made), taxLine(made) || `no ${region().tax_name}`, made.source && `source ${made.source}`].filter(Boolean).join(', ')}.`,
         made.status === 'confirmed' ? await scheduleLine(made.id) : '',
         added.length ? `Added to ${b.name}'s services: ${added.join(', ')}.` : '',
@@ -394,7 +394,7 @@ const writes = (user) => {
       const added = [];
       if (set.length || drop.size) {
         const missing = [...drop].filter((n) => !old.fees.some((f) => key(f.label) === n));
-        if (missing.length) throw new Error(`This booking has no charge named ${missing.join(', ')}. Its charges: ${chargesLine(old.fees)}.`);
+        if (missing.length) throw new Error(`This lease has no charge named ${missing.join(', ')}. Its charges: ${chargesLine(old.fees)}.`);
         body.fees = [...old.fees.filter((f) => !drop.has(key(f.label)) && !set.some((c) => key(c.name) === key(f.label))),
           ...set.map((c) => ({ label: c.name, amount: c.amount, repeats: !!c.repeats }))];
       }
@@ -408,7 +408,7 @@ const writes = (user) => {
         if (!known.has(key(c.name))) added.push((await addService({ name: c.name, amount: c.amount, repeats: !!c.repeats, building_id: old.building_id }, user.id)).name);
       }
       return [
-        `Booking changed, still ${now.status === 'confirmed' ? 'CONFIRMED' : 'a DRAFT (not confirmed)'}. It is now: ${bookingLine(now)}.`,
+        `Lease changed, still ${now.status === 'confirmed' ? 'CONFIRMED' : 'a DRAFT (not confirmed)'}. It is now: ${bookingLine(now)}.`,
         now.status === 'confirmed' ? await scheduleLine(now.id) : '',
         added.length ? `Added to ${now.building}'s services: ${added.join(', ')}.` : '',
         source?.fresh ? `Added to the sources list: ${source.name}.` : '',
@@ -416,7 +416,7 @@ const writes = (user) => {
     },
     leasing_confirm_booking: async (input) => {
       const made = await confirmBooking(bookingId(input.booking), user.id);
-      return `Booking ${made.ref} is confirmed: ${made.tenant}, unit ${made.unit_no}, ${made.building}, ${made.start_date} to ${made.end_date}.\n${await scheduleLine(made.id)}`;
+      return `Lease ${made.ref} is confirmed: ${made.tenant}, unit ${made.unit_no}, ${made.building}, ${made.start_date} to ${made.end_date}.\n${await scheduleLine(made.id)}`;
     },
   };
 };

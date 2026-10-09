@@ -79,9 +79,9 @@ export default function ImportBookings({ onDone }) {
   if (done) return (
     <div className="rounded-2xl border border-stroke p-6 text-center">
       <Check size={28} className="mx-auto text-ok" />
-      <p className="mt-2">{check.total} booking{check.total === 1 ? '' : 's'} imported and confirmed.</p>
+      <p className="mt-2">{check.total} lease{check.total === 1 ? '' : 's'} imported and confirmed.</p>
       <p className="mt-1 text-sm text-mute">Their payment schedules are written, and the rent already paid is recorded against them.</p>
-      <button onClick={onDone} className={`${PRIMARY} mx-auto mt-4`}>See the bookings</button>
+      <button onClick={onDone} className={`${PRIMARY} mx-auto mt-4`}>See the leases</button>
     </div>
   );
 
@@ -107,7 +107,7 @@ export default function ImportBookings({ onDone }) {
             <p className="flex-1 text-sm">{check.failed
               ? <span className="text-bad">{check.failed} of {check.total} rows need fixing. Nothing has been imported. Correct the sheet and choose it again.</span>
               : <span className="text-ok">All {check.total} rows are good. Nothing has been imported yet.</span>}</p>
-            {!check.failed && <button onClick={commit} disabled={busy} className={PRIMARY}><Upload size={16} /> Import {check.total} booking{check.total === 1 ? '' : 's'}</button>}
+            {!check.failed && <button onClick={commit} disabled={busy} className={PRIMARY}><Upload size={16} /> Import {check.total} lease{check.total === 1 ? '' : 's'}</button>}
           </div>
           <div className="overflow-x-auto rounded-2xl border border-stroke">
             <table className="w-full whitespace-nowrap text-sm">
