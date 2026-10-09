@@ -9,6 +9,7 @@ import { usDate as day, usPhone, usAddress, typeEin, typeZip, einProblem, emailP
 import CompanyDocs from './CompanyDocs';
 import ServiceList from './ServiceList';
 import { Cover, Logo, CardCover, UnitPhotos, photoUrl } from './PropertyPhoto';
+import Inspections from './Inspections';
 
 // Companies → buildings → units. Everyone can look; only the master adds, edits or removes.
 // The server is server/properties.js.
@@ -268,7 +269,7 @@ function Form({ kind, start, onSave, onCancel, bare, saveLabel = 'Save' }) {
 
 
 /** One level of the tree: a list of rows, each opening the next level, with master-only add/edit/delete. */
-function Level({ kind, rows, master, onOpen, onAdd, onSave, onRemove, onChanged, addLabel, empty, line, details, stat, addOpen, onAddClose }) {
+function Level({ kind, rows, master, onOpen, openLabel = 'Open', onAdd, onSave, onRemove, onChanged, addLabel, empty, line, details, stat, addOpen, onAddClose }) {
   const [editing, setEditing] = useState(null); // an id, 'new', or null
   const [error, setError] = useState('');
   const Ico = kind === 'company' ? Landmark : kind === 'building' ? Building2 : DoorOpen;
@@ -317,7 +318,7 @@ function Level({ kind, rows, master, onOpen, onAdd, onSave, onRemove, onChanged,
             </dl>
             <div className="flex items-center justify-between border-t border-stroke px-4 py-2.5">
               {stat(r)}
-              {onOpen && <button onClick={() => onOpen(r)} className="flex items-center gap-0.5 text-sm text-p3 hover:underline">Open <ChevronRight size={14} /></button>}
+              {onOpen && <button onClick={() => onOpen(r)} className="flex shrink-0 items-center gap-0.5 text-sm text-p3 hover:underline">{openLabel} <ChevronRight size={14} /></button>}
             </div>
           </div>
         ))}
@@ -427,6 +428,7 @@ export default function PropertiesPage({ me, onBack }) {
   const [newBuilding, setNewBuilding] = useState(false); // the add-building form on a company's page
   const [newUnit, setNewUnit] = useState(false); // the add-unit form on a building's page
   const [tab, setTab] = useState('units'); // which part of a building's page is showing
+  const [inspecting, setInspecting] = useState(null); // the unit whose inspections are open
   useEffect(() => { setAdding(false); setNewBuilding(false); setNewUnit(false); setTab('units'); }, [at]);
 
   const url =at.level === 'companies' ? '/properties/companies' : at.level === 'company' ? `/properties/companies/${at.id}` : `/properties/buildings/${at.id}`;
@@ -503,12 +505,19 @@ export default function PropertiesPage({ me, onBack }) {
               : !u.blocked && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">Vacant today</span>}
             {u.furnished && <span className="rounded-full bg-p3/15 px-2 py-0.5 text-[11px] text-p3">Furnished</span>}
             {u.blocked && <span className="rounded-full bg-bad/15 px-2 py-0.5 text-[11px] text-bad">Blocked</span>}
+            {u.move_in_due && <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[11px] text-warn" title="The tenant has the unit and the move-in inspection is not done">Move-in inspection</span>}
+            {u.move_out_due && <span className="rounded-full bg-bad/15 px-2 py-0.5 text-[11px] text-bad" title="The lease has ended, and the unit is not vacant until the move-out inspection is done">Move-out inspection</span>}
+            {u.needs_make_ready && <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[11px] text-warn" title="The last tenant has moved out, or the make-ready is not finished">Make ready</span>}
           </div>
         )}
         addOpen={newUnit} onAddClose={() => setNewUnit(false)} onChanged={load}
+        onOpen={setInspecting} openLabel="Inspections"
         onAdd={async (v, files) => { const u = await api.post(`/properties/buildings/${data.id}/units`, v); await sendPhotos('unit', u.id, files); load(); }} onSave={edit('units', 'unit')} onRemove={del('units')} />}
     </>
   );
+
+  // A unit's inspections take the whole page; back is the building, read again for its Make ready mark.
+  if (inspecting) return <Inspections unit={{ id: inspecting.id, unit_no: inspecting.unit_no, building: data?.name }} onBack={() => { setInspecting(null); load(); }} />;
 
   // Registering or editing a company takes the whole page; back cancels.
   if (adding && data && at.level !== 'building') {

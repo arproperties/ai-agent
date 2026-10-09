@@ -3,7 +3,7 @@ import multer from 'multer';
 import { rmSync } from 'node:fs';
 import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
-import { saveFile, sendDoc, upload } from './properties.js';
+import { saveFile, sendDoc, upload, HELD } from './properties.js';
 import { requireMaster } from './auth.js';
 import { todayHere, cash } from './leasingRegion.js';
 import { usPhone } from './usFormat.js';
@@ -94,6 +94,8 @@ const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amou
     b.fees, b.discount_type, b.discount_value, b.discount_note, b.tax_percent, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
     (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
+    EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete) AS moved_in,
+    EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_out' AND i.complete) AS moved_out,
     to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
     u.unit_no, u.floor, u.type AS unit_type, bl.id AS building_id, bl.name AS building, c.id AS company_id, c.name AS company,
     t.full_name AS tenant, t.phone AS tenant_phone, t.email AS tenant_email
@@ -203,10 +205,13 @@ function bookingFields(body = {}, { partial = false } = {}) {
 /** An amount taken off the rent has to leave some rent. */
 const mustLeaveRent = (b) => { if (b.discount_type === 'amount' && Number(b.discount_value) >= Number(b.rent_amount)) throw bad('The discount must be less than the rent.'); };
 
-/** The confirmed booking of this unit that shares a day with these dates, if any. */
+/**
+ * The confirmed booking of this unit that shares a day with these dates, if any; or one that
+ * ended before them whose tenant has not been inspected out (the unit is not vacant until then).
+ */
 const clash = (unitId, start, end, exceptId = 0) => db.prepare(`${BOOKING_SELECT}
-  WHERE b.unit_id = ? AND b.status = 'confirmed' AND b.id <> ? AND b.start_date <= ? AND b.end_date >= ?
-  ORDER BY b.start_date LIMIT 1`).get(Number(unitId), Number(exceptId), end, start);
+  WHERE b.unit_id = ? AND b.status = 'confirmed' AND b.id <> ? AND ((b.start_date <= ? AND b.end_date >= ?) OR (b.end_date < ? AND ${HELD}))
+  ORDER BY b.start_date LIMIT 1`).get(Number(unitId), Number(exceptId), end, start, start);
 
 /** Fails unless the unit can be confirmed for these dates. Call inside tx(): it locks the unit. */
 async function mustBeFree(unitId, start, end, exceptId) {
@@ -214,6 +219,7 @@ async function mustBeFree(unitId, start, end, exceptId) {
   if (!unit) throw bad('Unit not found', 404);
   if (unit.blocked) throw bad('This unit is blocked (not for rent). Unblock it on the building page first.', 409);
   const other = await clash(unitId, start, end, exceptId);
+  if (other && other.end_date < start) throw bad(`Unit ${other.unit_no} is not vacant: ${other.tenant}'s move-out inspection is not done (${bookingRef(other)}). Do it first.`, 409);
   if (other) throw bad(`Unit ${other.unit_no} is already leased by ${other.tenant} from ${other.start_date} to ${other.end_date} (${bookingRef(other)}).`, 409);
 }
 
@@ -234,8 +240,8 @@ export async function createBookingWithDocs(body = {}, files = {}, by) {
   });
 }
 
-/** createBooking without its own transaction, for a caller that is already in one (the importer). */
-export async function makeBooking(body = {}, by) {
+/** createBooking without its own transaction, for a caller that is already in one. */
+async function makeBooking(body = {}, by) {
   const row = bookingFields(body);
   mustLeaveRent(row);
   if (!body.unit_id) throw bad('Choose a unit.');
@@ -408,8 +414,8 @@ export async function availability(buildingId, start, end) {
   const units = await db.prepare(`SELECT id, unit_no, floor, type, size_sqft, furnished, blocked FROM prop_units WHERE building_id = ?
     ORDER BY NULLIF(regexp_replace(floor, '\\D', '', 'g'), '')::int NULLS FIRST, floor,
       NULLIF(regexp_replace(unit_no, '\\D', '', 'g'), '')::bigint NULLS LAST, unit_no`).all(Number(buildingId));
-  const taken = await db.prepare(`${BOOKING_SELECT} WHERE bl.id = ? AND b.status = 'confirmed' AND b.start_date <= ? AND b.end_date >= ?`)
-    .all(Number(buildingId), end, start);
+  const taken = await db.prepare(`${BOOKING_SELECT} WHERE bl.id = ? AND b.status = 'confirmed' AND ((b.start_date <= ? AND b.end_date >= ?) OR (b.end_date < ? AND ${HELD}))`)
+    .all(Number(buildingId), end, start, start); // a tenant not inspected out still has the unit
   return units.map((u) => {
     const t = taken.find((b) => b.unit_id === u.id);
     return { ...u, free: !u.blocked && !t, taken_by: t ? { tenant: t.tenant, start_date: t.start_date, end_date: t.end_date, ref: bookingRef(t) } : null };
@@ -1032,6 +1038,12 @@ const sentBooking = (req) => {
   try { return JSON.parse(req.body.booking); } catch { throw bad('The lease details did not arrive.'); }
 };
 
+// The form makes a draft: a lease is confirmed after its move-in inspection (server/inspections.js).
+const asDraft = (b) => {
+  if (b?.status === 'confirmed') throw bad('Save the lease as a draft, do the move-in inspection, then confirm it.', 409);
+  return b;
+};
+
 leasingRoutes.get('/tenants', wrap(async (req, res) => res.json(await listTenants(req.query.q))));
 leasingRoutes.post('/tenants', wrap(async (req, res) => res.json(await addTenant(req.body, req.user.id))));
 leasingRoutes.put('/tenants/:id', wrap(async (req, res) => res.json(await updateTenant(req.params.id, req.body))));
@@ -1051,7 +1063,7 @@ leasingRoutes.get('/overview', wrap(async (req, res) => res.json(await overview(
 leasingRoutes.get('/available',wrap(async (req, res) => res.json(await availability(req.query.building_id, req.query.start, req.query.end))));
 leasingRoutes.get('/bookings', wrap(async (req, res) => res.json(await listBookings(req.query))));
 leasingRoutes.get('/bookings/:id', wrap(async (req, res) => res.json(await getBooking(req.params.id))));
-leasingRoutes.post('/bookings', bookingFiles, wrap(async (req, res) => res.json(await createBookingWithDocs(sentBooking(req), req.files, req.user.id))));
+leasingRoutes.post('/bookings', bookingFiles, wrap(async (req, res) => res.json(await createBookingWithDocs(asDraft(sentBooking(req)), req.files, req.user.id))));
 leasingRoutes.put('/bookings/:id', wrap(async (req, res) => res.json(await updateBooking(req.params.id, req.body, req.user.id))));
 leasingRoutes.post('/bookings/:id/confirm', wrap(async (req, res) => res.json(await confirmBooking(req.params.id, req.user.id))));
 leasingRoutes.post('/bookings/:id/end', wrap(async (req, res) => res.json(await changeEnd(req.params.id, req.body?.end_date, req.user.id))));

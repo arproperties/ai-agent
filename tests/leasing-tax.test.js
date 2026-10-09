@@ -2,10 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, closeDb, makeUser } from './helpers/db.js';
 import { create } from '../server/properties.js';
-import { createBooking, updateBooking, bookingPayments, recordPayment, renewBooking, listBookings, monthlyRent, money, total } from '../server/leasing.js';
+import { createBooking, updateBooking, bookingPayments, recordPayment, renewBooking, addTenant, monthlyRent, money, total } from '../server/leasing.js';
 import { receiptRow, renderReceipt } from '../server/leasingReceipt.js';
 import { report } from '../server/leasingReports.js';
-import { importBookings } from '../server/leasingImport.js';
 import { leasingKit } from '../server/leasingKit.js';
 import { saveRegion, region } from '../server/leasingRegion.js';
 
@@ -119,15 +118,9 @@ test('the usual tax and what it is called are part of the region', async () => {
   }
 });
 
-test('the import sheet and Riley can both set a discount and the tax', async () => {
-  const { staff, c } = await tower();
-  const row = { company: 'ace', building: 'Tower', unit_no: '201', tenant_name: 'Omar', phone: '0501112222', start_date: '2026-09-01', end_date: '2026-10-31', rent_amount: '4,000', discount: '10%', tax_percent: '5' };
-  const done = await importBookings([row, { ...row, unit_no: '202', discount: '500', tax_percent: '' }], { commit: true, by: staff, today: AT });
-  assert.deepEqual([done.imported, done.failed], [true, 0], JSON.stringify(done.results));
-  const [a, b] = (await listBookings({ company_id: c.id })).sort((x, y) => x.id - y.id);
-  assert.deepEqual([a.discount_type, a.discount_value, a.tax_percent, b.discount_type, b.discount_value, b.tax_percent], ['percent', 10, 5, 'amount', 500, null]);
-  assert.deepEqual((await lines(a.id))[0], ['Rent', 3780, 180]);
-
+test('Riley can set a discount and the tax', async () => {
+  const { staff } = await tower();
+  await addTenant({ full_name: 'Omar', phone: '0501112222' }, staff);
   const boss = await makeUser('Boss');
   const kit = leasingKit({ id: boss, role: 'master' });
   const ask = (name, input) => kit.run({ id: 't', name, input });

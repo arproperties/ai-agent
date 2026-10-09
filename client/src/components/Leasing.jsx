@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, Upload, LayoutGrid, List, BedDouble, BedSingle, Lock, History } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, LayoutGrid, List, BedDouble, BedSingle, Lock, History, ClipboardCheck, LogIn } from 'lucide-react';
 import { api } from '../lib/api';
 import { money as aed, currency, region } from '../lib/region';
 import { usDate as fmt, usPhone } from '../lib/usFormat';
@@ -13,11 +13,11 @@ import BookingDocs, { REQUIRED } from './BookingDocs';
 import ServiceList, { REPEAT } from './ServiceList';
 import SourceList from './SourceList';
 import BookingPayments from './BookingPayments';
-import ImportBookings from './ImportBookings';
 import LeasingOverview, { LeasingBuildings } from './LeasingOverview';
 import LeasingReports from './LeasingReports';
 import LeasingAlerts from './LeasingAlerts';
 import TenantHistory from './TenantHistory';
+import Inspections from './Inspections';
 
 // Leasing: bookings of units and the tenants who make them. Anyone signed in can use it.
 // The server is server/leasing.js; the units come from Properties.
@@ -130,7 +130,8 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   });
   const taxName = region().tax_name;
   const [units, setUnits] = useState(null);
-  const [tenantMode, setTenantMode] = useState(start ? 'existing' : 'new');
+  const [unitQ, setUnitQ] = useState(''); // what is typed in the search box over the units
+  const [tenantMode,setTenantMode] = useState(start ? 'existing' : 'new');
   const [tenants, setTenants] = useState([]);
   const [tenantId, setTenantId] = useState(start?.tenant_id || '');
   const [tenant, setTenant] = useState({ full_name: '', phone: '', email: '', emirates_id_no: '', nationality: '' });
@@ -162,7 +163,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     api.get(`/leasing/available?building_id=${buildingId}&start=${v.start_date}&end=${v.end_date}`).then(setUnits).catch((e) => setError(e.message));
   }, [buildingId, v.start_date, v.end_date]);
 
-  const submit = (status) => async (e) => {
+  const submit = (status, inspect) => async (e) => {
     e?.preventDefault();
     if (busy) return;
     setBusy(true);
@@ -173,7 +174,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
       const form = new FormData();
       form.append('booking', JSON.stringify({ ...body, status }));
       for (const [f] of REQUIRED) form.append(f, files[f]);
-      onDone(await api.upload('/leasing/bookings', form));
+      onDone(await api.upload('/leasing/bookings', form), inspect);
     } catch (err) { setError(err.message); setBusy(false); }
   };
 
@@ -188,6 +189,12 @@ function BookingForm({ start, preset, onDone, onCancel }) {
 
   // The unit already booked by this very booking counts as free while editing it.
   const isFree = (u) => u.free || (start && u.id === start.unit_id && u.taken_by?.ref === start.ref);
+  // The units left once the search box has narrowed them: by number, type, floor, or who is in it.
+  const unitWords = unitQ.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const shownUnits = (units || []).filter((u) => {
+    const text = [u.unit_no, u.type, u.floor && `fl ${u.floor}`, u.taken_by?.tenant, isFree(u) ? 'free' : u.blocked ? 'blocked' : 'taken'].filter(Boolean).join(' ').toLowerCase();
+    return unitWords.every((w) => text.includes(w));
+  });
 
   // The summary beside the form: what has been chosen so far, and what it comes to.
   const unit = units?.find((u) => String(u.id) === String(v.unit_id)) || (start && String(v.unit_id) === String(start.unit_id) ? start : null);
@@ -207,7 +214,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const ready = reach(STEPS.length);
 
   return (
-    <form onSubmit={submit('confirmed')} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+    <form onSubmit={submit('draft', true)} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
      <div className="flex flex-col gap-5 rounded-2xl border border-stroke p-4 md:p-5">
       <ol className="flex items-center gap-2 border-b border-stroke/60 pb-4">
         {STEPS.map((name, i) => (
@@ -256,12 +263,20 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         <div className="sm:col-span-2">
           <span className="mb-1 block text-xs text-txt/80">Unit<span className="text-p2"> *</span>
             {datesOk && <span className="text-mute"> · {nights(v.start_date, v.end_date)} nights</span>}</span>
+          {units?.length > 0 && (
+            <div className="relative mb-2">
+              <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
+              <input value={unitQ} onChange={(e) => setUnitQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && e.preventDefault()}
+                placeholder="Search by unit no., type, floor or tenant" aria-label="Search units" className={`${FIELD} pl-10`} />
+            </div>
+          )}
           {!buildingId || !datesOk ? <p className="rounded-xl border border-dashed border-stroke px-3.5 py-3 text-sm text-mute">Choose a building and dates to see which units are free.</p>
             : !units ? <Loader2 size={18} className="my-3 animate-spin text-mute" />
               : units.length === 0 ? <p className="text-sm text-mute">This building has no units yet.</p>
+                : shownUnits.length === 0 ? <p className="text-sm text-mute">No unit matches “{unitQ.trim()}”.</p>
                 : (
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-                    {units.map((u) => {
+                    {shownUnits.map((u) => {
                       const free = isFree(u);
                       const on = String(v.unit_id) === String(u.id);
                       const Bed = u.blocked ? Lock : /studio|single/i.test(u.type || '') ? BedSingle : BedDouble;
@@ -449,7 +464,8 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         {error && <p className="text-bad">{error}</p>}
         <div className="space-y-2 pt-1">
           {start ? <button disabled={busy || !ready} className={`${PRIMARY} w-full justify-center`}>{busy ? 'Saving…' : 'Save'}</button> : <>
-            <button disabled={busy || !ready} className={`${PRIMARY} w-full justify-center`}>{busy ? 'Saving…' : 'Confirm lease'}</button>
+            <button disabled={busy || !ready} className={`${PRIMARY} w-full justify-center`}>{busy ? 'Saving…' : 'Save and inspect'}</button>
+            <p className="text-center text-xs text-mute">Next is the move-in inspection. The lease is confirmed after it.</p>
             <button type="button" disabled={busy || !ready} onClick={submit('draft')} className="w-full rounded-full border border-stroke px-4 py-2 text-sm hover:bg-white/5 disabled:opacity-50">Save as draft</button>
           </>}
           <button type="button" onClick={onCancel} className="w-full rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
@@ -518,7 +534,7 @@ function ChangeEnd({ booking: b, onPay, onDone }) {
   );
 }
 
-function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, onChanged }) {
+function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, onRenewed, onChanged }) {
   // Added in the last day (created_at is unix seconds): marked New, so it is easy to find again.
   const isNew = b.created_at && Date.now() / 1000 - Number(b.created_at) < 86400;
   const chip = fresh ? <span className="ml-1.5 rounded-full bg-p1/20 px-1.5 py-px text-[10px] font-medium text-p1">Just added</span>
@@ -530,6 +546,9 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
   const terms = [FREQ.find(([k]) => k === b.payment_frequency)?.[1], b.discount_type && `${b.discount_type === 'percent' ? `${b.discount_value}%` : aed(b.discount_value)} off`,
     b.tax_percent && `+ ${region().tax_name} ${b.tax_percent}%`].filter(Boolean).join(' · ');
   const rent = <>{aed(b.rent_amount)} / {b.rent_period} <span className="text-xs text-mute">· {terms}</span></>;
+  // A lease confirmed with no move-in (by Riley, or imported), whose tenant now has the unit: how they found it is not written down.
+  const moveInDue = b.status === 'confirmed' && b.stage !== 'upcoming' && !b.renewed_from && !b.moved_in && !b.moved_out;
+  const due = moveInDue && <p className="text-xs text-warn">Move-in inspection not done</p>;
   // What can be done to it: [icon, name, what happens, a longer hint, whether it is the dangerous one].
   const actions = [
     [Paperclip, 'Documents', onDocs, b.docs > 0 ? `${b.docs} document${b.docs === 1 ? '' : 's'}` : ''],
@@ -546,7 +565,10 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
     },
       'Draft the next lease: same unit, tenant and rent, starting the day after this one ends'],
     b.status === 'confirmed' && [CalendarDays, 'Change end date', onEnd, 'The tenant stays longer, or the stay is shorter than was leased'],
-    b.status === 'draft' && [Check, 'Confirm', () => act(() => api.post(`/leasing/bookings/${b.id}/confirm`))],
+    // A draft is confirmed after its move-in inspection; a renewal has none to do.
+    moveInDue || (b.status === 'draft' && !b.moved_in && !b.renewed_from) ? [LogIn, 'Move-in inspection', () => onInspect('move_in'), 'How the tenant finds the unit. The lease is confirmed after it']
+      : [ClipboardCheck, 'Inspections', () => onInspect(), 'The unit’s condition: make-ready, move-in and move-out'],
+    b.status === 'draft' && (b.moved_in || b.renewed_from) && [Check, 'Confirm', () => act(() => api.post(`/leasing/bookings/${b.id}/confirm`))],
     b.status !== 'cancelled' && [Pencil, 'Edit', onEdit],
     b.status === 'draft' && [Trash2, 'Delete', () => confirm('Delete this draft?') && act(() => api.del(`/leasing/bookings/${b.id}`)), '', true],
     b.status === 'confirmed' && [X, 'Cancel lease', () => { const reason = prompt('Why is this lease cancelled? (What is already due stays owed; later payments are taken off.)'); if (reason) act(() => api.post(`/leasing/bookings/${b.id}/cancel`, { reason })); }, '', true],
@@ -558,6 +580,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
         <p className="font-medium">{b.tenant}{chip}</p>
         <p className="text-xs text-mute">{b.ref}{b.tenant_phone && ` · ${usPhone(b.tenant_phone)}`}{b.source && ` · ${b.source}`}</p>
         {b.cancel_reason && <p className="max-w-[16rem] whitespace-normal text-xs text-bad">Cancelled: {b.cancel_reason}</p>}
+        {due}
         {error && <p className="max-w-[16rem] whitespace-normal text-xs text-bad">{error}</p>}
       </td>
       <td className="px-3 py-2.5"><p>Unit {b.unit_no} · {b.building}</p><p className="text-xs text-mute">{b.company}</p></td>
@@ -605,6 +628,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
           </div>
         )}
         {b.cancel_reason && <p className="py-2 text-xs text-bad">Cancelled: {b.cancel_reason}</p>}
+        {due && <div className="py-2">{due}</div>}
       </dl>
       {error && <p className="px-4 pb-1 text-xs text-bad">{error}</p>}
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-stroke px-4 py-2.5">
@@ -618,7 +642,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onRenewed, 
   );
 }
 
-function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onImport }) {
+function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect }) {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState('');
   const [stage, setStage] = useState('');
@@ -641,13 +665,10 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onImport }) {
   const paged = usePaged(shown, [q, stage, from, to, sort].join('|')); // cards or table, a page at a time
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <label className="relative block flex-1">
-          <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by tenant, phone, unit, building, company or contract no." className={`${FIELD} pl-10`} />
-        </label>
-        <button onClick={onImport} title="Bring in leases from an Excel sheet (master only)" className={`${GHOST} shrink-0 py-2.5`}><Upload size={13} /> Import</button>
-      </div>
+      <label className="relative block">
+        <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by tenant, phone, unit, building, company or contract no." className={`${FIELD} pl-10`} />
+      </label>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="flex flex-wrap gap-1.5 text-xs">
           {[['', 'All', dated?.length || 0], ...['active', 'upcoming', 'draft', 'ended', 'cancelled'].map((k) => [k, STAGE[k][0], count(k)])].map(([k, l, n]) => (
@@ -671,7 +692,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onImport }) {
                     <tr className={HEAD}>{['Tenant', 'Unit', 'Dates', 'Rent', 'Status', ''].map((h) => <th key={h} className={TH}>{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-stroke/60">
-                    {paged.rows.map((b) => <BookingCard key={b.id} list b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onRenewed={onEdit} onChanged={load} />)}
+                    {paged.rows.map((b) => <BookingCard key={b.id} list b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onInspect={(start) => onInspect(b, start)} onRenewed={onEdit} onChanged={load} />)}
                   </tbody>
                 </table>
               </div>
@@ -679,7 +700,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onImport }) {
             </>
           ) : (
             <>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{paged.rows.map((b) => <BookingCard key={b.id} b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onRenewed={onEdit} onChanged={load} />)}</div>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{paged.rows.map((b) => <BookingCard key={b.id} b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onInspect={(start) => onInspect(b, start)} onRenewed={onEdit} onChanged={load} />)}</div>
               <Pager {...paged.pager} />
             </>
           )}
@@ -1011,19 +1032,18 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
     );
   }
 
+  if (form?.inspectOf) {
+    const b = form.inspectOf;
+    return <Inspections unit={{ id: b.unit_id, unit_no: b.unit_no, building: b.building }} booking={b} start={form.start} onBack={close} />;
+  }
   if (form?.historyOf) return <TenantHistory tenant={form.historyOf} onBack={close} onPay={pay} />;
-  if (form?.importing) return (
-    <Page title="Import leases" onBack={close}>
-      <ImportBookings onDone={() => { setTab('bookings'); close(); }} />
-    </Page>
-  );
 
-  // A new booking goes on to its documents, so the contract and ID are attached while they are at hand.
+  // A new lease is a draft, and goes on to its move-in inspection; saved as a draft only, it goes on to its documents.
   if (form) return (
     <Page title={form.id ? `Edit ${form.ref}` : 'New lease'} onBack={() => setForm(null)}
       action={form.id && <button onClick={() => setForm({ docsOf: form })} className={PRIMARY}><Paperclip size={16} /> Documents</button>}>
       <BookingForm start={form.id ? form : null} preset={form.preset}
-        onDone={(saved) => { setTab('bookings'); if (form.id) close(); else { setFresh(saved.id); setForm({ docsOf: saved }); } }} onCancel={() => setForm(null)} />
+        onDone={(saved, inspect) => { setTab('bookings'); if (form.id) close(); else { setFresh(saved.id); setForm(inspect ? { inspectOf: saved, start: 'move_in' } : { docsOf: saved }); } }} onCancel={() => setForm(null)} />
     </Page>
   );
 
@@ -1038,7 +1058,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
         ))}
       </div>
       {tab === 'buildings' ? <LeasingBuildings key={key} />
-        : <Bookings key={key} fresh={fresh} onEdit={(b) => setForm(b)} onDocs={(b) => setForm({ docsOf: b })} onPay={(b) => setForm({ payOf: b })} onEnd={(b) => setForm({ endOf: b })} onImport={() => setForm({ importing: true })} />}
+        : <Bookings key={key} fresh={fresh} onEdit={(b) => setForm(b)} onDocs={(b) => setForm({ docsOf: b })} onPay={(b) => setForm({ payOf: b })} onEnd={(b) => setForm({ endOf: b })} onInspect={(b, start) => setForm({ inspectOf: b, start })} />}
     </Page>
   );
   if (tab === 'calendar') return <Page title="Calendar" onBack={onBack} action={add}><Calendar key={key} onEdit={(b) => setForm(b)} onNew={(preset) => setForm({ preset })} /></Page>;

@@ -6,7 +6,6 @@ import { existsSync } from 'node:fs';
 import { createBooking, updateBooking, bookingPayments, recordPayment, removePayment, attachPaymentFile, overview, depositState, settleDeposit, passDeposit, takeBackDeposit, removeBooking, renewBooking, bookingHistory, listBookings, listServices, addService, updateService, removeService, listSources, addSource, renameSource, removeSource } from '../server/leasing.js';
 import { receiptRow, renderReceipt, inWords } from '../server/leasingReceipt.js';
 import { tenantReminder, noteReminder, saveWording, whatsappNumber } from '../server/leasingAlerts.js';
-import { importBookings } from '../server/leasingImport.js';
 import { leasingKit } from '../server/leasingKit.js';
 import { saveRegion, region, todayHere, hourHere, cash } from '../server/leasingRegion.js';
 
@@ -238,32 +237,6 @@ test('renewal, history, the receipt and the reminder to the tenant', async () =>
   assert.deepEqual((await bookingHistory(bk.id)).map((e) => [e.kind, e.by]),
     [['changed', 'Staff'], ['renewed', 'Staff'], ['payment_deleted', 'Staff'], ['document', 'Staff'], ['payment', 'Staff'], ['payment', 'Staff'], ['reminder', 'Staff'], ['created', 'Staff']]);
   assert.equal((await bookingHistory(bk.id))[0].detail, 'notes');
-});
-
-test('import: checked first, all or nothing, with what is missing created', async () => {
-  const { staff, c } = await tower();
-  const row = (extra) => ({ company: 'ace', building: 'Marina', unit_no: '201', tenant_name: 'Omar', phone: '0501112222', start_date: '01/09/2026', end_date: '2027-08-31',
-    rent_amount: '4,500', payment_frequency: 'Monthly', rent_paid_so_far: '6000', ...extra });
-  const count = async () => (await db.prepare('SELECT count(*)::int AS n FROM lease_bookings').get()).n;
-
-  const check = await importBookings([row()], { by: staff, today: AT });
-  assert.deepEqual([check.imported, check.failed, check.results[0].ok, await count()], [false, 0, true, 0], 'a check keeps nothing');
-
-  assert.equal((await importBookings([row({ phone: ' ' })], { by: staff, today: AT })).results[0].error, 'phone is missing.', 'a tenant has a contact number');
-
-  const bad = await importBookings([row(), row({ unit_no: '202', start_date: 'soon' }), row({ tenant_name: 'Lina' })], { commit: true, by: staff, today: AT });
-  assert.deepEqual([bad.imported, bad.failed, await count()], [false, 2, 0], 'one bad row and nothing is kept');
-  assert.match(bad.results[1].error, /Start date is missing or not a date/);
-  assert.match(bad.results[2].error, /already leased by Omar/);
-
-  const done = await importBookings([row(), row({ unit_no: '202', tenant_name: 'Omar', rent_paid_so_far: '' })], { commit: true, by: staff, today: AT });
-  assert.deepEqual([done.imported, done.failed, await count()], [true, 0, 2]);
-  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM prop_companies').get()).n, 1, 'ACE was found, whatever its capitals');
-  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_tenants').get()).n, 1, 'the same name and phone is one tenant');
-  const [first] = (await listBookings({ company_id: c.id })).filter((b) => b.unit_no === '201');
-  assert.deepEqual((await bookingPayments(first.id, AT)).slice(0, 3).map((i) => [i.due_date, i.paid, i.status]),
-    [['2026-09-01', 4500, 'paid'], ['2026-10-01', 1500, 'overdue'], ['2026-11-01', 0, 'upcoming']]);
-  await assert.rejects(importBookings([], { by: staff }), /no rows/);
 });
 
 test('Riley reads the leasing records, and only reads', async () => {

@@ -115,7 +115,8 @@ export async function remove(kind, id) {
   // A company takes its documents with it; their rows cascade, their files are removed here.
   const files = kind === 'company'
     ? (await db.prepare('SELECT file_path FROM prop_documents WHERE company_id = ? AND file_path IS NOT NULL').all(Number(id))).map((d) => d.file_path)
-    : kind === 'unit' ? (await db.prepare('SELECT file_path FROM prop_unit_photos WHERE unit_id = ?').all(Number(id))).map((p) => p.file_path) // a unit's photos go with it
+    : kind === 'unit' ? (await db.prepare(`SELECT file_path FROM prop_unit_photos WHERE unit_id = ?
+        UNION ALL SELECT p.file_path FROM prop_inspection_photos p JOIN prop_inspections i ON i.id = p.inspection_id WHERE i.unit_id = ?`).all(Number(id), Number(id))).map((p) => p.file_path) // a unit's photos, and those of its inspections, go with it
       : [];
   try {
     const r = await db.prepare(`DELETE FROM ${KINDS[kind].table} WHERE id = ?`).run(Number(id));
@@ -140,19 +141,31 @@ export const listBuildings = (companyId) => db.prepare(`
   FROM prop_buildings b WHERE b.company_id = ? ORDER BY b.name`).all(Number(companyId));
 
 // Units in floor then number order, the way they read on a building's board (2, 10, 101…).
-// Each with today's confirmed booking, if any (today where the business is), so the card can say who is in it.
+// A lease `b` whose tenant was inspected in (or stayed on by renewing) and has not been inspected
+// out, nor renewed again: the unit is theirs until the move-out inspection, whatever the end date says.
+export const HELD = `(b.renewed_from IS NOT NULL OR EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete))
+  AND NOT EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_out' AND i.complete)
+  AND NOT EXISTS (SELECT 1 FROM lease_bookings r WHERE r.renewed_from = b.id AND r.status <> 'cancelled')`;
+
+// Each with today's confirmed booking, if any (today where the business is), so the card can say who is in it;
+// a lease that has ended still counts until its move-out inspection (move_out_due).
 // energy_on_tenant: that tenant has an energy account of their own, so the unit's own number (dewa_no,
 // the company's account) is not shown until the unit is vacant or on the company's account again.
+// needs_make_ready: its last tenant has moved out, or a make-ready was begun, and nothing has come since (server/inspections.js).
+// move_in_due: today's tenant has taken the unit (not by renewing) and their move-in inspection is not done.
 export const listUnits = (buildingId, today = todayHere()) => db.prepare(`
-  SELECT u.*, cur.tenant AS current_tenant, cur.end_date AS current_until, coalesce(cur.tenant_energy_account, false) AS energy_on_tenant,
-    (SELECT coalesce(array_agg(p.id ORDER BY p.id), '{}') FROM prop_unit_photos p WHERE p.unit_id = u.id) AS photos FROM prop_units u
-  LEFT JOIN LATERAL (SELECT t.full_name AS tenant, to_char(b.end_date, 'YYYY-MM-DD') AS end_date, b.tenant_energy_account FROM lease_bookings b
+  SELECT u.*, cur.tenant AS current_tenant, cur.end_date AS current_until, coalesce(cur.tenant_energy_account, false) AS energy_on_tenant, coalesce(cur.move_in_due, false) AS move_in_due, coalesce(cur.end_date < ?, false) AS move_out_due,
+    (SELECT coalesce(array_agg(p.id ORDER BY p.id), '{}') FROM prop_unit_photos p WHERE p.unit_id = u.id) AS photos,
+    coalesce((SELECT (i.kind = 'move_out' AND i.complete) OR (i.kind = 'make_ready' AND NOT i.complete) FROM prop_inspections i WHERE i.unit_id = u.id ORDER BY i.inspected_on DESC, i.id DESC LIMIT 1), false) AS needs_make_ready
+  FROM prop_units u
+  LEFT JOIN LATERAL (SELECT t.full_name AS tenant, to_char(b.end_date, 'YYYY-MM-DD') AS end_date, b.tenant_energy_account,
+      b.renewed_from IS NULL AND NOT EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind IN ('move_in', 'move_out') AND i.complete) AS move_in_due FROM lease_bookings b
     JOIN lease_tenants t ON t.id = b.tenant_id
-    WHERE b.unit_id = u.id AND b.status = 'confirmed' AND ?::date BETWEEN b.start_date AND b.end_date
-    LIMIT 1) cur ON true
+    WHERE b.unit_id = u.id AND b.status = 'confirmed' AND (?::date BETWEEN b.start_date AND b.end_date OR (b.end_date < ?::date AND ${HELD}))
+    ORDER BY b.start_date DESC LIMIT 1) cur ON true
   WHERE building_id = ?
   ORDER BY NULLIF(regexp_replace(floor, '\\D', '', 'g'), '')::int NULLS FIRST, floor,
-    NULLIF(regexp_replace(unit_no, '\\D', '', 'g'), '')::bigint NULLS LAST, unit_no`).all(today, Number(buildingId));
+    NULLIF(regexp_replace(unit_no, '\\D', '', 'g'), '')::bigint NULLS LAST, unit_no`).all(today, today, today, Number(buildingId));
 
 // One company or building, with when its picture last changed (null when it has none).
 /** The people who look after a building: its leasing alerts go to them. */

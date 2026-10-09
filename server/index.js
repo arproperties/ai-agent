@@ -26,11 +26,11 @@ import { hrLinkRoutes } from './hrLinks.js';
 import { propertyRoutes } from './properties.js';
 import { leasingRoutes } from './leasing.js';
 import { historyRoutes } from './leasingHistory.js';
+import { inspectionRoutes } from './inspections.js';
 import { reportRoutes } from './leasingReports.js';
 import { alertRoutes, startLeasingAlerts } from './leasingAlerts.js';
 import { receiptRoutes } from './leasingReceipt.js';
 import { regionRoutes } from './leasingRegion.js';
-import { importRoutes as leasingImportRoutes } from './leasingImport.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
@@ -75,7 +75,7 @@ app.use('/api/leasing/reports', reportRoutes); // rent roll, aging, collections,
 app.use('/api/leasing/alerts', alertRoutes); // what needs attention today, and the master's alert rules
 app.use('/api/leasing/region', regionRoutes); // the business's currency, time zone and phone country code (master sets)
 app.use('/api/leasing/payments', receiptRoutes); // the receipt PDF for one payment
-app.use('/api/leasing/import', leasingImportRoutes); // the office's existing spreadsheet, all or nothing (master only)
+app.use('/api/leasing', inspectionRoutes); // a unit's condition over time: make-ready, move-in and move-out inspections
 app.use('/api/leasing', historyRoutes); // a tenant's history: late rent, complaints, maintenance
 app.use('/api/leasing', leasingRoutes); // tenants and bookings of units; the rent is set per booking
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router

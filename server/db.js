@@ -1329,3 +1329,37 @@ if (!hadSources) {
     await db.prepare('INSERT INTO lease_sources (name) VALUES (?) ON CONFLICT DO NOTHING').run(name);
   }
 }
+
+// A unit's condition, written down each time it changes hands, and kept: the unit's history
+// is every one of these, so its state a year ago can be set beside its state today.
+//   kind: make_ready (the work done before it is let again) | move_in | move_out.
+//   booking_id: the lease it was done for; tenant: their name as it was, kept if the lease goes.
+//   items: JSON, one per area: { area, condition, note }. An inspection rates each
+//     good | fair | damaged; a make-ready marks each done | pending.
+//   complete: false while a make-ready still has work pending, or an inspection has areas not rated yet.
+//   prop_inspection_photos: the pictures, each under the area it shows.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS prop_inspections (
+    id SERIAL PRIMARY KEY,
+    unit_id      INTEGER NOT NULL REFERENCES prop_units(id) ON DELETE CASCADE,
+    booking_id   INTEGER REFERENCES lease_bookings(id) ON DELETE SET NULL,
+    kind         TEXT NOT NULL,
+    inspected_on DATE NOT NULL,
+    tenant       TEXT,
+    notes        TEXT,
+    items        TEXT NOT NULL DEFAULT '[]',
+    complete     BOOLEAN NOT NULL DEFAULT true,
+    created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at   BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_prop_inspections ON prop_inspections(unit_id, inspected_on);
+  CREATE TABLE IF NOT EXISTS prop_inspection_photos (
+    id SERIAL PRIMARY KEY,
+    inspection_id INTEGER NOT NULL REFERENCES prop_inspections(id) ON DELETE CASCADE,
+    area        TEXT NOT NULL,
+    file_path   TEXT NOT NULL,
+    file_mime   TEXT,
+    created_at  BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_prop_inspection_photos ON prop_inspection_photos(inspection_id);
+`);
