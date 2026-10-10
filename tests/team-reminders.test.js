@@ -2,9 +2,11 @@ import './helpers/push-env.js'; // before helpers/db.js: push.js reads the keys 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import webpush from 'web-push';
+import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
 import { saveSubscription } from '../server/push.js';
-import { proposeReminder, decideReminder, findPeople, inbox, markDone, getReminder, teamReminderKit } from '../server/teamReminders.js';
+import { proposeReminder, decideReminder, findPeople, inbox, markDone, getReminder, teamReminderKit, photoFor } from '../server/teamReminders.js';
 import { runRemindersOnce } from '../server/reminders.js';
 
 test.after(() => closeDb());
@@ -100,4 +102,71 @@ test('the chat tool only proposes, and shows the card', async () => {
   assert.equal(posted.length, 0);
   const miss = await kit.run({ id: 't2', name: 'remind_people', input: { text: 'x', people: ['Zed'] } });
   assert.equal(miss.is_error, true);
+});
+
+// A photo the way one dropped into the chat lands: a row on the sender's Shelf, bytes on disk.
+const dir = `${tmpdir()}/reem-team-reminder-test`;
+async function shelve(userId, name, mime = 'image/jpeg') {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(`${dir}/${name}`, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  await db.prepare('INSERT INTO documents (user_id, name, title, kind, mime, path) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(userId, name, name, mime.startsWith('image/') ? 'image' : 'doc', mime, `${dir}/${name}`);
+}
+
+test('a photo attached in the chat goes on the reminder by its file name', async () => {
+  const { boss, rona } = await office();
+  await shelve(boss, 'leak.jpg');
+  await shelve(boss, 'plan.pdf', 'application/pdf');
+  await shelve(rona, 'hers.jpg');
+
+  await assert.rejects(proposeReminder(boss, { text: 'Fix this', people: ['Rona'], photos: ['nothing.jpg'] }), /no picture called "nothing.jpg"/);
+  await assert.rejects(proposeReminder(boss, { text: 'Fix this', people: ['Rona'], photos: ['hers.jpg'] }), /no picture called/, 'the file is someone else\'s');
+  await assert.rejects(proposeReminder(boss, { text: 'Fix this', people: ['Rona'], photos: ['plan.pdf'] }), /not a photo/);
+  await assert.rejects(proposeReminder(boss, { text: 'Fix this', people: ['Rona'], photos: ['leak.jpg', 'leak.jpg', 'leak.jpg', 'leak.jpg'] }), /at most 3/);
+  assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM team_reminders').get()).n, 0, 'a reminder whose photo cannot be found is not written down');
+
+  const r = await proposeReminder(boss, { text: 'Fix this', people: ['Rona'], photos: ['LEAK.jpg'] });
+  assert.deepEqual(r.photos.map((p) => p.name), ['leak.jpg']);
+  assert.equal(r.photos[0].url, `/api/team-reminders/photos/${r.photos[0].id}`);
+  assert.deepEqual((await proposeReminder(boss, { text: 'No picture', people: ['Rona'] })).photos, []);
+});
+
+test('the photo opens for the sender, and for the people it was sent to once it is sent - nobody else', async () => {
+  const { boss, rona, tauqeer } = await office();
+  await shelve(boss, 'leak.jpg');
+  const r = await proposeReminder(boss, { text: 'Fix this', people: ['Rona'], photos: ['leak.jpg'] });
+  const id = r.photos[0].id;
+
+  const mine = await photoFor(boss, id);
+  assert.equal(mine.mime, 'image/jpeg');
+  assert.notEqual(mine.path, `${dir}/leak.jpg`, 'its own copy, so clearing the Shelf does not empty the reminder');
+  assert.ok(existsSync(mine.path));
+  assert.ok(!await photoFor(rona, id), 'not before Send');
+
+  await decideReminder(boss, r.id, true);
+  assert.ok(await photoFor(rona, id));
+  assert.ok(!await photoFor(tauqeer, id), 'not sent to him');
+  assert.deepEqual((await inbox(rona))[0].photos, r.photos);
+  assert.equal(posted[0].body, '📷 Fix this');
+});
+
+test('a cancelled reminder takes its photo with it', async () => {
+  const { boss } = await office();
+  await shelve(boss, 'leak.jpg');
+  const r = await proposeReminder(boss, { text: 'Fix this', people: ['Rona'], photos: ['leak.jpg'] });
+  const { path } = await photoFor(boss, r.photos[0].id);
+  const after = await decideReminder(boss, r.id, false);
+  assert.deepEqual(after.photos, []);
+  assert.ok(!existsSync(path));
+  assert.ok(!await photoFor(boss, r.photos[0].id));
+});
+
+test('the chat tool takes photos and says how many are on the card', async () => {
+  const { boss } = await office();
+  await shelve(boss, 'leak.jpg');
+  const kit = await teamReminderKit(boss, {});
+  assert.ok(kit.definitions[0].input_schema.properties.photos);
+  const out = await kit.run({ id: 't1', name: 'remind_people', input: { text: 'Fix this', people: ['rona'], photos: ['leak.jpg'] } });
+  assert.ok(!out.is_error, out.content);
+  assert.match(out.content, /with 1 photo/);
 });

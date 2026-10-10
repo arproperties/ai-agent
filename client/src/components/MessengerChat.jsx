@@ -409,6 +409,13 @@ export function Composer({ chatId, reply, onCancelReply, replyName, onSend, voic
             <Paperclip size={20} />
           </button>
         </div>
+        {/* Said the wrong thing: throw the recording away. Nothing is written in the box. */}
+        {voiceEnabled && rec === 'recording' && (
+          <button onClick={stopListening} aria-label="Delete this voice note" title="Delete this voice note"
+            className="grid size-11 shrink-0 place-items-center rounded-full text-mute transition hover:bg-white/10 hover:text-rose-300">
+            <Trash2 size={19} />
+          </button>
+        )}
         {voiceEnabled && (
           <button onClick={toggleMic} disabled={rec === 'transcribing'}
             aria-label={rec === 'recording' ? 'Stop listening' : 'Speak your message'}

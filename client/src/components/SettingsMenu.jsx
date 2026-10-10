@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, ClipboardList, Landmark, KeyRound, Globe, Moon, Sun } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, ClipboardList, ListChecks, HardHat, Package, Landmark, KeyRound, Globe, Moon, Sun } from 'lucide-react';
 import Icon from './Icon';
 import Avatar, { AGENT_COLORS } from './Avatar';
 import { THEMES, currentTheme, setTheme } from '../lib/theme';
@@ -40,7 +40,7 @@ const Tile = ({ icon, label, color, active, n = 0, onClick, ...rest }) => (
  * else, and choosing one leaves the menu open, so you can try a few against the app
  * behind it before settling.
  */
-export default function SettingsMenu({ user, agents = [], onEditAgent, expiring = 0, dueTodos = 0, filesOpen, todosOpen, meetingsOpen, transcribeOpen, dutiesOpen, propertiesOpen, leasingOpen, onFiles, onTodos, onMeetings, onTranscribe, onDuties, onProperties, onLeasing, onMemory, onEmail, onPeople, onRegion }) {
+export default function SettingsMenu({ user, agents = [], onEditAgent, expiring = 0, dueTodos = 0, filesOpen, todosOpen, meetingsOpen, transcribeOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, propertiesOpen, leasingOpen, onFiles, onTodos, onMeetings, onTranscribe, onDuties, onChecklists, onBuildings, onInventory, onProperties, onLeasing, onMemory, onEmail, onPeople, onRegion }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -117,6 +117,11 @@ export default function SettingsMenu({ user, agents = [], onEditAgent, expiring 
                   word and the full name stays on hover and for screen readers. */}
               <Tile color="rose" icon={<ClipboardList size={15} strokeWidth={1.75} />} label="Duties" active={dutiesOpen} onClick={go(onDuties)}
                 aria-label="My responsibilities" title="My responsibilities" />
+              <Tile color="teal" icon={<ListChecks size={15} strokeWidth={1.75} />} label="Checklists" active={checklistsOpen} onClick={go(onChecklists)} />
+              {/* Only for the master and for whoever runs a building: the field staff's jobs. */}
+              {hasBuildings && <Tile color="amber" icon={<HardHat size={15} strokeWidth={1.75} />} label="Buildings" active={buildingsOpen} onClick={go(onBuildings)} />}
+              {/* The same people keep the inventory of those buildings. */}
+              {hasBuildings && <Tile color="blue" icon={<Package size={15} strokeWidth={1.75} />} label="Inventory" active={inventoryOpen} onClick={go(onInventory)} />}
               <Tile color="slate" icon={<Landmark size={15} strokeWidth={1.75} />} label="Properties" active={propertiesOpen} onClick={go(onProperties)} />
               <Tile color="amber" icon={<KeyRound size={15} strokeWidth={1.75} />} label="Leasing" active={leasingOpen} onClick={go(onLeasing)} />
               <Tile color="violet" icon={<Icon name="brain" size={15} />} label="Memory" onClick={go(onMemory)} />

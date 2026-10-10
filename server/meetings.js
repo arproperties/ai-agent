@@ -1,10 +1,15 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { mkdirSync, rmSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { resolve } from 'node:path';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { readFile, writeFile, rename } from 'node:fs/promises';
 import { db } from './db.js';
 import { DATA_DIR } from './config.js';
 import { transcribeSpeakers, ask, audioExt } from './ai.js';
+import { isMaster } from './access.js';
+import { requireMaster } from './auth.js';
 
 // Meetings: record a meeting, get back who said what, and a summary.
 //
@@ -27,8 +32,21 @@ const bad = (message, status = 400) => Object.assign(new Error(message), { statu
 const clean = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const parse = (s, dflt) => { try { return JSON.parse(s); } catch { return dflt; } };
 
-// The two calls that cost money, swappable so the tests can run without either service.
-export const engine = { transcribe: transcribeSpeakers, summarize: (prompt, opts) => ask(prompt, opts) };
+const run = promisify(execFile);
+
+// The two calls that cost money, swappable so the tests can run without either service -
+// and the one that needs ffmpeg, for the same reason.
+export const engine = {
+  transcribe: transcribeSpeakers,
+  summarize: (prompt, opts) => ask(prompt, opts),
+  // Mono AAC in an .m4a: every phone and browser plays it and can jump to any second of it,
+  // which is not true of the .webm a phone's recorder hands over.
+  convert: async (from, to) => {
+    const tmp = `${to}.tmp`;
+    await run('ffmpeg', ['-v', 'error', '-i', from, '-vn', '-ac', '1', '-c:a', 'aac', '-b:a', '48k', '-movflags', '+faststart', '-f', 'mp4', '-y', tmp]);
+    await rename(tmp, to);
+  },
+};
 
 // ---------- voices ----------
 
@@ -79,11 +97,59 @@ export async function listMeetings(userId, limit = 100) {
 
 export async function getMeeting(userId, id) {
   const m = await ownMeeting(userId, id);
-  if (!m) return null;
-  const parts = await db.prepare('SELECT seq, status, error FROM meeting_parts WHERE meeting_id = ? ORDER BY seq').all(m.id);
+  return m ? detail(m) : null;
+}
+
+async function detail(m) {
+  const parts = await db.prepare('SELECT seq, offset_s, status, error FROM meeting_parts WHERE meeting_id = ? ORDER BY seq').all(m.id);
   const lines = await db.prepare('SELECT start_s, end_s, speaker, text FROM meeting_lines WHERE meeting_id = ? ORDER BY start_s, id').all(m.id);
   const names = await speakerNames(m);
   return { ...meetingOut(m), speaker_names: names, parts, lines };
+}
+
+// ---------- the master's view ----------
+// The master may read and listen to anyone's meeting, and nothing else: no renaming, no
+// deleting, no sharing. These are queries of their own, behind requireMaster, rather than
+// an "or the master" added to ownMeeting - that one stays the guard for everything that
+// changes a meeting.
+
+const anyMeeting = (id) => db.prepare('SELECT m.*, u.name owner FROM meetings m JOIN users u ON u.id = m.user_id WHERE m.id = ?').get(Number(id));
+
+/** Everyone else's meetings, newest first, with whose each one is. */
+export async function teamMeetings(master, limit = 200) {
+  const rows = await db.prepare(`SELECT m.*, u.name owner FROM meetings m JOIN users u ON u.id = m.user_id
+    WHERE m.user_id <> ? ORDER BY m.id DESC LIMIT ?`).all(master.id, limit);
+  return rows.map(meetingOut);
+}
+
+export async function teamMeeting(id) {
+  const m = await anyMeeting(id);
+  return m ? detail(m) : null;
+}
+
+// ---------- listening ----------
+// The recording stays in the pieces it arrived in; the page plays them one after another.
+// A piece is converted the first time someone listens and kept beside the original, so it
+// goes when the meeting is deleted.
+
+const converting = new Map();
+
+/** The file to play for one piece: the person who recorded it, or the master. */
+export async function partAudio(user, meetingId, seq) {
+  const m = isMaster(user) ? await anyMeeting(meetingId) : await ownMeeting(user.id, meetingId);
+  if (!m) return null;
+  const part = await db.prepare('SELECT path FROM meeting_parts WHERE meeting_id = ? AND seq = ?').get(m.id, Number(seq));
+  if (!part || !existsSync(part.path)) return null;
+  const out = `${part.path.replace(/\.[^./]+$/, '')}.listen.m4a`;
+  if (!existsSync(out)) {
+    if (!converting.has(out)) converting.set(out, engine.convert(part.path, out).finally(() => converting.delete(out)));
+    try {
+      await converting.get(out);
+    } catch (e) {
+      throw bad(e.code === 'ENOENT' ? 'Playing a recording needs ffmpeg on the server (sudo apt install -y ffmpeg)' : 'This part of the recording could not be played', 500);
+    }
+  }
+  return resolve(out);
 }
 
 async function speakerNames(m) {
@@ -405,6 +471,13 @@ meetingRoutes.delete('/voices/:id', wrap(async (req, res) => {
   (await deleteVoice(req.user.id, req.params.id)) ? res.json({ ok: true }) : res.status(404).json({ error: 'Voice not found' });
 }));
 
+// Everyone's meetings, for the master. Before '/:id', so "team" is never read as an id.
+meetingRoutes.get('/team', requireMaster, wrap(async (req, res) => res.json(await teamMeetings(req.user))));
+meetingRoutes.get('/team/:id', requireMaster, wrap(async (req, res) => {
+  const m = await teamMeeting(req.params.id);
+  m ? res.json(m) : gone(res);
+}));
+
 meetingRoutes.get('/', wrap(async (req, res) => res.json(await listMeetings(req.user.id))));
 meetingRoutes.post('/', wrap(async (req, res) => res.json(await createMeeting(req.user.id, req.body))));
 meetingRoutes.get('/:id', wrap(async (req, res) => {
@@ -416,6 +489,11 @@ meetingRoutes.post('/:id/parts', upload.single('audio'), wrap(async (req, res) =
     seq: req.body.seq, offset: req.body.offset, buffer: req.file?.buffer, mimetype: req.file?.mimetype,
   });
   r ? res.json(r) : gone(res);
+}));
+meetingRoutes.get('/:id/parts/:seq/audio', wrap(async (req, res) => {
+  const path = await partAudio(req.user, req.params.id, req.params.seq);
+  if (!path) return gone(res);
+  res.set('Cache-Control', 'private, max-age=3600').type('audio/mp4').sendFile(path);
 }));
 meetingRoutes.post('/:id/finish', wrap(async (req, res) => {
   const m = await finishMeeting(req.user.id, req.params.id, req.body);

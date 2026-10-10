@@ -35,8 +35,12 @@ const TABLES = [
   'imports', 'documents', 'chunks', 'memories', 'outlook_accounts', 'imap_accounts', 'email_drafts', 'email_action_log',
   'dm_groups', 'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
   'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs', 'saifsys_access', 'saifsys_action_access', 'ars_booking_requests',
-  'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'team_reminders', 'team_reminder_people', 'reminder_suggestions', 'suggestion_scans',
+  'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'team_reminders', 'team_reminder_people', 'team_reminder_photos', 'reminder_suggestions', 'suggestion_scans',
   'responsibilities', 'responsibility_proposals', 'hr_links',
+  'checklists', 'checklist_items', 'checklist_runs', 'checklist_run_items',
+  'buildings', 'building_sites', 'building_staff', 'building_jobs_seen',
+  'inventory_areas', 'inventory_items', 'inventory_log', 'inventory_proposals',
+  'recurring_buildings', 'recurring_payments', 'recurring_payment_dues', 'recurring_accounts', 'recurring_transfers',
   'prop_companies', 'prop_buildings', 'prop_units', 'prop_documents', 'prop_photos', 'prop_unit_photos', 'lease_tenants', 'lease_bookings', 'lease_documents', 'lease_installments', 'lease_payments', 'lease_settings', 'lease_alerts_sent', 'lease_events', 'lease_services', 'lease_sources', 'prop_building_staff', 'lease_tenant_notices', 'lease_tenant_log', 'lease_tenant_log_files', 'prop_inspections', 'prop_inspection_photos',
 ];
 

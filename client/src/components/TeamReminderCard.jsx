@@ -19,6 +19,26 @@ const at = (ts) => {
   return new Date().toDateString() === d.toDateString() ? `today ${time}` : `${d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })}, ${time}`;
 };
 
+/** The pictures sent with a reminder: small on the card, full screen on a tap. */
+export function ReminderPhotos({ photos = [], className = '' }) {
+  const [viewing, setViewing] = useState(null);
+  if (!photos.length) return null;
+  return (
+    <div className={`flex flex-wrap gap-1.5 ${className}`}>
+      {photos.map((p) => (
+        <button key={p.id} onClick={() => setViewing(p.url)} aria-label={`Open ${p.name}`} className="overflow-hidden rounded-lg">
+          <img src={p.url} alt={p.name} loading="lazy" className="size-16 object-cover" />
+        </button>
+      ))}
+      {viewing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setViewing(null)}>
+          <img src={viewing} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TeamReminderCard({ reminder: r, onChanged }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
@@ -52,6 +72,7 @@ export default function TeamReminderCard({ reminder: r, onChanged }) {
       </p>
 
       <p className="text-[15px] font-medium leading-snug">{r.text}</p>
+      <ReminderPhotos photos={r.photos} className="mt-2.5" />
 
       <div className="mt-2.5 border-t border-stroke/60 pt-2.5 text-[13px]">
         <p className="mb-1.5 text-xs text-mute">

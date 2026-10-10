@@ -8,7 +8,7 @@ import { spoken, prepare, cachedPath, claim, streamTo } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, canUseAgent, isMaster } from './access.js';
-import { chat } from './chat.js';
+import { deleteMessage, chat } from './chat.js';
 import { addMemory } from './knowledge.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
@@ -22,6 +22,7 @@ import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
 import { teamReminderRoutes } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
+import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { propertyRoutes } from './properties.js';
 import { leasingRoutes } from './leasing.js';
@@ -31,6 +32,10 @@ import { reportRoutes } from './leasingReports.js';
 import { alertRoutes, startLeasingAlerts } from './leasingAlerts.js';
 import { receiptRoutes } from './leasingReceipt.js';
 import { regionRoutes } from './leasingRegion.js';
+import { buildingRoutes, startBuildings } from './buildings.js';
+import { inventoryRoutes } from './inventory.js';
+import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
+import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
@@ -51,6 +56,8 @@ app.use(express.json({ limit: '1mb' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; checked by its one-time state
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
+app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
+app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api/outlook', outlookRoutes);
 app.use('/api/imap', imapRoutes);
@@ -69,6 +76,10 @@ app.use('/api/transcripts', transcriptRoutes); // any audio file or recording, a
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
+app.use('/api/checklists', checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
+app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
+app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
+app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/properties', propertyRoutes); // companies, buildings and units; the base for leasing (master writes)
 app.use('/api/leasing/reports', reportRoutes); // rent roll, aging, collections, expiring leases, vacancy, tenant statement
@@ -190,6 +201,11 @@ app.delete('/api/conversations/:id', wrap(async (req, res) => {
 }));
 
 app.post('/api/chat', upload.array('files', 10), wrap(chat));
+// One message taken out of a Reem chat, as in WhatsApp: a voice note said wrong, or a reply not worth keeping.
+app.delete('/api/messages/:id', wrap(async (req, res) => {
+  if (!await deleteMessage(req.user.id, req.params.id)) return notFound(res);
+  res.json({ ok: true });
+}));
 
 // ---------- files: ?agent=<id> for one agent's shelf, otherwise everything this user owns ----------
 const docOut = ({ path, hash, user_id, ...d }) => ({ ...d, tags: JSON.parse(d.tags || '[]') });
@@ -384,6 +400,8 @@ app.listen(PORT, '0.0.0.0', () => {
   startReminders();
   // Rent due, overdue, leases ending: the same kind of buzz, on its own ten-minute timer.
   startLeasingAlerts();
+  startBuildings(); // buzzes a building's administrator when a staff job needs them
+  startRecurringPayments(); // creates each recurring payment's line on its day of the month
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));

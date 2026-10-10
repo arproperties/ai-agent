@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown, Paperclip, FileText, Download } from 'lucide-react';
 import { api } from '../lib/api';
 
 // An email an agent wrote, waiting for the person whose name it would go out under.
@@ -26,12 +27,62 @@ const sentWhen = (ts) => {
   return today ? time : `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })}, ${time}`;
 };
 
+const fileUrl = (draftId, i) => `/api/email/drafts/${draftId}/files/${i}`;
+const fmtSize = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+const extOf = (name) => (/\.([a-z0-9]{1,4})$/i.exec(name)?.[1] || '').toLowerCase();
+// What the app can show without leaving the card. The server decides the same way.
+const modeOf = (name) => {
+  const ext = extOf(name);
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'image';
+  if (ext === 'pdf') return 'pdf';
+  if (ext === 'docx') return 'docx';
+  if (['txt', 'md', 'csv', 'json', 'log', 'tsv', 'yaml', 'yml', 'xml'].includes(ext)) return 'text';
+  return null;
+};
+
+// The attachment, full screen, exactly as it will go out.
+function FilePreview({ name, url, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const mode = modeOf(name);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex flex-col bg-[#07061a]/95 backdrop-blur-xl" onClick={onClose}>
+      <header className="flex items-center gap-2 px-3 pb-2 pt-safe md:px-5" onClick={(e) => e.stopPropagation()}>
+        <Paperclip size={17} className="ml-1 shrink-0 text-mute" />
+        <p className="min-w-0 flex-1 truncate text-sm font-medium">{name}</p>
+        <a href={`${url}?download=1`} aria-label="Download" title="Download"
+          className="grid size-10 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Download size={19} /></a>
+        <button onClick={onClose} aria-label="Close" title="Close"
+          className="grid size-10 place-items-center rounded-full bg-white/10 text-txt hover:bg-white/20"><X size={20} /></button>
+      </header>
+      <div className="flex min-h-0 flex-1 items-center justify-center px-3 pb-3 md:px-8 md:pb-6" onClick={(e) => mode !== 'image' && e.stopPropagation()}>
+        {mode === 'image' && <img src={url} alt={name} onClick={(e) => e.stopPropagation()} className="rise max-h-full max-w-full rounded-xl object-contain shadow-2xl" />}
+        {mode && mode !== 'image' && (
+          <iframe src={mode === 'docx' ? `${url}?preview=1` : url} title={name} className="rise h-full w-full max-w-4xl rounded-xl bg-white shadow-2xl" />
+        )}
+        {!mode && (
+          <div className="flex flex-col items-center gap-3 text-center">
+            <p className="text-sm text-mute">This file type can't be previewed here.</p>
+            <a href={`${url}?download=1`} className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2.5 text-sm font-medium text-white"><Download size={16} /> Download</a>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 const EVERY = 2000;
 const TRIES = 15; // about half a minute, which is longer than a healthy send takes
 
 export default function DraftCard({ draft, from, onChanged, onRemoved }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
+  const [viewing, setViewing] = useState(null); // index of the attachment being looked at
   const watch = useRef(null);
   const s = STATE[draft.status] || STATE.pending;
 
@@ -132,6 +183,31 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
       </dl>
 
       <p className="mt-2.5 whitespace-pre-wrap border-t border-stroke/60 pt-2.5 text-[13px] leading-relaxed">{draft.body}</p>
+
+      {draft.files?.length > 0 && (
+        <div className="mt-2.5 border-t border-stroke/60 pt-2.5">
+          <p className="mb-1.5 flex items-center gap-1.5 text-xs text-mute"><Paperclip size={12} /> {draft.files.length === 1 ? '1 attachment' : `${draft.files.length} attachments`}</p>
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {draft.files.map((f, i) => (
+              <li key={i}>
+                <button onClick={() => setViewing(i)} disabled={!f.here} title={f.here ? 'Preview' : 'No longer kept here'}
+                  className="flex w-full items-center gap-2.5 rounded-xl border border-stroke bg-white/[0.04] p-2 text-left enabled:hover:border-p1/60 enabled:hover:bg-white/[0.08] disabled:opacity-70">
+                  {f.here && modeOf(f.name) === 'image'
+                    ? <img src={fileUrl(draft.id, i)} alt="" className="size-11 shrink-0 rounded-lg object-cover" />
+                    : <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-white/[0.07] text-[10px] font-semibold uppercase text-mute">{extOf(f.name) || <FileText size={18} />}</span>}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] text-txt">{f.name}</span>
+                    <span className="block text-[11px] text-mute">{[f.size && fmtSize(f.size), f.here && 'Tap to preview'].filter(Boolean).join(' · ')}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {viewing !== null && draft.files?.[viewing] && (
+        <FilePreview name={draft.files[viewing].name} url={fileUrl(draft.id, viewing)} onClose={() => setViewing(null)} />
+      )}
 
       {draft.error && (
         <p className="mt-2.5 flex items-start gap-2 text-xs text-bad"><AlertCircle size={14} className="mt-0.5 shrink-0" />{draft.error}</p>

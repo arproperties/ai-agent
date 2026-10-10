@@ -36,7 +36,7 @@ function Place({ Ico, color, label, hint, here, onClick, badge = 0 }) {
   );
 }
 
-export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, dutiesOpen, onDuties, propertiesOpen, onProperties, chatsOpen, unreadMessages = 0, onChats, leasingOpen, leasingTab, onLeasing, onEditAgent, onFiles, onMemory, onEmail, onPeople, sourcesOpen, onSources, regionOpen, onRegion, onActivity, onLogout, onClose }) {
+export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, propertiesOpen, onProperties, chatsOpen, unreadMessages = 0, onChats, leasingOpen, leasingTab, onLeasing, onEditAgent, onFiles, onMemory, onEmail, onPeople, sourcesOpen, onSources, regionOpen, onRegion, onActivity, onLogout, onClose }) {
   // Only shown once somebody has actually looked at this account, so it is silent for
   // anyone nobody inspects - and impossible to miss for anyone who is.
   const [watched, setWatched] = useState(0);
@@ -102,8 +102,8 @@ export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodo
             </button>
           )}
           <SettingsMenu user={user} agents={agents} onEditAgent={onEditAgent} expiring={expiring} dueTodos={dueTodos}
-            filesOpen={filesOpen} todosOpen={todosOpen} meetingsOpen={meetingsOpen} transcribeOpen={transcribeOpen} dutiesOpen={dutiesOpen} propertiesOpen={propertiesOpen} leasingOpen={leasingOpen}
-            onFiles={onFiles} onTodos={onTodos} onMeetings={onMeetings} onTranscribe={onTranscribe} onDuties={onDuties} onProperties={onProperties} onLeasing={onLeasing}
+            filesOpen={filesOpen} todosOpen={todosOpen} meetingsOpen={meetingsOpen} transcribeOpen={transcribeOpen} dutiesOpen={dutiesOpen} checklistsOpen={checklistsOpen} hasBuildings={hasBuildings} buildingsOpen={buildingsOpen} inventoryOpen={inventoryOpen} propertiesOpen={propertiesOpen} leasingOpen={leasingOpen}
+            onFiles={onFiles} onTodos={onTodos} onMeetings={onMeetings} onTranscribe={onTranscribe} onDuties={onDuties} onChecklists={onChecklists} onBuildings={onBuildings} onInventory={onInventory} onProperties={onProperties} onLeasing={onLeasing}
             onMemory={onMemory} onEmail={onEmail} onPeople={onPeople} onRegion={onRegion} />
           <NotifyBell />
           <button onClick={onLogout} aria-label="Sign out" title="Sign out" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">

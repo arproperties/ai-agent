@@ -7,6 +7,8 @@ import { connectedMailbox, senderName } from './email.js';
 import { todoKit } from './todos.js';
 import { teamReminderKit } from './teamReminders.js';
 import { responsibilityKit } from './responsibilities.js';
+import { buildingKit } from './buildings.js';
+import { inventoryKit } from './inventory.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
 import { leasingKit } from './leasingKit.js';
@@ -97,6 +99,8 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
       parts.push(`You can also act on this mailbox. create_draft and reply_email write an email and put it in front of ${user.name} with ` +
         'Approve and Reject buttons — you never send anything yourself, and send_email cannot bypass that. Prefer reply_email over create_draft ' +
         'when answering an email that already exists, so it threads. mark_read, mark_unread and move_email take effect immediately. ' +
+        'Both can carry attachments: a saved file from <file_library> or one attached in this chat, by its file name, or a file from an email ' +
+        '(its email id and attachment name) to forward it. Attach only what they asked for, and name the attached files in your reply. ' +
         `When you draft something, say so plainly and tell ${user.name} it is waiting for their approval. Never claim an email has been sent.`);
       if (senderName(mailbox.address)) {
         parts.push(`Every email you draft goes out from ${mailbox.address}, so sign it off as ${senderName(mailbox.address)}. ` +
@@ -203,6 +207,7 @@ async function readAttachments(user, convId, files, send, team) {
       if (isImage(f)) {
         const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
         blocks.push({ type: 'image', source: { type: 'base64', media_type: f.mimetype, data: f.buffer.toString('base64') } });
+        blocks.push({ type: 'text', text: `<image name="${name}" />` }); // the name is how it can be attached to an email
         if (!duplicate) processDocument(doc, f, undefined, team);
         meta.push({ name, kind: 'image', docId: doc.id });
       } else if (isVideo(f)) {
@@ -238,6 +243,31 @@ async function readAttachments(user, convId, files, send, team) {
     }
   }
   return { blocks, meta };
+}
+
+// Asked again before it was answered — the reply was slow, stopped or lost, so the same
+// words were sent a second time. That is one question, not two: it is kept once, and the
+// reply that does come answers it. Only plain words count; a file is never folded away.
+const REPEAT_S = 10 * 60;
+export async function saveQuestion(convId, text, files) {
+  const last = await db.prepare(`SELECT id, role, content, files, extract(epoch from now()) - created_at age
+    FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1`).get(convId);
+  if (text && !files.length && last?.role === 'user' && last.content === text && last.files === '[]' && last.age < REPEAT_S) {
+    return { id: last.id, repeat: true };
+  }
+  const { id } = await db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?) RETURNING id')
+    .run(convId, 'user', text, JSON.stringify(files));
+  return { id, repeat: false };
+}
+
+/**
+ * One message out of a Reem chat, for the person whose chat it is. Only the message goes:
+ * a file it brought stays on the Shelf, and the agent no longer sees those words.
+ */
+export async function deleteMessage(userId, id) {
+  const r = await db.prepare(`DELETE FROM messages m USING conversations c
+    WHERE c.id = m.conversation_id AND m.id = ? AND c.user_id = ?`).run(Number(id) || 0, userId);
+  return r.changes > 0;
 }
 
 export async function chat(req, res) {
@@ -290,6 +320,8 @@ export async function chat(req, res) {
   const saifsysAct = await saifsysActionKit(user, { conversationId: convId, onCard: (b) => send('arsBooking', b) });
   const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), leasingKit(user, { onChanged: () => send('changed', { what: 'leasing' }) }),
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
+    await buildingKit(user),
+    await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),
     ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
@@ -301,8 +333,8 @@ export async function chat(req, res) {
   if (picked.length) send('status', { label: picked.length > 1 ? 'Reading the chats you brought in…' : 'Reading the chat you brought in…' });
   const { chats: carried, added } = await carry(user, convId, picked);
   if (carried.length) send('carried', carried.map(({ id, title }) => ({ id, title })));
-  const { id: userMessageId } = await db.prepare('INSERT INTO messages (conversation_id, role, content, files) VALUES (?, ?, ?, ?) RETURNING id')
-    .run(convId, 'user', text, JSON.stringify(savedFiles));
+  const { id: userMessageId, repeat } = await saveQuestion(convId, text, savedFiles);
+  if (repeat) send('repeat', { userMessageId }); // the app shows it once too
   if (added.length) await noteCarried(userMessageId, added);
 
   // 3. Stream the reply (with web search, and email tools when a mailbox is connected).
@@ -313,7 +345,8 @@ export async function chat(req, res) {
   const cited = new Map(); // pages the reply explicitly cites
   const searched = new Map(); // pages returned by searches (fallback: the newer search tool often returns no citations)
   const ran = []; // this turn's tool calls, kept with the reply so later turns see what was really done
-  const convo = [...toClaude(prior), { role: 'user', content: [...blocks, { type: 'text', text: text || 'Please review the attached file(s).' }] }];
+  // A repeat is already the last of the earlier turns: it is not said to the agent twice.
+  const convo = [...toClaude(repeat ? prior.slice(0, -1) : prior), { role: 'user', content: [...blocks, { type: 'text', text: text || 'Please review the attached file(s).' }] }];
   const emit = (t) => { reply += t; send('delta', { text: t }); };
   res.on('close', () => { if (!finished) stream?.abort(); });
 

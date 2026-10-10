@@ -864,6 +864,8 @@ await db.exec(`
 //   remind_at: NULL means "as soon as they tap Send".
 //   everyone: remembered so the card can say "Everyone" rather than a list of twenty names.
 //   team_reminder_people: one row per person it went to, and each person's own tick.
+//   team_reminder_photos: pictures sent along with it. path is the reminder's own copy of
+//     the bytes, under data/reminder-files, not the sender's Shelf file.
 await db.exec(`
   CREATE TABLE IF NOT EXISTS team_reminders (
     id SERIAL PRIMARY KEY,
@@ -887,6 +889,14 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_team_rem_sender ON team_reminders(sender_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_team_rem_waiting ON team_reminders(remind_at) WHERE status = 'scheduled';
   CREATE INDEX IF NOT EXISTS idx_team_rem_people ON team_reminder_people(user_id, done);
+  CREATE TABLE IF NOT EXISTS team_reminder_photos (
+    id SERIAL PRIMARY KEY,
+    reminder_id INTEGER NOT NULL REFERENCES team_reminders(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    path TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_team_rem_photos ON team_reminder_photos(reminder_id);
 `);
 
 // Reminders Riley thinks someone might want — the tables behind server/suggestions.js.
@@ -1362,4 +1372,339 @@ await db.exec(`
     created_at  BIGINT DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_prop_inspection_photos ON prop_inspection_photos(inspection_id);
+`);
+
+// Checklists: the points of one job, ticked off each time it is done - see server/checklists.js.
+// Their own tables rather than a flag on todos or routines: those are single things, and
+// a checklist is several steps that belong together and are done as one.
+//   kind: 'daily' comes back empty every morning; 'ondemand' is started when the job comes up.
+//   checklist_runs: one go. day is the Dubai date for a daily go (one per day, hence the
+//     unique index - NULLs do not collide, so a when-needed checklist has as many as it likes).
+//   checklist_run_items: the go's own copy of the points, so editing the checklist later
+//     never rewrites what was ticked before. item_id is where the copy came from.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS checklists (
+    id SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    kind        TEXT NOT NULL CHECK (kind IN ('daily', 'ondemand')),
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_checklists_user ON checklists(user_id, id);
+
+  CREATE TABLE IF NOT EXISTS checklist_items (
+    id SERIAL PRIMARY KEY,
+    checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    text     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_checklist_items ON checklist_items(checklist_id, position);
+
+  CREATE TABLE IF NOT EXISTS checklist_runs (
+    id SERIAL PRIMARY KEY,
+    checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    label TEXT,
+    day   TEXT,
+    started_at  BIGINT DEFAULT ${NOW},
+    finished_at BIGINT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_checklist_run_day ON checklist_runs(checklist_id, day);
+
+  CREATE TABLE IF NOT EXISTS checklist_run_items (
+    id SERIAL PRIMARY KEY,
+    run_id  INTEGER NOT NULL REFERENCES checklist_runs(id) ON DELETE CASCADE,
+    item_id INTEGER REFERENCES checklist_items(id) ON DELETE SET NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    text     TEXT NOT NULL,
+    done_at  BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_checklist_run_items ON checklist_run_items(run_id, position);
+`);
+
+// Buildings: who runs each building and which field staff were given to them - see
+// server/buildings.js. Its own tables: this is the company's structure, not HR's manager
+// field and not a responsibility.
+//   buildings: the name the office uses ("Townhouses"), its administrator, and who
+//     handles its renewals when that is not the administrator. watched_at: when the
+//     job watcher first looked, so the first look records what is there without buzzing.
+//   building_sites: the saifsys buildings (re_buildings.id) behind that name - usually
+//     one, several where the office's name covers more than one.
+//   building_staff: the cleaners and technicians, by HR employee code. They have no Reem
+//     account; they work on the saifsys staff app. One person can be in several buildings.
+//   building_jobs_seen: each staff job as the watcher last saw it, so a buzz goes out
+//     once when something changes and never again for the same thing.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS buildings (
+    id SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    admin_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    renewals_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    watched_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_buildings_admin ON buildings(admin_id);
+
+  CREATE TABLE IF NOT EXISTS building_sites (
+    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    site_id     INTEGER NOT NULL,
+    name        TEXT NOT NULL,
+    PRIMARY KEY (building_id, site_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS building_staff (
+    building_id   INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    employee_code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('cleaner', 'technician')),
+    PRIMARY KEY (building_id, employee_code)
+  );
+
+  CREATE TABLE IF NOT EXISTS building_jobs_seen (
+    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    job_id      INTEGER NOT NULL,
+    status      TEXT NOT NULL,
+    late            BOOLEAN NOT NULL DEFAULT false,
+    needs_materials BOOLEAN NOT NULL DEFAULT false,
+    problems        BOOLEAN NOT NULL DEFAULT false,
+    last_message_id INTEGER NOT NULL DEFAULT 0,
+    seen_at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (building_id, job_id)
+  );
+`);
+
+// Inventory: the things kept in each unit and area of a building - see server/inventory.js.
+// Its own tables, hung off buildings so the same people keep it who run the building.
+//   inventory_areas: the places of a building that are not a unit (lobby, store room).
+//   inventory_items: one thing in one place. unit is the saifsys unit number as text;
+//     an item is in a unit or in an area, never both. photo is a path on disk.
+//   inventory_log: every change, with who made it. item_id is not a foreign key, so
+//     what happened to an item is still there after the item is removed.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS inventory_areas (
+    id SERIAL PRIMARY KEY,
+    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+
+  CREATE TABLE IF NOT EXISTS inventory_items (
+    id SERIAL PRIMARY KEY,
+    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    unit    TEXT,
+    area_id INTEGER REFERENCES inventory_areas(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    counted_in TEXT,
+    quantity   NUMERIC NOT NULL DEFAULT 1,
+    condition  TEXT NOT NULL DEFAULT 'good' CHECK (condition IN ('good', 'damaged', 'missing')),
+    notes TEXT,
+    photo TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW},
+    CHECK ((unit IS NULL) <> (area_id IS NULL))
+  );
+  CREATE INDEX IF NOT EXISTS idx_inventory_items_building ON inventory_items(building_id);
+
+  CREATE TABLE IF NOT EXISTS inventory_log (
+    id SERIAL PRIMARY KEY,
+    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    item_id   INTEGER NOT NULL,
+    item_name TEXT NOT NULL,
+    place     TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    what TEXT NOT NULL,
+    at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_inventory_log_item ON inventory_log(item_id, id);
+`);
+
+// What was taken out for a saifsys job - see takeItem in server/inventory.js. Kept on the
+// log line itself (job_id set = this line is a take), so an item's history and a job's
+// list of materials are the same record and cannot disagree.
+await db.exec(`
+  ALTER TABLE inventory_log ADD COLUMN IF NOT EXISTS job_id     INTEGER;
+  ALTER TABLE inventory_log ADD COLUMN IF NOT EXISTS taken      NUMERIC;
+  ALTER TABLE inventory_log ADD COLUMN IF NOT EXISTS counted_in TEXT;
+  ALTER TABLE inventory_log ADD COLUMN IF NOT EXISTS note       TEXT;
+  CREATE INDEX IF NOT EXISTS idx_inventory_log_job ON inventory_log(job_id) WHERE job_id IS NOT NULL;
+`);
+
+// Inventory is kept per real saifsys building (site_id = re_buildings.id), not per entry
+// on the Buildings screen - see the top of server/inventory.js. The old building_id stays
+// on rows written before this and is no longer read or written; its foreign key and its
+// NOT NULL go, so regrouping or deleting an entry there cannot take a real building's
+// inventory with it.
+//
+// Rows from before are moved once (site_id IS NULL marks them): a unit item of an entry
+// covering several buildings carried "Name · unit" and goes to that building with the
+// plain unit; everything else goes to the entry's building, the first by name when it
+// covered several. An entry with nothing ticked had no real building: its rows stay
+// unmoved and unseen.
+const FIRST_SITE = (alias) => `(SELECT s.site_id FROM building_sites s WHERE s.building_id = ${alias}.building_id ORDER BY lower(s.name), s.site_id LIMIT 1)`;
+await db.exec(`
+  ALTER TABLE inventory_areas     ADD COLUMN IF NOT EXISTS site_id INTEGER;
+  ALTER TABLE inventory_items     ADD COLUMN IF NOT EXISTS site_id INTEGER;
+  ALTER TABLE inventory_log       ADD COLUMN IF NOT EXISTS site_id INTEGER;
+
+  ALTER TABLE inventory_areas DROP CONSTRAINT IF EXISTS inventory_areas_building_id_fkey;
+  ALTER TABLE inventory_items DROP CONSTRAINT IF EXISTS inventory_items_building_id_fkey;
+  ALTER TABLE inventory_log   DROP CONSTRAINT IF EXISTS inventory_log_building_id_fkey;
+  ALTER TABLE inventory_areas ALTER COLUMN building_id DROP NOT NULL;
+  ALTER TABLE inventory_items ALTER COLUMN building_id DROP NOT NULL;
+  ALTER TABLE inventory_log   ALTER COLUMN building_id DROP NOT NULL;
+
+  UPDATE inventory_areas a SET site_id = ${FIRST_SITE('a')} WHERE a.site_id IS NULL AND a.building_id IS NOT NULL;
+  UPDATE inventory_items i SET site_id = s.site_id, unit = substr(i.unit, length(s.name) + 4)
+    FROM building_sites s
+    WHERE i.site_id IS NULL AND i.unit IS NOT NULL AND s.building_id = i.building_id
+      AND left(i.unit, length(s.name) + 3) = s.name || ' · '
+      AND (SELECT count(*) FROM building_sites c WHERE c.building_id = i.building_id) > 1;
+  UPDATE inventory_items i SET site_id = a.site_id FROM inventory_areas a WHERE i.site_id IS NULL AND i.area_id = a.id;
+  UPDATE inventory_items i SET site_id = ${FIRST_SITE('i')} WHERE i.site_id IS NULL AND i.building_id IS NOT NULL;
+  UPDATE inventory_log l SET site_id = i.site_id FROM inventory_items i WHERE l.site_id IS NULL AND l.item_id = i.id;
+  UPDATE inventory_log l SET site_id = ${FIRST_SITE('l')} WHERE l.site_id IS NULL AND l.building_id IS NOT NULL;
+
+  -- Two entries that both covered one building may each have had a "Store room": the
+  -- later one keeps its items and gets its number in the name, so the index below holds.
+  UPDATE inventory_areas a SET name = a.name || ' (' || a.id || ')'
+    WHERE a.site_id IS NOT NULL AND EXISTS (SELECT 1 FROM inventory_areas o
+      WHERE o.site_id = a.site_id AND lower(o.name) = lower(a.name) AND o.id < a.id);
+  DROP INDEX IF EXISTS idx_inventory_areas_name;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_areas_site_name ON inventory_areas(site_id, lower(name)) WHERE site_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_inventory_items_site ON inventory_items(site_id);
+`);
+
+// Inventory items got ready from chat, waiting for Add or Cancel on their card - see
+// "adding from chat" in server/inventory.js. lines is every item in every place, as it
+// will be added; added is how many went in.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS inventory_proposals (
+    id SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    building_id     INTEGER REFERENCES buildings(id) ON DELETE SET NULL,
+    lines JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'added', 'cancelled')),
+    added INTEGER,
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_inventory_proposals_chat ON inventory_proposals(user_id, conversation_id, id);
+  ALTER TABLE inventory_proposals ADD COLUMN IF NOT EXISTS site_id INTEGER;
+`);
+
+// Recurring payments: money that should come in every month from something in a building
+// (a shop's rent, the washing machine in Ayla) - see server/recurringPayments.js.
+//   recurring_buildings: the module's own buildings, typed by the accountants. Nothing to
+//     do with the Buildings screen, the inventory or the saifsys building list.
+//   recurring_payments: the entry, made once, in one of those buildings. day is the day of
+//     the month its line is created.
+//   recurring_payment_dues: one month's line of one entry, pending until marked paid.
+//     amount is the entry's amount on the day the line was made, so a later change to the
+//     entry never rewrites a month already asked for. One line per entry per month, by
+//     the unique index, so the creator can run as often as it likes.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_buildings (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_buildings_name ON recurring_buildings(lower(name));
+
+  CREATE TABLE IF NOT EXISTS recurring_payments (
+    id SERIAL PRIMARY KEY,
+    building_id INTEGER NOT NULL REFERENCES recurring_buildings(id),
+    unit  TEXT,
+    title TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    day    INTEGER NOT NULL CHECK (day BETWEEN 1 AND 31),
+    auto_create BOOLEAN NOT NULL DEFAULT true,
+    first_month TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT true,
+    notes TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+
+  -- Entries made while a building was a saifsys building (site_id, site_name): each name
+  -- becomes a building of the module's own, once, and the old columns go.
+  ALTER TABLE recurring_payments ADD COLUMN IF NOT EXISTS building_id INTEGER REFERENCES recurring_buildings(id);
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'recurring_payments' AND column_name = 'site_name') THEN
+      INSERT INTO recurring_buildings (name)
+        SELECT min(site_name) FROM recurring_payments GROUP BY lower(site_name)
+        ON CONFLICT DO NOTHING;
+      UPDATE recurring_payments p SET building_id = b.id FROM recurring_buildings b
+        WHERE p.building_id IS NULL AND lower(b.name) = lower(p.site_name);
+      ALTER TABLE recurring_payments ALTER COLUMN building_id SET NOT NULL;
+      DROP INDEX IF EXISTS idx_recurring_payments_site;
+      ALTER TABLE recurring_payments DROP COLUMN site_id, DROP COLUMN site_name;
+    END IF;
+  END $$;
+  CREATE INDEX IF NOT EXISTS idx_recurring_payments_building ON recurring_payments(building_id);
+
+  CREATE TABLE IF NOT EXISTS recurring_payment_dues (
+    id SERIAL PRIMARY KEY,
+    payment_id INTEGER NOT NULL REFERENCES recurring_payments(id) ON DELETE CASCADE,
+    month    TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid')),
+    paid_at BIGINT,
+    paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_payment_dues_month ON recurring_payment_dues(payment_id, month);
+  CREATE INDEX IF NOT EXISTS idx_recurring_payment_dues_by_month ON recurring_payment_dues(month);
+`);
+
+// Recurring payments, where the money is: the module's own accounts ("Cash to Mr Tauqeer",
+// "Bank"), a free list typed by the accountants and used nowhere else.
+//   recurring_accounts: the list.
+//   recurring_payment_dues.account_id: the account a paid line's money went into;
+//     paid_on is the day it was received (picked, so it can be an earlier day than the
+//     one it was written down on, which is paid_at);
+//     attachment is the file kept with it (a receipt), a path under data/recurring.
+//   recurring_transfers: money handed from one account to another, with its own file.
+// An account holds what was paid into it, plus what was transferred in, less what was
+// transferred out. Nothing is stored for that; it is added up when asked.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_accounts (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_accounts_name ON recurring_accounts(lower(name));
+
+  ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES recurring_accounts(id);
+  ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS attachment TEXT;
+  ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS paid_on TEXT;
+  UPDATE recurring_payment_dues SET paid_on = to_char(to_timestamp(paid_at + 4 * 3600) AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+    WHERE status = 'paid' AND paid_on IS NULL AND paid_at IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_recurring_payment_dues_account ON recurring_payment_dues(account_id);
+
+  CREATE TABLE IF NOT EXISTS recurring_transfers (
+    id SERIAL PRIMARY KEY,
+    from_account_id INTEGER NOT NULL REFERENCES recurring_accounts(id),
+    to_account_id   INTEGER NOT NULL REFERENCES recurring_accounts(id),
+    amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    date TEXT NOT NULL,
+    notes TEXT,
+    attachment TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    CHECK (from_account_id <> to_account_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_recurring_transfers_from ON recurring_transfers(from_account_id);
+  CREATE INDEX IF NOT EXISTS idx_recurring_transfers_to ON recurring_transfers(to_account_id);
 `);

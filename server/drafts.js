@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { db } from './db.js';
 
 // An email an agent wrote, waiting for its owner. Nothing here sends anything — the whole
@@ -104,6 +105,13 @@ export const draftOut = (d) => d && {
   hidden: !!d.hidden,
   from: d.from_addr,
   attachments: d.attachments ? JSON.parse(d.attachments).map((a) => a.filename) : [],
+  // The same list with what the card needs to show each one. `here` is whether the file can
+  // still be opened: the copy is removed once the email is sent or rejected.
+  files: d.attachments ? JSON.parse(d.attachments).map((a) => ({
+    name: a.filename,
+    size: a.size ?? (a.content ? Math.floor(a.content.length * 0.75) : null),
+    here: a.path ? existsSync(a.path) : !!a.content,
+  })) : [],
 };
 
 // ---------- the record, and the limit ----------

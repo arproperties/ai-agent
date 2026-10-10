@@ -11,6 +11,10 @@ export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, 
   const [queued, setQueued] = useState(null); // spoken while a reply was still arriving
   const fileRef = useRef();
   const areaRef = useRef();
+  // Read when the words come back, not when the mic was tapped: a reply can start or end
+  // while someone is still talking, and a stale answer here would send on top of that reply.
+  const busyNow = useRef(busy);
+  busyNow.current = busy;
 
   const grow = (el) => { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 160)}px`; };
 
@@ -45,7 +49,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, 
       });
       if (said) {
         const whole = [text, said].filter(Boolean).join(' ');
-        if (busy) setQueued(whole); // a reply is still coming; wait for it
+        if (busyNow.current) setQueued(whole); // a reply is still coming; wait for it
         else onSend(whole, files, { voice: true });
         setText('');
         setFiles([]);
@@ -109,6 +113,13 @@ export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, 
             : queued ? 'Waiting for the reply, then sending…'
             : 'Message'}
           className="max-h-40 min-h-10 flex-1 resize-none bg-transparent px-1 py-2 leading-6 outline-none placeholder:text-mute/70" />
+        {/* Said the wrong thing: throw the recording away. Nothing is transcribed or sent. */}
+        {voiceEnabled && rec === 'recording' && (
+          <button type="button" onClick={stopListening} aria-label="Delete this voice note" title="Delete this voice note"
+            className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad">
+            <Icon name="trash" size={18} />
+          </button>
+        )}
         {voiceEnabled && (
           <button type="button" onClick={toggleMic} disabled={rec === 'transcribing'}
             aria-label={rec === 'recording' ? 'Stop and send' : 'Speak'} title={rec === 'recording' ? 'Stop and send' : 'Speak'}
