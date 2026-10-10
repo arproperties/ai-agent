@@ -28,7 +28,7 @@ const DEFAULTS = {
   summary: { on: true },                                 // the morning's one-line total, to the master
   quiet: { from: 22, to: 8 },                            // no buzz between these hours (the business's time zone)
   latefee: { on: false, days: 5, amount: 0, percent: 0 }, // a fee on rent still unpaid after the days of grace: fixed, a share of the rent, or both
-  tenant: { on: false },                                 // email the tenant the reminder automatically, on the due day and the overdue days
+  tenant: { on: false, before: 3 },                      // email the tenant the reminder automatically: this many days before (0: not before), on the due day and the overdue days
 };
 export const RULES = ['overdue', 'due', 'upcoming', 'ending', 'contract', 'eid', 'document'];
 const aed = (n) => cash(Math.round(n));
@@ -64,7 +64,7 @@ export async function saveSettings(body = {}, today = todayHere()) {
   const since = fee.on ? (now.latefee.on && now.latefee.since) || today : null;
   const next = {
     latefee: { ...fee, ...(since ? { since } : {}) },
-    tenant: { on: on('tenant') },
+    tenant: { on: on('tenant'), before: pick('tenant', 'before', (v) => whole(v, 60, 'Days before the due date')) },
     upcoming: { on: on('upcoming'), days: pick('upcoming', 'days', (v) => whole(v, 60, 'Days before a payment')) },
     due: { on: on('due') },
     overdue: { on: on('overdue'), days: pick('overdue', 'days', (v) => dayList(v, 'Days late').reverse()), every: pick('overdue', 'every', (v) => Math.max(1, whole(v, 90, 'Repeat every'))) },
@@ -226,10 +226,11 @@ export async function runAlerts(today = todayHere(), hour = hourHere(), { mail }
 }
 
 /**
- * The reminder, emailed to the tenant without anybody pressing send: on the day a payment
- * is due, and on the days the overdue rule chases (1, 3, 7 days late, then every so many).
- * One email a booking a day at most, about its oldest unpaid amount, in the master's wording,
- * and written in the booking's history. A tenant with no email address gets nothing: WhatsApp
+ * The reminder, emailed to the tenant without anybody pressing send: a few days before a
+ * payment is due (the master says how many; 0 is not before), on the day it is due, and on the
+ * days the overdue rule chases (1, 3, 7 days late, then every so many). One email a booking a
+ * day at most, about its oldest unpaid amount that today is a day to write about, in the
+ * master's wording, and written in the booking's history. A tenant with no email address gets nothing: WhatsApp
  * cannot be sent by a server, so that still takes a person.
  */
 async function emailTenants(s, cfg, mail) {
@@ -239,12 +240,13 @@ async function emailTenants(s, cfg, mail) {
     mail = m.sendPlain;
   }
   const last = Math.max(...cfg.overdue.days);
-  const oldest = new Map(); // booking → its oldest unpaid amount that has fallen due
-  for (const p of s.dues) if (p.left && p.due <= s.today && !oldest.has(p.booking_id)) oldest.set(p.booking_id, p);
+  // Days late (fewer than none: days still to go) on which the tenant is written to.
+  const goes = (d) => (d < 0 ? -d === cfg.tenant.before : d === 0 || cfg.overdue.days.includes(d) || (d > last && (d - last) % cfg.overdue.every === 0));
+  const oldest = new Map(); // booking → its oldest unpaid amount that today is a day to write about
+  for (const p of s.dues) if (p.left && !oldest.has(p.booking_id) && goes(s.T - dayNo(p.due))) oldest.set(p.booking_id, p);
   for (const [bookingId, p] of oldest) {
     const b = s.bookingOf.get(bookingId);
-    const d = s.T - dayNo(p.due);
-    if (!b.tenant_email || !(d === 0 || cfg.overdue.days.includes(d) || (d > last && (d - last) % cfg.overdue.every === 0))) continue;
+    if (!b.tenant_email) continue;
     const fresh = await db.prepare('INSERT INTO lease_tenant_notices (booking_id, day) VALUES (?, ?) ON CONFLICT DO NOTHING').run(bookingId, s.today);
     if (!fresh.changes) continue;
     try {

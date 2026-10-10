@@ -152,7 +152,9 @@ function Rules({ start, onSaved }) {
         ? ['Percent of the late rent', <Num value={v.latefee.percent} onChange={setFee('percent')} min={0} max={100} unit="%" label="Late fee percent of the rent" />]
         : ['Fee', <Num value={v.latefee.amount} onChange={setFee('amount')} min={0} max={1000000} unit={currency()} label="Late fee amount" />],
     ]],
-    ['tenant', 'Email the tenant automatically', Mail, 'On the due date and on the overdue days above, the reminder is emailed to the tenant by itself, in your wording. Tenants with no email get nothing; WhatsApp still needs a person to press send.', []],
+    ['tenant', 'Email the tenant automatically', Mail, 'Before the due date, on it, and on the overdue days above, the reminder is emailed to the tenant by itself, in your wording. Tenants with no email get nothing; WhatsApp still needs a person to press send.', [
+      ['First email this long before the due date (0: not before)', num('tenant', 'before', 'Days before the due date', 60)],
+    ]],
     ['quiet', 'Quiet hours', Moon, 'No phone notification between these hours, in the time zone set under Region. What is held back goes when they end.', [
       ['From', num('quiet', 'from', 'Quiet from', 23, ':00')],
       ['Until', num('quiet', 'to', 'Quiet until', 23, ':00')],

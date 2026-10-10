@@ -118,6 +118,18 @@ test('the people who look after a building get its alerts, and the tenant can be
   await runAlerts('2026-09-22', 10, { mail });
   assert.deepEqual([tries, mails.length], [1, 2]);
 
+  // October's rent, due on the 15th: the tenant hears three days before, unless the master says not before.
+  await runAlerts('2026-10-11', 9, { mail });
+  assert.equal(mails.length, 2, 'four days before is not the day');
+  assert.deepEqual((await saveSettings({ tenant: { before: 0 } })).tenant, { on: true, before: 0 });
+  await runAlerts('2026-10-12', 9, { mail });
+  assert.equal(mails.length, 2, 'not before, the master said');
+  await saveSettings({ tenant: { before: 3 } });
+  await runAlerts('2026-10-12', 10, { mail });
+  assert.equal(mails.length, 3);
+  assert.match(mails[2][1], /^Reminder: rent for unit 101, Tower/);
+  assert.match(mails[2][2], /^Dear Sara, a kind reminder that rent of AED 4,500 .* is due on /);
+
   // Two bookings of one tenant are one tenant behind.
   const u2 = await create('unit', { unit_no: '102' }, b.id);
   await createBooking({ unit_id: u2.id, tenant_id: bk.tenant_id, start_date: '2026-09-15', end_date: '2026-11-14', rent_amount: 3000, status: 'confirmed' }, staff);
