@@ -5,16 +5,17 @@ import { usDate as fmt } from '../lib/usFormat';
 import Select from './Select';
 
 // One renewal: getting a document that is due renewed, with Riley doing the legwork
-// (server/renewals.js). Five steps across the top: who to ask, the requests, the quotes that
-// came back, the offers side by side, and the decision. What Riley found or wrote is shown
-// with her mark; a person ticks, confirms an address, approves an email and chooses.
-// No email leaves from here without Approve being pressed on it.
+// (server/renewals.js). It is one page, for people who are not at home with forms: a line
+// at the top says what to do now, and under it only what that takes. First who to ask (Riley
+// has looked already; a person ticks and gives an email address), then the emails to
+// approve, then the offers as cards with her pick first, then the email that accepts one.
+// Comparing happens by itself when a quote arrives. What Riley found or wrote carries her
+// mark. No email leaves from here without Approve being pressed on it.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-p1/70';
 const CARD = 'rounded-2xl border border-stroke px-4 py-3';
 const PRIMARY = 'flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white disabled:opacity-60';
 const QUIET = 'flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-3.5 py-2 text-sm text-mute hover:bg-white/5 hover:text-txt disabled:opacity-50';
-const STEPS = [['suppliers', 'Who to ask'], ['requests', 'Requests'], ['quotes', 'Quotes'], ['compare', 'Compare'], ['decide', 'Decision']];
 const STATE = { listed: ['Not asked', 'bg-white/10 text-txt/80'], written: ['Written, to send by hand', 'bg-warn/10 text-warn'], drafted: ['Waiting for approval', 'bg-warn/10 text-warn'],
   failed: ['Could not be sent', 'bg-bad/10 text-bad'], sending: ['Sending…', 'bg-p3/15 text-p3'], sent: ['Sent', 'bg-p3/15 text-p3'], replied: ['Replied', 'bg-ok/10 text-ok'] };
 const REPLY = { quote: 'Sent a quote', question: 'Asked a question', declined: 'Will not quote', other: 'Wrote back', unread: 'Wrote back (not read)' };
@@ -66,81 +67,65 @@ function Letter({ to, subject, body, status, mine, canEdit, onSave, onApprove, o
   );
 }
 
-/** Who else could be asked: kept from before, and found on the web. Ticked, with an address a person has checked, they join the renewal. */
-function Candidates({ found, onAdd, onClose }) {
-  const all = [...found.known.map((s) => ({ ...s, supplier_id: s.id, from: 'known' })), ...found.found.map((s) => ({ ...s, from: 'web' }))];
-  const [rows, setRows] = useState(all.map((s) => ({ ...s, on: false, address: s.email || '' })));
-  const put = (i, change) => setRows(rows.map((x, j) => (j === i ? { ...x, ...change } : x)));
-  const ticked = rows.filter((x) => x.on);
+/** One company that can be asked: a tick, its name, why it is here, and the one thing a person gives, its email address. */
+function AskRow({ on, onTick, name, tag, why, website, address, onAddress, fixed }) {
   return (
-    <div className={`${CARD} space-y-3`}>
-      <div className="flex items-center gap-2">
-        <p className="flex-1 text-sm font-medium">Others who could be asked</p>
-        <button type="button" onClick={onClose} aria-label="Close" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10"><X size={15} /></button>
-      </div>
-      {found.failed && <p className="text-sm text-warn">The web search could not be made just now. You can still add a supplier yourself below.</p>}
-      {!rows.length && !found.failed && <p className="text-sm text-mute">Nobody new was found.</p>}
-      {rows.map((s, i) => (
-        <div key={`${s.from}-${s.name}`} className="rounded-xl border border-stroke/60 p-3">
-          <label className="flex cursor-pointer items-start gap-3">
-            <input type="checkbox" checked={s.on} onChange={(e) => put(i, { on: e.target.checked })} className="mt-1 size-4 accent-p1" />
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm">{s.name} <span className="text-xs text-mute">· {s.kind || 'insurer'}</span></span>
-              {s.from === 'web' ? <Riley>Found on the web{s.why ? `: ${s.why}` : ''}</Riley> : <span className="text-xs text-mute">Used before</span>}
-              {s.website && <a href={s.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="mt-0.5 flex items-center gap-1 text-xs text-p3 hover:underline"><ExternalLink size={12} /> {s.website}</a>}
-            </span>
-          </label>
-          {s.on && (
-            <label className="mt-2 block text-xs text-mute">
-              {s.from === 'web' ? 'Email address, if you have it. One found on the web is only a suggestion: you confirm it after adding.' : 'Email address to write to'}
-              <input value={s.address} onChange={(e) => put(i, { address: e.target.value })} type="email" placeholder="quotes@company.com" className={`${FIELD} mt-1`} />
-            </label>
-          )}
+    <div className={`rounded-2xl border px-4 py-3 ${on ? 'border-p1/50 bg-p1/[0.06]' : 'border-stroke'}`}>
+      <label className="flex cursor-pointer items-start gap-3">
+        <input type="checkbox" checked={on} onChange={(e) => onTick(e.target.checked)} className="mt-0.5 size-5 accent-p1" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">{name}</span>
+          <span className="block text-xs text-mute">{tag}{why ? ` · ${why}` : ''}</span>
+        </span>
+      </label>
+      {on && (fixed ? <p className="mt-2 pl-8 text-sm text-txt/80">{address}</p> : (
+        <div className="mt-2 pl-8">
+          <input value={address} onChange={(e) => onAddress(e.target.value)} type="email" placeholder="Their email address" aria-label={`Email address for ${name}`} className={FIELD} />
+          {!address && website && <a href={/^https?:\/\//i.test(website) ? website : `https://${website}`} target="_blank" rel="noreferrer" className="mt-1.5 inline-flex items-center gap-1 text-xs text-p3 hover:underline"><ExternalLink size={12} /> Find it on their website</a>}
         </div>
       ))}
-      {ticked.length > 0 && (
-        <div className="flex justify-end">
-          <button type="button" className={PRIMARY}
-            onClick={() => onAdd(ticked.map((s) => (s.supplier_id ? { supplier_id: s.supplier_id, email: s.address } : { name: s.name, email: s.address, website: s.website, phone: s.phone, kind: s.kind, found_by: 'search' })))}>
-            <Plus size={15} /> Add {ticked.length} to this renewal
-          </button>
-        </div>
-      )}
     </div>
   );
 }
 
 export default function Renewal({ id, onBack, onFile }) {
   const [r, setR] = useState(null);
-  const [tab, setTab] = useState(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
-  const [found, setFound] = useState(null); // what "Find more" came back with
-  const [mine, setMine] = useState({ name: '', email: '' }); // a supplier typed in by hand
-  const [emails, setEmails] = useState({}); // supplier → the address being typed for it
-  const [fixing, setFixing] = useState(null); // the supplier whose confirmed address is being corrected
-  const [quoteFor, setQuoteFor] = useState('');
+  const kept = `renewal-found-${id}`; // what Riley found, kept for this visit to the app: opening the renewal again does not search again
+  const [found, setFoundNow] = useState(() => { try { return JSON.parse(sessionStorage.getItem(kept)); } catch { return null; } }); // { known, found, failed }
+  const setFound = (f) => { setFoundNow(f); try { if (f && !f.failed) sessionStorage.setItem(kept, JSON.stringify(f)); else sessionStorage.removeItem(kept); } catch { /* kept only on the page, then */ } };
+  const [picks, setPicks] = useState({}); // a row → { on, address }: who is ticked, and the address typed for them
+  const [extra, setExtra] = useState({ open: false, name: '', email: '' }); // a company added by hand
+  const [asking, setAsking] = useState(false); // the list of who to ask is open again, after the first emails
+  const [upload, setUpload] = useState({ open: false, from: '' }); // a quote handed over as a file
 
   const base = `/properties/renewals/${id}`;
-  // The step a renewal is at, for when it is opened: the furthest one that has something in it.
-  const stepOf = (v) => (v.chosen_quote_id ? 'decide' : v.compared ? 'compare' : v.quotes.length ? 'quotes' : v.suppliers.some((s) => s.state !== 'listed') ? 'requests' : 'suppliers');
-  const take = (v) => { setR(v); setTab((t) => t || stepOf(v)); return v; };
+  const take = (v) => { setR(v); return v; };
   useEffect(() => { api.get(base).then(take).catch((e) => setError(e.message)); }, [id]);
-
-  /** Do one thing on the server, showing what is happening; gives back what came, or null if it failed. */
-  const run = async (label, fn) => {
-    setBusy(label); setError(''); setNote('');
-    try { return await fn(); } catch (e) { setError(e.message); return null; } finally { setBusy(''); }
-  };
-  const act = (label, fn, then) => run(label, fn).then((v) => { if (v) { take(v.renewal || v); then?.(v); } return v; });
   const reload = () => api.get(base).then(take).catch(() => {});
   const here = useRef(true); // false once the page is left, so nothing still waiting writes to it
   useEffect(() => { here.current = true; return () => { here.current = false; }; }, []);
   const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+  /** Do one thing on the server, showing what is happening; gives back what came, or null if it failed. */
+  const run = async (label, fn) => {
+    setBusy(label); setError(''); setNote('');
+    try { return await fn(); } catch (e) { if (here.current) setError(e.message); return null; } finally { if (here.current) setBusy(''); }
+  };
+  const act = (label, fn, then) => run(label, fn).then((v) => { if (v) { take(v.renewal || v); then?.(v); } return v; });
+  // Approving hands the email to the outbox; a moment later the renewal knows it has gone.
+  const settle = (draftId, verb) => api.post(`/email/drafts/${draftId}/${verb}`, {});
+  const decideDraft = (draftId, verb) => run(verb === 'approve' ? 'Sending…' : 'Withdrawing…', () => settle(draftId, verb))
+    .then((ok) => { if (ok) { reload(); if (verb === 'approve') { setTimeout(reload, 2500); setTimeout(reload, 8000); } } });
+
+  // Riley looks for more companies by herself the first time the renewal is opened with nobody asked yet.
   // The search takes a minute or more, so it runs on the server while this asks after it.
+  const looked = useRef(!!found);
   const find = async () => {
-    setBusy('Riley is searching the web for insurers and brokers. This takes a minute or two…'); setError(''); setNote('');
+    looked.current = true;
+    setBusy('Riley is looking for insurers and brokers to ask. This takes a minute or two…'); setError('');
     try {
       await api.post(`${base}/find`, {});
       for (let i = 0; i < 100 && here.current; i++) {
@@ -153,15 +138,22 @@ export default function Renewal({ id, onBack, onFile }) {
     } catch (e) { if (here.current) setError(e.message); }
     if (here.current) setBusy('');
   };
-  // Looking the suppliers up runs on the server too: while it does, the page reads again every few seconds.
+  const nobodyAsked = !!r && r.status === 'open' && r.suppliers.every((s) => s.state === 'listed');
+  useEffect(() => { if (nobodyAsked && !looked.current) find(); }, [nobodyAsked]);
+
+  // Once quotes are in, they are compared without being asked: again whenever another arrives.
+  const compared = useRef(-1);
+  useEffect(() => {
+    if (!r || r.status !== 'open' || !r.quotes.length || r.compared || busy || compared.current === r.quotes.length) return;
+    compared.current = r.quotes.length;
+    act('Riley is comparing the offers…', () => api.post(`${base}/compare`, {}));
+  }, [r, busy]);
+  // Looking the suppliers up runs on the server: while it does, the page reads again every few seconds.
   useEffect(() => {
     if (!r?.looking) return undefined;
     const t = setTimeout(reload, 5000);
     return () => clearTimeout(t);
   }, [r]);
-  // Approving hands the email to the outbox; a moment later the renewal knows it has gone.
-  const decideDraft = (draftId, verb) => run(verb === 'approve' ? 'Sending…' : 'Withdrawing…', () => api.post(`/email/drafts/${draftId}/${verb}`, {}))
-    .then((ok) => { if (ok) { reload(); if (verb === 'approve') setTimeout(reload, 2500); } });
 
   if (!r) return error ? (
     <div className="space-y-3">
@@ -169,105 +161,125 @@ export default function Renewal({ id, onBack, onFile }) {
       <p className="text-sm text-bad">{error}</p>
     </div>
   ) : <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
+
   const d = r.document;
   const open = r.status === 'open' || r.status === 'decided';
-  const ready = r.suppliers.filter((s) => ['listed', 'written'].includes(s.state) && s.email && s.email_confirmed);
-  const written = r.suppliers.filter((s) => s.state !== 'listed');
+  const toAsk = r.suppliers.filter((s) => ['listed', 'failed'].includes(s.state)); // on the renewal, not written to yet
+  const letters = r.suppliers.filter((s) => !['listed'].includes(s.state)); // everybody an email exists for
+  const waitingForMe = letters.filter((s) => s.state === 'drafted' && s.draft_owner === r.me);
+  const byHand = letters.filter((s) => s.state === 'written');
+  const out = letters.filter((s) => ['sending', 'sent', 'replied'].includes(s.state));
+  const silent = out.filter((s) => s.state !== 'replied');
   const chosen = r.quotes.find((q) => q.id === r.chosen_quote_id);
+  const closingForMe = r.closing.filter((c) => c.status === 'pending' && c.draft_owner === r.me);
   const about = (sid) => r.suppliers.find((s) => s.supplier_id === sid)?.about || {};
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+  // The rows of who can be asked: those on the renewal and not yet written to, then the ones kept from before, then the ones found.
+  const rows = [
+    ...toAsk.map((s) => ({ key: `s${s.supplier_id}`, supplier_id: s.supplier_id, name: s.name, tag: s.is_current ? 'Has it now' : s.found_by === 'search' ? 'Found on the web' : 'Added', email: s.email || '', website: s.website, onByDefault: true })),
+    ...(found?.known || []).map((s) => ({ key: `k${s.id}`, supplier_id: s.id, name: s.name, tag: 'Used before', email: s.email || '', website: s.website, add: true })),
+    ...(found?.found || []).map((s) => ({ key: `f${s.name}`, name: s.name, tag: 'Found on the web', why: s.why, email: s.email || '', website: s.website, phone: s.phone, kind: s.kind, add: true, web: true })),
+  ];
+  const pick = (row) => ({ on: row.onByDefault || false, address: row.email, ...picks[row.key] });
+  const setPick = (row, change) => setPicks({ ...picks, [row.key]: { ...pick(row), ...change } });
+  const ticked = rows.filter((row) => pick(row).on);
+  const ready = ticked.filter((row) => pick(row).address.trim());
+
+  // One press: the ticked companies join the renewal with the addresses given, and Riley writes to each.
+  const ask = () => act('Riley is writing the emails…', async () => {
+    const fresh = ready.filter((row) => row.add && !row.supplier_id);
+    // A company found on the web is first kept as found, then its address confirmed by this press: two acts, so it is on record which it was.
+    if (fresh.length) await api.post(`${base}/suppliers`, { suppliers: fresh.map((row) => ({ name: row.name, website: row.website, phone: row.phone, kind: row.kind, found_by: 'search' })) });
+    let v = await api.get(base);
+    const idOf = (row) => row.supplier_id || v.suppliers.find((s) => s.name.toLowerCase() === row.name.toLowerCase())?.supplier_id;
+    v = await api.post(`${base}/suppliers`, { suppliers: ready.map((row) => ({ supplier_id: idOf(row), email: pick(row).address.trim() })).filter((s) => s.supplier_id) });
+    const ids = ready.map(idOf).filter(Boolean);
+    return ids.length ? api.post(`${base}/requests`, { supplier_ids: ids }) : v;
+  }, () => { setPicks({}); setFound(null); setAsking(false); });
+
+  const approveAll = (list, what) => confirm(`Send ${plural(list.length, 'email')} now? ${what}`) && run('Sending…', async () => { for (const draftId of list) await settle(draftId, 'approve'); return true; })
+    .then(() => { reload(); setTimeout(reload, 2500); setTimeout(reload, 8000); });
+
+  // What happens next, in one line: the only thing a person has to read to know what to do.
+  const next = !open ? CLOSED[r.status]
+    : chosen ? (closingForMe.length ? `Approve the email to ${chosen.supplier} below to accept their offer.` : 'When the new policy arrives, upload it below. That finishes the renewal.')
+      : r.quotes.length ? `${plural(r.quotes.length, 'quote')} in. Choose the one you want.`
+        : waitingForMe.length ? `Read the ${plural(waitingForMe.length, 'email')} below and approve ${waitingForMe.length === 1 ? 'it' : 'them'}. Nothing is sent until you do.`
+          : byHand.length ? 'Send the emails below yourself, then press “I have sent it” on each.'
+            : silent.length ? `Waiting for ${silent.map((s) => s.name).join(', ')} to reply. Riley checks your inbox every half hour.`
+              : busy ? 'One moment…' : 'Tick who to ask, give their email address, and press the button.';
+  const showAsk = r.status === 'open' && !chosen && (nobodyAsked || asking);
 
   return (
     <div className="space-y-4">
       <button onClick={onBack} className="flex items-center gap-1 text-sm text-mute hover:text-txt"><ChevronLeft size={16} /> Back to documents</button>
       <div>
         <h2 className="text-lg font-light">Renewing {d.title}</h2>
-        <p className="text-sm text-mute">{[d.where, d.number, d.expiry_date && `expires ${fmt(d.expiry_date)}`, d.details.insurer && `with ${d.details.insurer}`].filter(Boolean).join(' · ')}</p>
-        {!open && <p className="mt-2 rounded-xl bg-white/5 px-3 py-2 text-sm">{CLOSED[r.status]}</p>}
+        <p className="text-sm text-mute">{[d.where, d.expiry_date && `expires ${fmt(d.expiry_date)}`, d.details.insurer && `with ${d.details.insurer}`].filter(Boolean).join(' · ')}</p>
       </div>
 
-      <div className="flex gap-5 overflow-x-auto border-b border-stroke text-sm">
-        {STEPS.map(([k, l], i) => (
-          <button key={k} onClick={() => setTab(k)} className={`-mb-px shrink-0 border-b-2 pb-2 pt-1 transition ${tab === k ? 'border-p1 text-txt' : 'border-transparent text-mute hover:text-txt'}`}>
-            <span className="mr-1 text-xs opacity-60">{i + 1}</span>{l}
-          </button>
-        ))}
+      <div className="rounded-2xl bg-gradient-to-br from-p1/15 to-p2/10 px-4 py-3.5">
+        <p className="text-[11px] font-medium uppercase tracking-widest text-p3">What to do now</p>
+        <p className="mt-1 text-base">{next}</p>
+        {busy && <p className="mt-2 flex items-center gap-2 text-sm text-p3"><Loader2 size={15} className="animate-spin" /> {busy}</p>}
       </div>
-      {busy && <p className="flex items-center gap-2 text-sm text-p3"><Loader2 size={15} className="animate-spin" /> {busy}</p>}
       {error && <p className="text-sm text-bad">{error}</p>}
       {note && <p className="text-sm text-ok">{note}</p>}
 
-      {tab === 'suppliers' && (
-        <div className="space-y-3">
-          <p className="text-sm text-mute">Who Riley will write to. Nothing is written to an address until you have confirmed it.</p>
-          {r.suppliers.map((s) => (
-            <div key={s.supplier_id} className={CARD}>
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="min-w-0 flex-1 truncate text-sm font-medium">{s.name}</p>
-                {s.is_current && <Chip tone="bg-p1/20 text-p1">Has it now</Chip>}
-                <Chip tone={STATE[s.state][1]}>{STATE[s.state][0]}</Chip>
-                {open && ['listed', 'written'].includes(s.state) && (
-                  <button onClick={() => act('Removing…', () => api.del(`${base}/suppliers/${s.supplier_id}`))} aria-label={`Remove ${s.name}`} className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
-                )}
-              </div>
-              {s.email && s.email_confirmed && fixing !== s.supplier_id ? (
-                <p className="mt-1 flex items-center gap-1.5 text-xs text-mute">{s.email}
-                  {open && ['listed', 'written', 'failed'].includes(s.state) && <button onClick={() => setFixing(s.supplier_id)} aria-label={`Change the address for ${s.name}`} className="grid size-6 place-items-center rounded-full hover:bg-white/10 hover:text-txt"><Pencil size={12} /></button>}
-                </p>
-              ) : open && (
-                <div className="mt-2 flex gap-2">
-                  <input value={emails[s.supplier_id] ?? s.email ?? ''} onChange={(e) => setEmails({ ...emails, [s.supplier_id]: e.target.value })} type="email" placeholder="Their email address for quotations" aria-label={`Email for ${s.name}`} className={FIELD} />
-                  <button className={QUIET} disabled={!(emails[s.supplier_id] ?? s.email)} onClick={() => act('Saving…', () => api.post(`${base}/suppliers`, { suppliers: [{ supplier_id: s.supplier_id, email: emails[s.supplier_id] ?? s.email }] }), () => setFixing(null))}>Confirm</button>
-                </div>
-              )}
-            </div>
+      {/* 1. Who to ask */}
+      {showAsk && (
+        <div className="space-y-2.5">
+          {found?.failed && <p className="text-sm text-warn">Riley could not search the web just now. You can still ask the companies below, or add one.</p>}
+          {rows.map((row) => (
+            <AskRow key={row.key} name={row.name} tag={row.tag} why={row.why} website={row.website} on={pick(row).on} address={pick(row).address}
+              onTick={(on) => setPick(row, { on })} onAddress={(address) => setPick(row, { address })} />
           ))}
-          {!r.suppliers.length && <p className="text-sm text-mute">Nobody listed yet.</p>}
-
-          {open && (found ? (
-            <Candidates found={found} onClose={() => setFound(null)} onAdd={(list) => act('Adding…', () => api.post(`${base}/suppliers`, { suppliers: list }), () => setFound(null))} />
+          {extra.open ? (
+            <form className={`${CARD} space-y-2`} onSubmit={(e) => { e.preventDefault(); act('Adding…', () => api.post(`${base}/suppliers`, { suppliers: [{ name: extra.name, email: extra.email }] }), () => setExtra({ open: false, name: '', email: '' })); }}>
+              <input value={extra.name} onChange={(e) => setExtra({ ...extra, name: e.target.value })} required placeholder="Company name" className={FIELD} autoFocus />
+              <input value={extra.email} onChange={(e) => setExtra({ ...extra, email: e.target.value })} type="email" placeholder="Their email address" className={FIELD} />
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setExtra({ open: false, name: '', email: '' })} className={QUIET}>Cancel</button>
+                <button className={QUIET}><Plus size={15} /> Add</button>
+              </div>
+            </form>
           ) : (
             <div className="flex flex-wrap gap-2">
-              <button className={QUIET} disabled={!!busy} onClick={find}><Search size={15} /> Find more with Riley</button>
-            </div>
-          ))}
-
-          {open && (
-            <form className={`${CARD} space-y-2`} onSubmit={(e) => { e.preventDefault(); act('Adding…', () => api.post(`${base}/suppliers`, { suppliers: [mine] }), () => setMine({ name: '', email: '' })); }}>
-              <p className="text-sm">Add one yourself</p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <input value={mine.name} onChange={(e) => setMine({ ...mine, name: e.target.value })} required placeholder="Company name *" className={FIELD} />
-                <input value={mine.email} onChange={(e) => setMine({ ...mine, email: e.target.value })} type="email" placeholder="Email address" className={FIELD} />
-              </div>
-              <div className="flex justify-end"><button className={QUIET}><Plus size={15} /> Add</button></div>
-            </form>
-          )}
-
-          {r.status === 'open' && ready.length > 0 && (
-            <div className="flex justify-end">
-              <button className={PRIMARY} disabled={!!busy} onClick={() => act('Riley is writing the requests…', () => api.post(`${base}/requests`, { supplier_ids: ready.map((s) => s.supplier_id) }), () => setTab('requests'))}>
-                <Sparkles size={15} /> Write the request to {ready.length === 1 ? ready[0].name : `${ready.length} suppliers`}
-              </button>
+              <button className={QUIET} onClick={() => setExtra({ ...extra, open: true })}><Plus size={15} /> Add a company I know</button>
+              {!busy && <button className={QUIET} onClick={find}><Search size={15} /> Look for more</button>}
             </div>
           )}
+          <button className={`${PRIMARY} w-full justify-center py-3 text-base`} disabled={!!busy || !ready.length} onClick={ask}>
+            <Sparkles size={17} /> {ready.length ? `Write the email to ${ready.length === 1 ? ready[0].name : plural(ready.length, 'company', 'companies')}` : ticked.length ? 'Give an email address first' : 'Tick who to ask'}
+          </button>
+          {ticked.length > ready.length && ready.length > 0 && <p className="text-center text-xs text-mute">{plural(ticked.length - ready.length, 'company', 'companies')} without an address will be left out.</p>}
         </div>
       )}
 
-      {tab === 'requests' && (
-        <div className="space-y-3">
-          <p className="text-sm text-mute">{r.can_send ? 'Each request is a draft. It goes only when you press Approve and send.' : 'Your mailbox is not set up to send from here, so each request is written for you to copy and send yourself.'}</p>
-          {!written.length && <p className="text-sm text-mute">Nothing written yet. Choose who to ask first.</p>}
-          {written.map((s) => (
-            <div key={s.supplier_id} className={CARD}>
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="min-w-0 flex-1 truncate text-sm font-medium">{s.name}</p>
-                <Chip tone={STATE[s.state][1]}>{STATE[s.state][0]}{s.sent_at ? ` ${when(s.sent_at)}` : ''}</Chip>
-              </div>
+      {/* 2. The emails */}
+      {letters.length > 0 && !chosen && (
+        <div className="space-y-2.5">
+          {waitingForMe.length > 1 && (
+            <button className={`${PRIMARY} w-full justify-center py-3 text-base`} disabled={!!busy} onClick={() => approveAll(waitingForMe.map((s) => s.draft_id), `They go to: ${waitingForMe.map((s) => s.to).join(', ')}.`)}>
+              <Mail size={17} /> Approve and send all {waitingForMe.length}
+            </button>
+          )}
+          {letters.map((s) => (
+            <details key={s.supplier_id} className={CARD} open={['drafted', 'written', 'failed'].includes(s.state)}>
+              <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{s.name}</span>
+                {s.state === 'replied' ? <Chip tone={s.reply_kind === 'quote' ? 'bg-ok/10 text-ok' : 'bg-warn/10 text-warn'}>{REPLY[s.reply_kind] || 'Wrote back'}</Chip>
+                  : <Chip tone={STATE[s.state][1]}>{STATE[s.state][0]}{s.sent_at ? ` ${when(s.sent_at)}` : ''}</Chip>}
+              </summary>
+              {s.reply_note && <p className="mt-2"><Riley>{s.reply_note}</Riley></p>}
               {s.state === 'failed' && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <p className="min-w-0 flex-1 text-sm text-bad">It could not be sent: {s.error || 'no reason was given'}</p>
                   {r.status === 'open' && <button className={QUIET} disabled={!!busy} onClick={() => act('Riley is writing it again…', () => api.post(`${base}/requests`, { supplier_ids: [s.supplier_id] }))}><Sparkles size={14} /> Write it again</button>}
                 </div>
               )}
+              {s.state === 'drafted' && s.found_by === 'search' && <p className="mt-2 text-xs text-warn">This company was found on the web. Check the address is theirs before you approve.</p>}
               {s.body && (
                 <Letter to={s.to} subject={s.subject} body={s.body} status={s.state === 'drafted' ? 'pending' : s.state === 'written' ? null : s.state} mine={s.draft_owner === r.me}
                   canEdit={open && (s.state === 'written' || (s.state === 'drafted' && s.draft_owner === r.me))}
@@ -283,179 +295,121 @@ export default function Renewal({ id, onBack, onFile }) {
                     onApprove={() => decideDraft(s.chaser_draft_id, 'approve')} onReject={() => decideDraft(s.chaser_draft_id, 'reject')} />
                 </>
               )}
-              {s.chaser_status === 'sent' && <p className="mt-2 text-xs text-mute">A follow-up was sent.</p>}
-            </div>
+            </details>
           ))}
-          {r.status === 'open' && r.can_send && r.suppliers.some((s) => s.state === 'sent' && !s.chaser_status) && (
-            <div className="flex justify-end"><button className={QUIET} disabled={!!busy} onClick={() => act('Writing follow-ups…', () => api.post(`${base}/chase`, {}))}>Write a follow-up to those silent for 5 days</button></div>
+          {r.status === 'open' && (
+            <div className="flex flex-wrap gap-2">
+              {out.length > 0 && <button className={QUIET} disabled={!!busy} onClick={() => act('Riley is reading your inbox…', () => api.post(`${base}/check`, {}),
+                (g) => setNote(g.quotes.length || g.questions.length ? [g.quotes.length && `New quote from ${g.quotes.join(', ')}`, g.questions.length && `A question from ${g.questions.join(', ')}`].filter(Boolean).join('. ') : 'Nothing new has come in yet.'))}><RefreshCw size={14} /> Check for replies now</button>}
+              <button className={QUIET} onClick={() => setUpload({ ...upload, open: !upload.open })}><FileUp size={14} /> I got a quote another way</button>
+              {!showAsk && <button className={QUIET} onClick={() => setAsking(true)}><Plus size={14} /> Ask more companies</button>}
+            </div>
           )}
-        </div>
-      )}
-
-      {tab === 'quotes' && (
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="min-w-0 flex-1 text-sm text-mute">Riley looks for replies by herself every half hour. You can also look now.</p>
-            {r.status === 'open' && <button className={QUIET} disabled={!!busy} onClick={() => act('Riley is reading the replies…', () => api.post(`${base}/check`, {}),
-              (g) => setNote(g.quotes.length || g.questions.length ? [g.quotes.length && `New quote from ${g.quotes.join(', ')}`, g.questions.length && `A question from ${g.questions.join(', ')}`].filter(Boolean).join('. ') : 'Nothing new has come in.'))}><RefreshCw size={14} /> Check for replies</button>}
-          </div>
-          {r.suppliers.filter((s) => ['sent', 'replied'].includes(s.state)).map((s) => (
-            <div key={s.supplier_id} className="flex flex-wrap items-center gap-2 rounded-xl border border-stroke/60 px-3.5 py-2.5 text-sm">
-              <span className="min-w-0 flex-1 truncate">{s.name}</span>
-              {s.state === 'replied' ? <Chip tone={s.reply_kind === 'quote' ? 'bg-ok/10 text-ok' : 'bg-warn/10 text-warn'}>{REPLY[s.reply_kind] || 'Wrote back'}</Chip> : <Chip tone="bg-white/10 text-txt/80">No reply yet</Chip>}
-              {s.reply_note && <p className="w-full text-xs text-mute"><Riley>{s.reply_note}</Riley></p>}
-            </div>
-          ))}
-          {r.quotes.map((q) => (
-            <div key={q.id} className={CARD}>
-              <div className="flex items-center gap-2">
-                <p className="min-w-0 flex-1 truncate text-sm font-medium">{q.supplier}{q.premium && <span className="text-mute"> · {q.premium}</span>}</p>
-                <Chip tone="bg-white/10 text-txt/80">{q.source === 'upload' ? 'Added by hand' : 'From their email'}</Chip>
-                {open && <button onClick={() => confirm(`Remove this quote from ${q.supplier}?`) && act('Removing…', () => api.del(`${base}/quotes/${q.id}`))} aria-label="Remove quote" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
-              </div>
-              <dl className="mt-2 space-y-0.5 text-sm">
-                {ROWS.filter(([k]) => q[k]).map(([k, l]) => <div key={k} className="flex gap-3"><dt className="shrink-0 text-mute">{l}</dt><dd className="min-w-0 flex-1 break-words text-right">{k === 'valid_until' ? fmt(q[k]) : q[k]}</dd></div>)}
-              </dl>
-              {q.note && <p className="mt-1.5"><Riley>{q.note}</Riley></p>}
-              {q.has_file && <a href={`/api${base}/quotes/${q.id}/file`} target="_blank" rel="noreferrer" className="mt-1.5 flex items-center gap-1.5 text-sm text-p3 hover:underline"><Paperclip size={14} /> {q.file_name}</a>}
-            </div>
-          ))}
-          {!r.quotes.length && <p className="text-sm text-mute">No quotes yet.</p>}
-
-          {open && r.suppliers.length > 0 && (
+          {upload.open && (
             <div className={`${CARD} space-y-2`}>
-              <p className="text-sm">A quote that came another way (WhatsApp, paper)</p>
-              <Select value={quoteFor} onChange={(e) => setQuoteFor(e.target.value)} options={r.suppliers.map((s) => [s.supplier_id, s.name])} placeholder="Who is it from?" aria-label="Supplier" className={FIELD} />
-              <label className={`flex items-center gap-2 rounded-xl border border-dashed border-stroke px-3.5 py-2.5 text-sm text-mute ${quoteFor ? 'cursor-pointer hover:bg-white/5' : 'opacity-50'}`}>
-                <FileUp size={15} /> Choose the file: Riley reads it
-                <input type="file" accept="application/pdf,image/*" className="hidden" disabled={!quoteFor || !!busy}
+              <Select value={upload.from} onChange={(e) => setUpload({ ...upload, from: e.target.value })} options={r.suppliers.map((s) => [s.supplier_id, s.name])} placeholder="Who is the quote from?" aria-label="Supplier" className={FIELD} />
+              <label className={`flex items-center justify-center gap-2 rounded-xl border border-dashed border-stroke px-3.5 py-4 text-sm text-mute ${upload.from ? 'cursor-pointer hover:bg-white/5' : 'opacity-50'}`}>
+                <FileUp size={16} /> Choose the PDF: Riley reads it
+                <input type="file" accept="application/pdf,.pdf" className="hidden" disabled={!upload.from || !!busy}
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     e.target.value = '';
                     if (!file) return;
                     const form = new FormData();
-                    form.append('supplier_id', quoteFor);
+                    form.append('supplier_id', upload.from);
                     form.append('file', file);
-                    act('Riley is reading the quote…', () => api.upload(`${base}/quotes`, form), () => setQuoteFor(''));
+                    act('Riley is reading the quote…', () => api.upload(`${base}/quotes`, form), () => setUpload({ open: false, from: '' }));
                   }} />
               </label>
             </div>
           )}
-          {open && r.quotes.length > 0 && <div className="flex justify-end"><button className={PRIMARY} disabled={!!busy} onClick={() => act('Riley is comparing the offers…', () => api.post(`${base}/compare`, {}), () => setTab('compare'))}><Sparkles size={15} /> Compare the offers</button></div>}
         </div>
       )}
 
-      {tab === 'compare' && (
-        <div className="space-y-3">
-          {!r.compared ? (
-            <div className="space-y-3">
-              <p className="text-sm text-mute">{r.quotes.length ? 'The offers have not been compared yet, or a new one has come in since.' : 'There are no quotes to compare yet.'}</p>
-              {open && r.quotes.length > 0 && <button className={PRIMARY} disabled={!!busy} onClick={() => act('Riley is comparing the offers…', () => api.post(`${base}/compare`, {}))}><Sparkles size={15} /> Compare the offers</button>}
+      {/* 3. The offers: each one a card to choose, Riley's pick first */}
+      {r.quotes.length > 0 && (
+        <div className="space-y-2.5">
+          {r.compared && !r.compared.failed && r.compared.why && (
+            <div className={CARD}>
+              <Riley>What Riley would do</Riley>
+              <p className="mt-1 whitespace-pre-wrap text-sm">{r.compared.why}</p>
+              {r.compared.unsure && <p className="mt-2 text-sm text-warn">Check first: {r.compared.unsure}</p>}
             </div>
-          ) : (
-            <>
-              <div className="overflow-x-auto rounded-2xl border border-stroke">
-                <table className="w-full min-w-[32rem] text-sm">
-                  <thead>
-                    <tr className="border-b border-stroke text-left text-xs text-mute">
-                      <th className="px-3 py-2 font-normal" />
-                      <th className="px-3 py-2 font-normal">Now{r.compared.current.supplier ? ` · ${r.compared.current.supplier}` : ''}</th>
-                      {r.compared.offers.map((o) => <th key={o.quote_id} className={`px-3 py-2 font-normal ${o.quote_id === r.compared.pick ? 'text-p3' : ''}`}>{o.supplier}{o.quote_id === r.compared.pick ? ' · Riley’s pick' : ''}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stroke/60">
-                    {ROWS.map(([k, l]) => (
-                      <tr key={k} className="align-top">
-                        <td className="px-3 py-2 text-mute">{l}</td>
-                        <td className="px-3 py-2">{r.compared.current[k] || '—'}</td>
-                        {r.compared.offers.map((o) => (
-                          <td key={o.quote_id} className="px-3 py-2">
-                            {o[k] ? (k === 'valid_until' ? fmt(o[k]) : o[k]) : '—'}
-                            {o.verdicts?.[k] && <span className={`ml-1.5 text-xs ${VERDICT[o.verdicts[k]]}`}>{o.verdicts[k]}</span>}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className={CARD}>
-                <Riley>What Riley would do</Riley>
-                {r.compared.failed ? <p className="mt-1 text-sm text-mute">The offers could not be weighed just now. The figures above are as the suppliers gave them.</p> : (
-                  <>
-                    <p className="mt-1 whitespace-pre-wrap text-sm">{r.compared.why || 'She has no recommendation.'}</p>
-                    {r.compared.unsure && <p className="mt-2 text-sm text-warn">Check before you decide: {r.compared.unsure}</p>}
-                  </>
-                )}
-              </div>
-
-              {r.compared.offers.map((o) => {
-                const a = about(o.supplier_id);
-                return (
-                  <div key={o.quote_id} className={CARD}>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="min-w-0 flex-1 text-sm font-medium">{o.supplier}</p>
-                      {open && <button className={o.quote_id === r.chosen_quote_id ? QUIET : PRIMARY} disabled={!!busy || o.quote_id === r.chosen_quote_id}
-                        onClick={() => confirm(`Go with ${o.supplier}? Riley will write the acceptance and the thank-yous for you to approve. Nothing is sent yet.`) && act('Writing the letters…', () => api.post(`${base}/decide`, { quote_id: o.quote_id }), () => setTab('decide'))}>
-                        <Check size={15} /> {o.quote_id === r.chosen_quote_id ? 'Chosen' : 'Choose this offer'}
-                      </button>}
-                    </div>
-                    <p className="mt-2"><Riley>What was found about them{a.checked_on ? `, ${fmt(a.checked_on)}` : ''} — evidence to check, not a verdict</Riley></p>
-                    {['licensed', 'rating', 'since', 'summary'].some((k) => a[k]) ? (
-                      <dl className="mt-1 space-y-0.5 text-sm">
-                        {[['summary', 'Who they are'], ['licensed', 'Licence'], ['rating', 'Rating'], ['since', 'Trading since']].filter(([k]) => a[k]).map(([k, l]) => <div key={k} className="flex gap-3"><dt className="shrink-0 text-mute">{l}</dt><dd className="min-w-0 flex-1 break-words text-right">{a[k]}</dd></div>)}
-                      </dl>
-                    ) : r.looking ? <p className="mt-1 flex items-center gap-2 text-sm text-mute"><Loader2 size={14} className="animate-spin" /> Riley is looking them up. This takes a minute or two…</p>
-                      : (
-                        <div className="mt-1 flex flex-wrap items-center gap-2">
-                          <p className="min-w-0 flex-1 text-sm text-mute">{a.checked_on ? 'Nothing could be found.' : 'Not looked up yet.'}</p>
-                          {!a.checked_on && <button className={QUIET} onClick={() => act('Starting…', () => api.post(`${base}/lookup`, {}))}><Search size={14} /> Look them up</button>}
-                        </div>
-                      )}
-                    {(a.sources || []).map((s) => <a key={s.url} href={s.url} target="_blank" rel="noreferrer" className="mt-1 flex items-center gap-1 text-xs text-p3 hover:underline"><ExternalLink size={12} /> {s.title}</a>)}
-                  </div>
-                );
-              })}
-            </>
           )}
+          {(r.compared ? [...r.compared.offers].sort((a, b) => (b.quote_id === r.compared.pick) - (a.quote_id === r.compared.pick)) : r.quotes.map((q) => ({ ...q, quote_id: q.id, verdicts: {} }))).map((o) => {
+            const a = about(o.supplier_id);
+            const picked = r.compared?.pick === o.quote_id;
+            const mine = o.quote_id === r.chosen_quote_id;
+            const q = r.quotes.find((x) => x.id === o.quote_id);
+            return (
+              <div key={o.quote_id} className={`rounded-2xl border px-4 py-3.5 ${mine ? 'border-ok/60 bg-ok/[0.06]' : picked ? 'border-p1/60 bg-p1/[0.06]' : 'border-stroke'}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="min-w-0 flex-1 truncate font-medium">{o.supplier}</p>
+                  {mine ? <Chip tone="bg-ok/15 text-ok">Chosen</Chip> : picked && <Chip tone="bg-p1/20 text-p1">Riley’s pick</Chip>}
+                </div>
+                <p className="mt-1 text-2xl font-light">{o.premium || 'Price not read'}{o.verdicts?.premium && <span className={`ml-2 text-sm ${VERDICT[o.verdicts.premium]}`}>{o.verdicts.premium === 'better' ? 'cheaper than now' : o.verdicts.premium === 'worse' ? 'dearer than now' : 'same as now'}</span>}</p>
+                <dl className="mt-2 space-y-0.5 text-sm">
+                  {ROWS.slice(1).filter(([k]) => o[k]).map(([k, l]) => (
+                    <div key={k} className="flex gap-3"><dt className="shrink-0 text-mute">{l}</dt>
+                      <dd className="min-w-0 flex-1 break-words text-right">{k === 'valid_until' ? fmt(o[k]) : o[k]}{o.verdicts?.[k] && k !== 'valid_until' && <span className={`ml-1.5 text-xs ${VERDICT[o.verdicts[k]]}`}>{o.verdicts[k]}</span>}</dd></div>
+                  ))}
+                </dl>
+                {q?.has_file && <a href={`/api${base}/quotes/${q.id}/file`} target="_blank" rel="noreferrer" className="mt-2 flex items-center gap-1.5 text-sm text-p3 hover:underline"><Paperclip size={14} /> Open their quote</a>}
+                {(a.summary || a.licensed || a.rating || r.looking) && (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs text-mute hover:text-txt">About this company</summary>
+                    {r.looking && !a.checked_on ? <p className="mt-1 flex items-center gap-2 text-xs text-mute"><Loader2 size={12} className="animate-spin" /> Riley is looking them up…</p> : (
+                      <>
+                        <dl className="mt-1 space-y-0.5 text-xs">
+                          {[['summary', 'Who they are'], ['licensed', 'Licence'], ['rating', 'Rating'], ['since', 'Trading since']].filter(([k]) => a[k]).map(([k, l]) => <div key={k} className="flex gap-3"><dt className="shrink-0 text-mute">{l}</dt><dd className="min-w-0 flex-1 break-words text-right">{a[k]}</dd></div>)}
+                        </dl>
+                        {(a.sources || []).map((s) => <a key={s.url} href={s.url} target="_blank" rel="noreferrer" className="mt-1 flex items-center gap-1 text-xs text-p3 hover:underline"><ExternalLink size={12} /> {s.title}</a>)}
+                        <p className="mt-1 text-[11px] text-mute">Found on the web. Check it yourself before relying on it.</p>
+                      </>
+                    )}
+                  </details>
+                )}
+                {open && !mine && (
+                  <button className={`${picked ? PRIMARY : QUIET} mt-3 w-full justify-center py-2.5`} disabled={!!busy}
+                    onClick={() => confirm(`Go with ${o.supplier}? Riley writes the email accepting their offer. It is not sent until you approve it.`) && act('Riley is writing the emails…', () => api.post(`${base}/decide`, { quote_id: o.quote_id }))}>
+                    <Check size={16} /> Choose {o.supplier}
+                  </button>
+                )}
+                {open && !chosen && <button onClick={() => confirm(`Remove this quote from ${o.supplier}?`) && act('Removing…', () => api.del(`${base}/quotes/${o.quote_id}`))} className="mt-2 flex items-center gap-1 text-xs text-mute hover:text-bad"><Trash2 size={12} /> Remove this quote</button>}
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {tab === 'decide' && (
-        <div className="space-y-3">
-          {!chosen ? <p className="text-sm text-mute">No offer has been chosen yet. Compare the offers, then choose one.</p> : (
-            <>
-              <div className={CARD}>
-                <p className="text-sm">Going with <span className="font-medium">{chosen.supplier}</span>{chosen.premium ? ` at ${chosen.premium}` : ''}.</p>
-                <p className="mt-1 text-xs text-mute">Nothing has been accepted until the letter below is sent.</p>
-              </div>
-              {r.closing.map((c) => (
-                <div key={`${c.kind}-${c.supplier_id}`} className={CARD}>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="min-w-0 flex-1 truncate text-sm font-medium">{c.kind === 'accept' ? 'Acceptance' : 'Thank-you'} · {c.supplier}</p>
-                    {c.status && <Chip tone={c.status === 'sent' ? 'bg-ok/10 text-ok' : c.status === 'pending' ? 'bg-warn/10 text-warn' : 'bg-white/10 text-txt/80'}>{c.status === 'pending' ? 'Waiting for approval' : c.status === 'sent' ? 'Sent' : c.status === 'rejected' ? 'Not sent' : c.status}</Chip>}
-                  </div>
-                  {c.error && <p className="mt-1 text-sm text-bad">It could not be sent: {c.error}</p>}
-                  <Letter to={c.to} subject={c.subject} body={c.body} status={c.draft_id ? c.status : null} mine={c.draft_owner === r.me}
-                    onApprove={() => decideDraft(c.draft_id, 'approve')} onReject={() => decideDraft(c.draft_id, 'reject')} />
-                </div>
-              ))}
-              {open && (
-                <div className={`${CARD} space-y-2`}>
-                  <p className="text-sm">When the new policy arrives, file it. That closes this renewal and stops the alert.</p>
-                  <button className={PRIMARY} onClick={() => onFile(d)}><FileUp size={15} /> File the new policy</button>
-                </div>
-              )}
-            </>
+      {/* 4. After choosing: the emails that say so, and the new policy */}
+      {chosen && (
+        <div className="space-y-2.5">
+          {closingForMe.length > 1 && (
+            <button className={`${PRIMARY} w-full justify-center py-3 text-base`} disabled={!!busy} onClick={() => approveAll(closingForMe.map((c) => c.draft_id), `They go to: ${closingForMe.map((c) => c.to).join(', ')}.`)}>
+              <Mail size={17} /> Approve and send all {closingForMe.length}
+            </button>
+          )}
+          {r.closing.map((c) => (
+            <details key={`${c.kind}-${c.supplier_id}`} className={CARD} open={c.status === 'pending' || c.status == null}>
+              <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.kind === 'accept' ? 'Accepting' : 'Thanking'} {c.supplier}</span>
+                {c.status && <Chip tone={c.status === 'sent' ? 'bg-ok/10 text-ok' : c.status === 'pending' ? 'bg-warn/10 text-warn' : 'bg-white/10 text-txt/80'}>{c.status === 'pending' ? 'Waiting for approval' : c.status === 'sent' ? 'Sent' : c.status === 'rejected' ? 'Not sent' : c.status === 'failed' ? 'Could not be sent' : 'Sending…'}</Chip>}
+              </summary>
+              {c.error && <p className="mt-1 text-sm text-bad">It could not be sent: {c.error}</p>}
+              <Letter to={c.to} subject={c.subject} body={c.body} status={c.draft_id ? c.status : null} mine={c.draft_owner === r.me}
+                onApprove={() => decideDraft(c.draft_id, 'approve')} onReject={() => decideDraft(c.draft_id, 'reject')} />
+            </details>
+          ))}
+          {open && (
+            <button className={`${closingForMe.length ? QUIET : PRIMARY} w-full justify-center py-3`} onClick={() => onFile(d)}><FileUp size={16} /> Upload the new policy</button>
           )}
         </div>
       )}
 
       {open && (
-        <div className="flex flex-wrap justify-end gap-2 border-t border-stroke/60 pt-4">
-          <button className={QUIET} disabled={!!busy} onClick={() => confirm('Close this as not renewing? The document will stop asking to be renewed.') && act('Closing…', () => api.post(`${base}/close`, { status: 'not_renewing' }))}>We are not renewing this</button>
-          <button className={QUIET} disabled={!!busy} onClick={() => confirm('Cancel this renewal? What was gathered stays on record, and the document goes on asking to be renewed.') && act('Cancelling…', () => api.post(`${base}/close`, { status: 'cancelled' }))}>Cancel this renewal</button>
+        <div className="border-t border-stroke/60 pt-4 text-right">
+          <button className="text-xs text-mute underline hover:text-txt" disabled={!!busy} onClick={() => confirm('Stop this renewal? The document will stop reminding you to renew it.') && act('Closing…', () => api.post(`${base}/close`, { status: 'not_renewing' }))}>We are not renewing this</button>
         </div>
       )}
     </div>
