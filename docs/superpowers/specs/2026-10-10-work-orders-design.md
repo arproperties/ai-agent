@@ -130,12 +130,18 @@ Only the master can delete a work order, and only while it is `open` with no ass
 
 ### 6.5 Access
 
-The same as leases: a leasing user sees and changes work orders for the buildings they
-look after; the master sees all.
+The same as leases: every signed-in user of the leasing app sees and changes work orders.
+Only deleting is the master's (6.4).
+
+### 6.6 A finished work order
+
+A `closed` or `cancelled` work order is not edited: it is reopened first. Notes can still
+be added to its history.
 
 ## 7. Moving the old maintenance notes
 
-Once, at start-up in `db.js`, inside a transaction, for every `lease_tenant_log` row with
+At server start-up (`moveMaintenanceNotes()` in `server/workOrders.js`, called from
+`server/index.js`), each in its own transaction, for every `lease_tenant_log` row with
 `kind = 'maintenance'` that has a `booking_id`:
 
 - make a work order on that lease's unit, with the same tenant, category, detail,
@@ -187,11 +193,13 @@ is answered from the list.
 ## 10. Alerts
 
 Using the leasing alert machinery (`leasingAlerts.js`, `push.js`, the sent-once log
-`lease_alerts_sent`), to the building's staff, the person who raised it and the master:
+`lease_alerts_sent`):
 
-- a new `urgent` work order: a push at once;
-- an overdue one (scheduled date passed, still not done): once a day, within quiet hours
-  rules, until it is done, rescheduled or cancelled.
+- a new `urgent` work order: a push at once, whatever the hour, to the building's staff and
+  the master (not to the person who raised it, who knows);
+- an overdue one (scheduled date passed, still not done): once a day, outside the quiet
+  hours, to the building's staff, the person who raised it and the master, until it is done,
+  rescheduled or cancelled. It is also listed on the Alerts screen.
 
 Both sit under one new rule the master can switch off in the alert settings.
 
@@ -199,8 +207,8 @@ Both sit under one new rule the master can switch off in the alert settings.
 
 | File | What |
 |------|------|
-| `server/db.js` | The three tables and the one-time move (section 7). |
-| `server/workOrders.js` (new) | The rules and the routes, mounted under `/api/leasing`. |
+| `server/db.js` | The three tables. |
+| `server/workOrders.js` (new) | The rules, the routes (mounted under `/api/leasing`) and the move of the old notes (section 7). |
 | `server/leasingHistory.js` | Maintenance read from work orders; `maintenance` entries refused. |
 | `server/leasingKit.js` | Riley's three tools; the tenant-history wording. |
 | `server/leasingAlerts.js` | The two alerts and their rule. |
