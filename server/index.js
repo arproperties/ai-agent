@@ -28,6 +28,7 @@ import { propertyRoutes } from './properties.js';
 import { leasingRoutes } from './leasing.js';
 import { historyRoutes } from './leasingHistory.js';
 import { inspectionRoutes } from './inspections.js';
+import { workOrderRoutes } from './workOrders.js';
 import { reportRoutes } from './leasingReports.js';
 import { alertRoutes, startLeasingAlerts } from './leasingAlerts.js';
 import { receiptRoutes } from './leasingReceipt.js';
@@ -88,6 +89,7 @@ app.use('/api/leasing/region', regionRoutes); // the business's currency, time z
 app.use('/api/leasing/payments', receiptRoutes); // the receipt PDF for one payment
 app.use('/api/leasing', inspectionRoutes); // a unit's condition over time: make-ready, move-in and move-out inspections
 app.use('/api/leasing', historyRoutes); // a tenant's history: late rent, complaints, maintenance
+app.use('/api/leasing', workOrderRoutes); // repairs to a unit, linked to its lease and tenant, each with its history
 app.use('/api/leasing', leasingRoutes); // tenants and bookings of units; the rent is set per booking
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 

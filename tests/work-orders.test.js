@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { reset, closeDb, db, makeUser } from './helpers/db.js';
 import { create, remove } from '../server/properties.js';
 import { createBooking } from '../server/leasing.js';
-import { createWorkOrder, getWorkOrder, listWorkOrders, updateWorkOrder, addWorkOrderNote, removeWorkOrder } from '../server/workOrders.js';
+import { existsSync } from 'node:fs';
+import { createWorkOrder, getWorkOrder, listWorkOrders, updateWorkOrder, addWorkOrderNote, removeWorkOrder,
+  addWorkOrderFiles, getWorkOrderFile, removeWorkOrderFile, workOrderUnits, workOrderLink } from '../server/workOrders.js';
 
 test.after(() => closeDb());
 
@@ -181,4 +183,38 @@ test('only a work order nobody has started is deleted; after that it is cancelle
   await assert.rejects(getWorkOrder(w.id), /not found/);
   assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_work_order_events WHERE work_order_id = ?').get(w.id)).n, 0);
   await assert.rejects(removeWorkOrder(999), /not found/);
+});
+
+test('a work order takes several files, each removed by itself, and all go when it is deleted', async () => {
+  const { staff, u1 } = await tower();
+  const file = (name, mime = 'image/jpeg') => ({ buffer: Buffer.from(name), originalname: name, mimetype: mime });
+  const w = await createWorkOrder({ unit_id: u1.id, detail: 'Leak under the sink' }, staff, AT);
+  await assert.rejects(addWorkOrderFiles(w.id, [], staff, AT), /Choose a file/);
+  await assert.rejects(addWorkOrderFiles(999, [file('a.jpg')], staff, AT), /not found/);
+
+  const two = await addWorkOrderFiles(w.id, [file('before.jpg'), file('report.pdf', 'application/pdf')], staff, AT);
+  assert.deepEqual(two.files.map((f) => [f.file_name, f.file_mime]), [['before.jpg', 'image/jpeg'], ['report.pdf', 'application/pdf']]);
+  assert.deepEqual([two.events.at(-1).kind, two.events.at(-1).detail], ['file_added', 'Added before.jpg, report.pdf']);
+  const paths = (await db.prepare('SELECT file_path FROM lease_work_order_files ORDER BY id').all()).map((r) => r.file_path);
+  assert.ok(paths.every((p) => existsSync(p)));
+  assert.equal((await getWorkOrderFile(two.files[0].id)).file_name, 'before.jpg');
+
+  await removeWorkOrderFile(two.files[0].id, staff);
+  assert.equal(existsSync(paths[0]), false);
+  await assert.rejects(removeWorkOrderFile(two.files[0].id, staff), /Not found/);
+  const now = await getWorkOrder(w.id, AT);
+  assert.deepEqual(now.files.map((f) => f.file_name), ['report.pdf']);
+  assert.deepEqual([now.events.at(-1).kind, now.events.at(-1).detail], ['file_removed', 'Removed before.jpg']);
+
+  await removeWorkOrder(w.id);
+  assert.ok(paths.every((p) => !existsSync(p)), 'deleting the work order deletes its files');
+});
+
+test('the form is told the units there are, and whose a unit is on a day', async () => {
+  const { u1, u2, bk } = await tower();
+  assert.deepEqual((await workOrderUnits()).map((u) => [u.unit_no, u.building]), [['101', 'Tower'], ['102', 'Tower']]);
+  assert.deepEqual(await workOrderLink(u1.id, '2026-10-01', AT), { tenant: 'Sara', ref: bk.ref });
+  assert.deepEqual(await workOrderLink(u1.id, '', AT), { tenant: 'Sara', ref: bk.ref }, 'no day given is today');
+  assert.deepEqual(await workOrderLink(u2.id, '2026-10-01', AT), { tenant: null, ref: null });
+  assert.deepEqual(await workOrderLink(u1.id, 'yesterday', AT), { tenant: null, ref: null }, 'a day that is not a date links to nobody');
 });

@@ -1,5 +1,10 @@
+import { Router } from 'express';
+import multer from 'multer';
 import { rmSync } from 'node:fs';
 import { db, tx } from './db.js';
+import { DATA_DIR } from './config.js';
+import { requireMaster } from './auth.js';
+import { saveFile, sendDoc } from './properties.js';
 import { bad, isDate, bookingRef, todayHere } from './leasing.js';
 
 // Work orders: a repair to a unit, from the report to the fix. It belongs to the unit, and
@@ -217,3 +222,68 @@ export async function removeWorkOrder(id) {
   for (const f of files) rmSync(f.file_path, { force: true });
   return { ok: true };
 }
+
+// ---------- files ----------
+
+const FILE_DIR = `${DATA_DIR}/leasing`;
+
+/** Attach files: as many as are sent, added to the ones it has. */
+export async function addWorkOrderFiles(id, files, by, today = todayHere()) {
+  const now = await getWorkOrder(id, today);
+  if (!files?.length) throw bad('Choose a file to attach.');
+  const names = [];
+  for (const file of files) {
+    const f = saveFile(file, FILE_DIR);
+    await db.prepare('INSERT INTO lease_work_order_files (work_order_id, file_path, file_name, file_mime, uploaded_by) VALUES (?, ?, ?, ?, ?)').run(now.id, f.file_path, f.file_name, f.file_mime, by ?? null);
+    names.push(f.file_name);
+  }
+  await log(now.id, 'file_added', `Added ${names.join(', ')}`, by);
+  return getWorkOrder(now.id, today);
+}
+
+export const getWorkOrderFile = async (id) => {
+  const f = await db.prepare('SELECT id, work_order_id, file_path, file_name, file_mime FROM lease_work_order_files WHERE id = ?').get(Number(id) || 0);
+  if (!f) throw bad('Not found', 404);
+  return f;
+};
+
+export async function removeWorkOrderFile(id, by) {
+  const f = await getWorkOrderFile(id);
+  await db.prepare('DELETE FROM lease_work_order_files WHERE id = ?').run(f.id);
+  rmSync(f.file_path, { force: true });
+  await log(f.work_order_id, 'file_removed', `Removed ${f.file_name}`, by);
+  return { ok: true };
+}
+
+// ---------- what the form asks ----------
+
+/** Every unit, for the form's picker. */
+export const workOrderUnits = () => db.prepare(`SELECT u.id, u.unit_no, bl.id AS building_id, bl.name AS building
+  FROM prop_units u JOIN prop_buildings bl ON bl.id = u.building_id ORDER BY lower(bl.name), u.unit_no`).all();
+
+/** Whose a unit is on a day (today when none is given), so the form can say who the work order will be for. */
+export async function workOrderLink(unitId, on, today = todayHere()) {
+  const d = String(on ?? '').trim() || today;
+  const lease = isDate(d) ? await leaseOn(unitId, d) : null;
+  return { tenant: lease?.tenant ?? null, ref: lease ? bookingRef({ id: lease.booking_id, start_date: lease.start_date }) : null };
+}
+
+// ---------- routes ----------
+
+export const workOrderRoutes = Router();
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const MAX_FILES = 10; // in one go; more can be added after
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: MAX_FILES } });
+const isMaster = (req) => req.user.role === 'master';
+
+workOrderRoutes.get('/work-orders', wrap(async (req, res) => res.json({ work_orders: await listWorkOrders(req.query), master: isMaster(req) })));
+workOrderRoutes.get('/work-orders/units', wrap(async (req, res) => res.json(await workOrderUnits())));
+workOrderRoutes.get('/work-orders/link', wrap(async (req, res) => res.json(await workOrderLink(req.query.unit_id, req.query.on))));
+workOrderRoutes.get('/work-orders/files/:id/file', wrap(async (req, res) => sendDoc(req, res, await getWorkOrderFile(req.params.id))));
+workOrderRoutes.delete('/work-orders/files/:id', wrap(async (req, res) => res.json(await removeWorkOrderFile(req.params.id, req.user.id))));
+workOrderRoutes.post('/work-orders', wrap(async (req, res) => res.json(await createWorkOrder(req.body, req.user.id))));
+workOrderRoutes.get('/work-orders/:id', wrap(async (req, res) => res.json({ ...(await getWorkOrder(req.params.id)), master: isMaster(req) })));
+workOrderRoutes.put('/work-orders/:id', wrap(async (req, res) => res.json(await updateWorkOrder(req.params.id, req.body, req.user.id))));
+workOrderRoutes.delete('/work-orders/:id', requireMaster, wrap(async (req, res) => res.json(await removeWorkOrder(req.params.id))));
+workOrderRoutes.post('/work-orders/:id/notes', wrap(async (req, res) => res.json(await addWorkOrderNote(req.params.id, req.body?.note, req.user.id))));
+workOrderRoutes.post('/work-orders/:id/files', upload.array('files', MAX_FILES), wrap(async (req, res) => res.json(await addWorkOrderFiles(req.params.id, req.files, req.user.id))));
