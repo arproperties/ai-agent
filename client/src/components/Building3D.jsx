@@ -8,6 +8,8 @@ import Select from './Select';
 // 3D View: one building as a tower that can be turned, pulled apart floor by floor and
 // tapped, each unit coloured by how it stands today. Nothing is kept here: the units and
 // their state are the Overview's (/leasing/overview), the repairs are Work orders'.
+// A building with a floor plan (/properties/plans) is drawn as it is built: each unit where
+// it is and as big as it is, with the corridor, the stairs and the lobby between them.
 // The drawing itself is lib/buildingScene.js.
 
 const SELECT = 'glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none focus:border-p1/70';
@@ -25,7 +27,7 @@ const hex = (c) => { const n = parseInt(c.slice(1), 16); return [n >> 16, (n >> 
 const blend = (a, b, t) => { const [x, y] = [hex(a), hex(b)]; return `#${x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('')}`; };
 const days = (n) => `${n} day${n === 1 ? '' : 's'}`;
 const pct = (x) => `${Math.round(x * 100)}%`;
-const floorName = (f) => (f == null || f === '' ? 'No floor' : /^\d+$/.test(String(f).trim()) ? `Floor ${f}` : String(f));
+const floorName = (f) => (f == null || f === '' ? 'No floor' : /^\d+$/.test(String(f).trim()) ? `Floor ${f}` : /^g$/i.test(String(f).trim()) ? 'Ground' : String(f));
 
 // A unit saved with no floor takes it from its number: 601 is on floor 6, 1001 on floor 10.
 const floorOf = (u) => (u.floor != null && u.floor !== '' ? u.floor : /^[1-9]\d{2,3}$/.test(u.unit_no) ? u.unit_no.slice(0, -2) : null);
@@ -36,6 +38,7 @@ let lastBuilding = ''; // the building last looked at, so coming back from a lea
 export default function Building3D({ onPay, onLease, onNew, onWork }) {
   const [d, setD] = useState(null);
   const [repairs, setRepairs] = useState([]);
+  const [plans, setPlans] = useState({});
   const [error, setError] = useState('');
   const [buildingId, setBuildingId] = useState(lastBuilding);
   const [mode, setMode] = useState('status');
@@ -50,6 +53,7 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
 
   useEffect(() => {
     api.get('/leasing/overview?company_id=&building_id=&months=1').then(setD).catch((e) => setError(e.message));
+    api.get('/properties/plans').then(setPlans).catch(() => {});
     api.get('/leasing/work-orders?status=active').then((r) => setRepairs(r.work_orders.filter((w) => LIVE.includes(w.status)))).catch(() => {});
   }, []);
 
@@ -89,9 +93,17 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
   useEffect(() => {
     if (!building) return;
     lastBuilding = String(building.id);
-    scene.current?.setData(floors.map((f) => ({ label: floorName(f[0]?.floor), units: f.map((u) => ({ id: u.unit_id, label: u.unit_no })) })));
+    // The plan is in metres from the south-west corner; the drawing is a storey to the unit, from the middle, the south side in front.
+    const plan = plans[building.id];
+    const real = plan && units.length > 0 && units.every((u) => plan.units[u.unit_id]) ? plan : null;
+    const place = (r) => ({ x: (r.x + r.w / 2 - real.width / 2) / real.storey, z: (real.depth / 2 - r.y - r.d / 2) / real.storey, w: r.w / real.storey, d: r.d / real.storey });
+    scene.current?.setData(floors.map((f) => ({
+      label: floorName(f[0]?.floor),
+      units: f.map((u) => ({ id: u.unit_id, label: u.unit_no, rect: real && place(real.units[u.unit_id]) })),
+      commons: real ? (real.commons[f[0]?.floor] || real.commons['*'] || []).map((c) => ({ kind: c.kind, label: c.label, ...place(c) })) : [],
+    })), real && { W: real.width / real.storey, D: real.depth / real.storey });
     setSelected(null); setFloor(null); setOnly(null);
-  }, [building?.id, floors]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [building?.id, floors, plans]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // How each unit is painted: by its state, by its rent, or by how long its lease has left.
   useEffect(() => {

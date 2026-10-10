@@ -6,6 +6,10 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 // component (Building3D.jsx) says how each unit is painted, and is told what is pointed at.
 //
 //   floors: bottom floor first, each { label, units: [{ id, label }] }
+//   shape:  given when the building has a floor plan: { W, D }, its footprint. Each unit then
+//     has `rect`, where it really is ({ x, z, w, d }, from the middle of the floor, +z the
+//     front), and a floor may have `commons`, what is there besides the units: the same
+//     rectangles, each with a `kind` (corridor, core, lobby, service, open) and a `label`.
 //   paint:  unit id → { color, dim, pulse, beacon }
 //     dim: a unit that is there but not the point (vacant, or outside what is being looked at)
 //     pulse: it breathes, to be noticed; beacon: a light on its face (a repair is open)
@@ -73,14 +77,14 @@ export function createBuildingScene(el, { onHover, onPick, onTurn, light = false
   }
 
   /** Draw a building. Its floors rise into place one after another. */
-  function setData(list) {
+  function setData(list, shape) {
     clear();
     tower = new THREE.Group();
     scene.add(tower);
     const rows = list.some((f) => f.units.length > 2) ? 2 : 1;
     const perRow = Math.max(1, ...list.map((f) => Math.ceil(f.units.length / rows)));
-    const W = Math.min(Math.max(perRow * UNIT_W, 4.5), 20);
-    const D = rows === 2 ? UNIT_D * 2 + HALL : UNIT_D;
+    const W = shape ? shape.W : Math.min(Math.max(perRow * UNIT_W, 4.5), 20);
+    const D = shape ? shape.D : rows === 2 ? UNIT_D * 2 + HALL : UNIT_D;
     const pitch = UNIT_H + SLAB;
     const H = Math.max(1, list.length) * pitch;
 
@@ -106,17 +110,44 @@ export function createBuildingScene(el, { onHover, onPick, onTurn, light = false
       tag.scale.set(1.5, 0.75, 1);
       tag.position.set(-W / 2 - 1.2, SLAB + UNIT_H / 2, D / 2);
       group.add(tag);
-      const floor = { group, y: i * pitch, slab, tag, units: [], wait: i * 3, shown: 0 };
+      const floor = { group, y: i * pitch, slab, tag, units: [], parts: [], wait: i * 3, shown: 0 };
       floors.push(floor);
+
+      // What is on the floor besides the units. A corridor or a terrace is a mat on the slab; the rest stand a storey high.
+      for (const c of (shape && f.commons) || []) {
+        const flat = c.kind === 'corridor' || c.kind === 'open';
+        const h = flat ? 0.03 : UNIT_H - 0.1;
+        const geo = new THREE.BoxGeometry(c.w - 0.1, h, c.d - 0.1);
+        const o = { corridor: 0.3, open: 0.14, core: 0.5, lobby: 0.26, service: 0.3 }[c.kind];
+        const box = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: c.kind === 'core' || c.kind === 'service' ? (light ? 0x8e88b8 : 0x6a6494) : lineColor, transparent: true, opacity: 0, depthWrite: false }));
+        box.position.set(c.x, SLAB + h / 2, c.z);
+        floor.parts.push({ material: box.material, o });
+        if (!flat) {
+          const rim = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: lineColor, transparent: true, opacity: 0 }));
+          box.add(rim);
+          floor.parts.push({ material: rim.material, o: 0.45 });
+        }
+        if (c.label) {
+          const w = Math.min(c.w - 0.3, 2.4);
+          const name = new THREE.Mesh(new THREE.PlaneGeometry(w, w / 2), new THREE.MeshBasicMaterial({ map: plate(c.label, tagInk), transparent: true, opacity: 0, depthWrite: false }));
+          name.rotation.x = -Math.PI / 2;
+          name.position.y = h / 2 + 0.012;
+          box.add(name);
+          floor.parts.push({ material: name.material, o: 0.8, open: true });
+        }
+        group.add(box);
+      }
 
       const front = rows === 2 ? Math.ceil(f.units.length / 2) : f.units.length;
       f.units.forEach((u, n) => {
-        const back = n >= front;
+        // From the plan, where it really is; with none, an equal share of the front row or the back.
+        const back = shape ? u.rect.z < 0 : n >= front;
         const count = back ? f.units.length - front : front;
-        const w = W / count;
-        const x = -W / 2 + w * ((back ? n - front : n) + 0.5);
-        const z = rows === 2 ? (back ? -1 : 1) * (HALL / 2 + UNIT_D / 2) : 0;
-        const geo = new THREE.BoxGeometry(w - 0.1, UNIT_H - 0.1, UNIT_D - 0.1);
+        const w = shape ? u.rect.w : W / count;
+        const d = shape ? u.rect.d : UNIT_D;
+        const x = shape ? u.rect.x : -W / 2 + w * ((back ? n - front : n) + 0.5);
+        const z = shape ? u.rect.z : rows === 2 ? (back ? -1 : 1) * (HALL / 2 + UNIT_D / 2) : 0;
+        const geo = new THREE.BoxGeometry(w - 0.1, UNIT_H - 0.1, d - 0.1);
         const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x888888, transparent: true, opacity: 0, roughness: 0.45, metalness: 0.1 }));
         mesh.position.set(x, SLAB + UNIT_H / 2, z);
         mesh.userData.unit = u.id;
@@ -124,7 +155,7 @@ export function createBuildingScene(el, { onHover, onPick, onTurn, light = false
         mesh.add(edges);
         const face = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(w - 0.25, 1.5), Math.min((w - 0.25) / 2, 0.75)),
           new THREE.MeshBasicMaterial({ map: plate(u.label, ink), transparent: true, opacity: 0, depthWrite: false }));
-        face.position.z = (UNIT_D - 0.1) / 2 + 0.012;
+        face.position.z = (d - 0.1) / 2 + 0.012;
         if (back) { face.position.z *= -1; face.rotation.y = Math.PI; }
         mesh.add(face);
         // And again on its top, to be read from above once the floors are apart.
@@ -133,7 +164,7 @@ export function createBuildingScene(el, { onHover, onPick, onTurn, light = false
         lid.position.y = (UNIT_H - 0.1) / 2 + 0.012;
         mesh.add(lid);
         const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.11, 16, 12), new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0 }));
-        beacon.position.set(Math.min(w / 2 - 0.25, 0.9), UNIT_H / 2 - 0.2, (back ? -1 : 1) * ((UNIT_D - 0.1) / 2 + 0.1));
+        beacon.position.set(Math.min(w / 2 - 0.25, 0.9), UNIT_H / 2 - 0.2, (back ? -1 : 1) * ((d - 0.1) / 2 + 0.1));
         beacon.visible = false;
         mesh.add(beacon);
         group.add(mesh);
@@ -271,7 +302,9 @@ export function createBuildingScene(el, { onHover, onPick, onTurn, light = false
       const away = view.floor != null && view.floor !== i;
       const solid = f.shown * (away ? 0.05 : 1);
       f.slab.material.opacity = ease(f.slab.material.opacity, solid * (f.roof ? 0.55 : 0.5), k);
+      f.slab.material.depthWrite = f.slab.material.opacity > 0.3; // a floor faded away hides nothing behind it
       for (const x of f.extras || []) x.material.opacity = ease(x.material.opacity, solid * 0.6, k);
+      for (const x of f.parts || []) x.material.opacity = ease(x.material.opacity, away || (x.open && !(view.explode || view.floor === i)) ? (x.open ? 0 : solid * x.o) : solid * x.o, k);
       if (f.tag) f.tag.material.opacity = ease(f.tag.material.opacity, f.shown * (away ? 0.12 : view.explode || view.floor === i ? 0.95 : 0.55), k);
       for (const u of f.units) {
         const m = u.mesh.material;
@@ -283,7 +316,7 @@ export function createBuildingScene(el, { onHover, onPick, onTurn, light = false
         u.edges.material.opacity = ease(u.edges.material.opacity, solid * (picked ? 1 : u.edge), k);
         u.edges.material.color.copy(picked || u.dim ? m.color : lineColor).lerp(new THREE.Color(0xffffff), picked ? 1 : light ? 0 : 0.35);
         u.face.material.opacity = ease(u.face.material.opacity, solid * (u.dim && !picked ? 0.55 : 1), k);
-        u.lid.material.opacity = ease(u.lid.material.opacity, view.explode || view.floor === i ? u.face.material.opacity : 0, k);
+        u.lid.material.opacity = ease(u.lid.material.opacity, !away && (view.explode || view.floor === i) ? u.face.material.opacity : 0, k);
         u.mesh.position.z = ease(u.mesh.position.z, u.home + (picked ? u.out * 0.45 : 0), k);
         if (u.beacon.visible) {
           u.beacon.material.opacity = solid;

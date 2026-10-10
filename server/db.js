@@ -1182,6 +1182,13 @@ await db.exec(`
   ALTER TABLE prop_buildings ADD COLUMN IF NOT EXISTS zip TEXT;
 `);
 
+// Where each unit really is on its floor, read off the building's floor plans: JSON, in
+// metres from the building's south-west corner (server/floorPlans.js). Null is no plan.
+await db.exec(`
+  ALTER TABLE prop_buildings ADD COLUMN IF NOT EXISTS plan TEXT;
+  ALTER TABLE prop_units ADD COLUMN IF NOT EXISTS plan TEXT;
+`);
+
 // Leasing: the people and companies who rent units, and their bookings. A booking is any
 // stay, a month or a five-year lease alike; its rent is set here, never on the unit.
 //   status: draft (holds nothing) → confirmed (the unit is taken for those dates), or

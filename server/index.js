@@ -25,6 +25,7 @@ import { responsibilityRoutes } from './responsibilities.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { propertyRoutes } from './properties.js';
+import { planRoutes } from './floorPlans.js';
 import { leasingRoutes } from './leasing.js';
 import { historyRoutes } from './leasingHistory.js';
 import { inspectionRoutes } from './inspections.js';
@@ -84,6 +85,7 @@ app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and 
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/properties/renewals', renewalRoutes); // getting a document renewed: suppliers, quote requests, offers (master only)
+app.use('/api/properties', planRoutes); // where each unit is on its floor, from the floor plans; the 3D View draws from it
 app.use('/api/properties', propertyRoutes); // companies, buildings and units; the base for leasing (master writes)
 app.use('/api/leasing/reports', reportRoutes); // rent roll, aging, collections, expiring leases, vacancy, tenant statement
 app.use('/api/leasing/alerts', alertRoutes); // what needs attention today, and the master's alert rules
