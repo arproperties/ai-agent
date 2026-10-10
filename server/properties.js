@@ -7,6 +7,7 @@ import { requireMaster } from './auth.js';
 import { DATA_DIR } from './config.js';
 import { todayHere } from './leasingRegion.js';
 import { usPhone, usEin, einProblem, emailProblem, zipProblem } from './usFormat.js';
+import { cleanDetails, readDocument } from './documentReader.js';
 
 // Properties: the companies of the group, their buildings, and each building's units.
 // Everyone signed in can read them; only the master adds, changes or removes. A company
@@ -112,12 +113,13 @@ export async function update(kind, id, body) {
 }
 
 export async function remove(kind, id) {
-  // A company takes its documents with it; their rows cascade, their files are removed here.
-  const files = kind === 'company'
-    ? (await db.prepare('SELECT file_path FROM prop_documents WHERE company_id = ? AND file_path IS NOT NULL').all(Number(id))).map((d) => d.file_path)
-    : kind === 'unit' ? (await db.prepare(`SELECT file_path FROM prop_unit_photos WHERE unit_id = ?
-        UNION ALL SELECT p.file_path FROM prop_inspection_photos p JOIN prop_inspections i ON i.id = p.inspection_id WHERE i.unit_id = ?`).all(Number(id), Number(id))).map((p) => p.file_path) // a unit's photos, and those of its inspections, go with it
-      : [];
+  // Its documents go with it: their rows cascade, their files are removed here. So do a
+  // unit's photos, and those of its inspections.
+  const files = (await db.prepare(`SELECT file_path FROM prop_documents WHERE ${OWNER[kind][0]} = ? AND file_path IS NOT NULL`).all(Number(id))).map((d) => d.file_path);
+  if (kind === 'unit') {
+    files.push(...(await db.prepare(`SELECT file_path FROM prop_unit_photos WHERE unit_id = ?
+      UNION ALL SELECT p.file_path FROM prop_inspection_photos p JOIN prop_inspections i ON i.id = p.inspection_id WHERE i.unit_id = ?`).all(Number(id), Number(id))).map((p) => p.file_path));
+  }
   try {
     const r = await db.prepare(`DELETE FROM ${KINDS[kind].table} WHERE id = ?`).run(Number(id));
     if (!r.changes) throw bad('Not found', 404);
@@ -262,11 +264,18 @@ export async function removeUnitPhoto(id) {
   return { ok: true };
 }
 
-// ---------- company documents ----------
+// ---------- documents ----------
+//
+// A document belongs to one company, one building or one unit: a licence, an insurance
+// policy, a certificate. It is named freely, and the same name again under the same owner
+// is its renewal. Each has a renewal window (renew_days before it expires) inside which
+// it is due.
 
 const DOC_DIR = `${DATA_DIR}/properties`;
-const SOON = 30; // days before expiry a document shows as due
-const DOC_COLS = `id, company_id, title, number, notes, file_name, file_mime, uploaded_by, created_at,
+const RENEW = 90; // days before expiry a document is due, unless it says otherwise
+const RENEW_BY = ['remind', 'quotes']; // tracked until it is renewed, or shopped around for
+const OWNER = { company: ['company_id', 'prop_companies'], building: ['building_id', 'prop_buildings'], unit: ['unit_id', 'prop_units'] };
+const DOC_COLS = `id, company_id, building_id, unit_id, title, number, notes, file_name, file_mime, uploaded_by, created_at, renew_days, renew_by, details,
   (file_path IS NOT NULL) AS has_file,
   to_char(issue_date, 'YYYY-MM-DD') AS issue_date, to_char(expiry_date, 'YYYY-MM-DD') AS expiry_date`;
 // Newest first within a name: the one that expires last, then the one added last.
@@ -274,14 +283,16 @@ const NEWEST = 'expiry_date DESC NULLS LAST, id DESC';
 
 const day = (s) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) / 86400000;
 
-/** valid | due | expired | on_file (no expiry) for one document, as of `today` (YYYY-MM-DD). */
+/** valid | due (inside its renewal window) | expired | on_file (no expiry) for one document, as of `today` (YYYY-MM-DD). */
 export function docStatus(doc, today) {
   if (!doc.expiry_date) return 'on_file';
   const left = day(doc.expiry_date) - day(today);
-  return left < 0 ? 'expired' : left <= SOON ? 'due' : 'valid';
+  return left < 0 ? 'expired' : left <= (doc.renew_days ?? RENEW) ? 'due' : 'valid';
 }
 
 const key = (title) => title.trim().toLowerCase();
+/** A row as it is sent: without where its file is kept, its details read back from their JSON, and its status as of `today`. */
+const view = ({ file_path, ...d }, today = todayHere()) => ({ ...d, details: JSON.parse(d.details || '{}'), status: docStatus(d, today) });
 
 /**
  * Each company with its documents grouped by name ("Trade License" twice is one licence,
@@ -289,14 +300,14 @@ const key = (title) => title.trim().toLowerCase();
  */
 export async function docBoard(today = todayHere()) {
   const companies = await listCompanies();
-  const docs = await db.prepare(`SELECT ${DOC_COLS} FROM prop_documents ORDER BY lower(title), ${NEWEST}`).all();
+  const docs = await db.prepare(`SELECT ${DOC_COLS} FROM prop_documents WHERE company_id IS NOT NULL ORDER BY lower(title), ${NEWEST}`).all();
   return companies.map((c) => {
     const groups = new Map();
     for (const d of docs) {
       if (d.company_id !== c.id) continue;
       const g = groups.get(key(d.title));
       if (g) g.count += 1;
-      else groups.set(key(d.title), { title: d.title, count: 1, doc: { ...d, status: docStatus(d, today) } });
+      else groups.set(key(d.title), { title: d.title, count: 1, doc: view(d, today) });
     }
     const list = [...groups.values()].map((g) => ({ ...g, status: g.doc.status }));
     return { ...c, docs: list, expired: list.filter((g) => g.status === 'expired').length, due: list.filter((g) => g.status === 'due').length };
@@ -308,8 +319,46 @@ export async function companyDocs(companyId, title, today = todayHere()) {
   const rows = title
     ? await db.prepare(`SELECT ${DOC_COLS} FROM prop_documents WHERE company_id = ? AND lower(title) = ? ORDER BY ${NEWEST}`).all(Number(companyId), key(title))
     : await db.prepare(`SELECT ${DOC_COLS} FROM prop_documents WHERE company_id = ? ORDER BY lower(title), ${NEWEST}`).all(Number(companyId));
-  return rows.map((d) => ({ ...d, status: docStatus(d, today) }));
+  return rows.map((d) => view(d, today));
 }
+
+/**
+ * The register: every document of every company, building and unit, one row a name an owner
+ * (its newest copy; `count` is how many copies that name has), the most pressing first. Each
+ * says whose it is (`owner`, and `where` in words) and how long it has (`days_left`).
+ * Narrowed to a building, a company's own documents are left out.
+ */
+export async function register({ company_id, building_id, status } = {}, today = todayHere()) {
+  const rows = await db.prepare(`SELECT d.*, u.unit_no, bl.id AS in_building, bl.name AS building, c.id AS in_company, c.name AS company
+    FROM (SELECT ${DOC_COLS} FROM prop_documents) d
+    LEFT JOIN prop_units u ON u.id = d.unit_id
+    LEFT JOIN prop_buildings bl ON bl.id = coalesce(d.building_id, u.building_id)
+    JOIN prop_companies c ON c.id = coalesce(d.company_id, bl.company_id)
+    ORDER BY lower(d.title), d.expiry_date DESC NULLS LAST, d.id DESC`).all();
+  const groups = new Map(); // an owner and a name → its newest copy
+  for (const d of rows) {
+    const owner = d.unit_id ? 'unit' : d.building_id ? 'building' : 'company';
+    const k = `${owner}:${d[OWNER[owner][0]]}:${key(d.title)}`;
+    const g = groups.get(k);
+    if (g) g.count += 1;
+    else {
+      groups.set(k, { ...view(d, today), owner, count: 1, days_left: d.expiry_date ? day(d.expiry_date) - day(today) : null,
+        where: owner === 'unit' ? `Unit ${d.unit_no}, ${d.building}` : owner === 'building' ? d.building : d.company });
+    }
+  }
+  const rank = { expired: 0, due: 1, valid: 2, on_file: 3 };
+  return [...groups.values()]
+    .filter((d) => (!Number(company_id) || d.in_company === Number(company_id)) && (!Number(building_id) || d.in_building === Number(building_id)) && (!status || d.status === status))
+    .sort((a, b) => rank[a.status] - rank[b.status] || a.days_left - b.days_left || a.title.localeCompare(b.title));
+}
+
+/** Every company, building and unit by name: what a document can be filed under. */
+export const places = async () => ({
+  companies: await db.prepare('SELECT id, name FROM prop_companies ORDER BY name').all(),
+  buildings: await db.prepare('SELECT id, name, company_id FROM prop_buildings ORDER BY name').all(),
+  units: await db.prepare(`SELECT id, unit_no, building_id FROM prop_units
+    ORDER BY NULLIF(regexp_replace(unit_no, '\\D', '', 'g'), '')::bigint NULLS LAST, unit_no`).all(),
+});
 
 const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(day(v));
 function docFields(body = {}) {
@@ -322,7 +371,27 @@ function docFields(body = {}) {
     out[f] = v || null;
   }
   if ('title' in out && !out.title) throw bad('Give the document a name.');
+  // A form sends an emptied box as empty text: that is the window left as it was, not no window.
+  if ('renew_days' in body && String(body.renew_days ?? '').trim() !== '') {
+    const n = Number(body.renew_days);
+    if (!Number.isInteger(n) || n < 0 || n > 365) throw bad('The renewal window is a whole number of days from 0 to 365.');
+    out.renew_days = n;
+  }
+  if ('renew_by' in body) {
+    if (!RENEW_BY.includes(body.renew_by)) throw bad('A document is renewed by a reminder or by quotes.');
+    out.renew_by = body.renew_by;
+  }
+  if ('details' in body) out.details = JSON.stringify(cleanDetails(body.details));
   return out;
+}
+
+/** The one thing a document is filed under, from company_id, building_id or unit_id: exactly one of them. */
+async function ownerOf(body = {}) {
+  const given = Object.values(OWNER).filter(([col]) => Number(body[col]) > 0);
+  if (given.length !== 1) throw bad('A document belongs to one company, one building or one unit.');
+  const [[col, table]] = given;
+  if (!(await db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(Number(body[col])))) throw bad('Not found', 404);
+  return { [col]: Number(body[col]) };
 }
 
 const getDoc = async (id) => {
@@ -330,7 +399,13 @@ const getDoc = async (id) => {
   if (!d) throw bad('Not found', 404);
   return d;
 };
-const shown = ({ file_path, ...d }) => d;
+
+/** Every copy under one document's name and owner (the current one and its renewals), newest first. */
+export async function docHistory(id, today = todayHere()) {
+  const d = await getDoc(id);
+  const [col] = Object.values(OWNER).find(([c]) => d[c] != null);
+  return (await db.prepare(`SELECT ${DOC_COLS} FROM prop_documents WHERE ${col} = ? AND lower(title) = ? ORDER BY ${NEWEST}`).all(d[col], key(d.title))).map((r) => view(r, today));
+}
 
 /** Keep an uploaded file on disk; gives the columns to store for it (nothing when no file came). */
 export function saveFile(file, dir = DOC_DIR) {
@@ -341,24 +416,27 @@ export function saveFile(file, dir = DOC_DIR) {
   return { file_path: path, file_name: file.originalname.slice(0, 200), file_mime: file.mimetype };
 }
 
-export async function addDoc(companyId, body, file, by) {
+/** File a document under the company, building or unit named in `body`. */
+export async function addDocument(body = {}, file, by) {
   const fields = docFields({ title: '', ...body });
-  if (!(await db.prepare('SELECT 1 FROM prop_companies WHERE id = ?').get(Number(companyId)))) throw bad('Not found', 404);
-  const row = { ...fields, ...saveFile(file), company_id: Number(companyId), uploaded_by: by ?? null };
+  const row = { ...fields, ...(await ownerOf(body)), ...saveFile(file), uploaded_by: by ?? null };
   const cols = Object.keys(row);
   const { id } = await db.prepare(`INSERT INTO prop_documents (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')}) RETURNING id`)
     .run(...cols.map((c) => row[c]));
-  return shown(await getDoc(id));
+  return view(await getDoc(id));
 }
 
-/** Change a document's details, and replace its file when a new one is sent. */
+/** File a document under a company. */
+export const addDoc = (companyId, body, file, by) => addDocument({ ...body, company_id: companyId, building_id: null, unit_id: null }, file, by);
+
+/** Change a document's details, and replace its file when a new one is sent. Whose it is stays. */
 export async function updateDoc(id, body, file) {
   const old = await getDoc(id);
   const row = { ...docFields(body), ...saveFile(file) };
   const cols = Object.keys(row);
   if (cols.length) await db.prepare(`UPDATE prop_documents SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => row[c]), old.id);
   if (file && old.file_path) rmSync(old.file_path, { force: true });
-  return shown(await getDoc(id));
+  return view(await getDoc(id));
 }
 
 export async function removeDoc(id) {
@@ -391,6 +469,12 @@ propertyRoutes.post('/companies/:id/docs', requireMaster, upload.single('file'),
 propertyRoutes.put('/docs/:id', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await updateDoc(req.params.id, req.body, req.file))));
 propertyRoutes.delete('/docs/:id', requireMaster, wrap(async (req, res) => res.json(await removeDoc(req.params.id))));
 propertyRoutes.get('/docs/:id/file', wrap(async (req, res) => sendDoc(req, res, await getDoc(req.params.id))));
+// The register: every document, whoever it belongs to. Reading a file only suggests; nothing is kept by it.
+propertyRoutes.get('/documents', wrap(async (req, res) => res.json({ documents: await register(req.query), master: req.user.role === 'master' })));
+propertyRoutes.get('/documents/:id/history', wrap(async (req, res) => res.json(await docHistory(req.params.id))));
+propertyRoutes.post('/documents', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await addDocument(req.body, req.file, req.user.id))));
+propertyRoutes.post('/documents/read', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await readDocument(req.file))));
+propertyRoutes.get('/places', wrap(async (req, res) => res.json(await places())));
 
 propertyRoutes.get('/companies', wrap(async (req, res) => res.json(await listCompanies())));
 propertyRoutes.get('/companies/:id', wrap(async (req, res) => res.json({ ...(await one('prop_companies', req.params.id)), list: await listBuildings(req.params.id) })));

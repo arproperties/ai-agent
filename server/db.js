@@ -1067,6 +1067,24 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_prop_documents ON prop_documents(company_id, lower(title));
 `);
 
+// A document can belong to a building or a unit instead (an insurance policy, a
+// certificate): exactly one of the three owns it.
+//   renew_days: how long before it expires its renewal window opens (the rule is three months).
+//   renew_by: 'remind' (one issuer: it is tracked) or 'quotes' (it is shopped around for).
+//   details: the figures read from it, as JSON (insurer, premium, sum_insured, deductible, cover).
+await db.exec(`
+  ALTER TABLE prop_documents ALTER COLUMN company_id DROP NOT NULL;
+  ALTER TABLE prop_documents ADD COLUMN IF NOT EXISTS building_id INTEGER REFERENCES prop_buildings(id) ON DELETE CASCADE;
+  ALTER TABLE prop_documents ADD COLUMN IF NOT EXISTS unit_id INTEGER REFERENCES prop_units(id) ON DELETE CASCADE;
+  ALTER TABLE prop_documents ADD COLUMN IF NOT EXISTS renew_days INTEGER NOT NULL DEFAULT 90;
+  ALTER TABLE prop_documents ADD COLUMN IF NOT EXISTS renew_by TEXT NOT NULL DEFAULT 'remind';
+  ALTER TABLE prop_documents ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT '{}';
+  ALTER TABLE prop_documents DROP CONSTRAINT IF EXISTS prop_documents_one_owner;
+  ALTER TABLE prop_documents ADD CONSTRAINT prop_documents_one_owner CHECK (num_nonnulls(company_id, building_id, unit_id) = 1);
+  CREATE INDEX IF NOT EXISTS idx_prop_documents_building ON prop_documents(building_id);
+  CREATE INDEX IF NOT EXISTS idx_prop_documents_unit ON prop_documents(unit_id);
+`);
+
 // The day a company was registered, as YYYY-MM-DD. Kept as text so it reads back as written.
 await db.exec(`ALTER TABLE prop_companies ADD COLUMN IF NOT EXISTS registration_date TEXT;`);
 

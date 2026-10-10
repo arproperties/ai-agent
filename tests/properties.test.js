@@ -75,8 +75,8 @@ test('company documents: named freely, and the newest under one name decides', a
   const { docStatus, docBoard, companyDocs, addDoc, updateDoc, removeDoc } = await import('../server/properties.js');
   assert.equal(docStatus({ expiry_date: null }, '2026-10-02'), 'on_file');
   assert.equal(docStatus({ expiry_date: '2026-10-01' }, '2026-10-02'), 'expired');
-  assert.equal(docStatus({ expiry_date: '2026-11-01' }, '2026-10-02'), 'due');
-  assert.equal(docStatus({ expiry_date: '2026-11-02' }, '2026-10-02'), 'valid');
+  assert.equal(docStatus({ expiry_date: '2026-12-31' }, '2026-10-02'), 'due');
+  assert.equal(docStatus({ expiry_date: '2027-01-01' }, '2026-10-02'), 'valid');
 
   await reset();
   const c = await create('company', { name: 'A' });
