@@ -41,7 +41,7 @@ const Label = ({ children, action }) => (
   </div>
 );
 
-export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
+export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, translateOpen, onTranslate, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
   const [q, setQ] = useState('');
   const [searching, setSearching] = useState(false);
@@ -200,8 +200,8 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
             </button>
           )}
           <SettingsMenu user={user} expiring={expiring} dueTodos={dueTodos} tenantCare={tenantCare}
-            filesOpen={filesOpen} todosOpen={todosOpen} meetingsOpen={meetingsOpen} transcribeOpen={transcribeOpen} tenantCareOpen={tenantCareOpen} dutiesOpen={dutiesOpen} checklistsOpen={checklistsOpen} hasBuildings={hasBuildings} buildingsOpen={buildingsOpen} inventoryOpen={inventoryOpen}
-            onFiles={onFiles} onTodos={onTodos} onMeetings={onMeetings} onTranscribe={onTranscribe} onTenantCare={onTenantCare} onDuties={onDuties} onChecklists={onChecklists} onBuildings={onBuildings} onInventory={onInventory}
+            filesOpen={filesOpen} todosOpen={todosOpen} translateOpen={translateOpen} meetingsOpen={meetingsOpen} transcribeOpen={transcribeOpen} tenantCareOpen={tenantCareOpen} dutiesOpen={dutiesOpen} checklistsOpen={checklistsOpen} hasBuildings={hasBuildings} buildingsOpen={buildingsOpen} inventoryOpen={inventoryOpen}
+            onFiles={onFiles} onTodos={onTodos} onTranslate={onTranslate} onMeetings={onMeetings} onTranscribe={onTranscribe} onTenantCare={onTenantCare} onDuties={onDuties} onChecklists={onChecklists} onBuildings={onBuildings} onInventory={onInventory}
             onMemory={onMemory} onEmail={onEmail} onPeople={onPeople} />
           <NotifyBell />
           <button onClick={onLogout} aria-label="Sign out" title="Sign out" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">

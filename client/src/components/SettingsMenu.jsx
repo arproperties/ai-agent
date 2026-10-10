@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Building2, ClipboardList, ListChecks, HardHat, Package } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package } from 'lucide-react';
 import Icon from './Icon';
 import { Row, Count } from './NavRow';
 
@@ -14,7 +14,7 @@ import { Row, Count } from './NavRow';
  * and a number nobody can see is a number that stops working. So the counts stay on the
  * items inside, and a single dot on the gear says "something in here wants you".
  */
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, filesOpen, todosOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, onFiles, onTodos, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef(null);
 
@@ -52,6 +52,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
             aria-label={expiring ? `Shelf (${expiring} expiring)` : 'Shelf'} badge={<Count n={expiring} />} />
           <Row role="menuitem" icon={<ListTodo size={17} strokeWidth={1.75} />} label="To-do" active={todosOpen} onClick={go(onTodos)}
             aria-label={dueTodos ? `To-do (${dueTodos} due)` : 'To-do'} badge={<Count n={dueTodos} />} />
+          <Row role="menuitem" icon={<Languages size={17} strokeWidth={1.75} />} label="Live Translator" active={translateOpen} onClick={go(onTranslate)} />
           <Row role="menuitem" icon={<AudioLines size={17} strokeWidth={1.75} />} label="Meetings" active={meetingsOpen} onClick={go(onMeetings)} />
           <Row role="menuitem" icon={<Captions size={17} strokeWidth={1.75} />} label="Transcribe" active={transcribeOpen} onClick={go(onTranscribe)} />
           {/* Only for the people who look after the tenant inbox (and the master). */}
