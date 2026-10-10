@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Ban, Check, CheckCheck, ChevronLeft, ChevronRight, Loader2, MessageSquarePlus, Paperclip, Pencil, Play, Plus, RotateCcw, Search, Trash2, Wrench, X } from 'lucide-react';
+import { Ban, Bug, Check, CheckCheck, ChevronLeft, ChevronRight, Droplets, Ellipsis, Refrigerator, Snowflake, Zap, Loader2, MessageSquarePlus, Paperclip, Pencil, Play, Plus, RotateCcw, Search, Trash2, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { usDate as fmt } from '../lib/usFormat';
 import Page from './Page';
@@ -26,7 +26,13 @@ export const WO_STATUS = {
 };
 const PRIORITY = [['low', 'Low'], ['normal', 'Normal'], ['urgent', 'Urgent']];
 const FILTERS = [['active', 'Active'], ['open', 'Open'], ['assigned', 'Assigned'], ['in_progress', 'In progress'], ['done', 'Done'], ['closed', 'Closed'], ['cancelled', 'Cancelled'], ['', 'All']];
-const CATEGORIES = ['AC', 'Plumbing', 'Electrical', 'Appliance', 'Pest control', 'Other']; // the usual ones, a tap each; anything else can be typed
+// The usual kinds of repair, a tap each, with the picture and colour of each. "Other" opens a box to type one.
+const CATEGORIES = [
+  ['AC', Snowflake, 'from-sky-400 to-blue-500'], ['Plumbing', Droplets, 'from-cyan-400 to-teal-500'], ['Electrical', Zap, 'from-amber-400 to-orange-500'],
+  ['Appliance', Refrigerator, 'from-violet-400 to-purple-500'], ['Pest control', Bug, 'from-lime-400 to-green-600'],
+];
+const TYPE_CHIP = (on) => `flex items-center gap-2 rounded-full border py-1.5 pl-1.5 pr-4 text-sm transition ${on ? 'border-p1 bg-p1/15 font-medium text-txt' : 'border-stroke text-txt/80 hover:border-p1/50 hover:bg-white/5'}`;
+const DISC = 'grid size-7 shrink-0 place-items-center rounded-full bg-gradient-to-br text-white';
 const LIVE = ['open', 'assigned', 'in_progress'];
 const STEPS = ['The problem', 'The work']; // the form, a step at a time: what is wrong first, then who fixes it and when
 const BATCH = 10; // files the server takes in one go
@@ -72,6 +78,7 @@ function WorkOrderForm({ start, preset, onDone, onCancel }) {
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
   const [step, setStep] = useState(0); // which of STEPS is on screen
+  const [other, setOther] = useState(() => !!start?.category && !CATEGORIES.some(([c]) => c === start.category)); // a type of their own, typed in
   const ready = !!v.unit_id && !!String(v.detail || '').trim(); // the problem is said, so the second step can be opened
   const next = (e) => { e.preventDefault(); if (!v.unit_id) { setError('Choose the unit.'); return; } setError(''); setStep(1); };
   useEffect(() => { api.get('/leasing/work-orders/units').then(setUnits).catch((e) => setError(e.message)); }, []);
@@ -94,7 +101,7 @@ function WorkOrderForm({ start, preset, onDone, onCancel }) {
   };
 
   return (
-    <form onSubmit={step === 0 ? next : save} className="max-w-2xl">
+    <form onSubmit={step === 0 ? next : save} className="w-full">
       <div className="flex flex-col gap-5 rounded-2xl border border-stroke p-4 md:p-5">
         <ol className="flex items-center gap-2 border-b border-stroke/60 pb-4">
           {STEPS.map((name, i) => (
@@ -118,12 +125,20 @@ function WorkOrderForm({ start, preset, onDone, onCancel }) {
                 options={units.map((u) => ({ value: u.id, label: `Unit ${u.unit_no} · ${u.building}` }))} />
               {v.unit_id && link && <span className="mt-1 block text-xs text-mute">{link.tenant ? `For ${link.tenant} (${link.ref}), who has the unit on that day.` : 'The unit is vacant on that day: this work order will have no tenant.'}</span>}
             </Label>
-            <Label text="Type" wide>
-              <div className="mb-2 flex flex-wrap gap-1">
-                {CATEGORIES.map((c) => <button key={c} type="button" onClick={() => setV({ ...v, category: c })} className={CHIP(v.category === c)}>{c}</button>)}
+            <div className="sm:col-span-2">
+              <span className="mb-1.5 block text-xs text-txt/80">Type</span>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Type">
+                {CATEGORIES.map(([c, Ico, tint]) => (
+                  <button key={c} type="button" aria-pressed={!other && v.category === c} onClick={() => { setOther(false); setV({ ...v, category: v.category === c ? '' : c }); }} className={TYPE_CHIP(!other && v.category === c)}>
+                    <span className={`${DISC} ${tint}`}><Ico size={14} /></span>{c}
+                  </button>
+                ))}
+                <button type="button" aria-pressed={other} onClick={() => { setOther(!other); setV({ ...v, category: '' }); }} className={TYPE_CHIP(other)}>
+                  <span className={`${DISC} from-slate-400 to-slate-600`}><Ellipsis size={14} /></span>Other
+                </button>
               </div>
-              <input value={v.category || ''} onChange={set('category')} maxLength={60} placeholder="Or type your own" className={FIELD} />
-            </Label>
+              {other && <input autoFocus value={v.category || ''} onChange={set('category')} maxLength={60} placeholder="Say what kind: Door, Window, Paint…" aria-label="Another type" className={`${FIELD} mt-2 max-w-md`} />}
+            </div>
             <Label text="What is wrong" need wide>
               <textarea value={v.detail || ''} onChange={set('detail')} required rows={4} maxLength={2000} className={`${FIELD} resize-none`} />
             </Label>
