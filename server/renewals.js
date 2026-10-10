@@ -1,7 +1,9 @@
+import { Router } from 'express';
 import { readFileSync, rmSync } from 'node:fs';
 import { db } from './db.js';
 import { MODELS, DATA_DIR } from './config.js';
-import { docHistory, saveFile } from './properties.js';
+import { requireMaster } from './auth.js';
+import { docHistory, saveFile, register, upload, sendDoc } from './properties.js';
 import { fileBlock, isDate } from './documentReader.js';
 import { cleanAddresses, createDraft, logAction } from './drafts.js';
 import { store, discard } from './draftFiles.js';
@@ -136,7 +138,7 @@ export async function getRenewal(id) {
   const r = await rawRenewal(id);
   const { file_path, ...document } = await documentOf(r.document_id);
   return { id: r.id, status: r.status, opened_by: r.opened_by, created_at: Number(r.created_at), chosen_quote_id: r.chosen_quote_id, document,
-    suppliers: (await requestsOf(r.id)).map(({ draft_owner, message_id, seen, ...q }) => q),
+    suppliers: (await requestsOf(r.id)).map(({ message_id, seen, ...q }) => q),
     quotes: await quotesOf(r.id), compared: r.compared ? JSON.parse(r.compared) : null, closing: await closingOf(r) };
 }
 
@@ -724,8 +726,126 @@ export async function decide(id, quoteId, by, deps) {
       draft = await createDraft(by, { to: [q.email], subject: w.subject, body: w.body, from: acc.email });
       await logAction(by, { action: 'draft', draftId: draft.id, recipients: draft.to_addrs });
     }
-    closing.push({ supplier_id: q.supplier_id, supplier: q.name, email: q.email, kind: w.kind, draft_id: draft?.id ?? null, subject: w.subject, body: w.body });
+    closing.push({ supplier_id: q.supplier_id, supplier: q.name, email: q.email, kind: w.kind, draft_id: draft?.id ?? null, draft_owner: draft ? by : null, subject: w.subject, body: w.body });
   }
   await db.prepare("UPDATE prop_renewals SET status = 'decided', chosen_quote_id = ?, closing = ? WHERE id = ?").run(chosen.id, JSON.stringify(closing), r.id);
   return getRenewal(r.id);
 }
+
+// ---------- Riley's hands ----------
+//
+// The same steps, asked for in the chat. She can say where renewals stand, start one, look
+// for replies and compare the offers. Finding suppliers' addresses, approving the emails
+// and choosing an offer stay on the screen, where a person sees what they are agreeing to.
+
+const text = { type: 'string' };
+const WHICH = { document: { ...text, description: 'The document, by its name or part of it (e.g. "fire insurance").' }, place: { ...text, description: 'The building, unit or company it belongs to, when more than one document has that name.' } };
+
+export const RENEWAL_TOOLS = [
+  { name: 'renewal_status',
+    description: 'Which documents (insurance policies, licences, certificates, contracts) are due for renewal or expired, and for each whether a renewal is under way and how far it has got: suppliers listed, asked, quotes in. Read-only.',
+    input_schema: { type: 'object', properties: {} } },
+  { name: 'renewal_start',
+    description: 'Start renewing a document: opens its renewal and lists the supplier that holds it now. Only when the user asks. It writes to nobody. '
+      + 'Afterwards tell the user to open the renewal on the Documents page to choose who else to ask and to approve the emails.',
+    input_schema: { type: 'object', properties: WHICH, required: ['document'] } },
+  { name: 'renewal_check_replies',
+    description: 'Look in the mailbox for replies to the quote requests of a renewal, read them, and say who has quoted, who asked a question and who has not answered. It only reads the mailbox.',
+    input_schema: { type: 'object', properties: WHICH, required: ['document'] } },
+  { name: 'renewal_compare',
+    description: 'Compare the quotes received for a renewal with the current policy and say which you would take and why. Give the user the figures and the reasons, and what to check before deciding. The user decides, on the renewal screen.',
+    input_schema: { type: 'object', properties: WHICH, required: ['document'] } },
+];
+export const RENEWAL_STATUS = { renewal_status: 'Looking at what is due for renewal…', renewal_start: 'Starting the renewal…', renewal_check_replies: 'Looking for replies…', renewal_compare: 'Comparing the offers…' };
+
+/** The tools above, for `user`. Reading where things stand is anyone's; the rest is the master's, as on the screens. */
+export function renewalTools(user, deps) {
+  const master = () => { if (user?.role !== 'master') throw new Error('Only the master can run a renewal. Tell the user to ask them.'); };
+  const label = (d) => `${d.title}, ${d.where}`;
+  /** The one document meant, from the register; says which there are when it is none or several. */
+  const find = async ({ document, place }) => {
+    const all = await register();
+    const has = (hay, needle) => !needle || String(hay).toLowerCase().includes(String(needle).trim().toLowerCase());
+    const hits = all.filter((d) => has(d.title, document) && has(`${d.where} ${d.company}`, place));
+    if (hits.length === 1) return hits[0];
+    throw new Error(`${hits.length ? 'More than one document matches' : 'No document matches'} "${[document, place].filter(Boolean).join(', ')}". There are: ${(hits.length ? hits : all).slice(0, 30).map(label).join('; ') || 'none yet'}.`);
+  };
+  const underWay = async (input) => {
+    const d = await find(input);
+    const r = (await openByDocument()).get(d.id);
+    if (!r) throw new Error(`No renewal has been started for ${label(d)}. Offer to start one.`);
+    return { d, r };
+  };
+  const who = (v) => v.suppliers.map((s) => `- ${s.name}: ${s.email ? (s.email_confirmed ? s.email : `${s.email} (not confirmed)`) : 'no address yet'}; ${s.state}`
+    + `${s.reply_note ? ` — ${s.reply_note}` : ''}`).join('\n') || '- nobody listed yet';
+
+  return {
+    renewal_status: async () => {
+      const [docs, open] = [await register(), await listRenewals()];
+      const due = docs.filter((d) => ['due', 'expired'].includes(d.status) || open.some((r) => same(r.title, d.title) && r.where === d.where));
+      if (!due.length) return 'Nothing is due for renewal.';
+      const under = await openByDocument();
+      return due.map((d) => {
+        const r = open.find((x) => x.id === under.get(d.id)?.id);
+        return `- ${label(d)}: ${d.expiry_date ? `${d.status === 'expired' ? 'expired' : 'expires'} ${usDate(d.expiry_date)}` : 'no expiry'}; `
+          + (r ? `renewal under way: ${r.listed} listed, ${r.asked} asked, ${r.quotes} quote${r.quotes === 1 ? '' : 's'}${r.status === 'decided' ? ', an offer chosen' : ''}` : 'no renewal started');
+      }).join('\n');
+    },
+    renewal_start: async (input) => {
+      master();
+      const d = await find(input);
+      const v = await startRenewal(d.id, user.id);
+      return `The renewal of ${label(d)} is open. On it so far:\n${who(v)}\nNobody has been written to. The user opens it on the Documents page to find more suppliers, confirm their addresses and approve the emails.`;
+    },
+    renewal_check_replies: async (input) => {
+      master();
+      const { d, r } = await underWay(input);
+      const got = await checkReplies(r.id, deps);
+      if (!got.renewal.suppliers.some((s) => ['sent', 'replied'].includes(s.state))) return `Nobody has been written to yet for ${label(d)}.\n${who(got.renewal)}`;
+      return `${label(d)}: ${got.quotes.length ? `new quote from ${got.quotes.join(', ')}` : 'no new quote'}${got.questions.length ? `; a question from ${got.questions.join(', ')}` : ''}.\n${who(got.renewal)}`;
+    },
+    renewal_compare: async (input) => {
+      master();
+      const { d, r } = await underWay(input);
+      const c = (await compare(r.id, deps)).compared;
+      const fields = (o) => ROWS.filter((k) => o[k]).map((k) => `${k.replace(/_/g, ' ')} ${o[k]}${o.verdicts?.[k] ? ` (${o.verdicts[k]})` : ''}`).join('; ');
+      return [`${label(d)}. Current: ${fields(c.current) || 'figures not on file'}${c.current.supplier ? `, with ${c.current.supplier}` : ''}.`,
+        ...c.offers.map((o) => `- ${o.supplier}: ${fields(o) || 'the offer could not be read'}${o.quote_id === c.pick ? ' ← recommended' : ''}`),
+        c.failed ? 'The offers could not be weighed just now; these are the figures only.' : `${c.why || 'No recommendation.'}${c.unsure ? ` To check: ${c.unsure}` : ''}`,
+        'The user chooses on the renewal screen; nothing has been accepted.'].join('\n');
+    },
+  };
+}
+
+// ---------- routes ----------
+
+export const renewalRoutes = Router();
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+renewalRoutes.use(requireMaster); // a renewal commits the company to a supplier: all of it is the master's
+// With whether this person's own mailbox can send, so the screen knows to offer Approve or the words to copy.
+const shown = async (req, v) => ({ ...v, can_send: canSend(await real.account(req.user.id)), me: req.user.id });
+
+renewalRoutes.get('/', wrap(async (req, res) => res.json({ renewals: await listRenewals() })));
+renewalRoutes.get('/suppliers', wrap(async (req, res) => res.json(await listSuppliers())));
+renewalRoutes.put('/suppliers/:sid', wrap(async (req, res) => res.json(await updateSupplier(req.params.sid, req.body))));
+renewalRoutes.delete('/suppliers/:sid', wrap(async (req, res) => res.json(await removeSupplierForGood(req.params.sid))));
+renewalRoutes.post('/suppliers/:sid/lookup', wrap(async (req, res) => res.json(await lookUp(req.params.sid))));
+renewalRoutes.post('/', wrap(async (req, res) => res.json(await shown(req, await startRenewal(req.body?.document_id, req.user.id)))));
+renewalRoutes.get('/:id', wrap(async (req, res) => res.json(await shown(req, await getRenewal(req.params.id)))));
+renewalRoutes.post('/:id/find', wrap(async (req, res) => res.json(await findSuppliers(req.params.id))));
+renewalRoutes.post('/:id/suppliers', wrap(async (req, res) => res.json(await shown(req, await addSuppliers(req.params.id, req.body?.suppliers)))));
+renewalRoutes.delete('/:id/suppliers/:sid', wrap(async (req, res) => res.json(await shown(req, await removeSupplier(req.params.id, req.params.sid)))));
+renewalRoutes.post('/:id/requests', wrap(async (req, res) => res.json(await shown(req, await draftRequests(req.params.id, req.body?.supplier_ids, req.user.id)))));
+renewalRoutes.put('/:id/requests/:rid', wrap(async (req, res) => res.json(await shown(req, await editRequest(req.params.id, req.params.rid, req.body, req.user.id)))));
+renewalRoutes.post('/:id/requests/:rid/sent', wrap(async (req, res) => res.json(await shown(req, await markSent(req.params.id, req.params.rid)))));
+renewalRoutes.post('/:id/check', wrap(async (req, res) => {
+  const got = await checkReplies(req.params.id);
+  res.json({ quotes: got.quotes, questions: got.questions, renewal: await shown(req, got.renewal) });
+}));
+renewalRoutes.post('/:id/chase', wrap(async (req, res) => res.json(await shown(req, await chase(req.params.id, req.user.id)))));
+renewalRoutes.post('/:id/quotes', upload.single('file'), wrap(async (req, res) => res.json(await shown(req, await addQuote(req.params.id, req.body?.supplier_id, req.file)))));
+renewalRoutes.delete('/:id/quotes/:qid', wrap(async (req, res) => res.json(await shown(req, await removeQuote(req.params.id, req.params.qid)))));
+renewalRoutes.get('/:id/quotes/:qid/file', wrap(async (req, res) => sendDoc(req, res, await quoteFile(req.params.id, req.params.qid))));
+renewalRoutes.post('/:id/compare', wrap(async (req, res) => res.json(await shown(req, await compare(req.params.id)))));
+renewalRoutes.post('/:id/decide', wrap(async (req, res) => res.json(await shown(req, await decide(req.params.id, req.body?.quote_id, req.user.id)))));
+renewalRoutes.post('/:id/close', wrap(async (req, res) => res.json(await shown(req, await closeRenewal(req.params.id, req.body?.status)))));

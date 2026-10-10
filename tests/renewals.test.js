@@ -310,3 +310,53 @@ test('choosing an offer writes the acceptance and the thank-yous, and they wait 
   assert.equal((await R.getRenewal(r.id)).status, 'renewed');
   await assert.rejects(R.decide(r.id, chubbQ, master, mailbox), /already closed/);
 });
+
+// ---------- who may, and Riley's hands ----------
+
+test("a renewal is the master's to run: the router turns anyone else away before anything is looked at", () => {
+  const guard = R.renewalRoutes.stack[0].handle;
+  const knock = (role) => {
+    const res = { code: 200, status(c) { this.code = c; return this; }, json() { return this; } };
+    let through = false;
+    guard({ user: { id: 1, role } }, res, () => { through = true; });
+    return [res.code, through];
+  };
+  assert.deepEqual([knock('user'), knock(undefined), knock('master')], [[403, false], [403, false], [200, true]]);
+});
+
+test('Riley says where renewals stand, starts one, looks for replies and compares the offers, and sends nothing', async () => {
+  const { leasingKit } = await import('../server/leasingKit.js');
+  const { master, b } = await tower();
+  await addDocument({ building_id: b.id, title: 'Lift maintenance', expiry_date: '2026-11-01', renew_by: 'quotes' });
+  const staff = await makeUser('Staff');
+  const kit = (user, deps = mailbox) => { const k = leasingKit(user, { renewals: deps }); return (name, input = {}) => k.run({ id: 't', name, input }); };
+  const boss = kit({ id: master, role: 'master', name: 'Boss' });
+  assert.deepEqual(['renewal_status', 'renewal_start', 'renewal_check_replies', 'renewal_compare'].filter((n) => !leasingKit().definitions.some((d) => d.name === n)), []);
+
+  let said = (await boss('renewal_status')).content;
+  assert.match(said, /Fire insurance, Tower: expire[sd] 01\/08\/2027.*no renewal started/);
+  assert.match(said, /Lift maintenance, Tower/);
+
+  const refused = await kit({ id: staff, role: 'user', name: 'Staff' })('renewal_start', { document: 'fire' });
+  assert.deepEqual([refused.is_error, /Only the master/.test(refused.content)], [true, true]);
+  const vague = await boss('renewal_start', { document: 'zzz' });
+  assert.deepEqual([vague.is_error, /Fire insurance, Tower/.test(vague.content)], [true, true], 'told which documents there are');
+
+  said = (await boss('renewal_start', { document: 'fire insurance', place: 'tower' })).content;
+  assert.match(said, /Orient Insurance/);
+  assert.match(said, /no address yet/);
+  assert.match((await boss('renewal_status')).content, /Fire insurance, Tower: expire[sd] 01\/08\/2027.*renewal under way: 1 listed, 0 asked, 0 quotes/);
+  assert.match((await boss('renewal_check_replies', { document: 'fire' })).content, /Nobody has been written to yet/);
+  const none = await boss('renewal_compare', { document: 'fire' });
+  assert.deepEqual([none.is_error, /no quotes to compare/.test(none.content)], [true, true]);
+
+  // With an offer in, she says what she would take.
+  const [r] = await R.listRenewals();
+  const v = await R.getRenewal(r.id);
+  await R.addQuote(r.id, v.suppliers[0].supplier_id, quotePdf, { think: async () => JSON.stringify(OFFER) });
+  const weigh = { ...mailbox, search: async () => '{}', think: async () => JSON.stringify({ verdicts: {}, pick: null, why: 'It is the only offer; ask others before deciding.', unsure: 'Whether flood matters here.' }) };
+  said = (await kit({ id: master, role: 'master', name: 'Boss' }, weigh)('renewal_compare', { document: 'fire' })).content;
+  assert.match(said, /Orient Insurance: premium USD 16,900/);
+  assert.match(said, /It is the only offer/);
+  assert.equal((await drafts()).length, 0, 'none of it wrote an email, let alone sent one');
+});

@@ -5,6 +5,7 @@ import { unitInspections, confirmInspected, addInspection, updateInspection, KIN
 import { report } from './leasingReports.js';
 import { tenantHistory } from './leasingHistory.js';
 import { cash, region } from './leasingRegion.js';
+import { RENEWAL_TOOLS, RENEWAL_STATUS, renewalTools } from './renewals.js';
 
 // Riley's hands in leasing. She reads any report, a tenant's account and which units are
 // free, and she sets things up from the conversation: a company, its buildings and units, a
@@ -564,14 +565,15 @@ const STATUS = {
  * The leasing tools, in the shape chat.js keeps its toolkits in. `user` is who is asking;
  * `onChanged` is told when something was added, so an open screen can show it.
  */
-export function leasingKit(user, { onChanged } = {}) {
+export function leasingKit(user, { onChanged, renewals } = {}) {
   const change = writes(user);
+  const renew = renewalTools(user, renewals); // getting a document renewed: server/renewals.js
   return {
-    definitions: LEASING_TOOLS,
-    status: (name) => STATUS[name] || 'Looking at the leasing records…',
+    definitions: [...LEASING_TOOLS, ...RENEWAL_TOOLS],
+    status: (name) => STATUS[name] || RENEWAL_STATUS[name] || 'Looking at the leasing records…',
     run: async (block) => {
       try {
-        const fn = reads[block.name] || change[block.name];
+        const fn = reads[block.name] || change[block.name] || renew[block.name];
         if (!fn) throw new Error(`Unknown tool ${block.name}`);
         const content = await fn(block.input || {});
         if (change[block.name]) onChanged?.();
