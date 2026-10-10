@@ -45,6 +45,7 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
   const [at, setAt] = useState({ kind: 'building', company_id: '', building_id: '', unit_id: '', ...preset });
   const [file, setFile] = useState(null);
   const [reading, setReading] = useState(false);
+  const [unread, setUnread] = useState(false); // the file was looked at and nothing could be taken from it
   const [suggested, setSuggested] = useState([]); // the boxes filled in from the file and not yet touched
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -67,7 +68,7 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
     const keptV = { ...was.v };
     const keptD = { ...was.details };
     for (const f of was.suggested) { if (f in keptD) keptD[f] = ''; else keptV[f] = ''; }
-    setV(keptV); setDetails(keptD); setSuggested([]);
+    setV(keptV); setDetails(keptD); setSuggested([]); setUnread(false);
     live.current = { v: keptV, details: keptD, suggested: [] };
     setReading(!!picked);
     if (!picked) return;
@@ -84,7 +85,9 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
       const nextD = { ...now.details };
       for (const [f] of DETAILS) if (got.details?.[f] && !now.details[f]) { nextD[f] = got.details[f]; filled.push(f); }
       setV(nextV); setDetails(nextD); setSuggested(filled);
-    } catch { /* not read: the form is filled in by hand */ }
+      // Nothing came back at all: say so, rather than leave empty boxes that look as if nothing was tried.
+      setUnread(!Object.keys(got).length);
+    } catch { if (mine === reads.current) setUnread(true); }
     if (mine === reads.current) setReading(false);
   };
 
@@ -118,7 +121,9 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
         <span className="truncate">{reading ? 'Reading the file…' : file ? file.name : start?.has_file ? `Replace file (${start.file_name})` : 'Attach the file (PDF or photo): it is read for you'}</span>
         <input type="file" accept="application/pdf,image/*,.doc,.docx" className="hidden" onChange={(e) => choose(e.target.files?.[0] || null)} />
       </label>
+      {!start && !file && !reading && <p className="flex items-center gap-1.5 px-1 text-xs text-p3"><Sparkles size={13} /> Attach the document first: its name, number and dates are read from it and filled in below.</p>}
       {suggested.length > 0 && <p className="flex items-center gap-1.5 px-1 text-xs text-p3"><Sparkles size={13} /> Filled in from the file. Check the outlined boxes before you save.</p>}
+      {unread && !reading && <p className="px-1 text-xs text-warn">This file could not be read (a PDF or a clear photo works best). Fill in the boxes below by hand.</p>}
       <input value={v.title} onChange={set('title')} required placeholder="Document name, e.g. Fire insurance *" className={look('title')} />
       <input value={v.number} onChange={set('number')} placeholder="Number / reference" className={look('number')} />
       <div className="grid grid-cols-2 gap-2">
