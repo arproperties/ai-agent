@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react';
-import { ChevronRight, Loader2, Plus, Search } from 'lucide-react';
+import { AlertCircle, FileText, Loader2, Plus, Search } from 'lucide-react';
 import { api } from '../lib/api';
 import Select from './Select';
-import DocumentSheet, { DOT, CHIP, chipText } from './DocumentSheet';
+import DocumentSheet, { CHIP, chipText } from './DocumentSheet';
 import Renewal from './Renewal';
 
 // The documents register: every document of every company, building and unit in one list,
-// the most pressing first (expired, then due inside its renewal window, then the rest). A
-// row opens the document: its file, its details and the renewals under it. The server is the
+// the most pressing first (expired, then due inside its renewal window, then the rest), each
+// a card. A card opens the document: its file, its details and the renewals under it. The server is the
 // documents part of server/properties.js. Given a building, it is that building's list.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
+// The colour behind a card's icon says how pressing it is, before anything is read.
+const TINT = { expired: 'bg-bad/15', due: 'bg-warn/10', valid: 'bg-white/[0.04]', on_file: 'bg-white/[0.04]' };
 const STATUS = [['', 'Any status'], ['expired', 'Expired'], ['due', 'Due for renewal'], ['valid', 'Valid'], ['on_file', 'On file']];
 
 export default function Documents({ openId, openRenewal, onOpened, building }) {
@@ -81,24 +83,25 @@ export default function Documents({ openId, openRenewal, onOpened, building }) {
         </div>
       )}
 
-      <div className="rounded-2xl border border-stroke">
-        {shown.length === 0 ? <p className="px-4 py-6 text-center text-sm text-mute">{mine.length ? 'No document matches.' : 'No documents yet.'}</p> : (
-          <div className="divide-y divide-stroke/60">
-            {shown.map((x) => (
-              <button key={x.id} onClick={() => setOpen(x)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.04]">
-                <span className={`size-2 shrink-0 rounded-full ${DOT[x.status]}`} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{x.title}{x.count > 1 && <span className="ml-1.5 rounded-full bg-white/15 px-1.5 text-[10px]">×{x.count}</span>}</span>
-                  <span className="block truncate text-xs text-mute">{[x.where, x.owner !== 'company' && x.company, x.number].filter(Boolean).join(' · ')}</span>
-                </span>
-                {under.has(x.id) && <span className="hidden shrink-0 rounded-full bg-p3/15 px-2.5 py-1 text-xs text-p3 sm:block">Renewing · {under.get(x.id).quotes} quote{under.get(x.id).quotes === 1 ? '' : 's'}</span>}
-                <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${CHIP[x.status]}`}>{chipText(x)}</span>
-                <ChevronRight size={16} className="shrink-0 text-mute" />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      {shown.length === 0 ? <p className="rounded-2xl border border-stroke px-4 py-6 text-center text-sm text-mute">{mine.length ? 'No document matches.' : 'No documents yet.'}</p> : (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+          {shown.map((x) => (
+            <button key={x.id} onClick={() => setOpen(x)} className="group flex flex-col overflow-hidden rounded-2xl border border-stroke bg-surface text-left transition hover:border-p1/60">
+              <div className={`relative grid h-28 w-full place-items-center ${TINT[x.status]}`}>
+                <span className="absolute left-3 top-3 rounded-md bg-black/30 px-2 py-0.5 text-[11px] font-medium tracking-wide text-white/90">{x.has_file ? 'PDF' : 'NO FILE'}</span>
+                {(x.status === 'expired' || x.status === 'due') && <AlertCircle size={18} className={`absolute right-3 top-3 ${x.status === 'expired' ? 'text-bad' : 'text-warn'}`} />}
+                <FileText size={30} className="text-mute transition group-hover:text-txt" />
+                {under.has(x.id) && <span className="absolute bottom-2 left-3 rounded-full bg-p3/20 px-2 py-0.5 text-[11px] text-p3">Renewing · {under.get(x.id).quotes} quote{under.get(x.id).quotes === 1 ? '' : 's'}</span>}
+              </div>
+              <div className="w-full px-3.5 py-3">
+                <p className="line-clamp-2 text-sm font-medium">{x.title}{x.count > 1 && <span className="ml-1.5 rounded-full bg-white/15 px-1.5 text-[10px] font-normal">×{x.count}</span>}</p>
+                <p className="mt-1 truncate text-xs text-mute">{[!building && x.where, x.number].filter(Boolean).join(' · ') || (building && x.owner === 'unit' ? x.where : '')}</p>
+                <span className={`mt-2 inline-block rounded-full px-2 py-0.5 text-[11px] ${CHIP[x.status]}`}>{x.status === 'on_file' && x.has_file ? 'No expiry date' : chipText(x)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
       {open && (
         <DocumentSheet doc={open === 'new' ? null : open} label={open === 'new' ? '' : open.where} places={places} master={d.master}
