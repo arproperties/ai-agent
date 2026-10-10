@@ -7,7 +7,9 @@ import Select from './Select';
 // The form a document is filed with, whoever it belongs to: a company, a building or a unit.
 // Choosing the file sends it to be read (server/documentReader.js), and what comes back fills
 // the boxes still empty, outlined until somebody touches them: a suggestion, checked by a
-// person before it is saved. A copy under a name already there is that document's renewal.
+// person before it is saved. The figures on it (insurer, premium, cover…) are never typed:
+// they are read, shown, and kept for the renewal. A copy under a name already there is that
+// document's renewal.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const SEGMENT = 'flex gap-1 rounded-full border border-stroke p-0.5 text-sm';
@@ -53,7 +55,6 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
 
   const touch = (f) => setSuggested((s) => s.filter((x) => x !== f));
   const set = (f) => (e) => { touch(f); setV({ ...v, [f]: e.target.value }); };
-  const setDetail = (f) => (e) => { touch(f); setDetails({ ...details, [f]: e.target.value }); };
   const look = (f) => `${FIELD} ${suggested.includes(f) ? 'border-p3/70' : ''}`;
 
   // A new document's file is read while the form is filled in. Only boxes still empty take what was read.
@@ -99,7 +100,7 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
     setError('');
     const form = new FormData();
     for (const [k, x] of Object.entries(v)) form.append(k, x);
-    form.append('details', JSON.stringify(v.renew_by === 'quotes' ? details : {}));
+    form.append('details', JSON.stringify(details));
     if (!start) for (const [k, x] of Object.entries(own)) form.append(k, x);
     if (file) form.append('file', file);
     try {
@@ -137,10 +138,12 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
       <div className={SEGMENT}>
         {BY.map(([k, l]) => <button key={k} type="button" onClick={() => setV({ ...v, renew_by: k })} aria-pressed={v.renew_by === k} className={seg(v.renew_by === k)}>{l}</button>)}
       </div>
-      {v.renew_by === 'quotes' && (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {DETAILS.map(([k, l]) => <input key={k} value={details[k]} onChange={setDetail(k)} placeholder={l} aria-label={l} className={`${look(k)} ${k === 'cover' ? 'sm:col-span-2' : ''}`} />)}
-        </div>
+      {/* The figures are the reader's to fill, not a person's: shown as read, and kept with the document. */}
+      {DETAILS.some(([k]) => details[k]) && (
+        <dl className="space-y-0.5 rounded-xl border border-stroke/60 px-3.5 py-2.5 text-sm">
+          <dt className="flex items-center gap-1.5 pb-1 text-xs text-p3"><Sparkles size={13} /> Read from the file</dt>
+          {DETAILS.filter(([k]) => details[k]).map(([k, l]) => <div key={k} className="flex gap-3"><dt className="shrink-0 text-mute">{l}</dt><dd className="min-w-0 flex-1 break-words text-right">{details[k]}</dd></div>)}
+        </dl>
       )}
       <textarea value={v.notes} onChange={set('notes')} rows={2} placeholder="Notes" className={`${FIELD} resize-none`} />
       {error && <p className="text-sm text-bad">{error}</p>}
