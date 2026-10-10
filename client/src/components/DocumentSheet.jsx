@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FileText, Loader2, Paperclip, Pencil, Plus, Trash2 } from 'lucide-react';
+import { FileText, Loader2, Paperclip, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { usDate as fmt } from '../lib/usFormat';
 import Sheet from './Sheet';
@@ -21,7 +21,7 @@ export function chipText(doc) {
   return `Until ${fmt(doc.expiry_date)}`;
 }
 
-export default function DocumentSheet({ doc, owner, preset, places, label, master, onClose, onChanged }) {
+export default function DocumentSheet({ doc, owner, preset, places, label, master, onRenew, renewing, onClose, onChanged }) {
   const [anchor, setAnchor] = useState(doc?.id || null); // any copy of it: its history is read by one
   const [docs, setDocs] = useState(doc ? null : []);
   const [editing, setEditing] = useState(doc ? null : 'new');
@@ -77,6 +77,13 @@ export default function DocumentSheet({ doc, owner, preset, places, label, maste
               </div>
             </div>
           )))}
+        {/* Getting it renewed with Riley's help: who to ask, the requests, the quotes, the choice (Renewal.jsx). */}
+        {master && onRenew && current?.expiry_date && editing == null && (
+          <button onClick={() => onRenew(current)}
+            className="flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white">
+            <Sparkles size={16} /> {renewing ? 'Open the renewal' : 'Renew with Riley'}
+          </button>
+        )}
         {master && (editing === 'new'
           ? <DocumentForm owner={own} preset={preset} places={places} from={current} onDone={done} onCancel={() => (anchor ? setEditing(null) : onClose())} />
           : (

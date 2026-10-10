@@ -3,6 +3,7 @@ import { ChevronRight, Loader2, Plus, Search } from 'lucide-react';
 import { api } from '../lib/api';
 import Select from './Select';
 import DocumentSheet, { DOT, CHIP, chipText } from './DocumentSheet';
+import Renewal from './Renewal';
 
 // The documents register: every document of every company, building and unit in one list,
 // the most pressing first (expired, then due inside its renewal window, then the rest). A
@@ -12,14 +13,21 @@ import DocumentSheet, { DOT, CHIP, chipText } from './DocumentSheet';
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const STATUS = [['', 'Any status'], ['expired', 'Expired'], ['due', 'Due for renewal'], ['valid', 'Valid'], ['on_file', 'On file']];
 
-export default function Documents({ openId, onOpened, building }) {
+export default function Documents({ openId, openRenewal, onOpened, building }) {
   const [d, setD] = useState(null); // { documents, master }
   const [places, setPlaces] = useState(null);
   const [error, setError] = useState('');
   const [f, setF] = useState({ company: '', building: '', status: '' });
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(null); // a row of the list, or 'new'
-  const load = () => api.get('/properties/documents').then(setD).catch((e) => setError(e.message));
+  const [renewing, setRenewing] = useState(null); // the id of the renewal that is open, in place of the list
+  const [under, setUnder] = useState(new Map()); // a document → its renewal under way (the master's to see)
+  const load = () => {
+    api.get('/properties/renewals').then((x) => setUnder(new Map(x.renewals.map((r) => [r.document_id, r])))).catch(() => {});
+    return api.get('/properties/documents').then(setD).catch((e) => setError(e.message));
+  };
+  // Renewing a document begins its renewal, or opens the one already under way.
+  const renew = (doc) => api.post('/properties/renewals', { document_id: doc.id }).then((r) => { setOpen(null); setRenewing(r.id); }).catch((e) => setError(e.message));
   useEffect(() => { load(); api.get('/properties/places').then(setPlaces).catch(() => {}); }, []);
   // Arriving from an alert: the document it is about opens once the list is here. Saying so
   // (onOpened) lets whoever sent us forget it, so it does not open again on the next visit.
@@ -29,6 +37,13 @@ export default function Documents({ openId, onOpened, building }) {
     if (row) setOpen(row);
     onOpened?.();
   }, [openId, d]);
+  useEffect(() => { if (openRenewal) { setRenewing(openRenewal); onOpened?.(); } }, [openRenewal]);
+
+  // A renewal takes the page; back is the list, read again. Filing the new policy opens the document it renews.
+  if (renewing) return (
+    <Renewal key={renewing} id={renewing} onBack={() => { setRenewing(null); load(); }}
+      onFile={(doc) => { setRenewing(null); load(); setOpen(d?.documents.find((x) => x.id === doc.id) || null); }} />
+  );
 
   if (error) return <p className="text-sm text-bad">{error}</p>;
   if (!d) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
@@ -76,6 +91,7 @@ export default function Documents({ openId, onOpened, building }) {
                   <span className="block truncate text-sm">{x.title}{x.count > 1 && <span className="ml-1.5 rounded-full bg-white/15 px-1.5 text-[10px]">×{x.count}</span>}</span>
                   <span className="block truncate text-xs text-mute">{[x.where, x.owner !== 'company' && x.company, x.number].filter(Boolean).join(' · ')}</span>
                 </span>
+                {under.has(x.id) && <span className="hidden shrink-0 rounded-full bg-p3/15 px-2.5 py-1 text-xs text-p3 sm:block">Renewing · {under.get(x.id).quotes} quote{under.get(x.id).quotes === 1 ? '' : 's'}</span>}
                 <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${CHIP[x.status]}`}>{chipText(x)}</span>
                 <ChevronRight size={16} className="shrink-0 text-mute" />
               </button>
@@ -87,6 +103,7 @@ export default function Documents({ openId, onOpened, building }) {
       {open && (
         <DocumentSheet doc={open === 'new' ? null : open} label={open === 'new' ? '' : open.where} places={places} master={d.master}
           preset={building && { kind: 'building', company_id: building.company_id, building_id: building.id }}
+          onRenew={d.master && open !== 'new' ? renew : undefined} renewing={open !== 'new' && under.has(open.id)}
           onClose={() => setOpen(null)} onChanged={load} />
       )}
     </div>

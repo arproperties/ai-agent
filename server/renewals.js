@@ -86,7 +86,7 @@ const settle = () => db.prepare(`UPDATE prop_renewals r SET status = 'renewed', 
 const REQUESTS = `SELECT q.id AS request_id, q.supplier_id, q.is_current, q.subject, q.body, q.manual_sent_at, q.chased_at, q.seen, q.reply_kind, q.reply_note, q.replied_at,
     q.draft_id, q.chaser_draft_id, s.name, s.email, s.email_confirmed, s.website, s.phone, s.kind, s.found_by, s.about,
     dr.status AS draft_status, dr.subject AS draft_subject, dr.body AS draft_body, dr.error AS draft_error, dr.sent_at AS draft_sent_at, dr.message_id, dr.user_id AS draft_owner,
-    ch.status AS chaser_status
+    ch.status AS chaser_status, ch.body AS chaser_body, ch.user_id AS chaser_owner
   FROM prop_renewal_requests q JOIN prop_suppliers s ON s.id = q.supplier_id
   LEFT JOIN email_drafts dr ON dr.id = q.draft_id LEFT JOIN email_drafts ch ON ch.id = q.chaser_draft_id
   WHERE q.renewal_id = ? ORDER BY q.is_current DESC, lower(s.name)`;
@@ -149,7 +149,7 @@ export async function listRenewals() {
   const out = [];
   for (const { id } of rows) {
     const r = await getRenewal(id);
-    out.push({ id: r.id, status: r.status, title: r.document.title, where: r.document.where, expiry_date: r.document.expiry_date,
+    out.push({ id: r.id, document_id: r.document.id, status: r.status, title: r.document.title, where: r.document.where, expiry_date: r.document.expiry_date,
       listed: r.suppliers.length, asked: r.suppliers.filter((s) => ['sent', 'replied'].includes(s.state)).length, quotes: r.quotes.length });
   }
   return out;

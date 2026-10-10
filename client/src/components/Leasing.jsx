@@ -998,12 +998,13 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   const [key, setKey] = useState(0); // bumped after a save, so the list reloads
   const [fresh, setFresh] = useState(null); // the id of the booking just made, picked out in the list
   const [docOpen, setDocOpen] = useState(null); // the document an alert was about, opened on the Documents page
+  const [renewalOpen, setRenewalOpen] = useState(null); // or its renewal, when one is under way
   const close = () => { setForm(null); setKey((k) => k + 1); };
   const openBooking = (id, as) => api.get(`/leasing/bookings/${id}`).then((b) => setForm(as ? { [as]: b } : b)).catch(() => {});
   const pay = (id) => openBooking(id, 'payOf');
   // An alert opens the screen that deals with it.
   const openAlert = (a) => {
-    if (a.open === 'documents') { setDocOpen(a.document_id); setTab('documents'); return; }
+    if (a.open === 'documents') { setDocOpen(a.renewal_id ? null : a.document_id); setRenewalOpen(a.renewal_id || null); setTab('documents'); return; }
     if (a.open === 'tenants') { setTab('tenants'); return; }
     openBooking(a.booking_id, { pay: 'payOf', docs: 'docsOf' }[a.open]);
   };
@@ -1071,7 +1072,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants onHistory={(t) => setForm({ historyOf: t })} /></Page>;
   if (tab === 'reports') return <Page title="Reports" onBack={onBack}><LeasingReports key={key} name={report} onName={onReport} onPay={pay} /></Page>;
   if (tab === 'alerts') return <Page title="Alerts" onBack={onBack}><LeasingAlerts key={key} rule={alert} onRule={onAlert} onOpen={openAlert} /></Page>;
-  if (tab === 'documents') return <Page title="Documents" onBack={onBack}><Documents key={key} openId={docOpen} onOpened={() => setDocOpen(null)} /></Page>;
+  if (tab === 'documents') return <Page title="Documents" onBack={onBack}><Documents key={key} openId={docOpen} openRenewal={renewalOpen} onOpened={() => { setDocOpen(null); setRenewalOpen(null); }} /></Page>;
 
   return <Page title="Overview" onBack={onBack} action={add}><LeasingOverview key={key} onPay={pay} onAlerts={(k) => { onAlert(k); setTab('alerts'); }} /></Page>;
 }
