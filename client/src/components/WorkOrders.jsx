@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Ban, Check, CheckCheck, Loader2, MessageSquarePlus, Paperclip, Pencil, Play, Plus, RotateCcw, Search, Trash2, Wrench, X } from 'lucide-react';
+import { Ban, Check, CheckCheck, ChevronLeft, ChevronRight, Loader2, MessageSquarePlus, Paperclip, Pencil, Play, Plus, RotateCcw, Search, Trash2, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { usDate as fmt } from '../lib/usFormat';
 import Page from './Page';
@@ -28,6 +28,7 @@ const PRIORITY = [['low', 'Low'], ['normal', 'Normal'], ['urgent', 'Urgent']];
 const FILTERS = [['active', 'Active'], ['open', 'Open'], ['assigned', 'Assigned'], ['in_progress', 'In progress'], ['done', 'Done'], ['closed', 'Closed'], ['cancelled', 'Cancelled'], ['', 'All']];
 const CATEGORIES = ['AC', 'Plumbing', 'Electrical', 'Appliance', 'Pest control', 'Other']; // the usual ones, a tap each; anything else can be typed
 const LIVE = ['open', 'assigned', 'in_progress'];
+const STEPS = ['The problem', 'The work']; // the form, a step at a time: what is wrong first, then who fixes it and when
 const BATCH = 10; // files the server takes in one go
 const fileUrl = (f) => `/api/leasing/work-orders/files/${f.id}/file`;
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -70,6 +71,9 @@ function WorkOrderForm({ start, preset, onDone, onCancel }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
+  const [step, setStep] = useState(0); // which of STEPS is on screen
+  const ready = !!v.unit_id && !!String(v.detail || '').trim(); // the problem is said, so the second step can be opened
+  const next = (e) => { e.preventDefault(); if (!v.unit_id) { setError('Choose the unit.'); return; } setError(''); setStep(1); };
   useEffect(() => { api.get('/leasing/work-orders/units').then(setUnits).catch((e) => setError(e.message)); }, []);
   useEffect(() => {
     if (!v.unit_id) { setLink(null); return; }
@@ -90,56 +94,86 @@ function WorkOrderForm({ start, preset, onDone, onCancel }) {
   };
 
   return (
-    <form onSubmit={save} className="max-w-2xl space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Label text="Unit" need wide>
-          <Select value={v.unit_id} onChange={set('unit_id')} disabled={!!id} placeholder="Choose the unit" aria-label="Unit" className={FIELD}
-            options={units.map((u) => ({ value: u.id, label: `Unit ${u.unit_no} · ${u.building}` }))} />
-          {v.unit_id && link && <span className="mt-1 block text-xs text-mute">{link.tenant ? `For ${link.tenant} (${link.ref}), who has the unit on that day.` : 'The unit is vacant on that day: this work order will have no tenant.'}</span>}
-        </Label>
-        <Label text="Type" wide>
-          <div className="mb-2 flex flex-wrap gap-1">
-            {CATEGORIES.map((c) => <button key={c} type="button" onClick={() => setV({ ...v, category: c })} className={CHIP(v.category === c)}>{c}</button>)}
+    <form onSubmit={step === 0 ? next : save} className="max-w-2xl">
+      <div className="flex flex-col gap-5 rounded-2xl border border-stroke p-4 md:p-5">
+        <ol className="flex items-center gap-2 border-b border-stroke/60 pb-4">
+          {STEPS.map((name, i) => (
+            <li key={name} className={`flex min-w-0 items-center gap-2 ${i < STEPS.length - 1 ? 'flex-1' : ''}`}>
+              <button type="button" disabled={i > 0 && !ready} onClick={() => setStep(i)} aria-current={step === i ? 'step' : undefined} title={name}
+                className="flex min-w-0 items-center gap-2 rounded-full disabled:cursor-not-allowed disabled:opacity-60">
+                <span className={`grid size-7 shrink-0 place-items-center rounded-full text-xs font-medium ${step === i ? 'bg-gradient-to-br from-p1 to-p2 text-white' : i < step ? 'bg-p1/15 text-p1' : 'border border-stroke text-mute'}`}>
+                  {i < step ? <Check size={14} /> : i + 1}
+                </span>
+                <span className={`truncate text-sm ${step === i ? 'font-medium' : 'text-mute'}`}>{name}</span>
+              </button>
+              {i < STEPS.length - 1 && <span className="h-px min-w-3 flex-1 bg-stroke" />}
+            </li>
+          ))}
+        </ol>
+
+        {step === 0 && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Label text="Unit" need wide>
+              <Select value={v.unit_id} onChange={set('unit_id')} disabled={!!id} placeholder="Choose the unit" aria-label="Unit" className={FIELD}
+                options={units.map((u) => ({ value: u.id, label: `Unit ${u.unit_no} · ${u.building}` }))} />
+              {v.unit_id && link && <span className="mt-1 block text-xs text-mute">{link.tenant ? `For ${link.tenant} (${link.ref}), who has the unit on that day.` : 'The unit is vacant on that day: this work order will have no tenant.'}</span>}
+            </Label>
+            <Label text="Type" wide>
+              <div className="mb-2 flex flex-wrap gap-1">
+                {CATEGORIES.map((c) => <button key={c} type="button" onClick={() => setV({ ...v, category: c })} className={CHIP(v.category === c)}>{c}</button>)}
+              </div>
+              <input value={v.category || ''} onChange={set('category')} maxLength={60} placeholder="Or type your own" className={FIELD} />
+            </Label>
+            <Label text="What is wrong" need wide>
+              <textarea value={v.detail || ''} onChange={set('detail')} required rows={4} maxLength={2000} className={`${FIELD} resize-none`} />
+            </Label>
+            <div className="sm:col-span-2">
+              <span className="mb-1 block text-xs text-txt/80">Photos and files</span>
+              <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-stroke px-3.5 py-2.5 text-sm text-mute hover:bg-white/5">
+                <Paperclip size={15} className="shrink-0" /> <span>Add photos, videos or files (as many as you need)</span>
+                <input type="file" multiple accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden" onChange={(e) => { setPicked([...picked, ...e.target.files]); e.target.value = ''; }} />
+              </label>
+              {picked.length > 0 && (
+                <ul className="mt-2 divide-y divide-stroke/60 rounded-xl border border-stroke text-sm">
+                  {picked.map((f, n) => (
+                    <li key={`${f.name}-${n}`} className="flex items-center gap-2 py-1.5 pl-3.5 pr-1.5">
+                      <Paperclip size={14} className="shrink-0 text-mute" />
+                      <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                      <button type="button" onClick={() => setPicked(picked.filter((_, i) => i !== n))} aria-label={`Take off ${f.name}`} title="Take off" className={`${ROUND} hover:text-txt`}><X size={15} /></button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
-          <input value={v.category || ''} onChange={set('category')} maxLength={60} placeholder="Or type your own" className={FIELD} />
-        </Label>
-        <Label text="What is wrong" need wide>
-          <textarea value={v.detail || ''} onChange={set('detail')} required rows={4} maxLength={2000} className={`${FIELD} resize-none`} />
-        </Label>
-        <Label text="Priority">
-          <div className="flex gap-1 rounded-full border border-stroke p-0.5 text-sm">
-            {PRIORITY.map(([k, l]) => <button key={k} type="button" onClick={() => setV({ ...v, priority: k })} aria-pressed={v.priority === k} className={`flex-1 ${CHIP(v.priority === k)}`}>{l}</button>)}
+        )}
+
+        {step === 1 && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <p className="text-sm text-mute sm:col-span-2">All of this can be left as it is and filled in later, on the work order’s page.</p>
+            <Label text="Priority">
+              <div className="flex gap-1 rounded-full border border-stroke p-0.5 text-sm">
+                {PRIORITY.map(([k, l]) => <button key={k} type="button" onClick={() => setV({ ...v, priority: k })} aria-pressed={v.priority === k} className={`flex-1 ${CHIP(v.priority === k)}`}>{l}</button>)}
+              </div>
+            </Label>
+            <Label text="Reported on" need><DateField value={v.reported_on || ''} onChange={set('reported_on')} required className={FIELD} /></Label>
+            <Label text="Reported by"><input value={v.reported_by || ''} onChange={set('reported_by')} maxLength={120} placeholder="The tenant, the watchman…" className={FIELD} /></Label>
+            <Label text="Assigned to"><input value={v.assigned_to || ''} onChange={set('assigned_to')} maxLength={120} placeholder="The technician or the AMC vendor" className={FIELD} /></Label>
+            <Label text="Scheduled for"><DateField value={v.scheduled_on || ''} onChange={set('scheduled_on')} className={FIELD} /></Label>
           </div>
-        </Label>
-        <Label text="Reported on" need><DateField value={v.reported_on || ''} onChange={set('reported_on')} required className={FIELD} /></Label>
-        <Label text="Reported by"><input value={v.reported_by || ''} onChange={set('reported_by')} maxLength={120} placeholder="The tenant, the watchman…" className={FIELD} /></Label>
-        <Label text="Assigned to"><input value={v.assigned_to || ''} onChange={set('assigned_to')} maxLength={120} placeholder="The technician or the AMC vendor" className={FIELD} /></Label>
-        <Label text="Scheduled for"><DateField value={v.scheduled_on || ''} onChange={set('scheduled_on')} className={FIELD} /></Label>
-        <div className="sm:col-span-2">
-          <span className="mb-1 block text-xs text-txt/80">Photos and files</span>
-          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-stroke px-3.5 py-2.5 text-sm text-mute hover:bg-white/5">
-            <Paperclip size={15} className="shrink-0" /> <span>Add photos, videos or files (as many as you need)</span>
-            <input type="file" multiple accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden" onChange={(e) => { setPicked([...picked, ...e.target.files]); e.target.value = ''; }} />
-          </label>
-          {picked.length > 0 && (
-            <ul className="mt-2 divide-y divide-stroke/60 rounded-xl border border-stroke text-sm">
-              {picked.map((f, n) => (
-                <li key={`${f.name}-${n}`} className="flex items-center gap-2 py-1.5 pl-3.5 pr-1.5">
-                  <Paperclip size={14} className="shrink-0 text-mute" />
-                  <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                  <button type="button" onClick={() => setPicked(picked.filter((_, i) => i !== n))} aria-label={`Take off ${f.name}`} title="Take off" className={`${ROUND} hover:text-txt`}><X size={15} /></button>
-                </li>
-              ))}
-            </ul>
-          )}
+        )}
+
+        {error && <p className="text-sm text-bad">{error}</p>}
+        <div className="flex items-center justify-between gap-2 border-t border-stroke/60 pt-4">
+          {step === 0
+            ? <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
+            : <button type="button" onClick={() => setStep(0)} className="flex items-center gap-1 rounded-full border border-stroke px-4 py-2 text-sm hover:bg-white/5"><ChevronLeft size={16} /> Back</button>}
+          {step === 0
+            ? <button className={PRIMARY}>Next <ChevronRight size={16} /></button>
+            : <button disabled={busy} className={PRIMARY}>{busy ? 'Saving…' : 'Save'}</button>}
         </div>
       </div>
-      <p className="text-xs text-mute">Repairs are under the AMC: nothing is charged, and nothing is sent to the tenant.</p>
-      {error && <p className="text-sm text-bad">{error}</p>}
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
-        <button disabled={busy} className={PRIMARY}>{busy ? 'Saving…' : 'Save'}</button>
-      </div>
+      <p className="mt-3 text-xs text-mute">Repairs are under the AMC: nothing is charged, and nothing is sent to the tenant.</p>
     </form>
   );
 }
