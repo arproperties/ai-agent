@@ -5,17 +5,19 @@ import { db } from './db.js';
 import { DATA_DIR } from './config.js';
 import { saveFile, sendDoc } from './properties.js';
 import { bad, isDate, bookingRef, dayNo, money, todayHere, applyLateFees } from './leasing.js';
+import { listWorkOrders, LIVE } from './workOrders.js';
 
 // A tenant's history: what kind of tenant they have been. Three things in one list, newest
 // first: rent that came in late, complaints made about them, and maintenance done for them.
 //
 // Late rent is never written down: it is worked out from the schedule and its payments each
-// time, so it stays right when a payment is added, changed or deleted. Complaints and
-// maintenance are a plain record a person types in (lease_tenant_log): they charge nothing
-// and send nothing. An entry can carry any number of files: photos, a video of the noise, the
-// repair invoice (lease_tenant_log_files).
+// time, so it stays right when a payment is added, changed or deleted. A complaint is a plain
+// record a person types in (lease_tenant_log), with any number of files (lease_tenant_log_files):
+// it charges nothing and sends nothing. Maintenance is the tenant's work orders
+// (server/workOrders.js), read here and changed there; a maintenance note older than work
+// orders, with no lease to take a unit from, is still in the log and still shown.
 
-const KINDS = new Set(['complaint', 'maintenance']);
+const KINDS = new Set(['complaint']); // maintenance is a work order now
 const text = (v, max = 300) => String(v ?? '').trim().slice(0, max) || null;
 
 const LOG_SELECT = `SELECT l.id, l.tenant_id, l.booking_id, l.kind AS type, l.category, l.detail, l.reported_by, l.resolution,
@@ -51,7 +53,7 @@ const bookingOn = async (tenantId, day) => (await db.prepare(`SELECT id FROM lea
 function logFields(body = {}, today, { partial = false } = {}) {
   const out = {};
   if (!partial) {
-    if (!KINDS.has(body.kind)) throw bad('An entry is a complaint or maintenance.');
+    if (!KINDS.has(body.kind)) throw bad('An entry is a complaint. Maintenance is raised as a work order.');
     out.kind = body.kind;
   }
   if ('category' in body) out.category = text(body.category, 60);
@@ -154,17 +156,32 @@ async function lateRent(tenantId, today) {
   });
 }
 
+/** A work order as a line of the history. Once done, the day it was done is the day it was resolved. */
+const asMaintenance = (w) => ({ type: 'maintenance', id: w.id, wo: w.ref, status: w.status, priority: w.priority, overdue: w.overdue, tenant_id: w.tenant_id, booking_id: w.booking_id,
+  ref: w.lease_ref, unit_no: w.unit_no, building: w.building, date: w.reported_on, category: w.category, detail: w.detail, reported_by: w.reported_by, assigned_to: w.assigned_to,
+  resolved_on: LIVE.includes(w.status) ? null : w.done_on, resolution: w.resolution, logged_by: w.raised_by, files: [] });
+
+/** The unit a tenant has today, where a new work order of theirs would go. */
+const unitToday = async (tenantId, today) => (await db.prepare(`SELECT b.unit_id, u.unit_no, bl.name AS building
+  FROM lease_bookings b JOIN prop_units u ON u.id = b.unit_id JOIN prop_buildings bl ON bl.id = u.building_id
+  WHERE b.tenant_id = ? AND b.status = 'confirmed' AND ?::date BETWEEN b.start_date AND b.end_date
+  ORDER BY b.start_date DESC LIMIT 1`).get(tenantId, today)) || null;
+
 /** One tenant's history: the figures at the top, then everything in one list, newest first. */
 export async function tenantHistory(tenantId, today = todayHere()) {
   const tenant = await mustBeTenant(tenantId);
   const late = await lateRent(tenant.id, today);
   const files = await db.prepare(`SELECT ${FILE_COLS} FROM lease_tenant_log_files f JOIN lease_tenant_log l ON l.id = f.log_id WHERE l.tenant_id = ? ORDER BY f.id`).all(tenant.id);
   const log = (await db.prepare(`${LOG_SELECT} WHERE l.tenant_id = ?`).all(tenant.id)).map((l) => shape(l, files));
-  const of = (type) => log.filter((l) => l.type === type);
-  const open = (list) => list.filter((l) => !l.resolved_on).length;
+  // A cancelled work order was never maintenance done for them, so it is left out.
+  const orders = (await listWorkOrders({ tenant_id: tenant.id }, today)).filter((w) => w.status !== 'cancelled').map(asMaintenance);
+  const all = [...log, ...orders];
+  const of = (type) => all.filter((l) => l.type === type);
+  const open = (list) => list.filter((l) => !l.resolved_on && (!l.wo || LIVE.includes(l.status))).length;
   const ORDER = { maintenance: 0, complaint: 1, late: 2 };
   return {
     tenant,
+    current: await unitToday(tenant.id, today),
     summary: {
       late: late.length, late_unpaid: late.filter((l) => !l.paid_on).length,
       late_days: late.length ? Math.round(late.reduce((t, l) => t + l.days_late, 0) / late.length) : 0, // on average
@@ -172,7 +189,7 @@ export async function tenantHistory(tenantId, today = todayHere()) {
       complaints: of('complaint').length, complaints_open: open(of('complaint')),
       maintenance: of('maintenance').length, maintenance_open: open(of('maintenance')),
     },
-    items: [...late, ...log].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : ORDER[a.type] - ORDER[b.type] || (b.id || 0) - (a.id || 0))),
+    items: [...late, ...all].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : ORDER[a.type] - ORDER[b.type] || (b.id || 0) - (a.id || 0))),
   };
 }
 

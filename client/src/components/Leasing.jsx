@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, LayoutGrid, List, BedDouble, BedSingle, Lock, History, ClipboardCheck, LogIn } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, LayoutGrid, List, BedDouble, BedSingle, Lock, History, ClipboardCheck, LogIn, Wrench } from 'lucide-react';
 import { api } from '../lib/api';
 import { money as aed, currency, region } from '../lib/region';
 import { usDate as fmt, usPhone } from '../lib/usFormat';
@@ -19,6 +19,7 @@ import LeasingAlerts from './LeasingAlerts';
 import Documents from './Documents';
 import TenantHistory from './TenantHistory';
 import Inspections from './Inspections';
+import WorkOrders from './WorkOrders';
 
 // Leasing: bookings of units and the tenants who make them. Anyone signed in can use it.
 // The server is server/leasing.js; the units come from Properties.
@@ -535,7 +536,7 @@ function ChangeEnd({ booking: b, onPay, onDone }) {
   );
 }
 
-function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, onRenewed, onChanged }) {
+function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork, onRenewed, onChanged }) {
   // Added in the last day (created_at is unix seconds): marked New, so it is easy to find again.
   const isNew = b.created_at && Date.now() / 1000 - Number(b.created_at) < 86400;
   const chip = fresh ? <span className="ml-1.5 rounded-full bg-p1/20 px-1.5 py-px text-[10px] font-medium text-p1">Just added</span>
@@ -566,6 +567,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
     },
       'Draft the next lease: same unit, tenant and rent, starting the day after this one ends'],
     b.status === 'confirmed' && [CalendarDays, 'Change end date', onEnd, 'The tenant stays longer, or the stay is shorter than was leased'],
+    b.status === 'confirmed' && [Wrench, 'Work orders', onWork, 'Repairs raised for this tenant during the lease'],
     // A draft is confirmed after its move-in inspection; a renewal has none to do.
     moveInDue || (b.status === 'draft' && !b.moved_in && !b.renewed_from) ? [LogIn, 'Move-in inspection', () => onInspect('move_in'), 'How the tenant finds the unit. The lease is confirmed after it']
       : [ClipboardCheck, 'Inspections', () => onInspect(), 'The unit’s condition: make-ready, move-in and move-out'],
@@ -643,7 +645,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
   );
 }
 
-function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect }) {
+function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork }) {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState('');
   const [stage, setStage] = useState('');
@@ -693,7 +695,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect }) {
                     <tr className={HEAD}>{['Tenant', 'Unit', 'Dates', 'Rent', 'Status', ''].map((h) => <th key={h} className={TH}>{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-stroke/60">
-                    {paged.rows.map((b) => <BookingCard key={b.id} list b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onInspect={(start) => onInspect(b, start)} onRenewed={onEdit} onChanged={load} />)}
+                    {paged.rows.map((b) => <BookingCard key={b.id} list b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onInspect={(start) => onInspect(b, start)} onWork={() => onWork(b)} onRenewed={onEdit} onChanged={load} />)}
                   </tbody>
                 </table>
               </div>
@@ -701,7 +703,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect }) {
             </>
           ) : (
             <>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{paged.rows.map((b) => <BookingCard key={b.id} b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onInspect={(start) => onInspect(b, start)} onRenewed={onEdit} onChanged={load} />)}</div>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{paged.rows.map((b) => <BookingCard key={b.id} b={b} fresh={b.id === fresh} onEdit={() => onEdit(b)} onDocs={() => onDocs(b)} onPay={() => onPay(b)} onEnd={() => onEnd(b)} onInspect={(start) => onInspect(b, start)} onWork={() => onWork(b)} onRenewed={onEdit} onChanged={load} />)}</div>
               <Pager {...paged.pager} />
             </>
           )}
@@ -1006,6 +1008,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   const openAlert = (a) => {
     if (a.open === 'documents') { setDocOpen(a.document_id); setRenewalOpen(a.renewal_id || null); setTab('documents'); return; }
     if (a.open === 'tenants') { setTab('tenants'); return; }
+    if (a.open === 'workorder') { setForm({ workOf: { openId: a.work_order_id } }); return; }
     openBooking(a.booking_id, { pay: 'payOf', docs: 'docsOf' }[a.open]);
   };
 
@@ -1043,7 +1046,12 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
     const b = form.inspectOf;
     return <Inspections unit={{ id: b.unit_id, unit_no: b.unit_no, building: b.building }} booking={b} start={form.start} onBack={close} />;
   }
-  if (form?.historyOf) return <TenantHistory tenant={form.historyOf} onBack={close} onPay={pay} />;
+  if (form?.historyOf) return <TenantHistory key={key} tenant={form.historyOf} onBack={close} onPay={pay} onWorkOrder={(w) => setForm({ workOf: w, back: { historyOf: form.historyOf } })} />;
+  // Work orders opened from somewhere else: an alert, a lease, a tenant's history. Back returns there.
+  if (form?.workOf) {
+    const from = form.back;
+    return <WorkOrders {...form.workOf} onBack={() => (from ? (setForm(from), setKey((k) => k + 1)) : close())} />;
+  }
 
   // A new lease is a draft, and goes on to its move-in inspection; saved as a draft only, it goes on to its documents.
   if (form) return (
@@ -1065,9 +1073,10 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
         ))}
       </div>
       {tab === 'buildings' ? <LeasingBuildings key={key} />
-        : <Bookings key={key} fresh={fresh} onEdit={(b) => setForm(b)} onDocs={(b) => setForm({ docsOf: b })} onPay={(b) => setForm({ payOf: b })} onEnd={(b) => setForm({ endOf: b })} onInspect={(b, start) => setForm({ inspectOf: b, start })} />}
+        : <Bookings key={key} fresh={fresh} onEdit={(b) => setForm(b)} onDocs={(b) => setForm({ docsOf: b })} onPay={(b) => setForm({ payOf: b })} onEnd={(b) => setForm({ endOf: b })} onInspect={(b, start) => setForm({ inspectOf: b, start })} onWork={(b) => setForm({ workOf: { scope: { booking_id: b.id }, title: `Work orders · ${b.ref}`, preset: { unit_id: b.unit_id } } })} />}
     </Page>
   );
+  if (tab === 'workorders') return <WorkOrders key={key} onBack={onBack} />;
   if (tab === 'calendar') return <Page title="Calendar" onBack={onBack} action={add}><Calendar key={key} onEdit={(b) => setForm(b)} onNew={(preset) => setForm({ preset })} /></Page>;
   if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants onHistory={(t) => setForm({ historyOf: t })} /></Page>;
   if (tab === 'reports') return <Page title="Reports" onBack={onBack}><LeasingReports key={key} name={report} onName={onReport} onPay={pay} /></Page>;

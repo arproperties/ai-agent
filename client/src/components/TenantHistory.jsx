@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Banknote, Check, Clock, Coins, Loader2, MessageSquareWarning, Paperclip, Pencil, Plus, RotateCcw, Trash2, Wrench, X } from 'lucide-react';
+import { Banknote, Check, ChevronRight, Clock, Coins, Loader2, MessageSquareWarning, Paperclip, Pencil, Plus, RotateCcw, Trash2, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { money as aed } from '../lib/region';
 import { usDate as fmt, usPhone } from '../lib/usFormat';
 import Page from './Page';
 import DateField from './DateField';
+import { WO_STATUS } from './WorkOrders';
 
 // One tenant's history: rent that came in late, complaints made about them and maintenance
 // done for them, in one list with the figures on top. Late rent is worked out by the server
-// (server/leasingHistory.js); complaints and maintenance are typed in here, each with as
-// many attachments as it needs (photos, a video, the repair invoice).
+// (server/leasingHistory.js); complaints are typed in here, each with as many attachments as it needs; maintenance is the
+// tenant's work orders, opened from here and changed on their own page.
 
 const FIELD = 'w-full rounded-xl border border-stroke bg-white/[0.03] px-3.5 py-2.5 outline-none focus:border-p1/70';
 const PRIMARY = 'flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white disabled:opacity-60';
@@ -133,7 +134,7 @@ function EntryForm({ tenant, start, onDone, onCancel }) {
 }
 
 /** One row of the list: late rent as the server worked it out, or an entry with what can be done to it. */
-function Item({ i, onPay, onEdit, onChanged }) {
+function Item({ i, onPay, onEdit, onChanged, onWork }) {
   const [resolving, setResolving] = useState(false);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
@@ -141,16 +142,18 @@ function Item({ i, onPay, onEdit, onChanged }) {
   const act = async (fn) => { setError(''); try { await fn(); onChanged(); } catch (e) { setError(e.message); } };
   const where = i.ref && `${i.ref} · Unit ${i.unit_no}, ${i.building}`;
   const late = i.type === 'late';
+  const order = !!i.wo; // a work order: shown here, changed on its own page
   const open = late ? !i.paid_on : !i.resolved_on;
   const pill = late ? (open ? [`${aed(i.left)} still owed`, 'bg-bad/15 text-bad'] : ['Paid late', 'bg-warn/15 text-warn'])
-    : open ? ['Open', 'bg-warn/15 text-warn'] : ['Resolved', 'bg-ok/15 text-ok'];
+    : order ? [WO_STATUS[i.status][0], WO_STATUS[i.status][1]]
+      : open ? ['Open', 'bg-warn/15 text-warn'] : ['Resolved', 'bg-ok/15 text-ok'];
   return (
     <li className="rounded-2xl border border-stroke bg-surface p-4">
       <div className="flex items-start gap-3">
         <span className={`grid size-9 shrink-0 place-items-center rounded-full bg-gradient-to-br text-white ${tint}`}><Ico size={16} /></span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="text-sm font-medium">{late ? `Rent ${days(i.days_late)} late` : `${name}${i.category ? ` · ${i.category}` : ''}`}</p>
+            <p className="text-sm font-medium">{late ? `Rent ${days(i.days_late)} late` : `${order ? `${i.wo} · ` : ''}${name}${i.category ? ` · ${i.category}` : ''}`}</p>
             <span className={`rounded-full px-2 py-0.5 text-[11px] ${pill[1]}`}>{pill[0]}</span>
           </div>
           <p className="mt-0.5 text-xs text-mute">{late ? `Due ${fmt(i.date)}` : fmt(i.date)}{where && ` · ${where}`}</p>
@@ -163,7 +166,7 @@ function Item({ i, onPay, onEdit, onChanged }) {
             <>
               <p className="mt-2 whitespace-pre-wrap text-sm text-txt/80">{i.detail}</p>
               <p className="mt-1.5 text-xs text-mute">
-                {[i.reported_by && `Reported by ${i.reported_by}`, i.logged_by && `Logged by ${i.logged_by}`, i.resolved_on && `Resolved ${fmt(i.resolved_on)}${i.resolution ? `: ${i.resolution}` : ''}`].filter(Boolean).join(' · ')}
+                {[i.reported_by && `Reported by ${i.reported_by}`, i.assigned_to && `Assigned to ${i.assigned_to}`, i.logged_by && `Logged by ${i.logged_by}`, i.resolved_on && `${order ? 'Done' : 'Resolved'} ${fmt(i.resolved_on)}${i.resolution ? `: ${i.resolution}` : ''}`].filter(Boolean).join(' · ')}
               </p>
               {i.files.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -184,7 +187,8 @@ function Item({ i, onPay, onEdit, onChanged }) {
           {error && <p className="mt-2 text-sm text-bad">{error}</p>}
         </div>
         <div className="-mr-1.5 flex shrink-0 items-center gap-1">
-          {late ? open && <button onClick={() => onPay(i.booking_id)} className={GHOST}><Banknote size={14} /> Payments</button> : (
+          {late ? open && <button onClick={() => onPay(i.booking_id)} className={GHOST}><Banknote size={14} /> Payments</button>
+            : order ? <button onClick={() => onWork(i)} className={GHOST}>Open <ChevronRight size={14} /></button> : (
             <>
               {open ? !resolving && <button onClick={() => setResolving(true)} className={GHOST}><Check size={14} /> Resolve</button>
                 : <button onClick={() => act(() => api.put(`/leasing/log/${i.id}`, { resolved: false, resolution: '' }))} aria-label="Open again" title="Open again" className={`${ROUND} hover:text-txt`}><RotateCcw size={15} /></button>}
@@ -198,13 +202,14 @@ function Item({ i, onPay, onEdit, onChanged }) {
   );
 }
 
-export default function TenantHistory({ tenant, onBack, onPay }) {
+export default function TenantHistory({ tenant, onBack, onPay, onWorkOrder }) {
   const [h, setH] = useState(null);
   const [error, setError] = useState('');
   const [show, setShow] = useState('');
   const [entry, setEntry] = useState(null); // { kind } for a new one, or the entry being changed
   const load = () => api.get(`/leasing/tenants/${tenant.id}/history`).then(setH).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [tenant.id]);
+  const mine = { scope: { tenant_id: tenant.id }, title: `Work orders · ${tenant.full_name}`, preset: h?.current ? { unit_id: h.current.unit_id } : null };
 
   if (entry) {
     const name = KIND[entry.kind || entry.type][0].toLowerCase();
@@ -222,7 +227,7 @@ export default function TenantHistory({ tenant, onBack, onPay }) {
   return (
     <Page title={`History · ${tenant.full_name}`} onBack={onBack} action={(
       <div className="flex gap-2">
-        <button onClick={() => setEntry({ kind: 'maintenance' })} className={OUTLINE}><Plus size={16} /> <span className="hidden sm:inline">Add </span>maintenance</button>
+        <button onClick={() => onWorkOrder({ ...mine, startNew: true })} className={OUTLINE} title={h?.current ? `A work order for unit ${h.current.unit_no}, ${h.current.building}` : 'A work order'}><Plus size={16} /> <span className="hidden sm:inline">Add </span>maintenance</button>
         <button onClick={() => setEntry({ kind: 'complaint' })} className={PRIMARY}><Plus size={16} /> <span className="hidden sm:inline">Add </span>complaint</button>
       </div>
     )}>
@@ -241,7 +246,7 @@ export default function TenantHistory({ tenant, onBack, onPay }) {
           </div>
           {items.length === 0
             ? <p className="py-3 text-sm text-mute">{h.items.length ? 'Nothing of this kind.' : 'Nothing on record: no late rent, no complaints, no maintenance.'}</p>
-            : <ul className="space-y-3">{items.map((i) => <Item key={`${i.type}-${i.id || `${i.booking_id}-${i.date}`}`} i={i} onPay={onPay} onEdit={setEntry} onChanged={load} />)}</ul>}
+            : <ul className="space-y-3">{items.map((i) => <Item key={i.wo || `${i.type}-${i.id || `${i.booking_id}-${i.date}`}`} i={i} onPay={onPay} onEdit={setEntry} onChanged={load} onWork={(o) => onWorkOrder({ ...mine, openId: o.id })} />)}</ul>}
         </div>
       )}
     </Page>

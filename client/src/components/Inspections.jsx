@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Camera, Check, ChevronLeft, ChevronRight, ClipboardCheck, GitCompareArrows, Loader2, LogIn, LogOut, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
+import { Camera, Check, ChevronLeft, ChevronRight, ClipboardCheck, GitCompareArrows, Loader2, LogIn, LogOut, Pencil, Plus, Sparkles, Trash2, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { usDate as fmt } from '../lib/usFormat';
 import Page from './Page';
 import Select from './Select';
 import DateField from './DateField';
+import WorkOrders from './WorkOrders';
 
 // One unit's condition over time: the make-ready done before it is let, and the move-in and
 // move-out inspection of every lease it has had. Nothing here is replaced, so the list is the
@@ -303,6 +304,7 @@ export default function Inspections({ unit, booking, start, onBack }) {
   const [data, setData] = useState(null);
   const [mode, setMode] = useState(null); // { form: kind, editing? } | { view: id } | null
   const [asked, setAsked] = useState(start);
+  const [orders, setOrders] = useState(false); // the unit's work orders are open
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const load = async () => {
@@ -361,6 +363,7 @@ export default function Inspections({ unit, booking, start, onBack }) {
   };
   const action = data && (
     <div className="flex gap-2">
+      <button onClick={() => setOrders(true)} className={OUTLINE} title="Every repair done in this unit, whoever lived in it"><Wrench size={16} /> <span className="hidden sm:inline">Work orders</span></button>
       {next?.also ? button(next.also, OUTLINE) : next?.late && step === 'move_in' ? button('move_out', OUTLINE) : !next && button('make_ready', OUTLINE)}
       {step && button(step, PRIMARY)}
     </div>
@@ -373,6 +376,7 @@ export default function Inspections({ unit, booking, start, onBack }) {
     : next?.kind === 'confirm' ? []
     : next?.kind === 'move_out' ? (next.late ? [`The lease ended on ${fmt(lease.end_date)} and the move-out inspection is not done. The unit is not vacant until it is.`, true] : [`${tenant}’s move-in is done. The move-out inspection comes when they leave.`])
     : ['The unit is ready. Next is a new lease, and its move-in inspection.'];
+  if (orders) return <WorkOrders scope={{ unit_id: unit.id }} title={`Work orders · ${place}`} preset={{ unit_id: unit.id }} onBack={() => setOrders(false)} />;
   return (
     <Page title={`Inspections · ${place}`} onBack={onBack} action={action}>
       {error && <p className="mb-3 text-sm text-bad">{error}</p>}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Banknote, BellRing, CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Coins, CreditCard, FileClock, FileWarning, Loader2, Mail, MessageSquareText, Minus, Moon, Plus, SlidersHorizontal, TriangleAlert, X } from 'lucide-react';
+import { Banknote, BellRing, CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Coins, CreditCard, FileClock, FileWarning, Loader2, Mail, MessageSquareText, Minus, Moon, Plus, SlidersHorizontal, TriangleAlert, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { currency } from '../lib/region';
 
@@ -21,13 +21,15 @@ export const ALERT_KINDS = [
   ['ending', 'Ending', CalendarDays, 'violet', 'Leases ending'], ['contract', 'Contract', FileWarning, 'slate', 'No contract on file'],
   ['eid', 'ID expiry', CreditCard, 'teal', 'ID expiring'],
   ['document', 'Documents', FileClock, 'slate', 'Documents to renew'],
+  ['workorder', 'Work orders', Wrench, 'from-sky-400 to-cyan-600 shadow-sky-500/30', 'Work orders overdue'],
 ];
 const RULE = {
   overdue: ['Overdue', TriangleAlert], due: ['Due today', Banknote], upcoming: ['Coming up', CalendarClock],
   ending: ['Leases ending', CalendarDays], contract: ['No contract', FileWarning], eid: ['ID expiry', CreditCard], document: ['Documents', FileClock],
+  workorder: ['Work orders', Wrench],
 };
 const LEVEL = { bad: 'bg-bad/15 text-bad', warn: 'bg-warn/15 text-warn', info: 'bg-p3/15 text-p3' };
-const DOES = { pay: 'Record payment', docs: 'Add the contract', booking: 'Open lease', tenants: 'Open tenants', documents: 'Open document' };
+const DOES = { pay: 'Record payment', docs: 'Add the contract', booking: 'Open lease', tenants: 'Open tenants', documents: 'Open document', workorder: 'Open work order' };
 
 function Switch({ on, onChange, label }) {
   return (
@@ -42,7 +44,7 @@ function Switch({ on, onChange, label }) {
 export const TINT = {
   overdue: 'from-rose-400 to-red-500', due: 'from-amber-400 to-orange-500', upcoming: 'from-sky-400 to-blue-500',
   ending: 'from-violet-400 to-purple-500', contract: 'from-slate-400 to-slate-600', eid: 'from-teal-400 to-emerald-500',
-  document: 'from-lime-400 to-green-600',
+  document: 'from-lime-400 to-green-600', workorder: 'from-sky-400 to-cyan-600',
   summary: 'from-orange-400 to-pink-500', quiet: 'from-indigo-400 to-indigo-600',
   latefee: 'from-rose-400 to-pink-600', tenant: 'from-sky-400 to-indigo-500',
 };
@@ -138,6 +140,7 @@ function Rules({ start, onSaved }) {
     ['due', 'Rent due today', Banknote, 'A notification on the day rent is due.', []],
     ['summary', 'Morning summary', BellRing, 'One line to the master each morning: what is due today and what is overdue.', []],
     ['contract', 'No contract on file', FileWarning, 'A confirmed lease still has no contract attached.', [['Notify after', num('contract', 'days', 'Days without a contract', 60)]]],
+    ['workorder', 'Work orders', Wrench, 'A work order past its scheduled day, every day until it is done; and a new urgent one, at once, whatever the hour.', []],
     ['latefee', 'Late fee', Coins, 'Added to the lease when rent is still not paid after the days of grace. Only rent falling due from the day you switch this on.', [
       ['Days of grace after the due date', num('latefee', 'days', 'Days of grace', 60)],
       ['Charge', (

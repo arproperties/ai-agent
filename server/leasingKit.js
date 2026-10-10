@@ -5,6 +5,7 @@ import { unitInspections, confirmInspected, addInspection, updateInspection, KIN
 import { report } from './leasingReports.js';
 import { tenantHistory } from './leasingHistory.js';
 import { cash, region } from './leasingRegion.js';
+import { createWorkOrder, updateWorkOrder, addWorkOrderNote, getWorkOrder, listWorkOrders, STATUS as WORK_STATUS } from './workOrders.js';
 import { RENEWAL_TOOLS, RENEWAL_STATUS, renewalTools } from './renewals.js';
 
 // Riley's hands in leasing. She reads any report, a tenant's account and which units are
@@ -17,7 +18,8 @@ import { RENEWAL_TOOLS, RENEWAL_STATUS, renewalTools } from './renewals.js';
 // confirmed once the tenant's move-in inspection is done (server/inspections.js), and a lease
 // that exists is changed, not made a second time. She reads a unit's inspections and what comes
 // next for it, and writes one down as the person tells her how the unit is; photos are added on the screens.
-// She never records a payment, cancels or deletes: people do that on the screens.
+// She raises a work order for a repair, moves it on as she is told (assigned, done, closed…) and says what is open.
+// She never records a payment, cancels a lease or deletes: people do that on the screens.
 
 const REPORT = { rent_roll: 'rent-roll', overdue: 'aging', collections: 'collections', expiring_leases: 'expiring', vacant_units: 'vacancy' };
 const ASK = 'Use only what the user has told you: ask for anything missing, and never invent a name, a phone number, a price or a date.';
@@ -71,6 +73,21 @@ export const LEASING_TOOLS = [
       + 'and their move-out inspection, area by area, with the notes. Use it when asked whether a unit is ready, why a lease cannot be confirmed yet, '
       + 'or how a tenant left a unit compared with how they found it. Read-only.',
     input_schema: { type: 'object', properties: { building: str, unit_no: str }, required: ['building', 'unit_no'] },
+  },
+  {
+    name: 'leasing_work_orders',
+    description: 'The work orders (repairs to a unit): what is wrong, its status, who is on it, when they come, and what was done. Each is linked to the tenant who had the unit when it was reported. '
+      + 'Use it for "what is open in unit 303", "what is overdue", or before raising one, so the same fault is not raised twice. Repairs are under the AMC: no cost is kept. Read-only.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        building: { ...str, description: 'Only this building (part of its name is enough).' },
+        unit_no: { ...str, description: 'Only this unit; needs the building.' },
+        tenant: { ...str, description: "Only this tenant's (part of the name is enough)." },
+        status: { type: 'string', enum: ['active', 'open', 'assigned', 'in_progress', 'done', 'closed', 'cancelled', 'all'], description: 'Default active: everything not closed or cancelled.' },
+        overdue: { type: 'boolean', description: 'true: only those whose scheduled day has passed and are not done.' },
+      },
+    },
   },
   {
     name: 'leasing_list',
@@ -210,6 +227,44 @@ export const LEASING_TOOLS = [
       + "It is refused until the tenant's move-in inspection is done (a renewal needs none: the tenant is already in), and while the unit's last tenant has not been inspected out.",
     input_schema: { type: 'object', properties: { booking: { ...str, description: 'The reference, like LS-2026-0007.' } }, required: ['booking'] },
   },
+  {
+    name: 'leasing_add_work_order',
+    description: `Raise a work order: a repair to a unit (the AC is not cooling, a tap leaks). It links itself to the tenant in the unit that day; an empty unit's has no tenant. Look at leasing_work_orders first: a fault already raised is updated, not raised again. ${ASK}`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        building: str, unit_no: str,
+        detail: { ...str, description: 'What is wrong, in the words the user gave.' },
+        category: { ...str, description: 'AC, Plumbing, Electrical, Appliance, Pest control, or another word.' },
+        priority: { type: 'string', enum: ['low', 'normal', 'urgent'], description: 'Default normal. urgent only when the user says so.' },
+        reported_by: { ...str, description: 'Who told the office: the tenant, the watchman…' },
+        reported_on: { ...str, description: 'YYYY-MM-DD. Default today.' },
+        assigned_to: { ...str, description: 'The technician or vendor, when the user names one.' },
+        scheduled_on: { ...str, description: 'YYYY-MM-DD, the day the work is planned for.' },
+      },
+      required: ['building', 'unit_no', 'detail'],
+    },
+  },
+  {
+    name: 'leasing_update_work_order',
+    description: 'Change a work order, by its reference (WO-2026-0014): who is on it, when they come, its priority, its status, or add a note to its history. '
+      + 'Statuses go forward: open, assigned, in_progress, done (needs what was done), then closed; or cancelled (needs why). A finished one is taken back to work with reopen. Only what the user has said.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        work_order: { ...str, description: 'The reference, like WO-2026-0014.' },
+        status: { type: 'string', enum: ['assigned', 'in_progress', 'done', 'closed', 'cancelled'] },
+        resolution: { ...str, description: 'With done: what was done.' },
+        cancel_reason: { ...str, description: 'With cancelled: why.' },
+        reopen: { type: 'boolean', description: 'true: a done, closed or cancelled one goes back to work.' },
+        assigned_to: { ...str, description: 'The technician or vendor. Empty takes them off.' },
+        scheduled_on: { ...str, description: 'YYYY-MM-DD. Empty clears it.' },
+        priority: { type: 'string', enum: ['low', 'normal', 'urgent'] },
+        note: { ...str, description: 'A line for its history: "tenant not home, coming back Thursday".' },
+      },
+      required: ['work_order'],
+    },
+  },
 ];
 
 /** The one row whose name contains `q`; says which ones there are when it is none or several. */
@@ -231,6 +286,18 @@ function bookingId(ref) {
   if (!id) throw new Error('Give the lease reference, like LS-2026-0007.');
   return id;
 }
+
+/** A work order's id from its reference (WO-2026-0014). The number finds it; the year is only for reading. */
+function workOrderId(ref) {
+  const id = Number(String(ref || '').match(/^\s*WO-\d{4}-(\d+)\s*$/i)?.[1]);
+  if (!id) throw new Error('Give the work order reference, like WO-2026-0014.');
+  return id;
+}
+
+/** A work order in one line, as Riley is told it. */
+const workOrderLine = (w) => `${w.ref} (${WORK_STATUS[w.status]}${w.overdue ? ', OVERDUE' : ''}${w.priority !== 'normal' ? `, ${w.priority}` : ''}): unit ${w.unit_no}, ${w.building}, ${w.tenant || 'vacant'}; `
+  + `${w.category ? `${w.category}: ` : ''}${w.detail}; reported ${w.reported_on}${w.assigned_to ? `; assigned to ${w.assigned_to}` : ''}${w.scheduled_on ? `; scheduled ${w.scheduled_on}` : ''}`
+  + `${w.done_on ? `; done ${w.done_on}${w.resolution ? `: ${w.resolution}` : ''}` : ''}${w.cancel_reason ? `; cancelled: ${w.cancel_reason}` : ''}`;
 
 /** The discount and the tax a booking is given, as createBooking and updateBooking take them. */
 function terms(input) {
@@ -324,6 +391,22 @@ const reads = {
       list.length ? `Inspections, newest first:\n${list.slice(0, 30).map(line).join('\n')}` : 'No inspection or make-ready has been written down yet.',
     ].join('\n');
   },
+  leasing_work_orders: async (input) => {
+    const q = { status: input.status === 'all' ? '' : input.status || 'active', overdue: input.overdue === true };
+    if (input.building) {
+      const b = await find('prop_buildings', 'building', input.building);
+      q.building_id = b.id;
+      if (input.unit_no) {
+        const unit = await unitOf(b, input.unit_no);
+        if (!unit) throw new Error(`${b.name} has no unit "${input.unit_no}". Look at leasing_list units.`);
+        q.unit_id = unit.id;
+      }
+    } else if (input.unit_no) throw new Error('Say which building the unit is in.');
+    if (input.tenant) q.tenant_id = (await find('lease_tenants', 'tenant', input.tenant)).id;
+    const rows = await listWorkOrders(q);
+    return rows.length ? `Work orders (today is ${todayHere()}), newest first:\n${rows.slice(0, 60).map((w) => `- ${workOrderLine(w)}`).join('\n')}${rows.length > 60 ? `\n…and ${rows.length - 60} more not shown.` : ''}`
+      : 'No work orders match.';
+  },
   leasing_tenant_statement: async (input) => asText(await report('statement', { tenant_id: (await find('lease_tenants', 'tenant', input.tenant)).id })),
   leasing_tenant_history: async (input) => {
     const h = await tenantHistory((await find('lease_tenants', 'tenant', input.tenant)).id);
@@ -331,7 +414,8 @@ const reads = {
     const where = (i) => (i.ref ? ` [${i.ref}, unit ${i.unit_no}, ${i.building}]` : '');
     const line = (i) => (i.type === 'late'
       ? `- ${i.date} Late rent: ${cash(i.amount)} due, ${i.paid_on ? `paid in full on ${i.paid_on}, ${i.days_late} days late` : `${cash(i.left)} still owed, ${i.days_late} days late so far`}${i.fee ? `, late fee ${cash(i.fee)}` : ''}${where(i)}`
-      : `- ${i.date} ${i.type === 'complaint' ? 'Complaint' : 'Maintenance'}${i.category ? ` (${i.category})` : ''}, ${i.resolved_on ? `resolved ${i.resolved_on}${i.resolution ? ` (${i.resolution})` : ''}` : 'open'}: ${i.detail}${where(i)}`);
+      : `- ${i.date} ${i.type === 'complaint' ? 'Complaint' : `Maintenance${i.wo ? ` ${i.wo}` : ''}`}${i.category ? ` (${i.category})` : ''}, `
+        + `${i.resolved_on ? `resolved ${i.resolved_on}${i.resolution ? ` (${i.resolution})` : ''}` : i.wo ? WORK_STATUS[i.status].toLowerCase() : 'open'}: ${i.detail}${where(i)}`);
     return [
       `History · ${h.tenant.full_name} (as of ${todayHere()})`,
       `Late rent: ${s.late} (${s.late_unpaid} still unpaid, ${s.late_days} days late on average, late fees ${cash(s.late_fees)}) | Complaints: ${s.complaints} (${s.complaints_open} open) | Maintenance: ${s.maintenance} (${s.maintenance_open} open)`,
@@ -544,6 +628,26 @@ const writes = (user) => {
       const made = await confirmInspected(bookingId(input.booking), user.id).catch((e) => { throw /move-in inspection/.test(e.message) ? new Error(`${e.message} ${INSPECT_FIRST}`) : e; });
       return `Lease ${made.ref} is confirmed: ${made.tenant}, unit ${made.unit_no}, ${made.building}, ${made.start_date} to ${made.end_date}.\n${await scheduleLine(made.id)}`;
     },
+    leasing_add_work_order: async (input) => {
+      const b = await find('prop_buildings', 'building', input.building);
+      const unit = await unitOf(b, input.unit_no);
+      if (!unit) throw new Error(`${b.name} has no unit "${input.unit_no}". Look at leasing_list units.`);
+      const body = { unit_id: unit.id, detail: input.detail };
+      for (const f of ['category', 'priority', 'reported_by', 'reported_on', 'assigned_to', 'scheduled_on']) if (input[f] != null) body[f] = input[f];
+      const w = await createWorkOrder(body, user.id);
+      return `Work order ${w.ref} raised ${w.tenant ? `for ${w.tenant}` : 'for the vacant unit'}: ${workOrderLine(w)}.\nPhotos can be added on the screens (Leasing, Work orders).`;
+    },
+    leasing_update_work_order: async (input) => {
+      const id = workOrderId(input.work_order);
+      const body = {};
+      for (const f of ['status', 'resolution', 'cancel_reason', 'reopen', 'assigned_to', 'scheduled_on', 'priority']) if (input[f] != null) body[f] = input[f];
+      const note = String(input.note ?? '').trim();
+      if (!Object.keys(body).length && !note) throw new Error('Say what to change.');
+      // With reopen the note is the reason it was reopened; otherwise it is a line of its own.
+      if (Object.keys(body).length) await updateWorkOrder(id, body.reopen ? { ...body, note } : body, user.id);
+      if (note && !body.reopen) await addWorkOrderNote(id, note, user.id);
+      return `Work order changed. It is now: ${workOrderLine(await getWorkOrder(id))}.`;
+    },
   };
 };
 
@@ -556,9 +660,10 @@ async function scheduleLine(bookingId) {
 }
 
 const STATUS = {
-  leasing_free_units: 'Checking which units are free…', leasing_tenant_statement: "Looking at the tenant's account…", leasing_tenant_history: "Looking at the tenant's history…", leasing_unit_inspections: "Looking at the unit's inspections…", leasing_list: 'Looking at what is set up…',
+  leasing_free_units: 'Checking which units are free…', leasing_tenant_statement: "Looking at the tenant's account…", leasing_tenant_history: "Looking at the tenant's history…", leasing_unit_inspections: "Looking at the unit's inspections…", leasing_work_orders: 'Looking at the work orders…', leasing_list: 'Looking at what is set up…',
   leasing_add_company: 'Adding the company…', leasing_add_building: 'Adding the building…', leasing_add_units: 'Adding the units…', leasing_add_service: 'Adding the service…',
   leasing_add_tenant: 'Adding the tenant…', leasing_record_inspection: 'Writing down the inspection…', leasing_add_booking: 'Making the lease…', leasing_change_booking: 'Changing the lease…', leasing_confirm_booking: 'Confirming the lease…',
+  leasing_add_work_order: 'Raising the work order…', leasing_update_work_order: 'Changing the work order…',
 };
 
 /**
