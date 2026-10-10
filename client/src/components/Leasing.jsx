@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, LayoutGrid, List, BedDouble, BedSingle, Lock, History, ClipboardCheck, LogIn, Wrench } from 'lucide-react';
 import { api } from '../lib/api';
 import { money as aed, currency, region } from '../lib/region';
@@ -20,6 +20,8 @@ import Documents from './Documents';
 import TenantHistory from './TenantHistory';
 import Inspections from './Inspections';
 import WorkOrders from './WorkOrders';
+
+const Building3D = lazy(() => import('./Building3D')); // it brings a 3D library with it, fetched only when the 3D View is opened
 
 // Leasing: bookings of units and the tenants who make them. Anyone signed in can use it.
 // The server is server/leasing.js; the units come from Properties.
@@ -991,7 +993,7 @@ function Calendar({ onEdit, onNew }) {
 }
 
 // Leasing is several pages, each with its own row in the sidebar: the overview, Bookings (which
-// has the buildings beside it as a second tab), Calendar, Tenants, Reports, Alerts and Documents. Which one
+// has the buildings beside it as a second tab), Calendar, 3D View, Tenants, Reports, Alerts and Documents. Which one
 // is open is the app's to hold, as `tab`, so the sidebar can open any of them.
 const BOOKING_TABS = [['bookings', 'Leasing'], ['buildings', 'Buildings']];
 
@@ -1078,6 +1080,14 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   );
   if (tab === 'workorders') return <WorkOrders key={key} onBack={onBack} />;
   if (tab === 'calendar') return <Page title="Calendar" onBack={onBack} action={add}><Calendar key={key} onEdit={(b) => setForm(b)} onNew={(preset) => setForm({ preset })} /></Page>;
+  if (tab === '3d') return (
+    <Page title="3D View" onBack={onBack} action={add}>
+      <Suspense fallback={<p className="flex items-center justify-center gap-2 py-10 text-sm text-mute"><Loader2 size={16} className="animate-spin" /> Loading…</p>}>
+        <Building3D key={key} onPay={pay} onLease={(id) => openBooking(id)} onNew={(preset) => setForm({ preset })}
+          onWork={(u) => setForm({ workOf: { scope: { unit_id: u.unit_id }, title: `Work orders · Unit ${u.unit_no}`, preset: { unit_id: u.unit_id } } })} />
+      </Suspense>
+    </Page>
+  );
   if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants onHistory={(t) => setForm({ historyOf: t })} /></Page>;
   if (tab === 'reports') return <Page title="Reports" onBack={onBack}><LeasingReports key={key} name={report} onName={onReport} onPay={pay} /></Page>;
   if (tab === 'alerts') return <Page title="Alerts" onBack={onBack}><LeasingAlerts key={key} rule={alert} onRule={onAlert} onOpen={openAlert} /></Page>;

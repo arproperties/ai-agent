@@ -1,0 +1,235 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Banknote, FileText, Layers, Plus, RotateCw, ScanEye, Wrench, X } from 'lucide-react';
+import { api } from '../lib/api';
+import { money } from '../lib/region';
+import { createBuildingScene } from '../lib/buildingScene';
+import Select from './Select';
+
+// 3D View: one building as a tower that can be turned, pulled apart floor by floor and
+// tapped, each unit coloured by how it stands today. Nothing is kept here: the units and
+// their state are the Overview's (/leasing/overview), the repairs are Work orders'.
+// The drawing itself is lib/buildingScene.js.
+
+const SELECT = 'glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none focus:border-p1/70';
+const CHIP = 'rounded-full border px-3 py-1.5 text-xs transition';
+const PANEL = 'rounded-2xl border border-stroke bg-surface/85 backdrop-blur';
+// The same colours the Buildings tab gives each state.
+const STATUS = { occupied: ['Occupied', 'chart'], ending: ['Ending soon', 'warn'], overdue: ['Overdue', 'bad'], vacant: ['Vacant', 'mute'], blocked: ['Blocked', 'mute'] };
+const MODES = [['status', 'Status'], ['rent', 'Rent'], ['ending', 'Lease end']];
+const LIVE = ['open', 'assigned', 'in_progress']; // a repair not done yet
+const FAR = 365; // a lease with this long left, or longer, is as green as it gets
+
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(`--color-${name}`).trim();
+const hex = (c) => { const n = parseInt(c.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+/** The colour a share of the way from one to another, both #rrggbb. */
+const blend = (a, b, t) => { const [x, y] = [hex(a), hex(b)]; return `#${x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('')}`; };
+const days = (n) => `${n} day${n === 1 ? '' : 's'}`;
+const pct = (x) => `${Math.round(x * 100)}%`;
+const floorName = (f) => (f == null || f === '' ? 'No floor' : /^\d+$/.test(String(f).trim()) ? `Floor ${f}` : String(f));
+
+let lastBuilding = ''; // the building last looked at, so coming back from a lease or a repair returns to it
+
+export default function Building3D({ onPay, onLease, onNew, onWork }) {
+  const [d, setD] = useState(null);
+  const [repairs, setRepairs] = useState([]);
+  const [error, setError] = useState('');
+  const [buildingId, setBuildingId] = useState(lastBuilding);
+  const [mode, setMode] = useState('status');
+  const [only, setOnly] = useState(null); // the one state the legend is narrowed to
+  const [explode, setExplode] = useState(false);
+  const [floor, setFloor] = useState(null); // the floor looked at alone, counted from the bottom
+  const [spin, setSpin] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [hover, setHover] = useState(null); // { id, x, y }
+  const stage = useRef(null);
+  const scene = useRef(null);
+
+  useEffect(() => {
+    api.get('/leasing/overview?company_id=&building_id=&months=1').then(setD).catch((e) => setError(e.message));
+    api.get('/leasing/work-orders?status=active').then((r) => setRepairs(r.work_orders.filter((w) => LIVE.includes(w.status)))).catch(() => {});
+  }, []);
+
+  const building = d?.buildings.find((b) => String(b.id) === String(buildingId)) || d?.buildings[0];
+  // Bottom floor first, as the tower is built.
+  const floors = useMemo(() => (building ? [...building.floors].reverse() : []), [building]);
+  const units = useMemo(() => floors.flat(), [floors]);
+  const repairsOf = useMemo(() => {
+    const m = new Map();
+    for (const w of repairs) m.set(w.unit_id, [...(m.get(w.unit_id) || []), w]);
+    return m;
+  }, [repairs]);
+  const unit = units.find((u) => u.unit_id === selected);
+  const rents = units.filter((u) => u.rent > 0).map((u) => u.rent);
+  const [low, high] = [Math.min(...rents), Math.max(...rents)];
+
+  // The scene lives as long as the screen does; a building is drawn into it when chosen.
+  const has = !!building;
+  useEffect(() => {
+    if (!has) return undefined;
+    const light = document.documentElement.dataset.mode === 'light';
+    const s = createBuildingScene(stage.current, {
+      light, ink: '#ffffff', tagInk: css('txt'), line: css('p1'),
+      onHover: (id, x, y) => setHover(id == null ? null : { id, x, y }),
+      onPick: (id) => { setSelected(id); if (id != null) setSpin(false); },
+      onTurn: () => setSpin(false),
+    });
+    scene.current = s;
+    return () => { s.dispose(); scene.current = null; };
+  }, [has]);
+
+  useEffect(() => {
+    if (!building) return;
+    lastBuilding = String(building.id);
+    scene.current?.setData(floors.map((f) => ({ label: floorName(f[0]?.floor), units: f.map((u) => ({ id: u.unit_id, label: u.unit_no })) })));
+    setSelected(null); setFloor(null); setOnly(null);
+  }, [building?.id, floors]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // How each unit is painted: by its state, by its rent, or by how long its lease has left.
+  useEffect(() => {
+    const c = { chart: css('chart'), warn: css('warn'), bad: css('bad'), ok: css('ok'), mute: css('mute'), p2: css('p2'), p3: css('p3') };
+    const paint = new Map();
+    for (const u of units) {
+      const let_ = !!u.tenant;
+      let color = c[STATUS[u.status][1]];
+      let dim = !let_;
+      if (mode === 'rent' && let_) color = blend(c.p3, c.p2, high > low ? (u.rent - low) / (high - low) : 0.5);
+      if (mode === 'ending' && let_) color = u.days_left <= 90 ? blend(c.bad, c.warn, Math.max(0, u.days_left) / 90) : blend(c.warn, c.ok, Math.min(1, (u.days_left - 90) / (FAR - 90)));
+      if (only && (only === 'repair' ? !repairsOf.has(u.unit_id) : u.status !== only)) dim = true;
+      else if (only) dim = false;
+      paint.set(u.unit_id, { color, dim, pulse: mode === 'status' && u.status === 'overdue' && !dim, beacon: repairsOf.has(u.unit_id) });
+    }
+    scene.current?.setPaint(paint);
+  }, [units, mode, only, repairsOf, low, high]);
+
+  useEffect(() => { scene.current?.setView({ explode, floor, selected }); }, [explode, floor, selected, building?.id]);
+  useEffect(() => { scene.current?.setSpin(spin); }, [spin, building?.id]);
+
+  if (!d) return <p className="py-10 text-center text-sm text-mute">{error || 'Loading…'}</p>;
+  if (!building) return <p className="rounded-2xl border border-stroke p-4 text-sm text-mute">No buildings yet. Add companies, buildings and units under Properties and they appear here.</p>;
+
+  const count = (s) => units.filter((u) => u.status === s).length;
+  const withRepairs = units.filter((u) => repairsOf.has(u.unit_id)).length;
+  const owed = units.reduce((t, u) => t + (u.owed || 0), 0);
+  const rentRoll = units.reduce((t, u) => t + (u.rent || 0), 0);
+  const tip = hover && units.find((u) => u.unit_id === hover.id);
+  const company = d.filters.buildings.find((b) => b.id === building.id)?.company_id;
+  const toggle = (on) => `${CHIP} flex items-center gap-1.5 ${on ? 'border-p1/60 bg-p1/20 text-p1' : 'border-stroke bg-surface/80 text-mute hover:text-txt'}`;
+
+  return (
+    <div className="relative h-[calc(100dvh-6.5rem)] min-h-[30rem] overflow-hidden rounded-2xl border border-stroke">
+      <div ref={stage} className="absolute inset-0" />
+
+      {/* Which building, and how it is doing. */}
+      <div className="pointer-events-none absolute inset-x-3 top-3 flex flex-wrap items-start gap-2">
+        <div className="pointer-events-auto flex min-w-0 flex-wrap items-center gap-2">
+          <Select value={building.id} onChange={(e) => setBuildingId(e.target.value)} aria-label="Building" className={SELECT} wrap="min-w-[11rem]"
+            options={d.buildings.map((b) => [b.id, b.name])} />
+          <div className={`${PANEL} flex gap-4 px-3.5 py-2 text-xs`}>
+            <span><span className="block text-mute">Occupancy</span><span className="text-sm font-medium tabular-nums">{pct(building.occupancy)}</span></span>
+            <span><span className="block text-mute">Units let</span><span className="text-sm font-medium tabular-nums">{units.filter((u) => u.tenant).length} / {units.length}</span></span>
+            <span className="hidden sm:block"><span className="block text-mute">Rent a month</span><span className="text-sm font-medium tabular-nums">{money(Math.round(rentRoll))}</span></span>
+            {owed > 0 && <span><span className="block text-mute">Overdue</span><span className="text-sm font-medium tabular-nums text-bad">{money(Math.round(owed))}</span></span>}
+          </div>
+        </div>
+        <div className="pointer-events-auto ml-auto flex flex-wrap items-center justify-end gap-2">
+          <span className="flex rounded-full border border-stroke bg-surface/80 p-0.5">
+            {MODES.map(([k, l]) => (
+              <button key={k} onClick={() => { setMode(k); setOnly(null); }} aria-pressed={mode === k}
+                className={`rounded-full px-3 py-1.5 text-xs ${mode === k ? 'bg-p1/20 text-p1' : 'text-mute hover:text-txt'}`}>{l}</button>
+            ))}
+          </span>
+          <button onClick={() => setExplode(!explode)} aria-pressed={explode} className={toggle(explode)}><Layers size={14} /> Open up</button>
+          <button onClick={() => setSpin(!spin)} aria-pressed={spin} className={toggle(spin)}><RotateCw size={14} /> Turn</button>
+          <button onClick={() => { setFloor(null); setSelected(null); scene.current?.reset(); }} className={toggle(false)}><ScanEye size={14} /> Reset</button>
+        </div>
+      </div>
+
+      {/* The floors, top first: one tapped is looked at alone. */}
+      {floors.length > 1 && (
+        <div className={`${PANEL} absolute left-3 top-1/2 flex max-h-[55%] -translate-y-1/2 flex-col gap-0.5 overflow-y-auto p-1 text-xs`}>
+          <button onClick={() => setFloor(null)} aria-pressed={floor == null} className={`rounded-lg px-2.5 py-1.5 text-left ${floor == null ? 'bg-p1/20 text-p1' : 'text-mute hover:text-txt'}`}>All</button>
+          {floors.map((f, i) => [f, i]).reverse().map(([f, i]) => (
+            <button key={i} onClick={() => { setFloor(floor === i ? null : i); setSpin(false); }} aria-pressed={floor === i}
+              className={`flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left ${floor === i ? 'bg-p1/20 text-p1' : 'text-mute hover:text-txt'}`}>
+              <span className="max-w-[6rem] truncate">{floorName(f[0]?.floor)}</span>
+              <span className="tabular-nums opacity-70">{f.filter((u) => u.tenant).length}/{f.length}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* What the colours mean. In Status, a row tapped picks those units out. */}
+      <div className={`${PANEL} absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] px-3 py-2 text-xs ${unit ? 'max-md:hidden' : ''}`}>
+        {mode === 'status' ? (
+          <div className="flex flex-wrap gap-x-1 gap-y-0.5">
+            {Object.entries(STATUS).map(([k, [label, tone]]) => (
+              <button key={k} onClick={() => setOnly(only === k ? null : k)} aria-pressed={only === k}
+                className={`flex items-center gap-1.5 rounded-full px-2 py-1 ${only === k ? 'bg-white/10 text-txt' : 'text-mute hover:text-txt'}`}>
+                <span className="size-2.5 rounded-[3px]" style={{ background: `var(--color-${tone})`, opacity: k === 'vacant' || k === 'blocked' ? 0.4 : 1 }} />{label} <span className="tabular-nums">{count(k)}</span>
+              </button>
+            ))}
+            <button onClick={() => setOnly(only === 'repair' ? null : 'repair')} aria-pressed={only === 'repair'}
+              className={`flex items-center gap-1.5 rounded-full px-2 py-1 ${only === 'repair' ? 'bg-white/10 text-txt' : 'text-mute hover:text-txt'}`}>
+              <span className="size-2.5 rounded-full bg-p3" />Repair open <span className="tabular-nums">{withRepairs}</span>
+            </button>
+          </div>
+        ) : (
+          <div className="w-56 max-w-full">
+            <div className="h-2 rounded-full" style={{ background: mode === 'rent' ? 'linear-gradient(90deg, var(--color-p3), var(--color-p2))' : 'linear-gradient(90deg, var(--color-bad), var(--color-warn) 25%, var(--color-ok))' }} />
+            <div className="mt-1 flex justify-between text-mute">
+              {mode === 'rent' ? (rents.length ? <><span>{money(Math.round(low))}</span><span>{money(Math.round(high))} a month</span></> : <span>No unit is let</span>)
+                : <><span>Ends now</span><span>3 months</span><span>A year or more</span></>}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {tip && (
+        <div className="pointer-events-none fixed z-30 -translate-x-1/2 -translate-y-full rounded-xl border border-stroke bg-surface px-3 py-2 text-xs shadow-xl" style={{ left: hover.x, top: hover.y - 14 }}>
+          <p className="font-medium">Unit {tip.unit_no}<span className="font-normal text-mute"> · {STATUS[tip.status][0]}</span></p>
+          {tip.tenant && <p className="text-mute">{tip.tenant} · {money(Math.round(tip.rent))} a month</p>}
+        </div>
+      )}
+
+      {/* The unit that was tapped. */}
+      {unit && (
+        <div className={`${PANEL} absolute inset-x-3 bottom-3 max-h-[60%] overflow-y-auto p-4 text-sm md:inset-x-auto md:bottom-auto md:right-3 md:top-28 md:w-72`}>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-base font-medium">Unit {unit.unit_no}</p>
+              <p className="truncate text-xs text-mute">{[floorName(unit.floor), unit.type].filter(Boolean).join(' · ')}</p>
+            </div>
+            <button onClick={() => setSelected(null)} aria-label="Close" className="-mr-1.5 -mt-1.5 grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><X size={16} /></button>
+          </div>
+          <p className="mt-2 flex items-center gap-1.5 text-xs">
+            <span className="size-2.5 rounded-[3px]" style={{ background: `var(--color-${STATUS[unit.status][1]})` }} />{STATUS[unit.status][0]}
+            {unit.status === 'overdue' && <span className="text-bad">· {money(Math.round(unit.owed))} owed, {days(unit.days_overdue)} late</span>}
+          </p>
+          {unit.tenant ? (
+            <dl className="mt-3 space-y-1.5 text-xs">
+              <div className="flex justify-between gap-3"><dt className="text-mute">Tenant</dt><dd className="truncate text-right">{unit.tenant}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-mute">Rent</dt><dd className="tabular-nums">{money(Math.round(unit.rent))} a month</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-mute">Lease ends</dt><dd>{unit.days_left > 0 ? `in ${days(unit.days_left)}` : 'today'} · {unit.renewal}</dd></div>
+            </dl>
+          ) : (
+            <p className="mt-3 text-xs text-mute">{unit.status === 'blocked' ? 'Blocked: it is not being let.' : unit.days_vacant != null ? `Empty for ${days(unit.days_vacant)}.` : 'Never let.'}</p>
+          )}
+          {(repairsOf.get(unit.unit_id) || []).map((w) => (
+            <p key={w.id} className="mt-2 flex items-start gap-1.5 rounded-lg bg-p3/10 px-2.5 py-1.5 text-xs">
+              <Wrench size={13} className="mt-0.5 shrink-0 text-p3" />
+              <span className="min-w-0"><span className="font-medium">{w.ref}</span>{w.priority === 'urgent' && <span className="text-bad"> · Urgent</span>}<span className="block truncate text-mute">{w.category ? `${w.category}: ` : ''}{w.detail}</span></span>
+            </p>
+          ))}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {unit.booking_id && <button onClick={() => onPay(unit.booking_id)} className={toggle(true)}><Banknote size={14} /> Payments</button>}
+            {unit.booking_id && <button onClick={() => onLease(unit.booking_id)} className={toggle(false)}><FileText size={14} /> Lease</button>}
+            {unit.status === 'vacant' && <button onClick={() => onNew({ company_id: company, building_id: building.id, unit_id: unit.unit_id })} className={toggle(true)}><Plus size={14} /> New lease</button>}
+            <button onClick={() => onWork(unit)} className={toggle(false)}><Wrench size={14} /> Work orders</button>
+          </div>
+        </div>
+      )}
+
+      {units.length === 0 && <p className="absolute inset-0 grid place-items-center text-sm text-mute">This building has no units yet. Add them under Properties.</p>}
+    </div>
+  );
+}
