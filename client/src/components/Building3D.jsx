@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Banknote, FileText, Layers, Plus, RotateCw, ScanEye, Wrench, X } from 'lucide-react';
+import { Banknote, Check, FileText, Layers, Loader2, Plus, RotateCw, ScanEye, Upload, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { money } from '../lib/region';
 import { createBuildingScene } from '../lib/buildingScene';
@@ -10,6 +10,8 @@ import Select from './Select';
 // their state are the Overview's (/leasing/overview), the repairs are Work orders'.
 // A building with a floor plan (/properties/plans) is drawn as it is built: each unit where
 // it is and as big as it is, with the corridor, the stairs and the lobby between them.
+// The master gives a building its plan by uploading the drawings: Riley reads them, the
+// reading is shown here as it would be drawn, and it is kept only when the master says so.
 // The drawing itself is lib/buildingScene.js.
 
 const SELECT = 'glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none focus:border-p1/70';
@@ -33,6 +35,9 @@ const floorName = (f) => (f == null || f === '' ? 'No floor' : /^\d+$/.test(Stri
 const floorOf = (u) => (u.floor != null && u.floor !== '' ? u.floor : /^[1-9]\d{2,3}$/.test(u.unit_no) ? u.unit_no.slice(0, -2) : null);
 const level = (f) => { const n = String(f ?? '').replace(/\D/g, ''); return n ? Number(n) : -1; }; // those with no number (G, or none) go under floor 1
 
+// A plan is in metres from the south-west corner; the drawing is a storey to the unit, from the middle, the south side in front.
+const placer = (p) => (r) => ({ x: (r.x + r.w / 2 - p.width / 2) / p.storey, z: (p.depth / 2 - r.y - r.d / 2) / p.storey, w: r.w / p.storey, d: r.d / p.storey });
+
 let lastBuilding = ''; // the building last looked at, so coming back from a lease or a repair returns to it
 
 export default function Building3D({ onPay, onLease, onNew, onWork }) {
@@ -48,14 +53,23 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
   const [spin, setSpin] = useState(true);
   const [selected, setSelected] = useState(null);
   const [hover, setHover] = useState(null); // { id, x, y }
+  const [master, setMaster] = useState(false);
+  const [reading, setReading] = useState(false); // Riley is reading an uploaded floor plan
+  const [draft, setDraft] = useState(null); // what was read, shown before it is kept
+  const [planError, setPlanError] = useState('');
+  const [saving, setSaving] = useState(false);
   const stage = useRef(null);
   const scene = useRef(null);
+  const file = useRef(null);
+  const here = useRef(true);
+  useEffect(() => () => { here.current = false; }, []);
 
-  useEffect(() => {
+  const load = () => {
     api.get('/leasing/overview?company_id=&building_id=&months=1').then(setD).catch((e) => setError(e.message));
     api.get('/properties/plans').then(setPlans).catch(() => {});
-    api.get('/leasing/work-orders?status=active').then((r) => setRepairs(r.work_orders.filter((w) => LIVE.includes(w.status)))).catch(() => {});
-  }, []);
+    api.get('/leasing/work-orders?status=active').then((r) => { setMaster(!!r.master); setRepairs(r.work_orders.filter((w) => LIVE.includes(w.status))); }).catch(() => {});
+  };
+  useEffect(load, []);
 
   const building = d?.buildings.find((b) => String(b.id) === String(buildingId)) || d?.buildings[0];
   // Bottom floor first, as the tower is built.
@@ -93,22 +107,36 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
   useEffect(() => {
     if (!building) return;
     lastBuilding = String(building.id);
-    // The plan is in metres from the south-west corner; the drawing is a storey to the unit, from the middle, the south side in front.
+    setSelected(null); setFloor(null); setOnly(null);
+    if (draft) { // the reading, drawn as it would be kept
+      const at = placer(draft);
+      scene.current?.setData(draft.floors.map((f) => ({
+        label: floorName(f.floor),
+        units: f.units.map((no) => ({ id: `plan:${no}`, label: no, rect: at(draft.units[no]) })),
+        commons: (draft.commons[f.floor] || []).map((c) => ({ kind: c.kind, label: c.label, ...at(c) })),
+      })), { W: draft.width / draft.storey, D: draft.depth / draft.storey });
+      return;
+    }
     const plan = plans[building.id];
     const real = plan && units.length > 0 && units.every((u) => plan.units[u.unit_id]) ? plan : null;
-    const place = (r) => ({ x: (r.x + r.w / 2 - real.width / 2) / real.storey, z: (real.depth / 2 - r.y - r.d / 2) / real.storey, w: r.w / real.storey, d: r.d / real.storey });
+    const place = real && placer(real);
     scene.current?.setData(floors.map((f) => ({
       label: floorName(f[0]?.floor),
       units: f.map((u) => ({ id: u.unit_id, label: u.unit_no, rect: real && place(real.units[u.unit_id]) })),
       commons: real ? (real.commons[f[0]?.floor] || real.commons['*'] || []).map((c) => ({ kind: c.kind, label: c.label, ...place(c) })) : [],
     })), real && { W: real.width / real.storey, D: real.depth / real.storey });
-    setSelected(null); setFloor(null); setOnly(null);
-  }, [building?.id, floors, plans]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [building?.id, floors, plans, draft]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // How each unit is painted: by its state, by its rent, or by how long its lease has left.
   useEffect(() => {
     const c = { chart: css('chart'), warn: css('warn'), bad: css('bad'), ok: css('ok'), mute: css('mute'), p2: css('p2'), p3: css('p3') };
     const paint = new Map();
+    if (draft) { // units the building has already, and in blue the ones the plan would add
+      const fresh = new Set(draft.add.map((u) => u.unit_no));
+      for (const no of Object.keys(draft.units)) paint.set(`plan:${no}`, { color: fresh.has(no) ? c.p3 : c.chart });
+      scene.current?.setPaint(paint);
+      return;
+    }
     for (const u of units) {
       const let_ = !!u.tenant;
       let color = c[STATUS[u.status][1]];
@@ -120,7 +148,7 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
       paint.set(u.unit_id, { color, dim, pulse: mode === 'status' && u.status === 'overdue' && !dim, beacon: repairsOf.has(u.unit_id) });
     }
     scene.current?.setPaint(paint);
-  }, [units, mode, only, repairsOf, low, high]);
+  }, [units, mode, only, repairsOf, low, high, draft]);
 
   useEffect(() => { scene.current?.setView({ explode, floor, selected }); }, [explode, floor, selected, building?.id]);
   useEffect(() => { scene.current?.setSpin(spin); }, [spin, building?.id]);
@@ -134,6 +162,31 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
   const rentRoll = units.reduce((t, u) => t + (u.rent || 0), 0);
   const tip = hover && units.find((u) => u.unit_id === hover.id);
   const company = d.filters.buildings.find((b) => b.id === building.id)?.company_id;
+  // Riley reads the uploaded drawings on the server, which takes a minute or so: asked after until it is done.
+  const read = async (f) => {
+    if (!f) return;
+    setPlanError(''); setDraft(null); setReading(true); setSpin(false);
+    try {
+      const form = new FormData();
+      form.append('file', f);
+      const { id } = await api.upload(`/properties/buildings/${building.id}/plan/read`, form);
+      while (here.current) {
+        await new Promise((done) => setTimeout(done, 2500));
+        const r = await api.get(`/properties/plan-readings/${id}`);
+        if (r.status === 'failed') throw new Error(r.error);
+        if (r.status === 'done') { setDraft(r.plan); setExplode(false); break; }
+      }
+    } catch (e) { setPlanError(e.message); } finally { setReading(false); }
+  };
+  const keep = async () => {
+    setSaving(true); setPlanError('');
+    try {
+      const { floors: shown, unplaced, ...body } = draft;
+      await api.put(`/properties/buildings/${building.id}/plan`, body);
+      setDraft(null);
+      load();
+    } catch (e) { setPlanError(e.message); } finally { setSaving(false); }
+  };
   const toggle = (on) => `${CHIP} flex items-center gap-1.5 ${on ? 'border-p1/60 bg-p1/20 text-p1' : 'border-stroke bg-surface/80 text-mute hover:text-txt'}`;
 
   return (
@@ -162,11 +215,17 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
           <button onClick={() => setExplode(!explode)} aria-pressed={explode} className={toggle(explode)}><Layers size={14} /> Open up</button>
           <button onClick={() => setSpin(!spin)} aria-pressed={spin} className={toggle(spin)}><RotateCw size={14} /> Turn</button>
           <button onClick={() => { setFloor(null); setSelected(null); scene.current?.reset(); }} className={toggle(false)}><ScanEye size={14} /> Reset</button>
+          {master && (
+            <>
+              <button onClick={() => file.current.click()} disabled={reading || saving} className={`${toggle(false)} disabled:opacity-60`}><Upload size={14} /> Floor plan</button>
+              <input ref={file} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={(e) => { read(e.target.files[0]); e.target.value = ''; }} />
+            </>
+          )}
         </div>
       </div>
 
       {/* The floors, top first: one tapped is looked at alone. */}
-      {floors.length > 1 && (
+      {floors.length > 1 && !draft && (
         <div className={`${PANEL} absolute left-3 top-1/2 flex max-h-[55%] -translate-y-1/2 flex-col gap-0.5 overflow-y-auto p-1 text-xs`}>
           <button onClick={() => setFloor(null)} aria-pressed={floor == null} className={`rounded-lg px-2.5 py-1.5 text-left ${floor == null ? 'bg-p1/20 text-p1' : 'text-mute hover:text-txt'}`}>All</button>
           {floors.map((f, i) => [f, i]).reverse().map(([f, i]) => (
@@ -180,7 +239,7 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
       )}
 
       {/* What the colours mean. In Status, a row tapped picks those units out. */}
-      <div className={`${PANEL} absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] px-3 py-2 text-xs ${unit ? 'max-md:hidden' : ''}`}>
+      <div className={`${PANEL} absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] px-3 py-2 text-xs ${unit ? 'max-md:hidden' : ''} ${draft ? 'hidden' : ''}`}>
         {mode === 'status' ? (
           <div className="flex flex-wrap gap-x-1 gap-y-0.5">
             {Object.entries(STATUS).map(([k, [label, tone]]) => (
@@ -213,7 +272,7 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
       )}
 
       {/* The unit that was tapped. */}
-      {unit && (
+      {unit && !draft && (
         <div className={`${PANEL} absolute inset-x-3 bottom-3 max-h-[60%] overflow-y-auto p-4 text-sm md:inset-x-auto md:bottom-auto md:right-3 md:top-28 md:w-72`}>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -250,7 +309,40 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
         </div>
       )}
 
-      {units.length === 0 && <p className="absolute inset-0 grid place-items-center text-sm text-mute">This building has no units yet. Add them under Properties.</p>}
+      {(reading || (planError && !draft)) && (
+        <div className={`${PANEL} absolute inset-x-3 top-28 mx-auto flex max-w-sm items-start gap-2.5 p-4 text-sm`}>
+          {reading ? <Loader2 size={16} className="mt-0.5 shrink-0 animate-spin text-p1" /> : <X size={16} className="mt-0.5 shrink-0 text-bad" />}
+          <p className="min-w-0 flex-1">{reading ? <>Riley is reading the floor plan.<span className="block text-xs text-mute">This takes about a minute. You can keep looking around.</span></> : planError}</p>
+          {!reading && <button onClick={() => setPlanError('')} aria-label="Close" className="-mr-1.5 -mt-1.5 grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><X size={16} /></button>}
+        </div>
+      )}
+
+      {/* What Riley read off the drawings, to be kept or not. Nothing here is typed. */}
+      {draft && (
+        <div className={`${PANEL} absolute inset-x-3 bottom-3 max-h-[60%] overflow-y-auto p-4 text-sm md:inset-x-auto md:bottom-auto md:right-3 md:top-28 md:w-72`}>
+          <p className="text-base font-medium">Floor plan read</p>
+          <p className="text-xs text-mute">This is how {building.name} would be drawn. Nothing is saved yet.</p>
+          <dl className="mt-3 space-y-1.5 text-xs">
+            <div className="flex justify-between gap-3"><dt className="text-mute">Building</dt><dd className="tabular-nums">{draft.width} m × {draft.depth} m</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-mute">Floors</dt><dd className="tabular-nums">{draft.floors.length}</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-mute">Units on the plan</dt><dd className="tabular-nums">{Object.keys(draft.units).length}</dd></div>
+            <div className="flex justify-between gap-3"><dt className="flex items-center gap-1.5 text-mute"><span className="size-2.5 rounded-[3px] bg-chart" />Already in this building</dt><dd className="tabular-nums">{Object.keys(draft.units).length - draft.add.length}</dd></div>
+            <div className="flex justify-between gap-3"><dt className="flex items-center gap-1.5 text-mute"><span className="size-2.5 rounded-[3px] bg-p3" />New, to be added</dt><dd className="tabular-nums">{draft.add.length}</dd></div>
+          </dl>
+          {draft.unplaced.length > 0 && (
+            <p className="mt-3 rounded-lg bg-warn/10 px-2.5 py-1.5 text-xs">
+              {draft.unplaced.length === 1 ? 'Unit' : 'Units'} {draft.unplaced.slice(0, 8).join(', ')}{draft.unplaced.length > 8 ? ` and ${draft.unplaced.length - 8} more` : ''} {draft.unplaced.length === 1 ? 'is' : 'are'} not on this plan. Until every unit is, the building is drawn the plain way.
+            </p>
+          )}
+          {planError && <p className="mt-3 text-xs text-bad">{planError}</p>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button onClick={keep} disabled={saving} className={`${toggle(true)} disabled:opacity-60`}>{saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Use this plan</button>
+            <button onClick={() => { setDraft(null); setPlanError(''); }} disabled={saving} className={toggle(false)}><X size={14} /> Discard</button>
+          </div>
+        </div>
+      )}
+
+      {units.length === 0 && !draft && !reading && <p className="absolute inset-0 grid place-items-center px-6 text-center text-sm text-mute">This building has no units yet. {master ? 'Upload its floor plan above, or add them under Properties.' : 'Add them under Properties.'}</p>}
     </div>
   );
 }

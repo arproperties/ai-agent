@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { db, tx } from './db.js';
 import { requireMaster } from './auth.js';
 import { bad } from './leasing.js';
+import { create, upload } from './properties.js';
+import { startReading, reading } from './floorPlanReader.js';
 
 // Floor plans: where each unit really is on its floor, read off the building's drawings, so
 // the 3D View can draw the building as it is built and not as a row of equal boxes.
@@ -14,6 +16,9 @@ import { bad } from './leasing.js';
 //     units have it, with '*' for every floor that has none of its own:
 //     { G: [{ kind, label, x, y, w, d }], '*': [...] }.
 // A building with no plan, or with a unit the plan leaves out, is drawn the plain way.
+//
+// A plan is typed by nobody: it is read off an uploaded drawing (floorPlanReader.js), shown,
+// and kept here when the master says so.
 
 const KINDS = ['corridor', 'core', 'lobby', 'service', 'open']; // open: a balcony or terrace, with no walls
 const EDGE = 0.01; // a centimetre over the line is the drawing's rounding
@@ -31,7 +36,9 @@ function rect(r, plan, what) {
 
 /**
  * Keep a building's plan. `units` is each unit's rectangle by its number; a number the
- * building has no unit for is refused, so a plan is never half kept.
+ * building has no unit for is refused, so a plan is never half kept. `add` is the units
+ * the plan shows that the building does not have yet ({ unit_no, floor, type, size_sqft }):
+ * they are made first, so a new building's units come from its drawings.
  */
 export async function savePlan(buildingId, body = {}) {
   const plan = { width: Number(body.width), depth: Number(body.depth), storey: Number(body.storey) || 3 };
@@ -46,6 +53,7 @@ export async function savePlan(buildingId, body = {}) {
   return tx(async () => {
     const id = Number(buildingId);
     if (!(await db.prepare('SELECT 1 FROM prop_buildings WHERE id = ?').get(id))) throw bad('Not found', 404);
+    for (const u of Array.isArray(body.add) ? body.add : []) await create('unit', { unit_no: u?.unit_no, floor: u?.floor, type: u?.type, size_sqft: u?.size_sqft }, id);
     const units = await db.prepare('SELECT id, unit_no FROM prop_units WHERE building_id = ?').all(id);
     for (const [no, r] of Object.entries(body.units || {})) {
       const u = units.find((x) => x.unit_no === no);
@@ -68,4 +76,6 @@ export async function plans() {
 export const planRoutes = Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 planRoutes.get('/plans', wrap(async (req, res) => res.json(await plans())));
+planRoutes.post('/buildings/:id/plan/read', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await startReading(req.params.id, req.file))));
+planRoutes.get('/plan-readings/:id', requireMaster, wrap(async (req, res) => res.json(reading(req.params.id))));
 planRoutes.put('/buildings/:id/plan', requireMaster, wrap(async (req, res) => res.json(await savePlan(req.params.id, req.body))));
