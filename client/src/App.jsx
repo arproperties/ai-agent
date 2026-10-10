@@ -36,7 +36,7 @@ const outlookReturn = params.get('outlook') && { status: params.get('outlook'), 
 const notifiedChat = Number(params.get('chat')) || null;
 const notifiedTodos = params.get('todos') === '1';
 const notifiedDuties = params.get('responsibilities') === '1'; // the master gave them a new responsibility
-const notifiedLeasing = params.get('leasing') === 'alerts'; // a leasing alert: rent due, overdue, a lease ending
+const notifiedLeasing = ['alerts', 'workorders'].includes(params.get('leasing')) ? params.get('leasing') : null; // a leasing alert (rent due, overdue, a lease ending), or an urgent work order
 const notifiedReminders = params.get('reminders') === '1'; // a reminder from someone else: it waits on the first screen of a new chat
 // a staff job in one of their buildings needs them: /?building=2&job=41
 const notifiedBuilding = Number(params.get('building')) ? { building: Number(params.get('building')), job: Number(params.get('job')) || null } : null;
@@ -55,7 +55,7 @@ export default function App() {
   const [history, setHistory] = useState(false); // on a phone: the list of chats is showing in place of the chat
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
   const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedDuties ? 'duties' : notifiedBuilding ? 'buildings' : notifiedReminders ? null : 'leasing'); // home is Leasing's Overview; null is the chat. 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'duties' | 'checklists' | 'buildings' | 'inventory'
-  const [leasingTab, setLeasingTab] = useState(notifiedLeasing ? 'alerts' : 'overview'); // which section of Leasing is open; the sidebar shortcuts set it too
+  const [leasingTab, setLeasingTab] = useState(notifiedLeasing || 'overview'); // which section of Leasing is open; the sidebar shortcuts set it too
   const [leasingReport, setLeasingReport] = useState('daily'); // which report is open in Leasing's Reports; the sidebar's Reports shortcuts set it
   const [leasingAlert, setLeasingAlert] = useState(''); // which kind of alert Leasing's Alerts is showing ('' is all); the sidebar's Alerts shortcuts set it
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
@@ -104,7 +104,7 @@ export default function App() {
       const where = new URL(e.data.url, window.location.origin).searchParams;
       if (where.get('todos') === '1') { setPanel('todos'); loadDue(); return; }
       if (where.get('responsibilities') === '1') { setPanel('duties'); return; }
-      if (where.get('leasing') === 'alerts') { setLeasingTab('alerts'); setPanel('leasing'); return; }
+      if (['alerts', 'workorders'].includes(where.get('leasing'))) { setLeasingTab(where.get('leasing')); setPanel('leasing'); return; }
       if (Number(where.get('building'))) {
         setJumpToBuilding({ building: Number(where.get('building')), job: Number(where.get('job')) || null });
         setPanel('buildings');

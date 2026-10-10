@@ -19,6 +19,7 @@ import LeasingAlerts from './LeasingAlerts';
 import Documents from './Documents';
 import TenantHistory from './TenantHistory';
 import Inspections from './Inspections';
+import WorkOrders from './WorkOrders';
 
 // Leasing: bookings of units and the tenants who make them. Anyone signed in can use it.
 // The server is server/leasing.js; the units come from Properties.
@@ -1005,6 +1006,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   const openAlert = (a) => {
     if (a.open === 'documents') { setDocOpen(a.document_id); setTab('documents'); return; }
     if (a.open === 'tenants') { setTab('tenants'); return; }
+    if (a.open === 'workorder') { setForm({ workOf: { openId: a.work_order_id } }); return; }
     openBooking(a.booking_id, { pay: 'payOf', docs: 'docsOf' }[a.open]);
   };
 
@@ -1043,6 +1045,11 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
     return <Inspections unit={{ id: b.unit_id, unit_no: b.unit_no, building: b.building }} booking={b} start={form.start} onBack={close} />;
   }
   if (form?.historyOf) return <TenantHistory tenant={form.historyOf} onBack={close} onPay={pay} />;
+  // Work orders opened from somewhere else: an alert, a lease, a tenant's history. Back returns there.
+  if (form?.workOf) {
+    const from = form.back;
+    return <WorkOrders {...form.workOf} onBack={() => (from ? (setForm(from), setKey((k) => k + 1)) : close())} />;
+  }
 
   // A new lease is a draft, and goes on to its move-in inspection; saved as a draft only, it goes on to its documents.
   if (form) return (
@@ -1067,6 +1074,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
         : <Bookings key={key} fresh={fresh} onEdit={(b) => setForm(b)} onDocs={(b) => setForm({ docsOf: b })} onPay={(b) => setForm({ payOf: b })} onEnd={(b) => setForm({ endOf: b })} onInspect={(b, start) => setForm({ inspectOf: b, start })} />}
     </Page>
   );
+  if (tab === 'workorders') return <WorkOrders key={key} onBack={onBack} />;
   if (tab === 'calendar') return <Page title="Calendar" onBack={onBack} action={add}><Calendar key={key} onEdit={(b) => setForm(b)} onNew={(preset) => setForm({ preset })} /></Page>;
   if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants onHistory={(t) => setForm({ historyOf: t })} /></Page>;
   if (tab === 'reports') return <Page title="Reports" onBack={onBack}><LeasingReports key={key} name={report} onName={onReport} onPay={pay} /></Page>;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, BellRing, CalendarDays, ClipboardList, Eye, FileClock, Globe, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Search, Users } from 'lucide-react';
+import { BarChart3, BellRing, CalendarDays, ClipboardList, Eye, FileClock, Globe, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Search, Users, Wrench } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
 import { AGENT_COLORS } from './Avatar';
@@ -53,6 +53,7 @@ export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodo
       here: leasingOpen && (leasingTab === 'bookings' || leasingTab === 'buildings'), onClick: () => onLeasing(leasingTab === 'buildings' ? 'buildings' : 'bookings') },
     { Ico: CalendarDays, color: 'blue', label: 'Calendar', hint: 'Who is in which unit, month by month', here: leasingOpen && leasingTab === 'calendar', onClick: () => onLeasing('calendar') },
     { Ico: Users, color: 'rose', label: 'Tenants', hint: 'The people and companies renting', here: leasingOpen && leasingTab === 'tenants', onClick: () => onLeasing('tenants') },
+    { Ico: Wrench, color: 'from-sky-400 to-cyan-600 shadow-sky-500/30', label: 'Work orders', hint: 'Repairs: what is open, and who has it', here: leasingOpen && leasingTab === 'workorders', onClick: () => onLeasing('workorders') },
     { Ico: BarChart3, color: 'violet', label: 'Reports', hint: 'Daily, rent roll, overdue, collections', here: leasingOpen && leasingTab === 'reports', onClick: () => onLeasing('reports') },
     { Ico: BellRing, color: 'from-orange-400 to-red-500 shadow-red-500/30', label: 'Alerts', hint: alerts.count ? `${alerts.count} need${alerts.count === 1 ? 's' : ''} attention` : 'Nothing needs attention',
       here: leasingOpen && leasingTab === 'alerts', onClick: () => onLeasing('alerts'), badge: alerts.count },
