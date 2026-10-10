@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, makeUser, closeDb, db } from './helpers/db.js';
+import { engine, LANGUAGES, addTurn } from '../server/translate.js';
 
 test.after(() => closeDb());
 
@@ -12,4 +13,96 @@ test('the tables are there, and a conversation takes its turns with it when dele
   await db.prepare('DELETE FROM translations WHERE id = ?').run(id);
   const left = await db.prepare('SELECT count(*)::int AS n FROM translation_turns').get();
   assert.equal(left.n, 0);
+});
+
+const audio = Buffer.from('pretend this is speech');
+
+// Stand-ins for the two paid calls. heard: the language hint of each transcription.
+// asked: each translation that was requested.
+let heard, asked;
+function fake({ says = 'Where is the office?', gives = 'أين المكتب؟' } = {}) {
+  heard = []; asked = [];
+  engine.transcribe = async (buf, mimetype, language) => { heard.push(language); return says; };
+  engine.translate = async (text, from, to) => {
+    asked.push({ text, from: from.code, to: to.code });
+    if (gives instanceof Error) throw gives;
+    return gives;
+  };
+}
+
+test('side A is heard in language A and translated into language B', async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio, mimetype: 'audio/webm' });
+  assert.deepEqual(heard, ['en']);
+  assert.deepEqual(asked, [{ text: 'Where is the office?', from: 'en', to: 'ar' }]);
+  assert.equal(r.turn.side, 'a');
+  assert.equal(r.turn.original, 'Where is the office?');
+  assert.equal(r.turn.translated, 'أين المكتب؟');
+  assert.equal(r.turn.error, null);
+});
+
+test('side B is heard in language B and translated into language A', async () => {
+  await reset();
+  fake({ says: 'في الطابق الثاني', gives: 'On the second floor' });
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'b', buffer: audio, mimetype: 'audio/webm' });
+  assert.deepEqual(heard, ['ar']);
+  assert.deepEqual(asked, [{ text: 'في الطابق الثاني', from: 'ar', to: 'en' }]);
+  assert.equal(r.turn.translated, 'On the second floor');
+});
+
+test('the first turn starts the conversation, the next one joins it', async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  const first = await addTurn(user, { langA: 'en', langB: 'ur', side: 'a', buffer: audio });
+  // The languages are the conversation's own from here on: what is sent with a later turn is ignored.
+  const second = await addTurn(user, { id: first.id, langA: 'fr', langB: 'ru', side: 'b', buffer: audio });
+  assert.equal(second.id, first.id);
+  assert.deepEqual(heard, ['en', 'ur']);
+  const rows = await db.prepare('SELECT title, lang_a, lang_b FROM translations').all();
+  assert.deepEqual(rows, [{ title: 'English ↔ Urdu', lang_a: 'en', lang_b: 'ur' }]);
+  const turns = await db.prepare('SELECT count(*)::int AS n FROM translation_turns WHERE translation_id = ?').get(first.id);
+  assert.equal(turns.n, 2);
+});
+
+test('when nothing was said, nothing is saved and nothing is translated', async () => {
+  await reset();
+  fake({ says: '   ' });
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio });
+  assert.deepEqual(r, { id: null, turn: null });
+  assert.equal(asked.length, 0);
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM translations').get()).n, 0);
+});
+
+test('a turn is refused without audio, without a side, or with languages that make no sense', async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  const ok = { langA: 'en', langB: 'ar', side: 'a', buffer: audio };
+  await assert.rejects(() => addTurn(user, { ...ok, buffer: Buffer.alloc(0) }), /No audio/);
+  await assert.rejects(() => addTurn(user, { ...ok, side: 'c' }), /who is speaking/);
+  await assert.rejects(() => addTurn(user, { ...ok, langB: 'xx' }), /from the list/);
+  await assert.rejects(() => addTurn(user, { ...ok, langB: 'en' }), /two different languages/);
+  assert.equal(heard.length, 0, 'nothing is paid for on a refused turn');
+});
+
+test('if the speech cannot be read, it says so plainly and saves nothing', async () => {
+  await reset();
+  fake();
+  engine.transcribe = async () => { throw new Error('upstream 500'); };
+  const user = await makeUser('Sara');
+  await assert.rejects(() => addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio }),
+    (e) => e.status === 502 && /Could not hear that/.test(e.message));
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM translations').get()).n, 0);
+});
+
+test('every language has a code, a name and its own name for itself', () => {
+  assert.ok(LANGUAGES.length >= 20);
+  assert.equal(new Set(LANGUAGES.map((l) => l.code)).size, LANGUAGES.length);
+  for (const l of LANGUAGES) assert.ok(/^[a-z]{2}$/.test(l.code) && l.name && l.native, l.code);
+  assert.equal(LANGUAGES.find((l) => l.code === 'ar').rtl, true);
 });
