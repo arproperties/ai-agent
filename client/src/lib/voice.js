@@ -231,8 +231,11 @@ export function finishListening() {
 /**
  * Records until the speaker stops, then transcribes.
  * Resolves with the text, or '' if nothing was actually said.
+ *
+ * raw: hand back the recording itself (a Blob, or null if nothing was said) and leave
+ * the transcribing to the caller — Live Translator sends it with the language attached.
  */
-export function listenUntilSilence({ onLevel, onCaptured } = {}) {
+export function listenUntilSilence({ onLevel, onCaptured, raw = false } = {}) {
   stopListening();
   return new Promise((resolve, reject) => {
     let stream, ctx, rec, raf, done = false, spoke = false;
@@ -249,7 +252,7 @@ export function listenUntilSilence({ onLevel, onCaptured } = {}) {
       done = true;
       if (rec?.state !== 'inactive') { rec.onstop = null; rec?.stop(); }
       cleanup();
-      resolve(''); // treated as "said nothing"
+      resolve(raw ? null : ''); // treated as "said nothing"
     };
     // Tapped to stop: send what was captured, even if it was quiet enough that
     // the level meter never counted it as speech.
@@ -277,7 +280,8 @@ export function listenUntilSilence({ onLevel, onCaptured } = {}) {
           cleanup();
           onCaptured?.(); // recording is over; transcription is about to start
           const blob = new Blob(parts, { type: rec.mimeType || 'audio/webm' });
-          if (!spoke || blob.size < 1200) return resolve(''); // nothing worth sending
+          if (!spoke || blob.size < 1200) return resolve(raw ? null : ''); // nothing worth sending
+          if (raw) return resolve(blob);
           try {
             const form = new FormData();
             form.append('audio', blob, `voice.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`);
