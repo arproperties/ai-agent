@@ -5,6 +5,7 @@ import { snapshot, dayNo, total, todayHere, bad, dueName, logEvent } from './lea
 import { region, hourHere, dayOf, cash } from './leasingRegion.js';
 import { usDate } from './usFormat.js';
 import { register } from './properties.js';
+import { listWorkOrders } from './workOrders.js';
 
 // Leasing alerts: what needs somebody's attention today, and the buzz that says so.
 //
@@ -12,7 +13,8 @@ import { register } from './properties.js';
 // time it is asked for, so it is right whether or not anything was ever sent. runAlerts() is
 // the phone: on the days a rule says so (3 days before, on the day, 1, 3 and 7 days after…)
 // it sends one notice to whoever made the booking and to the master, and writes down that
-// it did, so a restart never sends it twice. If the timer stops, the screen still works.
+// it did, so a restart never sends it twice. A work order past its scheduled day is one of
+// them, every day until it is done. If the timer stops, the screen still works.
 //
 // The rules and the quiet hours are the master's to change (lease_settings, key 'alerts').
 
@@ -24,12 +26,13 @@ const DEFAULTS = {
   contract: { on: true, days: 3 },                       // confirmed this long with no contract
   eid: { on: true, days: 30 },                           // the tenant's ID expires within this
   document: { on: true, days: [60, 30, 7], every: 7 },   // a document inside its renewal window: more days before it expires, then every so many after
+  workorder: { on: true },                               // a work order past its scheduled day, and a new urgent one
   summary: { on: true },                                 // the morning's one-line total, to the master
   quiet: { from: 22, to: 8 },                            // no buzz between these hours (the business's time zone)
   latefee: { on: false, days: 5, amount: 0, percent: 0 }, // a fee on rent still unpaid after the days of grace: fixed, a share of the rent, or both
   tenant: { on: false },                                 // email the tenant the reminder automatically, on the due day and the overdue days
 };
-export const RULES = ['overdue', 'due', 'upcoming', 'ending', 'contract', 'eid', 'document'];
+export const RULES = ['overdue', 'due', 'upcoming', 'ending', 'contract', 'eid', 'document', 'workorder'];
 const aed = (n) => cash(Math.round(n));
 // Loaded when first needed, so the list and the rules still work where push was never set up.
 const sendPush = (userIds, note) => import('./push.js').then((m) => m.sendPush(userIds, note));
@@ -71,6 +74,7 @@ export async function saveSettings(body = {}, today = todayHere()) {
     contract: { on: on('contract'), days: pick('contract', 'days', (v) => whole(v, 60, 'Days without a contract')) },
     eid: { on: on('eid'), days: pick('eid', 'days', (v) => whole(v, 180, 'Days before the ID expires')) },
     document: { on: on('document'), days: pick('document', 'days', (v) => dayList(v, 'Days before a document expires')), every: pick('document', 'every', (v) => Math.max(1, whole(v, 90, 'Repeat every'))) },
+    workorder: { on: on('workorder') },
     summary: { on: on('summary') },
     quiet: { from: pick('quiet', 'from', (v) => whole(v, 23, 'Quiet from')), to: pick('quiet', 'to', (v) => whole(v, 23, 'Quiet until')) },
   };
@@ -160,6 +164,20 @@ export async function openAlerts(s, cfg, q = {}) {
         title: left < 0 ? `${d.title} has expired` : `${d.title} expires ${left === 0 ? 'today' : `in ${left} day${left === 1 ? '' : 's'}`}`,
         detail: `${d.where} · ${usDate(d.expiry_date)}`,
         fires: left === d.renew_days || left === 0 || (left > 0 && cfg.document.days.includes(left)) || (left < 0 && -left % cfg.document.every === 0) });
+    }
+  }
+  // A work order whose day has passed and is still not done. It has no lease when its unit
+  // is empty, so it is placed by its unit; whoever raised it and the building's staff hear of it.
+  if (cfg.workorder.on) {
+    const here = new Map(s.list.map((b) => [b.id, b]));
+    for (const w of await listWorkOrders({ overdue: true }, s.today)) {
+      const bl = here.get(w.building_id);
+      if (!bl) continue;
+      const d = s.T - dayNo(w.scheduled_on);
+      out.push({ rule: 'workorder', key: `workorder:${w.id}`, work_order_id: w.id, booking_id: w.booking_id, tenant: w.tenant, unit_no: w.unit_no, building: w.building, building_id: w.building_id, company: bl.company,
+        owner: w.created_by, staff: s.staffOf.get(w.building_id) || [], level: w.priority === 'urgent' ? 'bad' : 'warn', open: 'workorder', days: d,
+        title: `${w.ref} is overdue${w.category ? `: ${w.category}` : ''}`,
+        detail: `Unit ${w.unit_no}, ${w.building} · scheduled ${w.scheduled_on} · ${d} day${d === 1 ? '' : 's'} late${w.assigned_to ? ` · ${w.assigned_to}` : ''}`, fires: true });
     }
   }
   const rank = { bad: 0, warn: 1, info: 2 };

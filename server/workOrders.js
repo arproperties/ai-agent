@@ -84,8 +84,24 @@ function fields(body = {}, today, { partial = false } = {}) {
   return out;
 }
 
+/**
+ * A new urgent work order buzzes the building's staff and the master at once, whatever the
+ * hour: it is urgent. Not the person who raised it, who knows. The master's "work orders"
+ * alert rule switches it off (loaded when needed: leasingAlerts.js reads this file too).
+ */
+async function tellUrgent(w, by, push) {
+  const { getSettings } = await import('./leasingAlerts.js');
+  if (!(await getSettings()).workorder.on) return;
+  const people = await db.prepare(`SELECT user_id AS id FROM prop_building_staff WHERE building_id = ?
+    UNION SELECT id FROM users WHERE role = 'master'`).all(w.building_id);
+  const to = people.map((p) => p.id).filter((id) => id !== by);
+  if (!to.length) return;
+  const send = push || (await import('./push.js')).sendPush;
+  await send(to, { title: `Urgent: ${w.category || 'work order'} · Unit ${w.unit_no}, ${w.building}`, body: `${w.ref}: ${w.detail.slice(0, 140)}`, url: '/?leasing=workorders', tag: `work-order-${w.id}` });
+}
+
 /** Raise a work order on a unit. Its lease and tenant are whoever had the unit on the reported day. */
-export async function createWorkOrder(body = {}, by, today = todayHere()) {
+export async function createWorkOrder(body = {}, by, today = todayHere(), { push } = {}) {
   const unit = await db.prepare('SELECT id FROM prop_units WHERE id = ?').get(Number(body.unit_id) || 0);
   if (!unit) throw bad('Choose the unit.');
   const f = fields(body, today);
@@ -98,7 +114,10 @@ export async function createWorkOrder(body = {}, by, today = todayHere()) {
     if (row.assigned_to) await log(made.id, 'assigned', `Assigned to ${row.assigned_to}`, by);
     return made.id;
   });
-  return getWorkOrder(id, today);
+  const made = await getWorkOrder(id, today);
+  // Raised all the same if the buzz fails: the work order is what matters.
+  if (made.priority === 'urgent') await tellUrgent(made, by, push).catch((e) => console.error('[work-orders]', e.message));
+  return made;
 }
 
 /** The list, newest first. `status: 'active'` is everything not closed or cancelled. */

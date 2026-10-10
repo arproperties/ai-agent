@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, closeDb, db, makeUser } from './helpers/db.js';
-import { create, remove } from '../server/properties.js';
+import { create, remove, setBuildingStaff } from '../server/properties.js';
+import { runAlerts, listAlerts, saveSettings, getSettings } from '../server/leasingAlerts.js';
 import { createBooking } from '../server/leasing.js';
 import { existsSync } from 'node:fs';
 import { createWorkOrder, getWorkOrder, listWorkOrders, updateWorkOrder, addWorkOrderNote, removeWorkOrder,
@@ -306,4 +307,70 @@ test('Riley raises a work order, moves it on, and says what is open', async () =
   assert.match(r.content, new RegExp(`${w.ref} \\(Done, urgent\\): unit 101, Tower, Sara; AC: AC not cooling`));
   r = await run('leasing_work_orders', { building: 'tower', unit_no: '102' });
   assert.match(r.content, /No work orders/);
+});
+
+test('a new urgent work order buzzes the building’s staff and the master, not the one who raised it', async () => {
+  const { staff, building, u1 } = await tower();
+  const keeper = await makeUser('Keeper');
+  const master = await makeUser('Boss');
+  await db.prepare("UPDATE users SET role = 'master' WHERE id = ?").run(master);
+  await setBuildingStaff(building.id, [keeper, staff]);
+  const sent = [];
+  const push = async (to, note) => { sent.push([[...to].sort((a, b) => a - b), note]); };
+
+  await createWorkOrder({ unit_id: u1.id, detail: 'Bulb out' }, staff, AT, { push });
+  assert.deepEqual(sent, [], 'a normal one buzzes nobody');
+
+  const w = await createWorkOrder({ unit_id: u1.id, category: 'Plumbing', detail: 'Water pouring through the ceiling', priority: 'urgent' }, staff, AT, { push });
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0][0], [keeper, master].sort((a, b) => a - b));
+  assert.deepEqual(sent[0][1], { title: 'Urgent: Plumbing · Unit 101, Tower', body: `${w.ref}: Water pouring through the ceiling`, url: '/?leasing=workorders', tag: `work-order-${w.id}` });
+
+  // Raised by the only person there is to tell: nothing is sent, and nothing breaks.
+  await setBuildingStaff(building.id, []);
+  await createWorkOrder({ unit_id: u1.id, detail: 'Gas smell', priority: 'urgent' }, master, AT, { push });
+  assert.equal(sent.length, 1);
+
+  // A push that fails does not stop the work order being raised.
+  const made = await createWorkOrder({ unit_id: u1.id, detail: 'Sparks from a socket', priority: 'urgent' }, staff, AT, { push: async () => { throw new Error('push down'); } });
+  assert.equal(made.status, 'open');
+
+  // Switched off by the master: nothing goes.
+  await saveSettings({ workorder: { on: false } }, AT);
+  await createWorkOrder({ unit_id: u1.id, detail: 'Flood', priority: 'urgent' }, staff, AT, { push });
+  assert.equal(sent.length, 1);
+});
+
+test('a work order past its scheduled day is an alert, once a day, until it is done', async () => {
+  const { staff, building, u1, u2 } = await tower();
+  const keeper = await makeUser('Keeper');
+  await setBuildingStaff(building.id, [keeper]);
+  assert.equal((await getSettings()).workorder.on, true);
+  const w = await createWorkOrder({ unit_id: u2.id, category: 'AC', detail: 'Service the AC', assigned_to: 'Cool Air LLC', scheduled_on: '2026-10-22' }, staff, AT);
+  await createWorkOrder({ unit_id: u1.id, detail: 'Not due yet', scheduled_on: '2026-10-30' }, staff, AT);
+
+  const mine = (await listAlerts({}, AT)).filter((a) => a.rule === 'workorder');
+  assert.deepEqual(mine.map((a) => [a.key, a.open, a.work_order_id, a.level, a.title, a.detail, a.fires]), [
+    [`workorder:${w.id}`, 'workorder', w.id, 'warn', `${w.ref} is overdue: AC`, 'Unit 102, Tower · scheduled 2026-10-22 · 3 days late · Cool Air LLC', true],
+  ]);
+  assert.deepEqual((await listAlerts({ building_id: 999 }, AT)).filter((a) => a.rule === 'workorder'), [], 'another building’s list does not show it');
+
+  // Each person is told once a day: the sent-once log says who, whatever else was in their notice.
+  const told = async (on) => (await db.prepare("SELECT user_id FROM lease_alerts_sent WHERE key = ? AND to_char(day, 'YYYY-MM-DD') = ? ORDER BY user_id").all(`workorder:${w.id}`, on)).map((r) => r.user_id);
+  const both = [staff, keeper].sort((a, b) => a - b);
+  assert.ok((await runAlerts(AT, 9)).length > 0);
+  assert.deepEqual(await told(AT), both, 'the one who raised it and the building’s staff');
+  assert.deepEqual(await runAlerts(AT, 10), [], 'nobody is told twice in one day');
+  await runAlerts('2026-10-26', 9);
+  assert.deepEqual(await told('2026-10-26'), both, 'again the next day');
+
+  await updateWorkOrder(w.id, { status: 'done', resolution: 'Serviced' }, staff, '2026-10-26');
+  assert.deepEqual((await listAlerts({}, '2026-10-27')).filter((a) => a.rule === 'workorder'), []);
+
+  // The master switches the rule off.
+  const late = await createWorkOrder({ unit_id: u2.id, detail: 'Late again', scheduled_on: '2026-10-20' }, staff, AT);
+  assert.equal((await listAlerts({}, AT)).filter((a) => a.rule === 'workorder').length, 1);
+  await saveSettings({ workorder: { on: false } }, AT);
+  assert.equal((await listAlerts({}, AT)).filter((a) => a.rule === 'workorder').length, 0);
+  assert.ok(late.id);
 });
