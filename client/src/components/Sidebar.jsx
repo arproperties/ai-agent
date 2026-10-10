@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, BellRing, CalendarDays, ClipboardList, Eye, Globe, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Search, Users } from 'lucide-react';
+import { BarChart3, BellRing, CalendarDays, ClipboardList, Eye, FileClock, Globe, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Search, Users } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
 import { AGENT_COLORS } from './Avatar';
@@ -56,6 +56,8 @@ export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodo
     { Ico: BarChart3, color: 'violet', label: 'Reports', hint: 'Daily, rent roll, overdue, collections', here: leasingOpen && leasingTab === 'reports', onClick: () => onLeasing('reports') },
     { Ico: BellRing, color: 'from-orange-400 to-red-500 shadow-red-500/30', label: 'Alerts', hint: alerts.count ? `${alerts.count} need${alerts.count === 1 ? 's' : ''} attention` : 'Nothing needs attention',
       here: leasingOpen && leasingTab === 'alerts', onClick: () => onLeasing('alerts'), badge: alerts.count },
+    { Ico: FileClock, color: 'from-lime-400 to-green-600 shadow-green-500/30', label: 'Documents', hint: alerts.rules.document ? `${alerts.rules.document} to renew` : 'Policies, licences and certificates, with their expiry',
+      here: leasingOpen && leasingTab === 'documents', onClick: () => onLeasing('documents'), badge: alerts.rules.document },
     { Ico: Landmark, color: 'slate', label: 'Properties', hint: 'Companies, buildings, units, documents', here: propertiesOpen, onClick: onProperties },
     { Ico: Megaphone, color: 'from-emerald-400 to-teal-600 shadow-emerald-500/30', label: 'Sources', hint: 'Where tenants come from', here: sourcesOpen, onClick: onSources },
     // The business's currency, time zone and phone country code: the master's to set.

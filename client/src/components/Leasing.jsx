@@ -16,6 +16,7 @@ import BookingPayments from './BookingPayments';
 import LeasingOverview, { LeasingBuildings } from './LeasingOverview';
 import LeasingReports from './LeasingReports';
 import LeasingAlerts from './LeasingAlerts';
+import Documents from './Documents';
 import TenantHistory from './TenantHistory';
 import Inspections from './Inspections';
 
@@ -988,7 +989,7 @@ function Calendar({ onEdit, onNew }) {
 }
 
 // Leasing is several pages, each with its own row in the sidebar: the overview, Bookings (which
-// has the buildings beside it as a second tab), Calendar, Tenants, Reports and Alerts. Which one
+// has the buildings beside it as a second tab), Calendar, Tenants, Reports, Alerts and Documents. Which one
 // is open is the app's to hold, as `tab`, so the sidebar can open any of them.
 const BOOKING_TABS = [['bookings', 'Leasing'], ['buildings', 'Buildings']];
 
@@ -996,11 +997,16 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   const [form, setForm] = useState(null); // { preset } for a new booking, a booking being edited, { docsOf } for its documents, { payOf } for its payments, or null
   const [key, setKey] = useState(0); // bumped after a save, so the list reloads
   const [fresh, setFresh] = useState(null); // the id of the booking just made, picked out in the list
+  const [docOpen, setDocOpen] = useState(null); // the document an alert was about, opened on the Documents page
   const close = () => { setForm(null); setKey((k) => k + 1); };
   const openBooking = (id, as) => api.get(`/leasing/bookings/${id}`).then((b) => setForm(as ? { [as]: b } : b)).catch(() => {});
   const pay = (id) => openBooking(id, 'payOf');
   // An alert opens the screen that deals with it.
-  const openAlert = (a) => (a.open === 'tenants' ? setTab('tenants') : openBooking(a.booking_id, { pay: 'payOf', docs: 'docsOf' }[a.open]));
+  const openAlert = (a) => {
+    if (a.open === 'documents') { setDocOpen(a.document_id); setTab('documents'); return; }
+    if (a.open === 'tenants') { setTab('tenants'); return; }
+    openBooking(a.booking_id, { pay: 'payOf', docs: 'docsOf' }[a.open]);
+  };
 
   if (form?.docsOf) {
     const b = form.docsOf;
@@ -1065,6 +1071,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants onHistory={(t) => setForm({ historyOf: t })} /></Page>;
   if (tab === 'reports') return <Page title="Reports" onBack={onBack}><LeasingReports key={key} name={report} onName={onReport} onPay={pay} /></Page>;
   if (tab === 'alerts') return <Page title="Alerts" onBack={onBack}><LeasingAlerts key={key} rule={alert} onRule={onAlert} onOpen={openAlert} /></Page>;
+  if (tab === 'documents') return <Page title="Documents" onBack={onBack}><Documents key={key} openId={docOpen} /></Page>;
 
   return <Page title="Overview" onBack={onBack} action={add}><LeasingOverview key={key} onPay={pay} onAlerts={(k) => { onAlert(k); setTab('alerts'); }} /></Page>;
 }

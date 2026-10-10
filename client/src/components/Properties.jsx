@@ -7,6 +7,7 @@ import DateField from './DateField';
 import PhoneField from './PhoneField';
 import { usDate as day, usPhone, usAddress, typeEin, typeZip, einProblem, emailProblem, zipProblem } from '../lib/usFormat';
 import CompanyDocs from './CompanyDocs';
+import Documents from './Documents';
 import ServiceList from './ServiceList';
 import { Cover, Logo, CardCover, UnitPhotos, photoUrl } from './PropertyPhoto';
 import Inspections from './Inspections';
@@ -367,7 +368,7 @@ const join = (...xs) => xs.filter(Boolean).join(' · ');
 // Where a building is, the way an address ends: "Austin, TX 78701".
 const cityLine = (b) => [b.city, [b.emirate, b.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
 // What a building's page is split into.
-const BUILDING_TABS = [['units', 'Units'], ['services', 'Services']];
+const BUILDING_TABS = [['units', 'Units'], ['services', 'Services'], ['docs', 'Documents']];
 
 /** A building's services (pet fee, parking, laundry…): what a booking in it can be charged besides the rent. The master keeps the list. */
 function BuildingServices({ building, master }) {
@@ -495,6 +496,7 @@ export default function PropertiesPage({ me, onBack }) {
         ))}
       </div>
       {tab === 'services' && <BuildingServices building={data} master={master} />}
+      {tab === 'docs' && <Documents building={{ id: data.id, company_id: data.company_id }} />}
       {tab === 'units' && <Level kind="unit" rows={data.list} master={master} addLabel="Add a unit" empty="No units in this building yet."
         line={(u) => join(u.floor && `Floor ${u.floor}`, u.type)}
         details={(u) => [['Size', u.size_sqft && `${Number(u.size_sqft).toLocaleString()} sq ft`], ['Energy account no.', !u.energy_on_tenant && u.dewa_no]]}

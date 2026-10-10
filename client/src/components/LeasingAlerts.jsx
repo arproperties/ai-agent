@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Banknote, BellRing, CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Coins, CreditCard, FileWarning, Loader2, Mail, MessageSquareText, Minus, Moon, Plus, SlidersHorizontal, TriangleAlert, X } from 'lucide-react';
+import { Banknote, BellRing, CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Coins, CreditCard, FileClock, FileWarning, Loader2, Mail, MessageSquareText, Minus, Moon, Plus, SlidersHorizontal, TriangleAlert, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { currency } from '../lib/region';
 
 // Leasing alerts: what needs somebody today — rent overdue, due today or coming up, leases
-// about to end, bookings with no contract, tenant IDs expiring. The list is worked out
+// about to end, bookings with no contract, tenant IDs expiring, documents to renew. The list is worked out
 // fresh by the server (server/leasingAlerts.js) each time, and a row opens the screen that
 // deals with it. The master's rules sit behind Settings: which alerts are on, on which days
 // each one buzzes a phone, the quiet hours and the reminder's wording.
@@ -20,13 +20,14 @@ export const ALERT_KINDS = [
   ['due', 'Due today', Banknote, 'amber', 'Rent due today'], ['upcoming', 'Coming up', CalendarClock, 'blue', 'Rent coming up'],
   ['ending', 'Ending', CalendarDays, 'violet', 'Leases ending'], ['contract', 'Contract', FileWarning, 'slate', 'No contract on file'],
   ['eid', 'ID expiry', CreditCard, 'teal', 'ID expiring'],
+  ['document', 'Documents', FileClock, 'slate', 'Documents to renew'],
 ];
 const RULE = {
   overdue: ['Overdue', TriangleAlert], due: ['Due today', Banknote], upcoming: ['Coming up', CalendarClock],
-  ending: ['Leases ending', CalendarDays], contract: ['No contract', FileWarning], eid: ['ID expiry', CreditCard],
+  ending: ['Leases ending', CalendarDays], contract: ['No contract', FileWarning], eid: ['ID expiry', CreditCard], document: ['Documents', FileClock],
 };
 const LEVEL = { bad: 'bg-bad/15 text-bad', warn: 'bg-warn/15 text-warn', info: 'bg-p3/15 text-p3' };
-const DOES = { pay: 'Record payment', docs: 'Add the contract', booking: 'Open lease', tenants: 'Open tenants' };
+const DOES = { pay: 'Record payment', docs: 'Add the contract', booking: 'Open lease', tenants: 'Open tenants', documents: 'Open document' };
 
 function Switch({ on, onChange, label }) {
   return (
@@ -41,6 +42,7 @@ function Switch({ on, onChange, label }) {
 export const TINT = {
   overdue: 'from-rose-400 to-red-500', due: 'from-amber-400 to-orange-500', upcoming: 'from-sky-400 to-blue-500',
   ending: 'from-violet-400 to-purple-500', contract: 'from-slate-400 to-slate-600', eid: 'from-teal-400 to-emerald-500',
+  document: 'from-lime-400 to-green-600',
   summary: 'from-orange-400 to-pink-500', quiet: 'from-indigo-400 to-indigo-600',
   latefee: 'from-rose-400 to-pink-600', tenant: 'from-sky-400 to-indigo-500',
 };
@@ -129,6 +131,10 @@ function Rules({ start, onSaved }) {
     ]],
     ['upcoming', 'Rent coming up', CalendarClock, 'A heads-up before rent falls due.', [['Notify this long before', num('upcoming', 'days', 'Days before rent is due', 60)]]],
     ['eid', 'ID expiring', CreditCard, 'A tenant’s ID is about to run out.', [['Notify this long before', num('eid', 'days', 'Days before the ID expires', 180)]]],
+    ['document', 'Documents to renew', FileClock, 'A policy, licence or certificate is inside its renewal window or has expired. Each document sets how long before expiry its own window opens (three months unless changed); the day it opens always notifies.', [
+      ['Notify again this long before it expires', days('document', 'days', 'Days before a document expires', true)],
+      ['After it expires, again every', num('document', 'every', 'Repeat every', 90, 'days', 1)],
+    ]],
     ['due', 'Rent due today', Banknote, 'A notification on the day rent is due.', []],
     ['summary', 'Morning summary', BellRing, 'One line to the master each morning: what is due today and what is overdue.', []],
     ['contract', 'No contract on file', FileWarning, 'A confirmed lease still has no contract attached.', [['Notify after', num('contract', 'days', 'Days without a contract', 60)]]],
