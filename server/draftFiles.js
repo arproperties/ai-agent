@@ -52,6 +52,14 @@ export async function gather(userId, items) {
   for (const it of list) {
     files.push(it?.email_id ? await emailFile(userId, { id: it.email_id, name: it.name }) : await shelfFile(userId, it?.name));
   }
+  return store(userId, files);
+}
+
+/**
+ * Keep copies of files — [{ name, mimetype, buffer }] — as the rows a draft holds. For a
+ * file that is neither on the Shelf nor in the mailbox (a policy on the documents register).
+ */
+export function store(userId, files) {
   const total = files.reduce((n, f) => n + f.buffer.length, 0);
   if (total > MAX_TOTAL) throw new Error(`These attachments are ${mb(total)} together; an email can carry ${mb(MAX_TOTAL)}.`);
 

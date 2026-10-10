@@ -7,7 +7,9 @@ import Select from './Select';
 // The form a document is filed with, whoever it belongs to: a company, a building or a unit.
 // Choosing the file sends it to be read (server/documentReader.js), and what comes back fills
 // the boxes still empty, outlined until somebody touches them: a suggestion, checked by a
-// person before it is saved. A copy under a name already there is that document's renewal.
+// person before it is saved. The figures on it (insurer, premium, cover…) are never typed:
+// they are read, shown, and kept for the renewal. A copy under a name already there is that
+// document's renewal.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const SEGMENT = 'flex gap-1 rounded-full border border-stroke p-0.5 text-sm';
@@ -48,22 +50,32 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
   const [error, setError] = useState('');
   // What is in the boxes right now, for when the reading comes back: it may not overwrite what was typed meanwhile.
   const live = useRef();
-  live.current = { v, details };
+  live.current = { v, details, suggested };
+  const reads = useRef(0); // which reading is the latest: one that comes back after another file was chosen, or after saving, is dropped
 
   const touch = (f) => setSuggested((s) => s.filter((x) => x !== f));
   const set = (f) => (e) => { touch(f); setV({ ...v, [f]: e.target.value }); };
-  const setDetail = (f) => (e) => { touch(f); setDetails({ ...details, [f]: e.target.value }); };
   const look = (f) => `${FIELD} ${suggested.includes(f) ? 'border-p3/70' : ''}`;
 
   // A new document's file is read while the form is filled in. Only boxes still empty take what was read.
   const choose = async (picked) => {
     setFile(picked);
-    if (!picked || start) return;
-    setReading(true);
+    if (start) return;
+    const mine = ++reads.current;
+    // What the last file suggested and nobody touched goes with that file, not with this one.
+    const was = live.current;
+    const keptV = { ...was.v };
+    const keptD = { ...was.details };
+    for (const f of was.suggested) { if (f in keptD) keptD[f] = ''; else keptV[f] = ''; }
+    setV(keptV); setDetails(keptD); setSuggested([]);
+    live.current = { v: keptV, details: keptD, suggested: [] };
+    setReading(!!picked);
+    if (!picked) return;
     try {
       const form = new FormData();
       form.append('file', picked);
       const got = await api.upload('/properties/documents/read', form);
+      if (mine !== reads.current) return;
       const now = live.current;
       const filled = [];
       const nextV = { ...now.v };
@@ -73,7 +85,7 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
       for (const [f] of DETAILS) if (got.details?.[f] && !now.details[f]) { nextD[f] = got.details[f]; filled.push(f); }
       setV(nextV); setDetails(nextD); setSuggested(filled);
     } catch { /* not read: the form is filled in by hand */ }
-    setReading(false);
+    if (mine === reads.current) setReading(false);
   };
 
   const submit = async (e) => {
@@ -81,11 +93,14 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
     if (busy) return;
     const own = owner || { [`${at.kind}_id`]: at[`${at.kind}_id`] };
     if (!start && !Object.values(own)[0]) { setError(`Choose the ${at.kind} this document belongs to.`); return; }
+    // Saving does not wait for the reading: one still on its way is no longer wanted.
+    reads.current += 1;
+    setReading(false);
     setBusy(true);
     setError('');
     const form = new FormData();
     for (const [k, x] of Object.entries(v)) form.append(k, x);
-    form.append('details', JSON.stringify(v.renew_by === 'quotes' ? details : {}));
+    form.append('details', JSON.stringify(details));
     if (!start) for (const [k, x] of Object.entries(own)) form.append(k, x);
     if (file) form.append('file', file);
     try {
@@ -123,16 +138,18 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
       <div className={SEGMENT}>
         {BY.map(([k, l]) => <button key={k} type="button" onClick={() => setV({ ...v, renew_by: k })} aria-pressed={v.renew_by === k} className={seg(v.renew_by === k)}>{l}</button>)}
       </div>
-      {v.renew_by === 'quotes' && (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {DETAILS.map(([k, l]) => <input key={k} value={details[k]} onChange={setDetail(k)} placeholder={l} aria-label={l} className={`${look(k)} ${k === 'cover' ? 'sm:col-span-2' : ''}`} />)}
-        </div>
+      {/* The figures are the reader's to fill, not a person's: shown as read, and kept with the document. */}
+      {DETAILS.some(([k]) => details[k]) && (
+        <dl className="space-y-0.5 rounded-xl border border-stroke/60 px-3.5 py-2.5 text-sm">
+          <dt className="flex items-center gap-1.5 pb-1 text-xs text-p3"><Sparkles size={13} /> Read from the file</dt>
+          {DETAILS.filter(([k]) => details[k]).map(([k, l]) => <div key={k} className="flex gap-3"><dt className="shrink-0 text-mute">{l}</dt><dd className="min-w-0 flex-1 break-words text-right">{details[k]}</dd></div>)}
+        </dl>
       )}
       <textarea value={v.notes} onChange={set('notes')} rows={2} placeholder="Notes" className={`${FIELD} resize-none`} />
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
-        <button disabled={busy || reading} className="rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2 text-sm font-medium text-white disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button>
+        <button disabled={busy} className="rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2 text-sm font-medium text-white disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button>
       </div>
     </form>
   );

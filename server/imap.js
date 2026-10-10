@@ -231,6 +231,14 @@ export async function emailFile(userId, { id, name }) {
   return pickAttachment(attached(p), name);
 }
 
+/** One email as its words and its files: { subject, from, at, text, files: [{ name, mimetype, buffer }], in_reply_to, refs }. Read-only. */
+export async function emailParts(userId, id) {
+  const { p } = await fetchParsed(userId, id);
+  // in_reply_to and refs: the messages this one answers, so a reply can be told from other mail by the same sender.
+  return { subject: p.subject || '', from: p.from?.text || '', at: p.date || null, text: String(p.text || ''), files: attached(p),
+    in_reply_to: p.inReplyTo || null, refs: [].concat(p.references || []) };
+}
+
 const readAttachment = async (userId, input) => attachmentText(await emailFile(userId, input));
 
 async function readEmail(userId, { id }) {

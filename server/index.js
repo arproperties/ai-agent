@@ -31,6 +31,7 @@ import { inspectionRoutes } from './inspections.js';
 import { workOrderRoutes, moveMaintenanceNotes } from './workOrders.js';
 import { reportRoutes } from './leasingReports.js';
 import { alertRoutes, startLeasingAlerts } from './leasingAlerts.js';
+import { renewalRoutes, startRenewals } from './renewals.js';
 import { receiptRoutes } from './leasingReceipt.js';
 import { regionRoutes } from './leasingRegion.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
@@ -82,6 +83,7 @@ app.use('/api/buildings', buildingRoutes); // who runs each building, and the st
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
+app.use('/api/properties/renewals', renewalRoutes); // getting a document renewed: suppliers, quote requests, offers (master only)
 app.use('/api/properties', propertyRoutes); // companies, buildings and units; the base for leasing (master writes)
 app.use('/api/leasing/reports', reportRoutes); // rent roll, aging, collections, expiring leases, vacancy, tenant statement
 app.use('/api/leasing/alerts', alertRoutes); // what needs attention today, and the master's alert rules
@@ -402,6 +404,7 @@ app.listen(PORT, '0.0.0.0', () => {
   startReminders();
   // Rent due, overdue, leases ending: the same kind of buzz, on its own ten-minute timer.
   startLeasingAlerts();
+  startRenewals();
   // Maintenance once typed into a tenant's history is a work order now; this moves what is left of it.
   moveMaintenanceNotes().then((n) => n && console.log(`[work-orders] moved ${n} maintenance note${n === 1 ? '' : 's'} from the tenants' histories`)).catch((e) => console.error('[work-orders]', e.message));
   startBuildings(); // buzzes a building's administrator when a staff job needs them

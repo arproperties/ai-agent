@@ -1085,6 +1085,87 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_prop_documents_unit ON prop_documents(unit_id);
 `);
 
+// Renewals: getting a document renewed, with Riley's help - see server/renewals.js.
+//   prop_suppliers: a company that can be asked for a quote, kept from one year to the next.
+//     email_confirmed: a person has seen this address and said it is right; nothing is drafted to one that is not.
+//     about: what was found out about it (licence, rating, how long it has traded), with where it was found, as JSON.
+//   prop_renewals: one case, on the copy of the document being renewed.
+//     compared: the offers side by side with the reasons, as JSON; closing: the emails written once an offer is chosen.
+//   prop_renewal_requests: one supplier on one renewal, and the email asking it. Where the request stands
+//     is worked out from its draft, not kept: a draft that is rejected or deleted simply frees it.
+//     seen: the ids of the emails from it already read, so none is read twice.
+//   prop_renewal_quotes: one offer, as read from the reply or from a file put in by hand.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS prop_suppliers (
+    id SERIAL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    email      TEXT,
+    phone      TEXT,
+    website    TEXT,
+    kind       TEXT NOT NULL DEFAULT 'insurer',
+    found_by   TEXT NOT NULL DEFAULT 'person',
+    email_confirmed BOOLEAN NOT NULL DEFAULT false,
+    notes      TEXT,
+    about      TEXT NOT NULL DEFAULT '{}',
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_prop_suppliers_name ON prop_suppliers(lower(name));
+  CREATE TABLE IF NOT EXISTS prop_renewals (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES prop_documents(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'decided', 'renewed', 'not_renewing', 'cancelled')),
+    opened_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    chosen_quote_id INTEGER,
+    compared    TEXT,
+    closing     TEXT NOT NULL DEFAULT '[]',
+    created_at  BIGINT DEFAULT ${NOW},
+    closed_at   BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_prop_renewals_document ON prop_renewals(document_id);
+  CREATE TABLE IF NOT EXISTS prop_renewal_requests (
+    id SERIAL PRIMARY KEY,
+    renewal_id  INTEGER NOT NULL REFERENCES prop_renewals(id) ON DELETE CASCADE,
+    supplier_id INTEGER NOT NULL REFERENCES prop_suppliers(id) ON DELETE CASCADE,
+    is_current  BOOLEAN NOT NULL DEFAULT false,
+    draft_id    INTEGER REFERENCES email_drafts(id) ON DELETE SET NULL,
+    subject     TEXT,
+    body        TEXT,
+    manual_sent_at  BIGINT,
+    chaser_draft_id INTEGER REFERENCES email_drafts(id) ON DELETE SET NULL,
+    chased_at   BIGINT,
+    seen        TEXT NOT NULL DEFAULT '[]',
+    reply_kind  TEXT,
+    reply_note  TEXT,
+    replied_at  BIGINT,
+    created_at  BIGINT DEFAULT ${NOW},
+    UNIQUE (renewal_id, supplier_id)
+  );
+  CREATE TABLE IF NOT EXISTS prop_renewal_quotes (
+    id SERIAL PRIMARY KEY,
+    renewal_id  INTEGER NOT NULL REFERENCES prop_renewals(id) ON DELETE CASCADE,
+    supplier_id INTEGER NOT NULL REFERENCES prop_suppliers(id) ON DELETE CASCADE,
+    premium     TEXT,
+    sum_insured TEXT,
+    deductible  TEXT,
+    cover       TEXT,
+    exclusions  TEXT,
+    valid_until DATE,
+    note        TEXT,
+    source      TEXT NOT NULL DEFAULT 'email',
+    email_id    TEXT,
+    file_path   TEXT,
+    file_name   TEXT,
+    file_mime   TEXT,
+    told        BOOLEAN NOT NULL DEFAULT false,
+    created_at  BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_prop_renewal_quotes ON prop_renewal_quotes(renewal_id);
+  -- When a request went, and as which message: kept on the request itself once its draft is
+  -- sent, so tidying the draft away afterwards does not undo the asking.
+  ALTER TABLE prop_renewal_requests ADD COLUMN IF NOT EXISTS sent_at BIGINT;
+  ALTER TABLE prop_renewal_requests ADD COLUMN IF NOT EXISTS message_id TEXT;
+`);
+
 // The day a company was registered, as YYYY-MM-DD. Kept as text so it reads back as written.
 await db.exec(`ALTER TABLE prop_companies ADD COLUMN IF NOT EXISTS registration_date TEXT;`);
 
