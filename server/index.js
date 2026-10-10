@@ -28,7 +28,7 @@ import { propertyRoutes } from './properties.js';
 import { leasingRoutes } from './leasing.js';
 import { historyRoutes } from './leasingHistory.js';
 import { inspectionRoutes } from './inspections.js';
-import { workOrderRoutes } from './workOrders.js';
+import { workOrderRoutes, moveMaintenanceNotes } from './workOrders.js';
 import { reportRoutes } from './leasingReports.js';
 import { alertRoutes, startLeasingAlerts } from './leasingAlerts.js';
 import { receiptRoutes } from './leasingReceipt.js';
@@ -402,6 +402,8 @@ app.listen(PORT, '0.0.0.0', () => {
   startReminders();
   // Rent due, overdue, leases ending: the same kind of buzz, on its own ten-minute timer.
   startLeasingAlerts();
+  // Maintenance once typed into a tenant's history is a work order now; this moves what is left of it.
+  moveMaintenanceNotes().then((n) => n && console.log(`[work-orders] moved ${n} maintenance note${n === 1 ? '' : 's'} from the tenants' histories`)).catch((e) => console.error('[work-orders]', e.message));
   startBuildings(); // buzzes a building's administrator when a staff job needs them
   startRecurringPayments(); // creates each recurring payment's line on its day of the month
   // meeting recordings that were still waiting to be transcribed when the server stopped

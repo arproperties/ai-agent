@@ -7,6 +7,7 @@ import { createBooking, bookingPayments, recordPayment } from '../server/leasing
 import { saveSettings } from '../server/leasingAlerts.js';
 import { tenantHistory, addLog, updateLog, removeLog, addLogFiles, getLogFile, removeLogFile } from '../server/leasingHistory.js';
 import { leasingKit } from '../server/leasingKit.js';
+import { createWorkOrder, updateWorkOrder } from '../server/workOrders.js';
 
 test.after(() => closeDb());
 
@@ -22,7 +23,7 @@ async function tower() {
   const bk = await createBooking({ unit_id: u1.id, start_date: '2026-09-15', end_date: '2026-11-14', rent_amount: 4500, status: 'confirmed',
     tenant: { full_name: 'Sara', phone: '050 123 4567' } }, staff);
   const rent = async (due) => (await bookingPayments(bk.id, AT)).find((r) => r.kind === 'rent' && r.due_date === due);
-  return { staff, bk, sara: bk.tenant_id, rent };
+  return { staff, bk, u1, sara: bk.tenant_id, rent };
 }
 
 test('late rent is worked out from the payments: paid late, still unpaid, and never rent paid in time', async () => {
@@ -57,9 +58,10 @@ test('a late fee that was charged shows with the rent it was charged for', async
 });
 
 test('complaints and maintenance are logged against the tenant and the booking of that day, resolved, changed and removed', async () => {
-  const { staff, bk, sara } = await tower();
+  const { staff, bk, u1, sara } = await tower();
   await assert.rejects(addLog(sara, { kind: 'complaint' }, staff, AT), /Say what happened/);
-  await assert.rejects(addLog(sara, { kind: 'fine', detail: 'x' }, staff, AT), /complaint or maintenance/);
+  await assert.rejects(addLog(sara, { kind: 'fine', detail: 'x' }, staff, AT), /is a complaint/);
+  await assert.rejects(addLog(sara, { kind: 'maintenance', detail: 'x' }, staff, AT), /raised as a work order/);
   await assert.rejects(addLog(sara, { kind: 'complaint', detail: 'x', happened_on: '2026-13-40' }, staff, AT), /not a date/);
   await assert.rejects(addLog(sara, { kind: 'complaint', detail: 'x', happened_on: '2026-10-26' }, staff, AT), /in the future/);
   await assert.rejects(addLog(999, { kind: 'complaint', detail: 'x' }, staff, AT), /Tenant not found/);
@@ -67,8 +69,10 @@ test('complaints and maintenance are logged against the tenant and the booking o
   const noise = await addLog(sara, { kind: 'complaint', category: 'Noise', detail: 'Loud music after midnight', reported_by: 'Unit 102', happened_on: '2026-10-01' }, staff, AT);
   assert.deepEqual([noise.type, noise.date, noise.category, noise.reported_by, noise.ref, noise.unit_no, noise.building, noise.resolved_on, noise.logged_by],
     ['complaint', '2026-10-01', 'Noise', 'Unit 102', bk.ref, '101', 'Tower', null, 'Staff']);
-  const ac = await addLog(sara, { kind: 'maintenance', category: 'AC', detail: 'AC not cooling' }, staff, AT);
-  assert.equal(ac.date, AT, 'with no date it is today');
+  const ac = await createWorkOrder({ unit_id: u1.id, category: 'AC', detail: 'AC not cooling' }, staff, AT);
+  const quiet = await addLog(sara, { kind: 'complaint', detail: 'Bins left out' }, staff, AT);
+  assert.equal(quiet.date, AT, 'with no date it is today');
+  await removeLog(quiet.id);
   const old = await addLog(sara, { kind: 'complaint', detail: 'Before any booking', happened_on: '2026-01-05' }, staff, AT);
   assert.equal(old.ref, null, 'no booking had started by then');
 
@@ -81,7 +85,7 @@ test('complaints and maintenance are logged against the tenant and the booking o
   assert.equal((await updateLog(noise.id, { detail: 'Loud music, twice' }, AT)).resolved_on, AT, 'changing the words leaves it resolved');
   assert.equal((await updateLog(noise.id, { resolved: false }, AT)).resolved_on, null);
   await assert.rejects(updateLog(noise.id, { detail: ' ' }, AT), /Say what happened/);
-  await updateLog(ac.id, { resolved: true }, AT);
+  await updateWorkOrder(ac.id, { status: 'done', resolution: 'Regassed' }, staff, AT);
   h = await tenantHistory(sara, AT);
   assert.deepEqual([h.summary.complaints_open, h.summary.maintenance_open], [2, 0]);
 
@@ -103,7 +107,7 @@ test('Riley can read a tenant’s history', async () => {
 test('an entry takes several attachments, each opened or removed by itself, and all go with the entry', async () => {
   const { staff, sara } = await tower();
   const file = (name, mime = 'image/jpeg') => ({ buffer: Buffer.from(name), originalname: name, mimetype: mime });
-  const leak = await addLog(sara, { kind: 'maintenance', category: 'Plumbing', detail: 'Leak under the sink' }, staff, AT);
+  const leak = await addLog(sara, { kind: 'complaint', category: 'Damage', detail: 'Broke the lobby door' }, staff, AT);
   assert.deepEqual(leak.files, []);
   await assert.rejects(addLogFiles(leak.id, [], staff), /Choose a file/);
   await assert.rejects(addLogFiles(999, [file('a.jpg')], staff), /not found/);
@@ -111,7 +115,7 @@ test('an entry takes several attachments, each opened or removed by itself, and 
   const withTwo = await addLogFiles(leak.id, [file('before.jpg'), file('invoice.pdf', 'application/pdf')], staff);
   assert.deepEqual(withTwo.files.map((f) => [f.file_name, f.file_mime]), [['before.jpg', 'image/jpeg'], ['invoice.pdf', 'application/pdf']]);
   assert.equal((await addLogFiles(leak.id, [file('after.jpg')], staff)).files.length, 3, 'more can be added later');
-  assert.equal((await tenantHistory(sara, AT)).items.find((i) => i.id === leak.id).files.length, 3);
+  assert.equal((await tenantHistory(sara, AT)).items.find((i) => i.type === 'complaint' && i.id === leak.id).files.length, 3);
 
   const paths = (await db.prepare('SELECT file_path FROM lease_tenant_log_files ORDER BY id').all()).map((r) => r.file_path);
   assert.ok(paths.every((p) => existsSync(p)));
@@ -120,7 +124,7 @@ test('an entry takes several attachments, each opened or removed by itself, and 
   await removeLogFile(withTwo.files[0].id);
   assert.equal(existsSync(paths[0]), false);
   await assert.rejects(removeLogFile(withTwo.files[0].id), /Not found/);
-  assert.deepEqual((await tenantHistory(sara, AT)).items.find((i) => i.id === leak.id).files.map((f) => f.file_name), ['invoice.pdf', 'after.jpg']);
+  assert.deepEqual((await tenantHistory(sara, AT)).items.find((i) => i.type === 'complaint' && i.id === leak.id).files.map((f) => f.file_name), ['invoice.pdf', 'after.jpg']);
 
   await removeLog(leak.id);
   assert.ok(paths.every((p) => !existsSync(p)), 'deleting the entry deletes its files');

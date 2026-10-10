@@ -5,7 +5,8 @@ import { create, remove } from '../server/properties.js';
 import { createBooking } from '../server/leasing.js';
 import { existsSync } from 'node:fs';
 import { createWorkOrder, getWorkOrder, listWorkOrders, updateWorkOrder, addWorkOrderNote, removeWorkOrder,
-  addWorkOrderFiles, getWorkOrderFile, removeWorkOrderFile, workOrderUnits, workOrderLink } from '../server/workOrders.js';
+  addWorkOrderFiles, getWorkOrderFile, removeWorkOrderFile, workOrderUnits, workOrderLink, moveMaintenanceNotes } from '../server/workOrders.js';
+import { tenantHistory } from '../server/leasingHistory.js';
 
 test.after(() => closeDb());
 
@@ -217,4 +218,53 @@ test('the form is told the units there are, and whose a unit is on a day', async
   assert.deepEqual(await workOrderLink(u1.id, '', AT), { tenant: 'Sara', ref: bk.ref }, 'no day given is today');
   assert.deepEqual(await workOrderLink(u2.id, '2026-10-01', AT), { tenant: null, ref: null });
   assert.deepEqual(await workOrderLink(u1.id, 'yesterday', AT), { tenant: null, ref: null }, 'a day that is not a date links to nobody');
+});
+
+test('the maintenance notes of a tenant’s history become work orders, once, with their files', async () => {
+  const { staff, u1, bk, sara } = await tower();
+  const note = (detail, on, resolved, resolution, booking = bk.id) => db.prepare(`INSERT INTO lease_tenant_log (tenant_id, booking_id, kind, category, detail, reported_by, happened_on, resolved_on, resolution, created_by, created_at)
+    VALUES (?, ?, 'maintenance', 'AC', ?, 'Sara', ?, ?, ?, ?, 1760000000) RETURNING id`).run(sara, booking, detail, on, resolved, resolution, staff);
+  const open = await note('AC not cooling', '2026-10-01', null, null);
+  const fixed = await note('Filter blocked', '2026-09-20', '2026-09-22', 'Cleaned the filter');
+  const loose = await note('Before any lease', '2026-01-05', null, null, null);
+  await db.prepare("INSERT INTO lease_tenant_log (tenant_id, booking_id, kind, detail, happened_on) VALUES (?, ?, 'complaint', 'Loud music', '2026-10-02')").run(sara, bk.id);
+  await db.prepare("INSERT INTO lease_tenant_log_files (log_id, file_path, file_name, file_mime, uploaded_by) VALUES (?, '/tmp/wo-before.jpg', 'before.jpg', 'image/jpeg', ?)").run(open.id, staff);
+
+  assert.equal(await moveMaintenanceNotes(), 2);
+  const [a, b] = await listWorkOrders({ tenant_id: sara }, AT);
+  assert.deepEqual([a.detail, a.status, a.reported_on, a.unit_id, a.booking_id, a.tenant, a.category, a.reported_by, a.raised_by, a.done_on],
+    ['AC not cooling', 'open', '2026-10-01', u1.id, bk.id, 'Sara', 'AC', 'Sara', 'Staff', null]);
+  assert.deepEqual([b.detail, b.status, b.reported_on, b.done_on, b.resolution], ['Filter blocked', 'closed', '2026-09-20', '2026-09-22', 'Cleaned the filter']);
+  const full = await getWorkOrder(a.id, AT);
+  assert.deepEqual(full.files.map((f) => f.file_name), ['before.jpg']);
+  assert.deepEqual(full.events.map((e) => [e.kind, e.detail, String(e.created_at)]), [['created', 'Moved from the tenant’s history', '1760000000']]);
+  assert.equal((await getWorkOrder(b.id, AT)).events[0].detail, 'Moved from the tenant’s history, resolved 2026-09-22');
+
+  // What is left behind: the complaint, and the note with no lease to take its unit from.
+  assert.deepEqual((await db.prepare('SELECT id, kind FROM lease_tenant_log ORDER BY id').all()).map((r) => r.kind), ['maintenance', 'complaint']);
+  assert.equal((await db.prepare('SELECT id FROM lease_tenant_log WHERE kind = ?').get('maintenance')).id, loose.id);
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_tenant_log_files').get()).n, 0);
+
+  assert.equal(await moveMaintenanceNotes(), 0, 'a second run finds nothing to move');
+  assert.equal((await listWorkOrders({}, AT)).length, 2);
+});
+
+test('a tenant’s history shows their work orders as maintenance, and counts the ones not done', async () => {
+  const { staff, u1, u2, bk, sara } = await tower();
+  const ac = await createWorkOrder({ unit_id: u1.id, category: 'AC', detail: 'AC not cooling', reported_on: '2026-10-20' }, staff, AT);
+  const leak = await createWorkOrder({ unit_id: u1.id, detail: 'Leak', reported_on: '2026-10-21' }, staff, AT);
+  const off = await createWorkOrder({ unit_id: u1.id, detail: 'Typed twice', reported_on: '2026-10-22' }, staff, AT);
+  await createWorkOrder({ unit_id: u2.id, detail: 'Somebody else’s unit' }, staff, AT);
+  await updateWorkOrder(leak.id, { status: 'done', resolution: 'Tightened the trap' }, staff, AT);
+  await updateWorkOrder(off.id, { status: 'cancelled', cancel_reason: 'Duplicate' }, staff, AT);
+
+  const h = await tenantHistory(sara, AT);
+  const mine = h.items.filter((i) => i.type === 'maintenance');
+  assert.deepEqual(mine.map((i) => [i.wo, i.date, i.status, i.resolved_on, i.resolution, i.ref, i.unit_no]), [
+    [leak.ref, '2026-10-21', 'done', AT, 'Tightened the trap', bk.ref, '101'],
+    [ac.ref, '2026-10-20', 'open', null, null, bk.ref, '101'],
+  ]);
+  assert.deepEqual([h.summary.maintenance, h.summary.maintenance_open], [2, 1], 'a cancelled one is not counted');
+  assert.deepEqual(h.current, { unit_id: u1.id, unit_no: '101', building: 'Tower' });
+  assert.equal((await tenantHistory(sara, '2026-12-01')).current, null, 'after the lease, they have no unit');
 });

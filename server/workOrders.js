@@ -268,6 +268,35 @@ export async function workOrderLink(unitId, on, today = todayHere()) {
   return { tenant: lease?.tenant ?? null, ref: lease ? bookingRef({ id: lease.booking_id, start_date: lease.start_date }) : null };
 }
 
+// ---------- the notes that came before ----------
+
+/**
+ * Maintenance used to be a line in a tenant's history (lease_tenant_log). Each of those
+ * becomes a work order on the unit of its lease: open if it was open, closed if it was
+ * resolved, with its files. Run at every start; once a note is moved it is gone from the
+ * old table, so a second run finds nothing. A note with no lease has no unit, and stays.
+ */
+export async function moveMaintenanceNotes() {
+  const notes = await db.prepare(`SELECT l.id, l.tenant_id, l.booking_id, l.category, l.detail, l.reported_by, l.resolution, l.created_by, l.created_at,
+      ${day('l.happened_on')} AS happened_on, ${day('l.resolved_on')} AS resolved_on, b.unit_id, t.full_name AS tenant
+    FROM lease_tenant_log l JOIN lease_bookings b ON b.id = l.booking_id JOIN lease_tenants t ON t.id = l.tenant_id
+    WHERE l.kind = 'maintenance' ORDER BY l.id`).all();
+  for (const n of notes) {
+    await tx(async () => {
+      const { id } = await db.prepare(`INSERT INTO lease_work_orders (unit_id, booking_id, tenant_id, tenant, category, detail, reported_by, reported_on, status, resolution, done_on, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(n.unit_id, n.booking_id, n.tenant_id, n.tenant, n.category, n.detail, n.reported_by, n.happened_on,
+        n.resolved_on ? 'closed' : 'open', n.resolved_on ? n.resolution : null, n.resolved_on, n.created_by, n.created_at);
+      await db.prepare('INSERT INTO lease_work_order_events (work_order_id, kind, detail, user_id, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(id, 'created', `Moved from the tenant’s history${n.resolved_on ? `, resolved ${n.resolved_on}` : ''}`, n.created_by, n.created_at);
+      // The files stay where they are on disk; only the rows that point at them move.
+      await db.prepare(`INSERT INTO lease_work_order_files (work_order_id, file_path, file_name, file_mime, uploaded_by, created_at)
+        SELECT ?::int, file_path, file_name, file_mime, uploaded_by, created_at FROM lease_tenant_log_files WHERE log_id = ? ORDER BY id`).run(id, n.id);
+      await db.prepare('DELETE FROM lease_tenant_log WHERE id = ?').run(n.id);
+    });
+  }
+  return notes.length;
+}
+
 // ---------- routes ----------
 
 export const workOrderRoutes = Router();
