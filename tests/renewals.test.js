@@ -161,3 +161,80 @@ test('a supplier that has not answered in five days gets a follow-up drafted, on
   await R.chase(r.id, master, deps, now);
   assert.equal((await drafts()).length, 3, 'chased once');
 });
+
+// ---------- replies and quotes ----------
+
+const quotePdf = { name: 'chubb-quote.pdf', originalname: 'chubb-quote.pdf', mimetype: 'application/pdf', buffer: Buffer.from('%PDF quote') };
+const OFFER = { kind: 'quote', note: 'Annual premium USD 16,900.', premium: 'USD 16,900', sum_insured: 'USD 12,500,000', deductible: 'USD 10,000', cover: 'Building and common areas', exclusions: 'Flood', valid_until: '2026-11-30', extra: 'x' };
+
+// Orient and Chubb were both written to `days` ago, from the master's mailbox.
+async function asked(days = 3) {
+  const t = await listed();
+  const v = await R.draftRequests(t.r.id, [t.orient.supplier_id, t.chubb.supplier_id], t.master, { ...mailbox, ...wording });
+  const now = Math.floor(Date.now() / 1000);
+  await db.prepare("UPDATE email_drafts SET status = 'sent', sent_at = ?, message_id = '<m' || id || '@ace.com>'").run(now - days * 86400);
+  const at = (daysAgo) => new Date((now - daysAgo * 86400) * 1000);
+  return { ...t, v, now, at };
+}
+
+test('replies are found by who they are from, read once, and an offer is kept with its file', async () => {
+  const { r, at } = await asked();
+  const mail = [
+    { id: 'INBOX:1', from: 'Chubb Quotes <quotes@chubb.com>', subject: 'Re: Quotation', at: at(1), text: 'Please find our quotation attached.' },
+    { id: 'INBOX:2', from: 'Sam <Sam@Orient.com>', subject: 'Re: Renewal', at: at(1), text: 'How many floors does the building have?' }, // another person at the same company
+    { id: 'INBOX:3', from: 'News <news@chubb.com>', subject: 'Newsletter', at: at(9), text: 'from before we wrote' },
+    { id: 'INBOX:4', from: 'Someone <x@other.com>', subject: 'Hi', at: at(1), text: 'nothing to do with it' },
+  ];
+  const read = [];
+  const deps = { ...mailbox, inbox: async () => mail,
+    parts: async (userId, id) => ({ text: mail.find((m) => m.id === id).text, files: id === 'INBOX:1' ? [quotePdf] : [] }),
+    think: async (content) => { read.push(content); return JSON.stringify(JSON.stringify(content).includes('floors') ? { kind: 'question', note: 'Asks how many floors the building has.' } : OFFER); } };
+
+  const got = await R.checkReplies(r.id, deps);
+  assert.deepEqual([got.quotes, got.questions], [['Chubb'], ['Orient Insurance']]);
+  assert.deepEqual(got.renewal.suppliers.map((s) => [s.name, s.state, s.reply_kind, s.reply_note]),
+    [['Orient Insurance', 'replied', 'question', 'Asks how many floors the building has.'], ['Chubb', 'replied', 'quote', 'Annual premium USD 16,900.'], ['Marsh', 'listed', null, null]]);
+  assert.deepEqual(got.renewal.quotes.map((q) => [q.supplier, q.premium, q.deductible, q.exclusions, q.valid_until, q.source, q.has_file, q.file_name]),
+    [['Chubb', 'USD 16,900', 'USD 10,000', 'Flood', '2026-11-30', 'email', true, 'chubb-quote.pdf']]);
+  assert.equal(read.length, 2, 'mail from before the request, and from anyone else, is never read');
+  assert.equal(read.find((c) => c.length > 1)[0].type, 'document', 'the attached quote is read as the file it is');
+
+  const again = await R.checkReplies(r.id, deps);
+  assert.deepEqual([again.quotes, again.questions, read.length, again.renewal.quotes.length], [[], [], 2, 1], 'the same mail is not read twice');
+});
+
+test('a reply that cannot be read is still shown as received, and a quote handed over as a file is read the same way', async () => {
+  const { existsSync } = await import('node:fs');
+  const { r, at, chubb, marsh } = await asked();
+  const mail = [{ id: 'INBOX:7', from: 'Orient <renewals@orient.com>', subject: 'Re: Renewal', at: at(1), text: 'see attached' }];
+  const got = await R.checkReplies(r.id, { ...mailbox, inbox: async () => mail, parts: async () => { throw new Error('gone'); }, think: async () => '{}' });
+  assert.deepEqual(got.renewal.suppliers.map((s) => [s.name, s.state, s.reply_kind]).slice(0, 1), [['Orient Insurance', 'replied', 'unread']]);
+
+  // By WhatsApp or on paper: the file is put in by hand, and read like the others.
+  let v = await R.addQuote(r.id, chubb.supplier_id, quotePdf, { think: async () => JSON.stringify({ ...OFFER, valid_until: '31/11/2026' }) });
+  assert.deepEqual(v.quotes.map((q) => [q.supplier, q.premium, q.valid_until, q.source, q.has_file]), [['Chubb', 'USD 16,900', null, 'upload', true]], 'a date that is not one is left out');
+  assert.equal(named(v, 'Chubb').state, 'replied');
+  // Not readable: it is kept all the same, for a person to open.
+  v = await R.addQuote(r.id, marsh.supplier_id, quotePdf, { think: async () => { throw new Error('down'); } });
+  assert.deepEqual(v.quotes.map((q) => [q.supplier, q.premium, q.note]).at(-1), ['Marsh', null, 'This could not be read: open the file to see the offer.']);
+  await assert.rejects(R.addQuote(r.id, 999, quotePdf), /Not found/);
+  await assert.rejects(R.addQuote(r.id, chubb.supplier_id, null), /Choose the file/);
+
+  const kept = await db.prepare('SELECT id, file_path FROM prop_renewal_quotes ORDER BY id').all();
+  v = await R.removeQuote(r.id, kept[0].id);
+  assert.deepEqual([v.quotes.length, existsSync(kept[0].file_path), existsSync(kept[1].file_path)], [1, false, true]);
+});
+
+test('unasked, Riley looks for replies: a new quote is told once, and a supplier gone quiet is chased', async () => {
+  const { master, r, at, now } = await asked(6);
+  const mail = [{ id: 'INBOX:1', from: 'Chubb <quotes@chubb.com>', subject: 'Quotation', at: at(1), text: 'Attached.' }];
+  const told = [];
+  const deps = { ...mailbox, inbox: async () => mail, parts: async () => ({ text: 'Attached.', files: [quotePdf] }), think: async () => JSON.stringify(OFFER),
+    push: async (ids, note) => { told.push([ids, note.title, note.body]); } };
+  await R.runRenewals(deps, now);
+  assert.deepEqual(told, [[[master], 'A quote from Chubb', 'Fire insurance, Tower · USD 16,900'], [[master], 'No reply from Orient Insurance', 'Fire insurance, Tower · a follow-up is written and waiting for you']]);
+  assert.equal(named(await R.getRenewal(r.id), 'Orient Insurance').chaser_status, 'pending');
+  await R.runRenewals(deps, now);
+  assert.equal(told.length, 2, 'neither is told twice');
+  assert.deepEqual([...new Set((await drafts()).map((d) => d.status))].sort(), ['pending', 'sent'], 'only the two this test marked as sent were ever sent');
+});

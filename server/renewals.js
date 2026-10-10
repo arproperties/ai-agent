@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { db } from './db.js';
-import { MODELS } from './config.js';
-import { docHistory } from './properties.js';
+import { MODELS, DATA_DIR } from './config.js';
+import { docHistory, saveFile } from './properties.js';
+import { fileBlock, isDate } from './documentReader.js';
 import { cleanAddresses, createDraft, logAction } from './drafts.js';
 import { store, discard } from './draftFiles.js';
 import { replySubject } from './imap.js';
@@ -427,4 +428,165 @@ export async function chase(id, by, deps, now = Math.floor(Date.now() / 1000)) {
     await db.prepare('UPDATE prop_renewal_requests SET chaser_draft_id = ?, chased_at = ? WHERE id = ?').run(draft.id, now, q.request_id);
   }
   return getRenewal(r.id);
+}
+
+// ---------- replies and quotes ----------
+
+const QUOTE_DIR = `${DATA_DIR}/properties/quotes`;
+const QUOTE_FIELDS = ['premium', 'sum_insured', 'deductible', 'cover', 'exclusions'];
+// Addresses anyone can have: mail from one of these is only that supplier's when it is the very address written to.
+const FREE_MAIL = /@(gmail|googlemail|outlook|hotmail|live|yahoo|icloud|aol|proton|protonmail)\./i;
+const addressOf = (from) => (String(from || '').match(/<([^>]+)>/)?.[1] || String(from || '')).trim().toLowerCase();
+
+/** Whether mail from `from` is that supplier's: the address written to, or anybody else at the same company's own domain. */
+function fromSupplier(from, email) {
+  const [a, b] = [addressOf(from), String(email || '').toLowerCase()];
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const domain = (x) => x.split('@')[1];
+  return !FREE_MAIL.test(b) && !!domain(a) && domain(a) === domain(b);
+}
+
+const READ = 'This is what a supplier sent back after we asked for a quotation to renew a policy or contract. Reply with one JSON object and nothing else. '
+  + '"kind": "quote" if it gives a price or terms, "question" if it asks us for something before it can quote, "declined" if they will not quote, otherwise "other". '
+  + '"note": one short sentence saying what it says. And, for a quote, only what is actually stated: "premium", "sum_insured" and "deductible" (each with its currency), '
+  + '"cover" (what is covered, one line), "exclusions" (the notable ones, one line), "valid_until" (the date the offer stands until, YYYY-MM-DD). Never guess a figure or a date.';
+
+/**
+ * What a reply says: a quote (with its figures), a question, a refusal, or something else.
+ * `files` are read as they are, PDFs and photos; the rest are only named. A file handed over
+ * as a quote (`asQuote`) is taken as one whatever the model calls it.
+ */
+export async function readReply({ text = '', files = [] }, deps, asQuote = false) {
+  const { think } = use(deps);
+  const blocks = files.map(fileBlock).filter(Boolean).slice(0, 3);
+  const unread = files.filter((f) => !fileBlock(f)).map((f) => f.name || f.originalname);
+  const o = pull(await think([...blocks, { type: 'text', text: `${READ}\n\nThe email says:\n${String(text || '').slice(0, 8000) || '(nothing)'}`
+    + `${unread.length ? `\n\nAlso attached, and not readable here: ${unread.join(', ')}` : ''}` }], { maxTokens: 800 })) || {};
+  const kind = asQuote ? 'quote' : ['quote', 'question', 'declined'].includes(o.kind) ? o.kind : 'other';
+  const out = { kind, note: line(o.note, 500) || null };
+  if (kind === 'quote') {
+    for (const f of QUOTE_FIELDS) out[f] = line(o[f], 500) || null;
+    out.valid_until = isDate(o.valid_until) ? o.valid_until : null;
+  }
+  return out;
+}
+
+/** Keep an offer, with the file it came in. Whatever was made of the offers before is out of date now. */
+async function keepQuote(renewalId, supplierId, offer, file, source, emailId = null) {
+  const f = file ? saveFile({ buffer: file.buffer, originalname: file.originalname || file.name || 'quote', mimetype: file.mimetype || 'application/octet-stream' }, QUOTE_DIR) : {};
+  await db.prepare(`INSERT INTO prop_renewal_quotes (renewal_id, supplier_id, premium, sum_insured, deductible, cover, exclusions, valid_until, note, source, email_id, file_path, file_name, file_mime, told)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(renewalId, supplierId, offer.premium ?? null, offer.sum_insured ?? null, offer.deductible ?? null, offer.cover ?? null,
+    offer.exclusions ?? null, offer.valid_until ?? null, offer.note ?? null, source, emailId, f.file_path ?? null, f.file_name ?? null, f.file_mime ?? null, source !== 'email');
+  await db.prepare('UPDATE prop_renewals SET compared = NULL WHERE id = ?').run(renewalId);
+}
+
+/**
+ * Look in the mailbox each request went from for what has come back: mail from that
+ * supplier since it was written to, not read before. A quote is kept with its file; a
+ * question, a refusal or anything else is noted on the request. It only reads.
+ * Gives the names of who quoted and who asked something this time, and the renewal.
+ */
+export async function checkReplies(id, deps) {
+  const { inbox, parts } = use(deps);
+  const r = await rawRenewal(id);
+  const out = { quotes: [], questions: [] };
+  if (r.status !== 'open') return { ...out, renewal: await getRenewal(r.id) };
+  const ownerOf = (q) => q.draft_owner || r.opened_by;
+  const waiting = (await requestsOf(r.id)).filter((q) => ['sent', 'replied'].includes(q.state) && q.email && q.sent_at && ownerOf(q));
+  const boxes = new Map(); // whose mailbox → its mail since the first of their requests went
+  for (const q of waiting) {
+    const owner = ownerOf(q);
+    if (!boxes.has(owner)) {
+      const first = Math.min(...waiting.filter((x) => ownerOf(x) === owner).map((x) => x.sent_at));
+      boxes.set(owner, await inbox(owner, { since: new Date(first * 1000), limit: 200 }));
+    }
+    let kind = q.reply_kind;
+    for (const m of boxes.get(owner)) {
+      const at = Math.floor(new Date(m.at).getTime() / 1000);
+      if (q.seen.includes(m.id) || at < q.sent_at || !fromSupplier(m.from, q.email)) continue;
+      let got;
+      let p;
+      try { p = await parts(owner, m.id); } catch { got = { kind: 'unread', note: 'This reply could not be read here: open it in your mailbox.' }; }
+      if (p) {
+        // The model not answering is not the reply's fault: it is left unread, and tried again next time.
+        try { got = await readReply(p, deps); } catch (e) { console.error('[renewals] reading a reply:', e.message); continue; }
+        if (got.kind === 'quote') await keepQuote(r.id, q.supplier_id, got, (p.files || []).find(fileBlock) || (p.files || [])[0], 'email', m.id);
+      }
+      q.seen.push(m.id);
+      // Once it has quoted it has quoted: a thank-you afterwards does not undo that.
+      kind = kind === 'quote' ? 'quote' : got.kind;
+      await db.prepare('UPDATE prop_renewal_requests SET seen = ?, reply_kind = ?, reply_note = ?, replied_at = ? WHERE id = ?').run(JSON.stringify(q.seen), kind, got.note, at, q.request_id);
+      if (got.kind === 'quote') out.quotes.push(q.name);
+      else if (got.kind === 'question') out.questions.push(q.name);
+    }
+  }
+  return { ...out, renewal: await getRenewal(r.id) };
+}
+
+/** A quote that came some other way (WhatsApp, paper, a call): the file is put in by a person and read like the rest. */
+export async function addQuote(id, supplierId, file, deps) {
+  const r = await rawRenewal(id);
+  if (!file) throw bad('Choose the file with the quote.');
+  const q = (await requestsOf(r.id)).find((x) => x.supplier_id === Number(supplierId));
+  if (!q) throw bad('Not found', 404);
+  let offer;
+  try { offer = await readReply({ files: [file] }, deps, true); } catch (e) { console.error('[renewals] reading a quote:', e.message); }
+  if (!offer || !QUOTE_FIELDS.some((f) => offer[f])) offer = { note: 'This could not be read: open the file to see the offer.' };
+  await keepQuote(r.id, q.supplier_id, offer, file, 'upload');
+  await db.prepare(`UPDATE prop_renewal_requests SET reply_kind = 'quote', reply_note = coalesce(?, reply_note), replied_at = coalesce(replied_at, ${NOW}) WHERE id = ?`).run(offer.note ?? null, q.request_id);
+  return getRenewal(r.id);
+}
+
+const quoteFile = async (renewalId, quoteId) => {
+  const q = await db.prepare('SELECT id, file_path, file_name, file_mime FROM prop_renewal_quotes WHERE id = ? AND renewal_id = ?').get(Number(quoteId), Number(renewalId));
+  if (!q) throw bad('Not found', 404);
+  return q;
+};
+
+export async function removeQuote(id, quoteId) {
+  const r = await rawRenewal(id);
+  const q = await quoteFile(r.id, quoteId);
+  await db.prepare('DELETE FROM prop_renewal_quotes WHERE id = ?').run(q.id);
+  await db.prepare('UPDATE prop_renewals SET compared = NULL, chosen_quote_id = CASE WHEN chosen_quote_id = ? THEN NULL ELSE chosen_quote_id END WHERE id = ?').run(q.id, r.id);
+  if (q.file_path) rmSync(q.file_path, { force: true });
+  return getRenewal(r.id);
+}
+
+/**
+ * What Riley does unasked, for every renewal under way: look for replies, tell whoever
+ * opened it (and the master) of a quote that has come, once, and write a follow-up to a
+ * supplier gone quiet, saying so. It reads and it drafts; it sends nothing. `now` in seconds.
+ */
+export async function runRenewals(deps, now = Math.floor(Date.now() / 1000)) {
+  const { push } = use(deps);
+  await settle();
+  const masters = (await db.prepare("SELECT id FROM users WHERE role = 'master'").all()).map((u) => u.id);
+  const tell = (who, title, body) => Promise.resolve(push(who, { title, body, url: '/?leasing=alerts', tag: 'leasing-renewals' })).catch((e) => console.error('[renewals] push:', e.message));
+  for (const r of await db.prepare("SELECT id, document_id, opened_by FROM prop_renewals WHERE status = 'open' ORDER BY id").all()) {
+    try {
+      const d = await documentOf(r.document_id);
+      const who = [...new Set([r.opened_by, ...masters].filter(Boolean))];
+      const what = `${d.title}, ${d.where}`;
+      await checkReplies(r.id, deps);
+      for (const q of await db.prepare(`SELECT q.id, q.premium, s.name FROM prop_renewal_quotes q JOIN prop_suppliers s ON s.id = q.supplier_id WHERE q.renewal_id = ? AND NOT q.told ORDER BY q.id`).all(r.id)) {
+        // Written down before it is said, so a restart in between never says it twice.
+        if ((await db.prepare('UPDATE prop_renewal_quotes SET told = true WHERE id = ? AND NOT told').run(q.id)).changes) await tell(who, `A quote from ${q.name}`, `${what}${q.premium ? ` · ${q.premium}` : ''}`);
+      }
+      if (!r.opened_by) continue;
+      const before = new Set((await requestsOf(r.id)).filter((q) => q.chased_at).map((q) => q.request_id));
+      await chase(r.id, r.opened_by, deps, now);
+      for (const q of (await requestsOf(r.id)).filter((x) => x.chased_at && !before.has(x.request_id))) await tell(who, `No reply from ${q.name}`, `${what} · a follow-up is written and waiting for you`);
+    } catch (e) { console.error(`[renewals] renewal ${r.id}:`, e.message); }
+  }
+}
+
+let timer = null;
+/** Every half hour. If it stops, nothing is lost: "Check for replies" on the renewal does the same by hand. */
+export function startRenewals() {
+  if (timer) return;
+  const tick = () => runRenewals().catch((e) => console.error('[renewals]', e.message));
+  timer = setInterval(tick, 30 * 60_000);
+  timer.unref();
+  setTimeout(tick, 60_000).unref();
 }

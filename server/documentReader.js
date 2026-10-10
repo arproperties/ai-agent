@@ -27,7 +27,7 @@ Never guess a date or a number.`;
 const line = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v).trim().slice(0, 300) : '');
 
 /** A real day written YYYY-MM-DD: 2026-02-31 is not one. */
-function isDate(v) {
+export function isDate(v) {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
   return new Date(Date.UTC(+v.slice(0, 4), +v.slice(5, 7) - 1, +v.slice(8, 10))).toISOString().slice(0, 10) === v;
 }
@@ -57,7 +57,7 @@ export function suggestion(reply) {
 }
 
 /** The file as Claude takes it: a PDF as a document, a photo as a picture. Nothing for any other kind. */
-function block(file) {
+export function fileBlock(file) {
   const data = file.buffer.toString('base64');
   if (file.mimetype === 'application/pdf') return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } };
   if (IMAGE.test(file.mimetype)) return { type: 'image', source: { type: 'base64', media_type: file.mimetype, data } };
@@ -66,7 +66,7 @@ function block(file) {
 
 /** What an uploaded file says about itself, to fill the form with. {} when it cannot be read, for any reason. */
 export async function readDocument(file, { ask = claudeAsk, timeoutMs = WAIT } = {}) {
-  const b = file && block(file);
+  const b = file && fileBlock(file);
   if (!b) return {};
   let timer;
   const late = new Promise((_, no) => { timer = setTimeout(() => no(new Error('the reading took too long')), timeoutMs); });
