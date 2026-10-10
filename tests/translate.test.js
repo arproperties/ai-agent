@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, makeUser, closeDb, db } from './helpers/db.js';
-import { engine, LANGUAGES, addTurn } from '../server/translate.js';
+import { engine, LANGUAGES, addTurn, retryTurn, clean } from '../server/translate.js';
 
 test.after(() => closeDb());
 
@@ -105,4 +105,64 @@ test('every language has a code, a name and its own name for itself', () => {
   assert.equal(new Set(LANGUAGES.map((l) => l.code)).size, LANGUAGES.length);
   for (const l of LANGUAGES) assert.ok(/^[a-z]{2}$/.test(l.code) && l.name && l.native, l.code);
   assert.equal(LANGUAGES.find((l) => l.code === 'ar').rtl, true);
+});
+
+test('only the translated words are kept, whatever the model wraps them in', async () => {
+  assert.equal(clean('  "On the second floor"  '), 'On the second floor');
+  assert.equal(clean('«أين المكتب؟»'), 'أين المكتب؟');
+  assert.equal(clean('Translation: “Good morning”'), 'Good morning');
+  assert.equal(clean("It's the boys' room"), "It's the boys' room", 'an apostrophe that belongs is left alone');
+  assert.equal(clean('He said "no" twice'), 'He said "no" twice', 'quotes inside the sentence stay');
+
+  await reset();
+  fake({ gives: 'Translation: "أين المكتب؟"' });
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio });
+  assert.equal(r.turn.translated, 'أين المكتب؟');
+});
+
+test('a translation that fails keeps what was said, and trying again fills it in', async () => {
+  await reset();
+  fake({ gives: new Error('overloaded') });
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio });
+  assert.equal(r.turn.original, 'Where is the office?');
+  assert.equal(r.turn.translated, '');
+  assert.match(r.turn.error, /could not be translated/i);
+
+  fake({ gives: 'أين المكتب؟' });
+  const again = await retryTurn(user, r.id, r.turn.id);
+  assert.equal(again.translated, 'أين المكتب؟');
+  assert.equal(again.error, null);
+  assert.deepEqual(asked, [{ text: 'Where is the office?', from: 'en', to: 'ar' }]);
+  assert.equal(heard.length, 0, 'the speech is not read a second time');
+});
+
+test('an empty reply from the model counts as a failed translation', async () => {
+  await reset();
+  fake({ gives: '  ' });
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio });
+  assert.match(r.turn.error, /could not be translated/i);
+});
+
+test('trying again on a turn that is already translated costs nothing', async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio });
+  fake({ gives: 'something else' });
+  const again = await retryTurn(user, r.id, r.turn.id);
+  assert.equal(again.translated, 'أين المكتب؟');
+  assert.equal(asked.length, 0);
+});
+
+test('a side-B turn is retried in the right direction', async () => {
+  await reset();
+  fake({ says: 'في الطابق الثاني', gives: new Error('overloaded') });
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'b', buffer: audio });
+  fake({ gives: 'On the second floor' });
+  await retryTurn(user, r.id, r.turn.id);
+  assert.deepEqual(asked, [{ text: 'في الطابق الثاني', from: 'ar', to: 'en' }]);
 });

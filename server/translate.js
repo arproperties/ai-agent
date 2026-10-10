@@ -58,6 +58,27 @@ export const engine = {
   translate: (text, from, to) => ask('', { system: brief(from, to), content: `<speech>${text}</speech>`, maxTokens: 2048 }),
 };
 
+// Models like to hand a translation back in quotation marks, or labelled. Only a pair
+// wrapping the whole reply is removed: quotes inside the sentence belong to the speaker.
+export const clean = (text) => {
+  const s = String(text || '').trim().replace(/^translation\s*:\s*/i, '').trim();
+  const wrapped = s.match(/^["“«]([^"“”«»]*)["”»]$/);
+  return (wrapped ? wrapped[1] : s).trim();
+};
+
+const FAILED = 'This could not be translated. Tap Try again.';
+
+/** { translated, error }: never throws, because what was said is worth keeping either way. */
+async function translateSafely(text, from, to) {
+  try {
+    const translated = clean(await engine.translate(text, from, to));
+    return translated ? { translated, error: null } : { translated: '', error: FAILED };
+  } catch (e) {
+    console.warn('[translate] translating', e.message);
+    return { translated: '', error: FAILED };
+  }
+}
+
 const turnOut = ({ translation_id, ...t }) => t;
 
 async function owned(userId, id) {
@@ -93,12 +114,25 @@ export async function addTurn(userId, { id, langA, langB, side, buffer, mimetype
   }
   if (!original) return { id: conv?.id ?? null, turn: null };
 
-  const translated = await engine.translate(original, from, to);
+  const { translated, error } = await translateSafely(original, from, to);
 
   conv ??= await db.prepare(`INSERT INTO translations (user_id, title, lang_a, lang_b) VALUES (?, ?, ?, ?) RETURNING *`)
     .get(userId, `${a.name} ↔ ${b.name}`, a.code, b.code);
-  const turn = await db.prepare(`INSERT INTO translation_turns (translation_id, side, original, translated) VALUES (?, ?, ?, ?) RETURNING *`)
-    .get(conv.id, side, original, translated);
+  const turn = await db.prepare(`INSERT INTO translation_turns (translation_id, side, original, translated, error) VALUES (?, ?, ?, ?, ?) RETURNING *`)
+    .get(conv.id, side, original, translated, error);
   await db.prepare('UPDATE translations SET updated_at = extract(epoch from now())::bigint WHERE id = ?').run(conv.id);
   return { id: conv.id, turn: turnOut(turn) };
+}
+
+/** A turn whose translation failed, translated again. null when it is not this user's. */
+export async function retryTurn(userId, id, turnId) {
+  const conv = await owned(userId, id);
+  if (!conv) return null;
+  const turn = await db.prepare('SELECT * FROM translation_turns WHERE id = ? AND translation_id = ?').get(int(turnId), conv.id);
+  if (!turn) return null;
+  if (!turn.error) return turnOut(turn);
+  const [from, to] = turn.side === 'a' ? [lang(conv.lang_a), lang(conv.lang_b)] : [lang(conv.lang_b), lang(conv.lang_a)];
+  const { translated, error } = await translateSafely(turn.original, from, to);
+  return turnOut(await db.prepare('UPDATE translation_turns SET translated = ?, error = ? WHERE id = ? RETURNING *')
+    .get(translated, error, turn.id));
 }
