@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Ban, Bug, Check, CheckCheck, ChevronLeft, ChevronRight, Droplets, Ellipsis, Refrigerator, Snowflake, Zap, Loader2, MessageSquarePlus, Paperclip, Pencil, Play, Plus, RotateCcw, Search, Trash2, Wrench, X } from 'lucide-react';
+import { ArrowDown, Ban, Bug, Check, CheckCheck, ChevronLeft, ChevronRight, Droplets, Ellipsis, Equal, Flag, Flame, Refrigerator, Snowflake, Zap, Loader2, MessageSquarePlus, Paperclip, Pencil, Play, Plus, RotateCcw, Search, Trash2, UserRound, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { usDate as fmt } from '../lib/usFormat';
 import Page from './Page';
@@ -24,7 +24,11 @@ export const WO_STATUS = {
   open: ['Open', 'bg-warn/15 text-warn'], assigned: ['Assigned', 'bg-p3/15 text-p3'], in_progress: ['In progress', 'bg-p1/15 text-p1'],
   done: ['Done', 'bg-ok/15 text-ok'], closed: ['Closed', 'bg-white/10 text-mute'], cancelled: ['Cancelled', 'bg-white/10 text-mute'],
 };
-const PRIORITY = [['low', 'Low'], ['normal', 'Normal'], ['urgent', 'Urgent']];
+// How pressing: [value, label, picture, colour, what it means].
+const PRIORITY = [
+  ['low', 'Low', ArrowDown, 'from-slate-400 to-slate-600', 'It can wait'], ['normal', 'Normal', Equal, 'from-sky-400 to-blue-500', 'In the usual time'],
+  ['urgent', 'Urgent', Flame, 'from-rose-400 to-red-500', 'Needs somebody today'],
+];
 const FILTERS = [['active', 'Active'], ['open', 'Open'], ['assigned', 'Assigned'], ['in_progress', 'In progress'], ['done', 'Done'], ['closed', 'Closed'], ['cancelled', 'Cancelled'], ['', 'All']];
 // The usual kinds of repair, a tap each, with the picture and colour of each. "Other" opens a box to type one.
 const CATEGORIES = [
@@ -45,6 +49,17 @@ const Label = ({ text, need, children, wide }) => (
     <span className="mb-1 block text-xs text-txt/80">{text}{need && <span className="text-p2"> *</span>}</span>
     {children}
   </label>
+);
+
+/** A titled part of the form's second step, with its picture; `hint` sits beside the title. */
+const Part = ({ icon: Ico, title, hint, children }) => (
+  <section className="border-t border-stroke/60 pt-5 first:border-0 first:pt-0">
+    <h2 className="mb-3 flex items-center gap-2 text-sm font-medium">
+      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-p1/15 text-p1"><Ico size={14} /></span>
+      {title}{hint && <span className="font-normal text-mute">· {hint}</span>}
+    </h2>
+    {children}
+  </section>
 );
 
 const Pill = ({ w }) => (
@@ -164,17 +179,29 @@ function WorkOrderForm({ start, preset, onDone, onCancel }) {
         )}
 
         {step === 1 && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <p className="text-sm text-mute sm:col-span-2">All of this can be left as it is and filled in later, on the work order’s page.</p>
-            <Label text="Priority">
-              <div className="flex gap-1 rounded-full border border-stroke p-0.5 text-sm">
-                {PRIORITY.map(([k, l]) => <button key={k} type="button" onClick={() => setV({ ...v, priority: k })} aria-pressed={v.priority === k} className={`flex-1 ${CHIP(v.priority === k)}`}>{l}</button>)}
+          <div className="space-y-5">
+            <Part icon={Flag} title="How urgent is it?">
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Priority">
+                {PRIORITY.map(([k, l, Ico, tint, hint]) => (
+                  <button key={k} type="button" aria-pressed={v.priority === k} title={hint} onClick={() => setV({ ...v, priority: k })} className={TYPE_CHIP(v.priority === k)}>
+                    <span className={`${DISC} ${tint}`}><Ico size={14} /></span>{l}
+                  </button>
+                ))}
               </div>
-            </Label>
-            <Label text="Reported on" need><DateField value={v.reported_on || ''} onChange={set('reported_on')} required className={FIELD} /></Label>
-            <Label text="Reported by"><input value={v.reported_by || ''} onChange={set('reported_by')} maxLength={120} placeholder="The tenant, the watchman…" className={FIELD} /></Label>
-            <Label text="Assigned to"><input value={v.assigned_to || ''} onChange={set('assigned_to')} maxLength={120} placeholder="The technician or the AMC vendor" className={FIELD} /></Label>
-            <Label text="Scheduled for"><DateField value={v.scheduled_on || ''} onChange={set('scheduled_on')} className={FIELD} /></Label>
+              {v.priority === 'urgent' && <p className="mt-2 text-xs text-mute">The building’s staff and the master are notified at once.</p>}
+            </Part>
+            <Part icon={UserRound} title="Who reported it?">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Label text="Reported by"><input value={v.reported_by || ''} onChange={set('reported_by')} maxLength={120} placeholder="The tenant, the watchman…" className={FIELD} /></Label>
+                <Label text="Reported on" need><DateField value={v.reported_on || ''} onChange={set('reported_on')} required className={FIELD} /></Label>
+              </div>
+            </Part>
+            <Part icon={Wrench} title="Who fixes it, and when?" hint="can be filled in later">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Label text="Assigned to"><input value={v.assigned_to || ''} onChange={set('assigned_to')} maxLength={120} placeholder="The technician or the AMC vendor" className={FIELD} /></Label>
+                <Label text="Scheduled for"><DateField value={v.scheduled_on || ''} onChange={set('scheduled_on')} className={FIELD} /></Label>
+              </div>
+            </Part>
           </div>
         )}
 
