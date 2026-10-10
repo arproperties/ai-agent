@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { reset, closeDb, db, makeUser } from './helpers/db.js';
 import { create, remove } from '../server/properties.js';
 import { createBooking } from '../server/leasing.js';
-import { createWorkOrder, getWorkOrder, listWorkOrders } from '../server/workOrders.js';
+import { createWorkOrder, getWorkOrder, listWorkOrders, updateWorkOrder, addWorkOrderNote, removeWorkOrder } from '../server/workOrders.js';
 
 test.after(() => closeDb());
 
@@ -82,4 +82,103 @@ test('a unit with work orders is not deleted, and the message says why', async (
   const { staff, u2 } = await tower();
   await createWorkOrder({ unit_id: u2.id, detail: 'Repaint the hallway' }, staff, AT);
   await assert.rejects(remove('unit', u2.id), /work orders/);
+});
+
+test('a work order moves forward step by step, and each step is written in its history', async () => {
+  const { staff, u1 } = await tower();
+  const boss = await makeUser('Boss');
+  const w = await createWorkOrder({ unit_id: u1.id, category: 'AC', detail: 'AC not cooling' }, staff, AT);
+
+  await assert.rejects(updateWorkOrder(w.id, { status: 'flying' }, staff, AT), /not a status/);
+  await assert.rejects(updateWorkOrder(w.id, { status: 'assigned' }, staff, AT), /who it is assigned to/);
+  await assert.rejects(updateWorkOrder(w.id, { status: 'closed' }, staff, AT), /Only a work order that is done/);
+  await assert.rejects(updateWorkOrder(w.id, { status: 'done' }, staff, AT), /Say what was done/);
+  await assert.rejects(updateWorkOrder(w.id, { status: 'cancelled' }, staff, AT), /Say why/);
+
+  // Typing an assignee on an open one makes it assigned; a date is its schedule.
+  let now = await updateWorkOrder(w.id, { assigned_to: 'Cool Air LLC', scheduled_on: '2026-10-28' }, boss, AT);
+  assert.deepEqual([now.status, now.assigned_to, now.scheduled_on], ['assigned', 'Cool Air LLC', '2026-10-28']);
+  now = await updateWorkOrder(w.id, { status: 'in_progress' }, staff, AT);
+  await assert.rejects(updateWorkOrder(w.id, { status: 'open' }, staff, AT), /already in progress/);
+  await assert.rejects(updateWorkOrder(w.id, { status: 'done', resolution: 'x', done_on: '2026-10-26' }, staff, AT), /in the future/);
+  now = await updateWorkOrder(w.id, { status: 'done', resolution: 'Replaced the compressor' }, staff, AT);
+  assert.deepEqual([now.status, now.resolution, now.done_on], ['done', 'Replaced the compressor', AT]);
+  await assert.rejects(updateWorkOrder(w.id, { status: 'cancelled', cancel_reason: 'x' }, staff, AT), /cannot be cancelled/);
+  now = await updateWorkOrder(w.id, { status: 'closed' }, boss, AT);
+  assert.equal(now.status, 'closed');
+
+  assert.deepEqual(now.events.map((e) => [e.kind, e.detail, e.who]), [
+    ['created', 'Raised for Sara', 'Staff'],
+    ['assigned', 'Assigned to Cool Air LLC', 'Boss'],
+    ['scheduled', 'Scheduled for 2026-10-28', 'Boss'],
+    ['status', 'Assigned → In progress', 'Staff'],
+    ['status', 'In progress → Done: Replaced the compressor', 'Staff'],
+    ['status', 'Done → Closed', 'Boss'],
+  ]);
+});
+
+test('a step can be skipped, an assignee taken off, and the words changed', async () => {
+  const { staff, u1, u2 } = await tower();
+  // A five-minute fix: open straight to done.
+  const bulb = await createWorkOrder({ unit_id: u1.id, detail: 'Bulb out' }, staff, AT);
+  const done = await updateWorkOrder(bulb.id, { status: 'done', resolution: 'Changed the bulb', done_on: '2026-10-24' }, staff, AT);
+  assert.deepEqual([done.status, done.done_on], ['done', '2026-10-24']);
+
+  const w = await createWorkOrder({ unit_id: u1.id, detail: 'Leak', assigned_to: 'Pipes Co' }, staff, AT);
+  let now = await updateWorkOrder(w.id, { assigned_to: '' }, staff, AT);
+  assert.deepEqual([now.status, now.assigned_to], ['open', null], 'with nobody on it, it is open again');
+  now = await updateWorkOrder(w.id, { detail: 'Leak under the kitchen sink', priority: 'urgent', category: 'Plumbing' }, staff, AT);
+  assert.deepEqual([now.detail, now.priority, now.category], ['Leak under the kitchen sink', 'urgent', 'Plumbing']);
+  assert.equal(now.events.at(-1).detail, 'Changed: type to Plumbing, priority to urgent, description');
+  await assert.rejects(updateWorkOrder(w.id, { detail: ' ' }, staff, AT), /Say what is wrong/);
+
+  // Nothing new: nothing is written.
+  const before = now.events.length;
+  now = await updateWorkOrder(w.id, { status: 'open', priority: 'urgent' }, staff, AT);
+  assert.equal(now.events.length, before);
+
+  // A reported day before the lease began: it is no longer the tenant's.
+  now = await updateWorkOrder(w.id, { reported_on: '2026-09-01' }, staff, AT);
+  assert.deepEqual([now.tenant, now.booking_id], [null, null]);
+  now = await updateWorkOrder(w.id, { reported_on: '2026-10-01' }, staff, AT);
+  assert.equal(now.tenant, 'Sara');
+
+  // Cancelled with its reason.
+  const paint = await createWorkOrder({ unit_id: u2.id, detail: 'Repaint' }, staff, AT);
+  const off = await updateWorkOrder(paint.id, { status: 'cancelled', cancel_reason: 'Owner will repaint next year' }, staff, AT);
+  assert.deepEqual([off.status, off.cancel_reason, off.events.at(-1).detail], ['cancelled', 'Owner will repaint next year', 'Open → Cancelled: Owner will repaint next year']);
+});
+
+test('a finished work order is reopened before it is changed, and notes can always be added', async () => {
+  const { staff, u1 } = await tower();
+  const w = await createWorkOrder({ unit_id: u1.id, detail: 'AC not cooling', assigned_to: 'Cool Air LLC' }, staff, AT);
+  await assert.rejects(updateWorkOrder(w.id, { reopen: true }, staff, AT), /not finished/);
+  await updateWorkOrder(w.id, { status: 'done', resolution: 'Regassed' }, staff, AT);
+  await updateWorkOrder(w.id, { status: 'closed' }, staff, AT);
+  await assert.rejects(updateWorkOrder(w.id, { detail: 'Something else' }, staff, AT), /Reopen it to change it/);
+
+  await assert.rejects(addWorkOrderNote(w.id, '  ', staff, AT), /Write the note/);
+  let now = await addWorkOrderNote(w.id, 'Tenant says it is warm again', staff, AT);
+  assert.deepEqual([now.events.at(-1).kind, now.events.at(-1).detail], ['note', 'Tenant says it is warm again']);
+
+  now = await updateWorkOrder(w.id, { reopen: true, note: 'Not cooling again' }, staff, AT);
+  assert.deepEqual([now.status, now.resolution, now.done_on], ['in_progress', null, null], 'it has an assignee, so work carries on');
+  assert.deepEqual([now.events.at(-1).kind, now.events.at(-1).detail], ['reopened', 'Closed → In progress: Not cooling again']);
+
+  // One with nobody on it goes back to open.
+  const bulb = await createWorkOrder({ unit_id: u1.id, detail: 'Bulb out' }, staff, AT);
+  await updateWorkOrder(bulb.id, { status: 'cancelled', cancel_reason: 'Duplicate' }, staff, AT);
+  now = await updateWorkOrder(bulb.id, { reopen: true }, staff, AT);
+  assert.deepEqual([now.status, now.cancel_reason], ['open', null]);
+});
+
+test('only a work order nobody has started is deleted; after that it is cancelled, so its history is kept', async () => {
+  const { staff, u1 } = await tower();
+  const w = await createWorkOrder({ unit_id: u1.id, detail: 'Typed twice by mistake' }, staff, AT);
+  const started = await createWorkOrder({ unit_id: u1.id, detail: 'Leak', assigned_to: 'Pipes Co' }, staff, AT);
+  await assert.rejects(removeWorkOrder(started.id), /Cancel it instead/);
+  assert.deepEqual(await removeWorkOrder(w.id), { ok: true });
+  await assert.rejects(getWorkOrder(w.id), /not found/);
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_work_order_events WHERE work_order_id = ?').get(w.id)).n, 0);
+  await assert.rejects(removeWorkOrder(999), /not found/);
 });

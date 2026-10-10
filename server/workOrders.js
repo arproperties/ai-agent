@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import { db, tx } from './db.js';
 import { bad, isDate, bookingRef, todayHere } from './leasing.js';
 
@@ -12,6 +13,7 @@ import { bad, isDate, bookingRef, todayHere } from './leasing.js';
 export const STATUS = { open: 'Open', assigned: 'Assigned', in_progress: 'In progress', done: 'Done', closed: 'Closed', cancelled: 'Cancelled' };
 export const PRIORITIES = ['low', 'normal', 'urgent'];
 export const LIVE = ['open', 'assigned', 'in_progress']; // not done yet
+const STEPS = ['open', 'assigned', 'in_progress', 'done']; // forward only; closed and cancelled have rules of their own
 const text = (v, max = 300) => String(v ?? '').trim().slice(0, max) || null;
 const day = (col) => `to_char(${col}, 'YYYY-MM-DD')`;
 
@@ -113,4 +115,105 @@ export async function listWorkOrders({ status, building_id, unit_id, booking_id,
   }
   const rows = await db.prepare(`${SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY w.reported_on DESC, w.id DESC`).all(...args);
   return rows.map((w) => shape(w, today));
+}
+
+/** A finished one goes back to work: in progress when somebody is on it, open when nobody is. */
+async function reopen(now, note, by, today) {
+  if (LIVE.includes(now.status)) throw bad(`${now.ref} is not finished.`, 409);
+  const status = now.assigned_to ? 'in_progress' : 'open';
+  const why = text(note, 500);
+  await tx(async () => {
+    await db.prepare('UPDATE lease_work_orders SET status = ?, resolution = NULL, done_on = NULL, cancel_reason = NULL WHERE id = ?').run(status, now.id);
+    await log(now.id, 'reopened', `${STATUS[now.status]} → ${STATUS[status]}${why ? `: ${why}` : ''}`, by);
+  });
+  return getWorkOrder(now.id, today);
+}
+
+/**
+ * Change a work order: its words, who is on it, when they come, or its status. Each kind of
+ * change is one line of its history. `reopen: true` takes a finished one back to work.
+ */
+export async function updateWorkOrder(id, body = {}, by, today = todayHere()) {
+  const now = await getWorkOrder(id, today);
+  if (body.reopen) return reopen(now, body.note, by, today);
+  if (['closed', 'cancelled'].includes(now.status)) throw bad(`${now.ref} is ${STATUS[now.status].toLowerCase()}. Reopen it to change it.`, 409);
+  const f = fields(body, today, { partial: true });
+  const changed = (k) => k in f && f[k] !== now[k];
+  const set = {};
+  const events = [];
+
+  const words = [['category', 'type'], ['priority', 'priority'], ['detail', 'description'], ['reported_by', 'reported by'], ['reported_on', 'reported date']].filter(([k]) => changed(k));
+  for (const [k] of words) set[k] = f[k];
+  if (words.length) events.push(['edited', `Changed: ${words.map(([k, name]) => (k === 'detail' ? name : `${name} to ${f[k] ?? 'none'}`)).join(', ')}`]);
+  // Reported on another day: the lease and tenant are those of that day.
+  if (changed('reported_on')) Object.assign(set, linkOf(await leaseOn(now.unit_id, f.reported_on)));
+
+  let status = now.status;
+  if (changed('assigned_to')) {
+    set.assigned_to = f.assigned_to;
+    events.push(['assigned', f.assigned_to ? `Assigned to ${f.assigned_to}` : 'Assignee removed']);
+    if (f.assigned_to && status === 'open') status = 'assigned';
+    if (!f.assigned_to && status === 'assigned') status = 'open';
+  }
+  if (changed('scheduled_on')) {
+    set.scheduled_on = f.scheduled_on;
+    events.push(['scheduled', f.scheduled_on ? `Scheduled for ${f.scheduled_on}` : 'Schedule cleared']);
+  }
+
+  const to = body.status;
+  if (to != null && to !== status) {
+    if (!STATUS[to]) throw bad('That is not a status.');
+    const from = status;
+    let note = '';
+    if (to === 'cancelled') {
+      if (!LIVE.includes(from)) throw bad('A work order that is done cannot be cancelled.', 409);
+      set.cancel_reason = text(body.cancel_reason, 500);
+      if (!set.cancel_reason) throw bad('Say why it is cancelled.');
+      note = set.cancel_reason;
+    } else if (to === 'closed') {
+      if (from !== 'done') throw bad('Only a work order that is done can be closed.', 409);
+    } else {
+      if (STEPS.indexOf(to) < STEPS.indexOf(from)) throw bad(`${now.ref} is already ${STATUS[from].toLowerCase()}.`, 409);
+      if (to === 'assigned' && !('assigned_to' in set ? set.assigned_to : now.assigned_to)) throw bad('Say who it is assigned to.');
+      if (to === 'done') {
+        set.resolution = text(body.resolution, 2000);
+        if (!set.resolution) throw bad('Say what was done.');
+        const on = String(body.done_on ?? '').trim() || today;
+        if (!isDate(on)) throw bad('The date is not a date.');
+        if (on > today) throw bad('The finished date cannot be in the future.');
+        set.done_on = on;
+        note = set.resolution;
+      }
+    }
+    events.push(['status', `${STATUS[from]} → ${STATUS[to]}${note ? `: ${note}` : ''}`]);
+    status = to;
+  }
+  if (status !== now.status) set.status = status;
+
+  const cols = Object.keys(set);
+  if (!cols.length) return now;
+  await tx(async () => {
+    await db.prepare(`UPDATE lease_work_orders SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => set[c]), now.id);
+    for (const [kind, detail] of events) await log(now.id, kind, detail, by);
+  });
+  return getWorkOrder(now.id, today);
+}
+
+/** A line somebody adds to the history: "tenant not home, coming back Thursday". Allowed whatever its status. */
+export async function addWorkOrderNote(id, note, by, today = todayHere()) {
+  const now = await getWorkOrder(id, today);
+  const words = text(note, 1000);
+  if (!words) throw bad('Write the note.');
+  await log(now.id, 'note', words, by);
+  return getWorkOrder(now.id, today);
+}
+
+/** Delete one raised by mistake. Once somebody is on it, it is cancelled instead, so what happened is kept. */
+export async function removeWorkOrder(id) {
+  const now = await getWorkOrder(id);
+  if (now.status !== 'open' || now.assigned_to) throw bad(`${now.ref} has been started. Cancel it instead, so its history is kept.`, 409);
+  const files = await db.prepare('SELECT file_path FROM lease_work_order_files WHERE work_order_id = ?').all(now.id);
+  await db.prepare('DELETE FROM lease_work_orders WHERE id = ?').run(now.id);
+  for (const f of files) rmSync(f.file_path, { force: true });
+  return { ok: true };
 }
