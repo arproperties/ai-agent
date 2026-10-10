@@ -250,7 +250,8 @@ export function listenUntilSilence({ onLevel, onCaptured, raw = false } = {}) {
     const abort = () => {
       if (done) return;
       done = true;
-      if (rec?.state !== 'inactive') { rec.onstop = null; rec?.stop(); }
+      // rec does not exist yet while the browser is still asking for the microphone.
+      if (rec && rec.state !== 'inactive') { rec.onstop = null; rec.stop(); }
       cleanup();
       resolve(raw ? null : ''); // treated as "said nothing"
     };

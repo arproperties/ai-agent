@@ -10,6 +10,7 @@ import Picker from './Picker';
 // and translating happen on the server (server/translate.js); this page records, shows
 // both versions, and reads the translation aloud. Every conversation is kept as text.
 
+const timed = (secs) => new Date(secs * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const dated = (secs) => new Date(secs * 1000).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 // What this phone remembers between visits. Storage can be missing (a private window),
@@ -38,6 +39,7 @@ function Bubble({ turn, from, to, busy, onSay, onRetry }) {
             {turn.translated}
           </button>
         )}
+        <p className="mt-1.5 text-[11px] text-mute/70">{from.name} · {timed(turn.created_at)}</p>
       </div>
     </li>
   );
@@ -67,6 +69,10 @@ export default function TranslatePage({ onBack }) {
   const end = useRef(null);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  // Goes up each time the open conversation is left. An answer that comes back from the
+  // server afterwards belongs to a conversation nobody is looking at: it is saved there,
+  // but must not be spoken, or added to whatever is open now.
+  const visit = useRef(0);
 
   const load = useCallback(() => api.get('/translate').then(setList).catch(() => setList((l) => l || [])), []);
   useEffect(() => {
@@ -74,7 +80,7 @@ export default function TranslatePage({ onBack }) {
     load();
   }, [load]);
   // Leaving the page lets go of the microphone and stops the voice.
-  useEffect(() => () => { stopListening(); stopSpeaking(); }, []);
+  useEffect(() => () => { visit.current++; stopListening(); stopSpeaking(); }, []);
   useEffect(() => { keep('translate.pair', pair); }, [pair]);
   useEffect(() => { keep('translate.muted', muted); if (muted) stopSpeaking(); }, [muted]);
   const turnCount = conv?.turns.length;
@@ -85,6 +91,7 @@ export default function TranslatePage({ onBack }) {
 
   const say = (turn) => {
     if (!turn.translated) return;
+    unlockAudio(); // a tap straight after a reload: the phone needs it before it will play
     setPhase('speaking');
     speakText(turn.translated, null, (s) => { if (s === 'idle' || s === 'error') setPhase('idle'); })
       .catch(() => setPhase('idle'));
@@ -93,11 +100,14 @@ export default function TranslatePage({ onBack }) {
   const talk = async (side) => {
     if (phase === side) return finishListening(); // second tap: that is everything, send it
     if (phase !== 'idle') return;                 // one thing at a time
+    const here = visit.current;
+    const left = () => visit.current !== here;
     unlockAudio();
     setError('');
     setPhase(side);
     try {
-      const blob = await listenUntilSilence({ raw: true, onCaptured: () => setPhase('working') });
+      const blob = await listenUntilSilence({ raw: true, onCaptured: () => { if (!left()) setPhase('working'); } });
+      if (left()) return;
       if (!blob) return setPhase('idle');
       const form = new FormData();
       form.append('side', side);
@@ -105,11 +115,13 @@ export default function TranslatePage({ onBack }) {
       else { form.append('langA', conv.lang_a); form.append('langB', conv.lang_b); }
       form.append('audio', blob, `turn.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`);
       const r = await api.upload('/translate/turns', form);
+      if (left()) return;
       if (!r.turn) return setPhase('idle');
       setConv((c) => (c ? { ...c, id: r.id, turns: [...c.turns, r.turn] } : c));
       if (mutedRef.current || r.turn.error) setPhase('idle');
       else say(r.turn);
     } catch (e) {
+      if (left()) return;
       setError(e.message);
       setPhase('idle');
     }
@@ -117,14 +129,19 @@ export default function TranslatePage({ onBack }) {
 
   const retry = async (turn) => {
     if (phase !== 'idle') return;
+    const here = visit.current;
+    const left = () => visit.current !== here;
+    unlockAudio();
     setError('');
     setPhase('working');
     try {
       const again = await api.post(`/translate/${conv.id}/turns/${turn.id}/retry`);
+      if (left()) return;
       setConv((c) => (c ? { ...c, turns: c.turns.map((t) => (t.id === again.id ? again : t)) } : c));
       if (mutedRef.current || again.error) setPhase('idle');
       else say(again);
     } catch (e) {
+      if (left()) return;
       setError(e.message);
       setPhase('idle');
     }
@@ -132,13 +149,18 @@ export default function TranslatePage({ onBack }) {
 
   const start = () => {
     setError('');
+    visit.current++;
     setConv({ id: null, title: `${lang(pair.a).name} ↔ ${lang(pair.b).name}`, lang_a: pair.a, lang_b: pair.b, turns: [] });
   };
   const openPast = async (id) => {
     setError('');
-    try { setConv(await api.get(`/translate/${id}`)); } catch (e) { setError(e.message); }
+    const here = ++visit.current;
+    try {
+      const past = await api.get(`/translate/${id}`);
+      if (visit.current === here) setConv(past);
+    } catch (e) { setError(e.message); }
   };
-  const close = () => { stopListening(); stopSpeaking(); setPhase('idle'); setError(''); setConv(null); load(); };
+  const close = () => { visit.current++; stopListening(); stopSpeaking(); setPhase('idle'); setError(''); setConv(null); load(); };
   const back = () => (conv ? close() : onBack());
 
   const rename = async () => {
@@ -149,7 +171,7 @@ export default function TranslatePage({ onBack }) {
   const copy = async () => {
     const text = conv.turns.map((t) => {
       const [from, to] = t.side === 'a' ? [lang(conv.lang_a), lang(conv.lang_b)] : [lang(conv.lang_b), lang(conv.lang_a)];
-      return `${from.name}: ${t.original}\n${to.name}: ${t.translated || '(not translated)'}`;
+      return `[${timed(t.created_at)}] ${from.name}: ${t.original}\n${to.name}: ${t.translated || '(not translated)'}`;
     }).join('\n\n');
     await navigator.clipboard?.writeText(text);
     setCopied(true);
@@ -220,12 +242,12 @@ export default function TranslatePage({ onBack }) {
                 {error ? <span className="text-bad">{error}</span>
                   : phase === 'a' || phase === 'b' ? 'Listening…'
                   : phase === 'working' ? <><Loader2 size={14} className="animate-spin" /> Translating…</>
-                  : phase === 'speaking' ? <><Volume2 size={14} /> Speaking…</>
+                  : phase === 'speaking' ? <button onClick={stopSpeaking} className="flex items-center gap-2 hover:text-txt"><Volume2 size={14} /> Speaking… tap to stop</button>
                   : null}
               </p>
               <div className="grid grid-cols-2 gap-3">
-                <MicButton lang={a} listening={phase === 'a'} disabled={busy && phase !== 'a'} onClick={() => talk('a')} />
-                <MicButton lang={b} listening={phase === 'b'} disabled={busy && phase !== 'b'} onClick={() => talk('b')} />
+                <MicButton lang={a} listening={phase === 'a'} disabled={!setup?.voice || (busy && phase !== 'a')} onClick={() => talk('a')} />
+                <MicButton lang={b} listening={phase === 'b'} disabled={!setup?.voice || (busy && phase !== 'b')} onClick={() => talk('b')} />
               </div>
             </div>
           </footer>

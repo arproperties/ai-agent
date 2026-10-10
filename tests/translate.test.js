@@ -268,3 +268,13 @@ test('a language the speech service has no code for is named in words instead', 
     assert.match(how.prompt, new RegExp(name), code);
   }
 });
+
+test('an id too big to be one finds nothing rather than breaking', async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  assert.equal(await getTranslation(user, '99999999999'), null);
+  assert.equal(await deleteTranslation(user, '99999999999'), false);
+  assert.equal(await retryTurn(user, '99999999999', '99999999999'), null);
+  assert.equal(await getTranslation(user, '-5'), null);
+});

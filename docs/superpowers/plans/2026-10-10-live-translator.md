@@ -1344,6 +1344,12 @@ Tick each one only after seeing it:
 - [ ] Rename, Copy text and Delete work. After Delete it is gone from the list.
 - [ ] Reloading the page keeps the last language pair.
 - [ ] Press Back while "Listening…": the browser's microphone indicator goes off.
+- [ ] Press Back while "Translating…": nothing is spoken afterwards, and the turn is in that conversation when reopened. Then the same again, but tap Start straight away: the late turn does not appear in the new conversation.
+- [ ] Press Back while "Speaking…": the voice stops. Tapping "Speaking… tap to stop" also stops it.
+- [ ] Tap a mic button twice very quickly, and press Back during the browser's microphone permission prompt: the page never sticks on "Listening…".
+- [ ] Deny the microphone: the page says "Microphone not available…" and the buttons come back.
+- [ ] Each bubble shows who spoke and the time.
+- [ ] On an iPhone, reload, open a past conversation and tap a translation: it is read aloud.
 - [ ] On an iPhone (Safari, or the installed app): one full turn each way works, including the spoken translation.
 - [ ] Try one turn each in Urdu and Hindi. If the speech service rejects a language code, remove that language from `LANGUAGES` or drop its hint, and note which.
 

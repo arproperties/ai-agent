@@ -46,7 +46,9 @@ export const LANGUAGES = [
 const lang = (code) => LANGUAGES.find((l) => l.code === code);
 
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
-const int = (v) => (Number.isInteger(Number(v)) ? Number(v) : 0); // anything else matches no row
+// A row id, or 0 (which matches no row) for anything that could not be one: a word, a
+// fraction, or a number too big for the column, which Postgres would otherwise reject loudly.
+const int = (v) => { const n = Number(v); return Number.isInteger(n) && n > 0 && n <= 2147483647 ? n : 0; };
 
 // What was said is handed over as data inside <speech>, never as part of the instructions,
 // so "ignore the above and…" is just a sentence to translate.
