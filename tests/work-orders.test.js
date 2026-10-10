@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { createWorkOrder, getWorkOrder, listWorkOrders, updateWorkOrder, addWorkOrderNote, removeWorkOrder,
   addWorkOrderFiles, getWorkOrderFile, removeWorkOrderFile, workOrderUnits, workOrderLink, moveMaintenanceNotes } from '../server/workOrders.js';
 import { tenantHistory } from '../server/leasingHistory.js';
+import { leasingKit } from '../server/leasingKit.js';
 
 test.after(() => closeDb());
 
@@ -267,4 +268,42 @@ test('a tenant’s history shows their work orders as maintenance, and counts th
   assert.deepEqual([h.summary.maintenance, h.summary.maintenance_open], [2, 1], 'a cancelled one is not counted');
   assert.deepEqual(h.current, { unit_id: u1.id, unit_no: '101', building: 'Tower' });
   assert.equal((await tenantHistory(sara, '2026-12-01')).current, null, 'after the lease, they have no unit');
+});
+
+test('Riley raises a work order, moves it on, and says what is open', async () => {
+  const { staff, u1 } = await tower();
+  const kit = leasingKit({ id: staff, role: 'member' });
+  const run = async (name, input) => kit.run({ id: 't1', name, input });
+  for (const name of ['leasing_work_orders', 'leasing_add_work_order', 'leasing_update_work_order']) assert.ok(kit.definitions.some((d) => d.name === name), name);
+
+  let r = await run('leasing_add_work_order', { building: 'tower', unit_no: '999', detail: 'AC not cooling' });
+  assert.ok(r.is_error);
+  assert.match(r.content, /no unit "999"/);
+
+  // A fixed day inside Sara's lease, so the test reads the same whenever it is run.
+  r = await run('leasing_add_work_order', { building: 'tower', unit_no: '101', detail: 'AC not cooling', category: 'AC', priority: 'urgent', reported_on: '2026-10-01' });
+  assert.equal(r.is_error, undefined);
+  const [w] = await listWorkOrders({ unit_id: u1.id });
+  assert.match(r.content, new RegExp(`^Work order ${w.ref} raised`));
+  assert.match(r.content, /for Sara/);
+  assert.deepEqual([w.priority, w.category, w.created_by], ['urgent', 'AC', staff]);
+
+  r = await run('leasing_update_work_order', { work_order: w.ref, assigned_to: 'Cool Air LLC', scheduled_on: '2026-10-28', note: 'Vendor called' });
+  assert.match(r.content, /Assigned/);
+  const now = await getWorkOrder(w.id);
+  assert.deepEqual([now.status, now.assigned_to, now.events.at(-1).detail], ['assigned', 'Cool Air LLC', 'Vendor called']);
+
+  // The year of a reference can be stale; the number is what finds it.
+  r = await run('leasing_update_work_order', { work_order: `WO-2019-${String(w.id).padStart(4, '0')}`, status: 'done', resolution: 'Regassed' });
+  assert.match(r.content, /Done/);
+  r = await run('leasing_update_work_order', { work_order: w.ref });
+  assert.ok(r.is_error);
+  assert.match(r.content, /Say what to change/);
+  r = await run('leasing_update_work_order', { work_order: 'the AC one' });
+  assert.match(r.content, /Give the work order reference/);
+
+  r = await run('leasing_work_orders', { building: 'tower' });
+  assert.match(r.content, new RegExp(`${w.ref} \\(Done, urgent\\): unit 101, Tower, Sara; AC: AC not cooling`));
+  r = await run('leasing_work_orders', { building: 'tower', unit_no: '102' });
+  assert.match(r.content, /No work orders/);
 });
