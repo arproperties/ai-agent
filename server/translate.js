@@ -24,7 +24,7 @@ export const LANGUAGES = [
   { code: 'ta', name: 'Tamil', native: 'தமிழ்' },
   { code: 'te', name: 'Telugu', native: 'తెలుగు' },
   { code: 'pa', name: 'Punjabi', native: 'ਪੰਜਾਬੀ', unhinted: true },
-  { code: 'tl', name: 'Tagalog', native: 'Tagalog' },
+  { code: 'tl', name: 'Filipino (Tagalog)', native: 'Filipino' },
   { code: 'ne', name: 'Nepali', native: 'नेपाली' },
   { code: 'si', name: 'Sinhala', native: 'සිංහල', unhinted: true },
   { code: 'ps', name: 'Pashto', native: 'پښتو', rtl: true, unhinted: true },
