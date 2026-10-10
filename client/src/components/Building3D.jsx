@@ -342,7 +342,7 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
         </div>
       )}
 
-      {units.length === 0 && !draft && !reading && <p className="absolute inset-0 grid place-items-center px-6 text-center text-sm text-mute">This building has no units yet. {master ? 'Upload its floor plan above, or add them under Properties.' : 'Add them under Properties.'}</p>}
+      {units.length === 0 && !draft && !reading && <p className="pointer-events-none absolute inset-x-0 bottom-24 px-6 text-center text-sm text-mute">This building has no units yet. {master ? 'Upload its floor plan above, or add them under Properties.' : 'Add them under Properties.'}</p>}
     </div>
   );
 }
