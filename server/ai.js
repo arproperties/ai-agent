@@ -10,12 +10,14 @@ const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPE
 
 // language: an ISO 639-1 code ('ar', 'ur'…) when the caller knows what is being spoken.
 // It makes short phrases far more reliable; without it the model works the language out.
-export async function transcribe(buffer, mimetype, { language } = {}) {
+// prompt: a line of context in words, for a language the API has no code for.
+export async function transcribe(buffer, mimetype, { language, prompt } = {}) {
   if (!openai) throw new Error('Voice is not configured (OPENAI_API_KEY missing)');
   const res = await openai.audio.transcriptions.create({
     file: await toFile(buffer, `audio.${audioExt(mimetype)}`, { type: mimetype }),
     model: 'gpt-4o-mini-transcribe',
     ...(language ? { language } : {}),
+    ...(prompt ? { prompt } : {}),
   });
   return res.text;
 }

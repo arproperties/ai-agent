@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, makeUser, closeDb, db } from './helpers/db.js';
 import {
-  engine, LANGUAGES, addTurn, retryTurn, clean,
+  engine, LANGUAGES, addTurn, retryTurn, clean, hearing,
   listTranslations, getTranslation, renameTranslation, deleteTranslation,
 } from '../server/translate.js';
 
@@ -255,4 +255,16 @@ test('an id that is not a number finds nothing rather than breaking', async () =
   assert.equal(await deleteTranslation(user, undefined), false);
   assert.equal(await retryTurn(user, 'abc', 'def'), null);
   await assert.rejects(() => addTurn(user, { id: 'abc', side: 'a', buffer: audio }), (e) => e.status === 404);
+});
+
+// Found against the real speech service: it refuses the code of some languages outright
+// ("Language code 'pa' is not recognized"), which would fail every turn in that language.
+test('a language the speech service has no code for is named in words instead', () => {
+  assert.deepEqual(hearing('ar'), { language: 'ar' });
+  for (const code of ['pa', 'si', 'ps', 'am']) {
+    const name = LANGUAGES.find((l) => l.code === code).name;
+    const how = hearing(code);
+    assert.equal(how.language, undefined, code);
+    assert.match(how.prompt, new RegExp(name), code);
+  }
 });
