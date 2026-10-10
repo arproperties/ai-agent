@@ -35,7 +35,7 @@ async function model(content, { web = false, maxTokens = 2500 } = {}) {
   // A long search can pause the turn: it is picked up where it stopped, a few times at most.
   for (let turn = 0; turn < 4; turn++) {
     const res = await claude.messages.create({ model: MODEL, max_tokens: maxTokens, messages,
-      ...(web ? { tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }] } : {}) });
+      ...(web ? { tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }] } : {}) });
     text += res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     if (res.stop_reason !== 'pause_turn') break;
     messages.push({ role: 'assistant', content: res.content });
@@ -275,6 +275,32 @@ export async function findSuppliers(id, deps) {
     found.push({ name, email, website: line(x.website) || null, phone: line(x.phone, 60) || null, kind: x.kind === 'broker' ? 'broker' : 'insurer', why: line(x.why) || null });
   }
   return { known, found };
+}
+
+// The search takes a minute or more, longer than a page should wait on one request: the
+// screen begins it, asks after it, and collects what it found.
+const finding = new Map(); // a renewal → its search: under way, or done and not yet collected
+
+/** Begin looking for suppliers, unless that is already under way. */
+export function beginFind(id, deps) {
+  const key = Number(id);
+  if (!finding.has(key)) {
+    const job = { done: false };
+    finding.set(key, job);
+    findSuppliers(key, deps).then((result) => { job.result = result; }, (e) => { job.error = e; }).finally(() => { job.done = true; });
+  }
+  return { pending: true };
+}
+
+/** How the search stands: still going, or what it found (given once), or that none was begun. */
+export function foundSoFar(id) {
+  const key = Number(id);
+  const job = finding.get(key);
+  if (!job) return { pending: false, none: true };
+  if (!job.done) return { pending: true };
+  finding.delete(key);
+  if (job.error) throw job.error;
+  return { pending: false, ...job.result };
 }
 
 /** Put suppliers on a renewal: ones already kept (supplier_id) or new ones by name. */
@@ -637,6 +663,22 @@ export async function lookUp(supplierId, deps) {
   return supplierOut(await db.prepare(`SELECT ${SUPPLIER} FROM prop_suppliers WHERE id = ?`).get(s.id));
 }
 
+const looking = new Set(); // the suppliers being looked up this minute, so none is looked up twice at once
+/** Whether any supplier with an offer on this renewal is being looked up right now (the screen waits and reads again). */
+export const isLooking = (view) => view.quotes.some((q) => looking.has(q.supplier_id));
+
+/**
+ * Look up every supplier that has quoted on a renewal and never was. A web search each, so
+ * it takes a minute or more: the screen starts it and comes back, rather than waiting.
+ */
+export async function lookUpQuoted(id, deps) {
+  const r = await rawRenewal(id);
+  const suppliers = new Map((await listSuppliers()).map((s) => [s.id, s]));
+  const todo = [...new Set((await quotesOf(r.id)).map((q) => q.supplier_id))].filter((sid) => !suppliers.get(sid)?.about?.checked_on && !looking.has(sid));
+  for (const sid of todo) looking.add(sid);
+  await Promise.all(todo.map((sid) => lookUp(sid, deps).catch((e) => console.error('[renewals] look-up:', e.message)).finally(() => looking.delete(sid))));
+}
+
 const WEIGH = (d, current, offers) => 'A property company is renewing this and has these offers. Compare each offer with the current terms from the buyer\'s side, and say which you would take.\n'
   + `${JSON.stringify({ what: d.title, for: d.where, current, offers })}\n`
   + `Reply with one JSON object and nothing else: "verdicts": for each offer's quote_id, for each of ${ROWS.join(', ')} that can be compared, "better", "worse" or "same" than the current terms `
@@ -646,9 +688,9 @@ const WEIGH = (d, current, offers) => 'A property company is renewing this and h
 
 /**
  * The offers beside the current policy: each supplier's latest, figure by figure, marked
- * better, worse or the same, with which one Riley would take and why. Suppliers that have
- * quoted and were never looked up are looked up first. If the model cannot be asked, the
- * figures are still laid side by side, with no marks and nothing recommended.
+ * better, worse or the same, with which one Riley would take and why. If the model cannot
+ * be asked, the figures are still laid side by side, with no marks and nothing recommended.
+ * Looking the suppliers up is a separate, slower thing (lookUpQuoted): this does not wait on it.
  */
 export async function compare(id, deps) {
   const { think } = use(deps);
@@ -659,8 +701,6 @@ export async function compare(id, deps) {
   const d = await documentOf(r.document_id);
 
   const suppliers = new Map((await listSuppliers()).map((s) => [s.id, s]));
-  await Promise.all([...latest.keys()].filter((sid) => !suppliers.get(sid)?.about?.checked_on)
-    .map((sid) => lookUp(sid, deps).then((s) => suppliers.set(sid, s)).catch(() => {})));
 
   const current = Object.fromEntries([['supplier', d.details.insurer], ...ROWS.map((k) => [k, d.details[k]])].filter(([, v]) => v));
   const offers = [...latest.values()].sort((a, b) => a.id - b.id).map((q) => ({ quote_id: q.id, supplier_id: q.supplier_id, supplier: q.supplier,
@@ -823,16 +863,18 @@ export const renewalRoutes = Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 renewalRoutes.use(requireMaster); // a renewal commits the company to a supplier: all of it is the master's
 // With whether this person's own mailbox can send, so the screen knows to offer Approve or the words to copy.
-const shown = async (req, v) => ({ ...v, can_send: canSend(await real.account(req.user.id)), me: req.user.id });
+const shown = async (req, v) => ({ ...v, can_send: canSend(await real.account(req.user.id)), me: req.user.id, looking: isLooking(v) });
+// Begun and left to run: a web search for each supplier is too long to hold a request open for.
+const lookUpBehind = (id) => { lookUpQuoted(id).catch((e) => console.error('[renewals] look-ups:', e.message)); };
 
 renewalRoutes.get('/', wrap(async (req, res) => res.json({ renewals: await listRenewals() })));
 renewalRoutes.get('/suppliers', wrap(async (req, res) => res.json(await listSuppliers())));
 renewalRoutes.put('/suppliers/:sid', wrap(async (req, res) => res.json(await updateSupplier(req.params.sid, req.body))));
 renewalRoutes.delete('/suppliers/:sid', wrap(async (req, res) => res.json(await removeSupplierForGood(req.params.sid))));
-renewalRoutes.post('/suppliers/:sid/lookup', wrap(async (req, res) => res.json(await lookUp(req.params.sid))));
 renewalRoutes.post('/', wrap(async (req, res) => res.json(await shown(req, await startRenewal(req.body?.document_id, req.user.id)))));
 renewalRoutes.get('/:id', wrap(async (req, res) => res.json(await shown(req, await getRenewal(req.params.id)))));
-renewalRoutes.post('/:id/find', wrap(async (req, res) => res.json(await findSuppliers(req.params.id))));
+renewalRoutes.post('/:id/find', wrap(async (req, res) => { await getRenewal(req.params.id); res.json(beginFind(req.params.id)); }));
+renewalRoutes.get('/:id/find', wrap(async (req, res) => res.json(foundSoFar(req.params.id))));
 renewalRoutes.post('/:id/suppliers', wrap(async (req, res) => res.json(await shown(req, await addSuppliers(req.params.id, req.body?.suppliers)))));
 renewalRoutes.delete('/:id/suppliers/:sid', wrap(async (req, res) => res.json(await shown(req, await removeSupplier(req.params.id, req.params.sid)))));
 renewalRoutes.post('/:id/requests', wrap(async (req, res) => res.json(await shown(req, await draftRequests(req.params.id, req.body?.supplier_ids, req.user.id)))));
@@ -846,6 +888,17 @@ renewalRoutes.post('/:id/chase', wrap(async (req, res) => res.json(await shown(r
 renewalRoutes.post('/:id/quotes', upload.single('file'), wrap(async (req, res) => res.json(await shown(req, await addQuote(req.params.id, req.body?.supplier_id, req.file)))));
 renewalRoutes.delete('/:id/quotes/:qid', wrap(async (req, res) => res.json(await shown(req, await removeQuote(req.params.id, req.params.qid)))));
 renewalRoutes.get('/:id/quotes/:qid/file', wrap(async (req, res) => sendDoc(req, res, await quoteFile(req.params.id, req.params.qid))));
-renewalRoutes.post('/:id/compare', wrap(async (req, res) => res.json(await shown(req, await compare(req.params.id)))));
+renewalRoutes.post('/:id/compare', wrap(async (req, res) => {
+  const v = await compare(req.params.id);
+  lookUpBehind(v.id);
+  await new Promise((ok) => setImmediate(ok)); // let the look-ups mark themselves as begun, so the answer says so
+  res.json(await shown(req, v));
+}));
+renewalRoutes.post('/:id/lookup', wrap(async (req, res) => {
+  const v = await getRenewal(req.params.id);
+  lookUpBehind(v.id);
+  await new Promise((ok) => setImmediate(ok));
+  res.json(await shown(req, v));
+}));
 renewalRoutes.post('/:id/decide', wrap(async (req, res) => res.json(await shown(req, await decide(req.params.id, req.body?.quote_id, req.user.id)))));
 renewalRoutes.post('/:id/close', wrap(async (req, res) => res.json(await shown(req, await closeRenewal(req.params.id, req.body?.status)))));

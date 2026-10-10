@@ -39,6 +39,13 @@ test('a renewal is a case on one document: its current insurer listed, suppliers
   assert.deepEqual(found.found.map((s) => [s.name, s.email, s.why]), [['Chubb', 'quotes@chubb.com', 'Insures commercial buildings in Texas']]);
   assert.equal((await R.listSuppliers()).length, 1, 'nothing found is kept yet');
   assert.deepEqual(await R.findSuppliers(r.id, { search: async () => { throw new Error('offline'); } }), { known: [], found: [], failed: true });
+  // On the screen the search runs behind: it is begun, asked after, and collected once.
+  assert.deepEqual(R.foundSoFar(r.id), { pending: false, none: true });
+  assert.deepEqual([R.beginFind(r.id, { search }), R.beginFind(r.id, { search })], [{ pending: true }, { pending: true }]);
+  let got = R.foundSoFar(r.id);
+  for (let i = 0; got.pending && i < 50; i++) { await new Promise((ok) => setTimeout(ok, 20)); got = R.foundSoFar(r.id); }
+  assert.deepEqual([got.pending, got.found.map((s) => s.name)], [false, ['Chubb']]);
+  assert.deepEqual(R.foundSoFar(r.id), { pending: false, none: true }, 'collected once');
 
   // Added by a person: an address they give is one they have confirmed.
   const orient = r.suppliers[0];
@@ -263,6 +270,9 @@ test('the offers beside the current policy, what was found about each supplier, 
       pick: chubbQ, why: 'Chubb is USD 1,500 cheaper for the same cover.', unsure: 'Its deductible is twice as high.' }) };
 
   let v = await R.compare(r.id, deps);
+  assert.equal(looked.length, 0, 'comparing does not wait on the web');
+  await R.lookUpQuoted(r.id, deps);
+  v = await R.getRenewal(r.id);
   assert.deepEqual(v.compared.current, { supplier: 'Orient Insurance', premium: 'USD 18,400', sum_insured: 'USD 12,500,000', deductible: 'USD 5,000', cover: 'Building and common areas' });
   assert.deepEqual(v.compared.offers.map((o) => [o.supplier, o.premium, o.deductible, o.verdicts]),
     [['Chubb', 'USD 16,900', 'USD 10,000', { premium: 'better', deductible: 'worse', cover: 'same' }], ['Orient Insurance', 'USD 19,900', 'USD 5,000', { premium: 'worse' }]]);
@@ -273,6 +283,7 @@ test('the offers beside the current policy, what was found about each supplier, 
   assert.equal(looked.length, 2, 'each supplier that quoted is looked up');
 
   await R.compare(r.id, deps);
+  await R.lookUpQuoted(r.id, deps);
   assert.equal(looked.length, 2, 'and not looked up again');
 
   // The model down: the figures are still side by side, with no verdicts and nothing recommended.

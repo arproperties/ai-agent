@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronLeft, Copy, ExternalLink, FileUp, Loader2, Mail, Paperclip, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { usDate as fmt } from '../lib/usFormat';
@@ -134,6 +134,30 @@ export default function Renewal({ id, onBack, onFile }) {
   };
   const act = (label, fn, then) => run(label, fn).then((v) => { if (v) { take(v.renewal || v); then?.(v); } return v; });
   const reload = () => api.get(base).then(take).catch(() => {});
+  const here = useRef(true); // false once the page is left, so nothing still waiting writes to it
+  useEffect(() => () => { here.current = false; }, []);
+  const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  // The search takes a minute or more, so it runs on the server while this asks after it.
+  const find = async () => {
+    setBusy('Riley is searching the web for insurers and brokers. This takes a minute or two…'); setError(''); setNote('');
+    try {
+      await api.post(`${base}/find`, {});
+      for (let i = 0; i < 100 && here.current; i++) {
+        await wait(3000);
+        const f = await api.get(`${base}/find`);
+        if (f.pending) continue;
+        if (here.current && !f.none) setFound(f);
+        break;
+      }
+    } catch (e) { if (here.current) setError(e.message); }
+    if (here.current) setBusy('');
+  };
+  // Looking the suppliers up runs on the server too: while it does, the page reads again every few seconds.
+  useEffect(() => {
+    if (!r?.looking) return undefined;
+    const t = setTimeout(reload, 5000);
+    return () => clearTimeout(t);
+  }, [r]);
   // Approving hands the email to the outbox; a moment later the renewal knows it has gone.
   const decideDraft = (draftId, verb) => run(verb === 'approve' ? 'Sending…' : 'Withdrawing…', () => api.post(`/email/drafts/${draftId}/${verb}`, {}))
     .then((ok) => { if (ok) { reload(); if (verb === 'approve') setTimeout(reload, 2500); } });
@@ -193,7 +217,7 @@ export default function Renewal({ id, onBack, onFile }) {
             <Candidates found={found} onClose={() => setFound(null)} onAdd={(list) => act('Adding…', () => api.post(`${base}/suppliers`, { suppliers: list }), () => setFound(null))} />
           ) : (
             <div className="flex flex-wrap gap-2">
-              <button className={QUIET} disabled={!!busy} onClick={() => run('Riley is looking for insurers and brokers…', () => api.post(`${base}/find`, {})).then((f) => f && setFound(f))}><Search size={15} /> Find more with Riley</button>
+              <button className={QUIET} disabled={!!busy} onClick={find}><Search size={15} /> Find more with Riley</button>
             </div>
           ))}
 
@@ -367,7 +391,13 @@ export default function Renewal({ id, onBack, onFile }) {
                       <dl className="mt-1 space-y-0.5 text-sm">
                         {[['summary', 'Who they are'], ['licensed', 'Licence'], ['rating', 'Rating'], ['since', 'Trading since']].filter(([k]) => a[k]).map(([k, l]) => <div key={k} className="flex gap-3"><dt className="shrink-0 text-mute">{l}</dt><dd className="min-w-0 flex-1 break-words text-right">{a[k]}</dd></div>)}
                       </dl>
-                    ) : <p className="mt-1 text-sm text-mute">Nothing could be found.</p>}
+                    ) : r.looking ? <p className="mt-1 flex items-center gap-2 text-sm text-mute"><Loader2 size={14} className="animate-spin" /> Riley is looking them up. This takes a minute or two…</p>
+                      : (
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <p className="min-w-0 flex-1 text-sm text-mute">{a.checked_on ? 'Nothing could be found.' : 'Not looked up yet.'}</p>
+                          {!a.checked_on && <button className={QUIET} onClick={() => act('Starting…', () => api.post(`${base}/lookup`, {}))}><Search size={14} /> Look them up</button>}
+                        </div>
+                      )}
                     {(a.sources || []).map((s) => <a key={s.url} href={s.url} target="_blank" rel="noreferrer" className="mt-1 flex items-center gap-1 text-xs text-p3 hover:underline"><ExternalLink size={12} /> {s.title}</a>)}
                   </div>
                 );
