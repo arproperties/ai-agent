@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { db } from './db.js';
 import { MODELS } from './config.js';
 import { docHistory } from './properties.js';
-import { cleanAddresses } from './drafts.js';
+import { cleanAddresses, createDraft, logAction } from './drafts.js';
+import { store, discard } from './draftFiles.js';
+import { replySubject } from './imap.js';
+import { usDate } from './usFormat.js';
 
 // Renewals: getting a document that is due renewed, with Riley doing the legwork. A renewal
 // is a case on one document. She lists who to ask (the insurer on the policy, others found
@@ -284,5 +288,143 @@ export async function closeRenewal(id, status) {
   if (!['not_renewing', 'cancelled'].includes(status)) throw bad('A renewal is closed as not renewing or cancelled.');
   if (!['open', 'decided'].includes(r.status)) throw bad('This renewal is already closed.', 409);
   await db.prepare(`UPDATE prop_renewals SET status = ?, closed_at = ${NOW} WHERE id = ?`).run(status, r.id);
+  return getRenewal(r.id);
+}
+
+// ---------- requests ----------
+
+const CHASE_AFTER = 5; // days with no reply before a follow-up is written
+const canSend = (acc) => !!(acc && acc.can_write && acc.smtp_host);
+const fill = (text, supplier) => String(text || '').replace(/\{supplier\}/g, supplier);
+
+/** The facts a request is written from. What is paid today is left out: it is not another insurer's to know. */
+async function brief(d, by) {
+  const user = await db.prepare('SELECT name FROM users WHERE id = ?').get(Number(by) || 0);
+  const place = [d.where, d.address, d.city, d.state].filter(Boolean).join(', ');
+  return { title: d.title, place, company: d.company, number: d.number, expiry: d.expiry_date ? usDate(d.expiry_date) : null, sender: user?.name || d.company,
+    cover: d.details.cover, sum_insured: d.details.sum_insured, deductible: d.details.deductible, insurer: d.details.insurer };
+}
+
+/** The request in plain words, for when the model cannot write it: to a new supplier, and to the one who holds the policy now. */
+function plainWording(b) {
+  const facts = [b.cover && `Cover: ${b.cover}`, b.sum_insured && `Sum insured: ${b.sum_insured}`, b.deductible && `Deductible: ${b.deductible}`].filter(Boolean).join('\n');
+  const ask = 'with the premium, the sum insured, the deductible, what is covered and any exclusions, and how long the offer stands';
+  const sign = `Thank you,\n${b.sender}\n${b.company}`;
+  return {
+    new: { subject: `Quotation request: ${b.title}, ${b.place}`,
+      body: `Dear {supplier} team,\n\n${b.company} would like a quotation for ${b.title} for ${b.place}.\n\n${facts ? `${facts}\n` : ''}${b.expiry ? `The present policy expires on ${b.expiry}.\n` : ''}\nPlease send your quotation ${ask}. The present policy schedule is attached where we have it.\n\n${sign}` },
+    renewal: { subject: `Renewal terms: ${b.title}${b.number ? `, policy ${b.number}` : ''}`,
+      body: `Dear {supplier} team,\n\nOur ${b.title}${b.number ? ` (policy ${b.number})` : ''} for ${b.place} ${b.expiry ? `expires on ${b.expiry}` : 'is coming up for renewal'}.\n\nPlease send your renewal terms ${ask}.\n\n${sign}` },
+  };
+}
+
+const WORDING = (b) => `Write two short, courteous business emails for ${b.company}, a property company, signed by ${b.sender}. Use only these facts and invent nothing:\n${JSON.stringify(b)}\n`
+  + '1. "new": to an insurer or broker we have not used, asking for a quotation for this cover. 2. "renewal": to the supplier that holds it now, asking for renewal terms. '
+  + 'Each asks for the premium, the sum insured, the deductible, what is covered, any exclusions and how long the offer stands. Say the present policy schedule is attached. '
+  + 'Never mention what we pay now. Write {supplier} wherever the name of the company written to belongs. Plain text, no markdown. '
+  + 'Reply with one JSON object and nothing else: {"new": {"subject": "...", "body": "..."}, "renewal": {"subject": "...", "body": "..."}}.';
+
+async function wordingFor(d, by, think) {
+  const b = await brief(d, by);
+  const plain = plainWording(b);
+  try {
+    const got = pull(await think(WORDING(b)));
+    for (const k of ['new', 'renewal']) if (line(got?.[k]?.subject, 200) && line(got[k].body, 20000)) plain[k] = { subject: line(got[k].subject, 200), body: line(got[k].body, 20000) };
+  } catch (e) { console.error('[renewals] wording:', e.message); }
+  return plain;
+}
+
+/** The policy as a file to go with an email, or none when it has no file (or the file has gone). */
+function policyFile(d) {
+  if (!d.file_path) return [];
+  try { return [{ name: d.file_name || 'policy', mimetype: d.file_mime, buffer: readFileSync(d.file_path) }]; } catch { return []; }
+}
+
+/**
+ * Write the request to each supplier named (or to every one not yet written to): a draft
+ * that waits for `by` to approve it, with the policy attached. Nothing is written to an
+ * address nobody has confirmed. With no mailbox that can send, the words are kept on the
+ * request instead, to be copied and sent by hand.
+ */
+export async function draftRequests(id, supplierIds, by, deps) {
+  const { think, account } = use(deps);
+  const r = await rawRenewal(id);
+  if (r.status !== 'open') throw bad('This renewal is no longer open.', 409);
+  const want = Array.isArray(supplierIds) && supplierIds.length ? supplierIds.map(Number) : null;
+  const todo = (await requestsOf(r.id)).filter((q) => ['listed', 'written'].includes(q.state) && (!want || want.includes(q.supplier_id)));
+  if (!todo.length) return getRenewal(r.id);
+  const missing = todo.filter((q) => !q.email || !q.email_confirmed);
+  if (missing.length) throw bad(`Confirm an email address first for: ${missing.map((q) => q.name).join(', ')}.`);
+
+  const d = await documentOf(r.document_id);
+  const words = await wordingFor(d, by, think);
+  const acc = await account(by);
+  for (const q of todo) {
+    const w = words[q.is_current ? 'renewal' : 'new'];
+    const [subject, body] = [fill(w.subject, q.name), fill(w.body, q.name)];
+    if (!canSend(acc)) {
+      await db.prepare('UPDATE prop_renewal_requests SET subject = ?, body = ?, draft_id = NULL WHERE id = ?').run(subject, body, q.request_id);
+      continue;
+    }
+    const attachments = store(by, policyFile(d)); // each email its own copy: one is removed when its email goes
+    let draft;
+    try { draft = await createDraft(by, { to: [q.email], subject, body, from: acc.email, attachments }); } catch (e) { discard({ attachments: JSON.stringify(attachments) }); throw e; }
+    await logAction(by, { action: 'draft', draftId: draft.id, recipients: draft.to_addrs });
+    await db.prepare('UPDATE prop_renewal_requests SET draft_id = ?, subject = NULL, body = NULL WHERE id = ?').run(draft.id, q.request_id);
+  }
+  return getRenewal(r.id);
+}
+
+const requestOf = async (renewalId, requestId) => {
+  const q = (await requestsOf(renewalId)).find((x) => x.request_id === Number(requestId));
+  if (!q) throw bad('Not found', 404);
+  return q;
+};
+
+/** Reword a request that has not gone: the draft while it waits (its own drafter only), or the words kept for copying. */
+export async function editRequest(id, requestId, { subject, body } = {}, by) {
+  const r = await rawRenewal(id);
+  const q = await requestOf(r.id, requestId);
+  const [s, b] = [line(subject, 200), String(body ?? '').trim().slice(0, 20000)];
+  if (!s || !b) throw bad('An email needs a subject and some words.');
+  if (q.state === 'drafted') {
+    if (q.draft_owner !== by) throw bad('Only the person who drafted it can change it.', 403);
+    const done = await db.prepare("UPDATE email_drafts SET subject = ?, body = ? WHERE id = ? AND status = 'pending'").run(s, b, q.draft_id);
+    if (!done.changes) throw bad('This email has already been decided.', 409);
+  } else if (q.state === 'written') {
+    await db.prepare('UPDATE prop_renewal_requests SET subject = ?, body = ? WHERE id = ?').run(s, b, q.request_id);
+  } else throw bad('This request can no longer be changed.', 409);
+  return getRenewal(r.id);
+}
+
+/** A request copied out and sent by hand: say so, and it counts as asked. */
+export async function markSent(id, requestId) {
+  const r = await rawRenewal(id);
+  const q = await requestOf(r.id, requestId);
+  if (q.state !== 'written') throw bad(q.state === 'listed' ? 'There is nothing written to this supplier yet.' : 'This request has already gone.', 409);
+  await db.prepare(`UPDATE prop_renewal_requests SET manual_sent_at = ${NOW} WHERE id = ?`).run(q.request_id);
+  return getRenewal(r.id);
+}
+
+/**
+ * A follow-up, drafted to each supplier whose request went five or more days ago and has
+ * not been answered: once each, threaded onto the request, and waiting for approval like
+ * any other. `now` is the moment, in seconds.
+ */
+export async function chase(id, by, deps, now = Math.floor(Date.now() / 1000)) {
+  const { account } = use(deps);
+  const r = await rawRenewal(id);
+  const acc = await account(by);
+  if (r.status !== 'open' || !canSend(acc)) return getRenewal(r.id);
+  const d = await documentOf(r.document_id);
+  const b = await brief(d, by);
+  for (const q of await requestsOf(r.id)) {
+    if (q.state !== 'sent' || q.chased_at || !q.draft_id || now - q.sent_at < CHASE_AFTER * 86400) continue;
+    const body = `Dear ${q.name} team,\n\nWe wrote on ${usDate(new Date(q.sent_at * 1000).toISOString().slice(0, 10))} asking for ${q.is_current ? 'renewal terms' : 'a quotation'} for ${b.title} for ${b.place}`
+      + `${b.expiry ? `, which expires on ${b.expiry}` : ''}. We would be glad to have it, or to know if you will not be quoting.\n\nThank you,\n${b.sender}\n${b.company}`;
+    const draft = await createDraft(by, { to: [q.email], subject: replySubject(q.subject), body, from: acc.email, inReplyTo: q.message_id, refs: q.message_id });
+    await logAction(by, { action: 'draft', draftId: draft.id, recipients: draft.to_addrs });
+    await db.prepare('UPDATE prop_renewal_requests SET chaser_draft_id = ?, chased_at = ? WHERE id = ?').run(draft.id, now, q.request_id);
+  }
   return getRenewal(r.id);
 }
