@@ -27,6 +27,10 @@ const days = (n) => `${n} day${n === 1 ? '' : 's'}`;
 const pct = (x) => `${Math.round(x * 100)}%`;
 const floorName = (f) => (f == null || f === '' ? 'No floor' : /^\d+$/.test(String(f).trim()) ? `Floor ${f}` : String(f));
 
+// A unit saved with no floor takes it from its number: 601 is on floor 6, 1001 on floor 10.
+const floorOf = (u) => (u.floor != null && u.floor !== '' ? u.floor : /^[1-9]\d{2,3}$/.test(u.unit_no) ? u.unit_no.slice(0, -2) : null);
+const level = (f) => { const n = String(f ?? '').replace(/\D/g, ''); return n ? Number(n) : -1; }; // those with no number (G, or none) go under floor 1
+
 let lastBuilding = ''; // the building last looked at, so coming back from a lease or a repair returns to it
 
 export default function Building3D({ onPay, onLease, onNew, onWork }) {
@@ -51,7 +55,12 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
 
   const building = d?.buildings.find((b) => String(b.id) === String(buildingId)) || d?.buildings[0];
   // Bottom floor first, as the tower is built.
-  const floors = useMemo(() => (building ? [...building.floors].reverse() : []), [building]);
+  const floors = useMemo(() => {
+    if (!building) return [];
+    const all = building.floors.flat().map((u) => ({ ...u, floor: floorOf(u) }));
+    return [...new Set(all.map((u) => u.floor))].sort((a, b) => level(a) - level(b))
+      .map((f) => all.filter((u) => u.floor === f).sort((a, b) => a.unit_no.localeCompare(b.unit_no, undefined, { numeric: true })));
+  }, [building]);
   const units = useMemo(() => floors.flat(), [floors]);
   const repairsOf = useMemo(() => {
     const m = new Map();
