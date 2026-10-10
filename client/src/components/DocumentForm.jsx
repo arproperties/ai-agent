@@ -1,10 +1,14 @@
 import { useRef, useState } from 'react';
 import { Loader2, Paperclip, Sparkles } from 'lucide-react';
 import { api } from '../lib/api';
+import { usDate as fmt } from '../lib/usFormat';
 import DateField from './DateField';
 import Select from './Select';
 
 // The form a document is filed with, whoever it belongs to: a company, a building or a unit.
+// A new document is not typed in: the file is attached, read, and what was read is shown to
+// be checked and saved. The boxes only appear when somebody asks to change something, when
+// the file could not be read, or when there is no file at all.
 // Choosing the file sends it to be read (server/documentReader.js), and what comes back fills
 // the boxes still empty, outlined until somebody touches them: a suggestion, checked by a
 // person before it is saved. The figures on it (insurer, premium, cover…) are never typed:
@@ -46,6 +50,7 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
   const [file, setFile] = useState(null);
   const [reading, setReading] = useState(false);
   const [unread, setUnread] = useState(false); // the file was looked at and nothing could be taken from it
+  const [manual, setManual] = useState(!!start); // the boxes are showing: an edit, a correction, or nothing to read from
   const [suggested, setSuggested] = useState([]); // the boxes filled in from the file and not yet touched
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -87,7 +92,8 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
       setV(nextV); setDetails(nextD); setSuggested(filled);
       // Nothing came back at all: say so, rather than leave empty boxes that look as if nothing was tried.
       setUnread(!Object.keys(got).length);
-    } catch { if (mine === reads.current) setUnread(true); }
+      if (!nextV.title) setManual(true); // not enough was read to save it as it is: the boxes are there to finish it
+    } catch { if (mine === reads.current) { setUnread(true); setManual(true); } }
     if (mine === reads.current) setReading(false);
   };
 
@@ -121,40 +127,64 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
         <span className="truncate">{reading ? 'Reading the file…' : file ? file.name : start?.has_file ? `Replace file (${start.file_name})` : 'Attach the file (PDF or photo): it is read for you'}</span>
         <input type="file" accept="application/pdf,image/*,.doc,.docx" className="hidden" onChange={(e) => choose(e.target.files?.[0] || null)} />
       </label>
-      {!start && !file && !reading && <p className="flex items-center gap-1.5 px-1 text-xs text-p3"><Sparkles size={13} /> Attach the document first: its name, number and dates are read from it and filled in below.</p>}
-      {suggested.length > 0 && <p className="flex items-center gap-1.5 px-1 text-xs text-p3"><Sparkles size={13} /> Filled in from the file. Check the outlined boxes before you save.</p>}
       {unread && !reading && <p className="px-1 text-xs text-warn">This file could not be read (a PDF or a clear photo works best). Fill in the boxes below by hand.</p>}
-      <input value={v.title} onChange={set('title')} required placeholder="Document name, e.g. Fire insurance *" className={look('title')} />
-      <input value={v.number} onChange={set('number')} placeholder="Number / reference" className={look('number')} />
-      <div className="grid grid-cols-2 gap-2">
-        <label className="text-xs text-mute">Issue date<DateField value={v.issue_date} onChange={set('issue_date')} className={look('issue_date')} wrap="mt-1" /></label>
-        <label className="text-xs text-mute">Expiry date<DateField value={v.expiry_date} onChange={set('expiry_date')} className={look('expiry_date')} wrap="mt-1" /></label>
-      </div>
-      <p className="px-1 text-xs text-mute">Leave expiry empty for documents that do not expire (e.g. MOA).</p>
-      <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-sm">
-        <span className="text-txt/80">Start renewing</span>
-        <span className="flex items-center gap-2">
-          <input value={v.renew_days} inputMode="numeric" aria-label="Days before it expires to start renewing"
-            onChange={(e) => setV({ ...v, renew_days: e.target.value.replace(/\D/g, '').slice(0, 3) })}
-            className="glass w-16 rounded-xl px-3 py-2 text-right tabular-nums outline-none focus:border-p1/70" />
-          <span className="text-mute">days before it expires</span>
-        </span>
-      </div>
-      <div className={SEGMENT}>
-        {BY.map(([k, l]) => <button key={k} type="button" onClick={() => setV({ ...v, renew_by: k })} aria-pressed={v.renew_by === k} className={seg(v.renew_by === k)}>{l}</button>)}
-      </div>
-      {/* The figures are the reader's to fill, not a person's: shown as read, and kept with the document. */}
-      {DETAILS.some(([k]) => details[k]) && (
-        <dl className="space-y-0.5 rounded-xl border border-stroke/60 px-3.5 py-2.5 text-sm">
-          <dt className="flex items-center gap-1.5 pb-1 text-xs text-p3"><Sparkles size={13} /> Read from the file</dt>
+
+      {!manual && !file && !reading && (
+        <p className="flex flex-wrap items-center gap-x-1.5 px-1 text-xs text-p3">
+          <Sparkles size={13} /> Attach the document and its name, number and dates are read from it. Nothing to type.
+          <button type="button" onClick={() => setManual(true)} className="text-mute underline hover:text-txt">I have no file</button>
+        </p>
+      )}
+
+      {/* What was read, to be checked and saved as it is. */}
+      {!manual && file && !reading && v.title && (
+        <dl className="space-y-1 rounded-xl border border-stroke/60 px-3.5 py-3 text-sm">
+          <dt className="flex items-center gap-1.5 pb-1 text-xs text-p3"><Sparkles size={13} /> Read from the file. Check it, then save.</dt>
+          {[['Document', v.title], ['Number', v.number], ['Issued', v.issue_date && fmt(v.issue_date)]].filter(([, x]) => x).map(([l, x]) => (
+            <div key={l} className="flex gap-3"><dt className="shrink-0 text-mute">{l}</dt><dd className="min-w-0 flex-1 break-words text-right">{x}</dd></div>
+          ))}
+          <div className="flex gap-3"><dt className="shrink-0 text-mute">Expires</dt>
+            <dd className={`min-w-0 flex-1 text-right ${v.expiry_date ? 'font-medium' : 'text-warn'}`}>{v.expiry_date ? fmt(v.expiry_date) : 'No expiry date was found: add one if it has one'}</dd></div>
           {DETAILS.filter(([k]) => details[k]).map(([k, l]) => <div key={k} className="flex gap-3"><dt className="shrink-0 text-mute">{l}</dt><dd className="min-w-0 flex-1 break-words text-right">{details[k]}</dd></div>)}
+          {v.expiry_date && <dd className="pt-1 text-xs text-mute">You will be reminded from {v.renew_days} days before it expires{v.renew_by === 'quotes' ? ', and Riley can get quotes to renew it' : ''}.</dd>}
+          <dd className="pt-1 text-right"><button type="button" onClick={() => setManual(true)} className="text-xs text-mute underline hover:text-txt">Something is wrong: change it</button></dd>
         </dl>
       )}
-      <textarea value={v.notes} onChange={set('notes')} rows={2} placeholder="Notes" className={`${FIELD} resize-none`} />
+
+      {manual && <>
+        {suggested.length > 0 && <p className="flex items-center gap-1.5 px-1 text-xs text-p3"><Sparkles size={13} /> Filled in from the file. Check the outlined boxes before you save.</p>}
+        <input value={v.title} onChange={set('title')} required placeholder="Document name, e.g. Fire insurance *" className={look('title')} />
+        <input value={v.number} onChange={set('number')} placeholder="Number / reference" className={look('number')} />
+        <div className="grid grid-cols-2 gap-2">
+          <label className="text-xs text-mute">Issue date<DateField value={v.issue_date} onChange={set('issue_date')} className={look('issue_date')} wrap="mt-1" /></label>
+          <label className="text-xs text-mute">Expiry date<DateField value={v.expiry_date} onChange={set('expiry_date')} className={look('expiry_date')} wrap="mt-1" /></label>
+        </div>
+        <p className="px-1 text-xs text-mute">Leave expiry empty for documents that do not expire (e.g. MOA).</p>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-sm">
+          <span className="text-txt/80">Start renewing</span>
+          <span className="flex items-center gap-2">
+            <input value={v.renew_days} inputMode="numeric" aria-label="Days before it expires to start renewing"
+              onChange={(e) => setV({ ...v, renew_days: e.target.value.replace(/\D/g, '').slice(0, 3) })}
+              className="glass w-16 rounded-xl px-3 py-2 text-right tabular-nums outline-none focus:border-p1/70" />
+            <span className="text-mute">days before it expires</span>
+          </span>
+        </div>
+        <div className={SEGMENT}>
+          {BY.map(([k, l]) => <button key={k} type="button" onClick={() => setV({ ...v, renew_by: k })} aria-pressed={v.renew_by === k} className={seg(v.renew_by === k)}>{l}</button>)}
+        </div>
+        {/* The figures are the reader's to fill, not a person's: shown as read, and kept with the document. */}
+        {DETAILS.some(([k]) => details[k]) && (
+          <dl className="space-y-0.5 rounded-xl border border-stroke/60 px-3.5 py-2.5 text-sm">
+            <dt className="flex items-center gap-1.5 pb-1 text-xs text-p3"><Sparkles size={13} /> Read from the file</dt>
+            {DETAILS.filter(([k]) => details[k]).map(([k, l]) => <div key={k} className="flex gap-3"><dt className="shrink-0 text-mute">{l}</dt><dd className="min-w-0 flex-1 break-words text-right">{details[k]}</dd></div>)}
+          </dl>
+        )}
+        <textarea value={v.notes} onChange={set('notes')} rows={2} placeholder="Notes" className={`${FIELD} resize-none`} />
+      </>}
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
-        <button disabled={busy} className="rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2 text-sm font-medium text-white disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button>
+        {(manual || (file && !reading && v.title)) && <button disabled={busy} className="rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2 text-sm font-medium text-white disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button>}
       </div>
     </form>
   );
