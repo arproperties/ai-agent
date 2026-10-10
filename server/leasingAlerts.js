@@ -4,6 +4,7 @@ import { requireMaster } from './auth.js';
 import { snapshot, dayNo, total, todayHere, bad, dueName, logEvent } from './leasing.js';
 import { region, hourHere, dayOf, cash } from './leasingRegion.js';
 import { usDate } from './usFormat.js';
+import { register } from './properties.js';
 
 // Leasing alerts: what needs somebody's attention today, and the buzz that says so.
 //
@@ -22,12 +23,13 @@ const DEFAULTS = {
   ending: { on: true, lease: [90, 60, 30], short: [14, 3] }, // days before a lease or a short stay ends
   contract: { on: true, days: 3 },                       // confirmed this long with no contract
   eid: { on: true, days: 30 },                           // the tenant's ID expires within this
+  document: { on: true, days: [60, 30, 7], every: 7 },   // a document inside its renewal window: more days before it expires, then every so many after
   summary: { on: true },                                 // the morning's one-line total, to the master
   quiet: { from: 22, to: 8 },                            // no buzz between these hours (the business's time zone)
   latefee: { on: false, days: 5, amount: 0, percent: 0 }, // a fee on rent still unpaid after the days of grace: fixed, a share of the rent, or both
   tenant: { on: false },                                 // email the tenant the reminder automatically, on the due day and the overdue days
 };
-export const RULES = ['overdue', 'due', 'upcoming', 'ending', 'contract', 'eid'];
+export const RULES = ['overdue', 'due', 'upcoming', 'ending', 'contract', 'eid', 'document'];
 const aed = (n) => cash(Math.round(n));
 // Loaded when first needed, so the list and the rules still work where push was never set up.
 const sendPush = (userIds, note) => import('./push.js').then((m) => m.sendPush(userIds, note));
@@ -68,6 +70,7 @@ export async function saveSettings(body = {}, today = todayHere()) {
     ending: { on: on('ending'), lease: pick('ending', 'lease', (v) => dayList(v, 'Days before a lease ends')), short: pick('ending', 'short', (v) => dayList(v, 'Days before a short stay ends')) },
     contract: { on: on('contract'), days: pick('contract', 'days', (v) => whole(v, 60, 'Days without a contract')) },
     eid: { on: on('eid'), days: pick('eid', 'days', (v) => whole(v, 180, 'Days before the ID expires')) },
+    document: { on: on('document'), days: pick('document', 'days', (v) => dayList(v, 'Days before a document expires')), every: pick('document', 'every', (v) => Math.max(1, whole(v, 90, 'Repeat every'))) },
     summary: { on: on('summary') },
     quiet: { from: pick('quiet', 'from', (v) => whole(v, 23, 'Quiet from')), to: pick('quiet', 'to', (v) => whole(v, 23, 'Quiet until')) },
   };
@@ -82,10 +85,11 @@ export const isQuiet = ({ from, to }, hour) => (from === to ? false : from < to 
  * Everything that needs attention on `s.today`, most pressing first. Each has:
  *   rule, key (rule:id, what the sent-once log is kept against), level (bad | warn | info),
  *   title, detail, the booking and place it is about, `open` (which screen deals with it:
- *   pay | docs | booking | tenants), `owner` (who made the booking), and `fires`: whether
- *   today is one of the days this rule buzzes a phone.
+ *   pay | docs | booking | tenants | documents), `owner` (who made the booking), and `fires`:
+ *   whether today is one of the days this rule buzzes a phone. `q` is the company or building
+ *   the list is narrowed to, for what is not found through a booking.
  */
-export async function openAlerts(s, cfg) {
+export async function openAlerts(s, cfg, q = {}) {
   const out = [];
   // Who hears of it: whoever made the booking and whoever looks after its building (and the master, always).
   const add = (rule, id, b, a) => { const w = s.where(b); out.push({ rule, key: `${rule}:${id}`, ...w, owner: b.created_by, staff: s.staffOf.get(w.building_id) || [], ...a }); };
@@ -144,13 +148,27 @@ export async function openAlerts(s, cfg) {
         detail: `${unit(s.where(b))} · ${on}`, fires: left === cfg.eid.days });
     }
   }
+  // A document, from the day its own renewal window opens until a renewed copy is filed.
+  // It belongs to no lease, so it is told to its building's staff (a company's, to the master alone).
+  if (cfg.document.on) {
+    for (const d of await register({ company_id: q.company_id, building_id: q.building_id }, s.today)) {
+      const left = d.days_left;
+      if (left == null || left > d.renew_days) continue;
+      out.push({ rule: 'document', key: `document:${d.id}`, document_id: d.id, open: 'documents', days: left,
+        level: left <= 0 ? 'bad' : left <= 30 ? 'warn' : 'info',
+        building: d.building, building_id: d.in_building, company: d.company, unit_no: d.unit_no, owner: null, staff: s.staffOf.get(d.in_building) || [],
+        title: left < 0 ? `${d.title} has expired` : `${d.title} expires ${left === 0 ? 'today' : `in ${left} day${left === 1 ? '' : 's'}`}`,
+        detail: `${d.where} · ${usDate(d.expiry_date)}`,
+        fires: left === d.renew_days || left === 0 || (left > 0 && cfg.document.days.includes(left)) || (left < 0 && -left % cfg.document.every === 0) });
+    }
+  }
   const rank = { bad: 0, warn: 1, info: 2 };
   return out.sort((a, b) => rank[a.level] - rank[b.level] || RULES.indexOf(a.rule) - RULES.indexOf(b.rule) || (b.amount || 0) - (a.amount || 0));
 }
 
 /** The Alerts screen: what is open for one company, one building, or everything. */
 export async function listAlerts(q = {}, today = todayHere()) {
-  return openAlerts(await snapshot(q, today), await getSettings());
+  return openAlerts(await snapshot(q, today), await getSettings(), q);
 }
 
 /**
@@ -169,13 +187,14 @@ export async function runAlerts(today = todayHere(), hour = hourHere(), { mail }
 
   const byUser = new Map();
   const give = (userId, item) => byUser.set(userId, [...(byUser.get(userId) || []), item]);
-  // Rent that is overdue and that this person has never been told about goes out now, whatever
-  // day it is on: a tenancy brought in already late (the import), or one whose day to buzz
-  // fell while the server was down. After that it keeps to the rule's days.
+  // Rent that is overdue, or a document inside its window, that this person has never been
+  // told about goes out now, whatever day it is on: a tenancy brought in already late, a
+  // document filed when it was already due, or one whose day to buzz fell while the server
+  // was down. After that it keeps to the rule's days.
   const told = async (userId, key) => !!(await db.prepare('SELECT 1 FROM lease_alerts_sent WHERE user_id = ? AND key = ? LIMIT 1').get(userId, key));
   for (const a of all) {
     for (const userId of new Set([a.owner, ...a.staff, ...masters].filter(Boolean))) {
-      const goes = a.fires || (a.rule === 'overdue' && !(await told(userId, a.key)));
+      const goes = a.fires || ((a.rule === 'overdue' || a.rule === 'document') && !(await told(userId, a.key)));
       if (goes && await fresh(userId, a.key)) give(userId, a);
     }
   }
