@@ -1071,7 +1071,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants onHistory={(t) => setForm({ historyOf: t })} /></Page>;
   if (tab === 'reports') return <Page title="Reports" onBack={onBack}><LeasingReports key={key} name={report} onName={onReport} onPay={pay} /></Page>;
   if (tab === 'alerts') return <Page title="Alerts" onBack={onBack}><LeasingAlerts key={key} rule={alert} onRule={onAlert} onOpen={openAlert} /></Page>;
-  if (tab === 'documents') return <Page title="Documents" onBack={onBack}><Documents key={key} openId={docOpen} /></Page>;
+  if (tab === 'documents') return <Page title="Documents" onBack={onBack}><Documents key={key} openId={docOpen} onOpened={() => setDocOpen(null)} /></Page>;
 
   return <Page title="Overview" onBack={onBack} action={add}><LeasingOverview key={key} onPay={pay} onAlerts={(k) => { onAlert(k); setTab('alerts'); }} /></Page>;
 }

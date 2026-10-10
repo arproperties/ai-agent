@@ -48,7 +48,8 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
   const [error, setError] = useState('');
   // What is in the boxes right now, for when the reading comes back: it may not overwrite what was typed meanwhile.
   const live = useRef();
-  live.current = { v, details };
+  live.current = { v, details, suggested };
+  const reads = useRef(0); // which reading is the latest: one that comes back after another file was chosen, or after saving, is dropped
 
   const touch = (f) => setSuggested((s) => s.filter((x) => x !== f));
   const set = (f) => (e) => { touch(f); setV({ ...v, [f]: e.target.value }); };
@@ -58,12 +59,22 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
   // A new document's file is read while the form is filled in. Only boxes still empty take what was read.
   const choose = async (picked) => {
     setFile(picked);
-    if (!picked || start) return;
-    setReading(true);
+    if (start) return;
+    const mine = ++reads.current;
+    // What the last file suggested and nobody touched goes with that file, not with this one.
+    const was = live.current;
+    const keptV = { ...was.v };
+    const keptD = { ...was.details };
+    for (const f of was.suggested) { if (f in keptD) keptD[f] = ''; else keptV[f] = ''; }
+    setV(keptV); setDetails(keptD); setSuggested([]);
+    live.current = { v: keptV, details: keptD, suggested: [] };
+    setReading(!!picked);
+    if (!picked) return;
     try {
       const form = new FormData();
       form.append('file', picked);
       const got = await api.upload('/properties/documents/read', form);
+      if (mine !== reads.current) return;
       const now = live.current;
       const filled = [];
       const nextV = { ...now.v };
@@ -73,7 +84,7 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
       for (const [f] of DETAILS) if (got.details?.[f] && !now.details[f]) { nextD[f] = got.details[f]; filled.push(f); }
       setV(nextV); setDetails(nextD); setSuggested(filled);
     } catch { /* not read: the form is filled in by hand */ }
-    setReading(false);
+    if (mine === reads.current) setReading(false);
   };
 
   const submit = async (e) => {
@@ -81,6 +92,9 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
     if (busy) return;
     const own = owner || { [`${at.kind}_id`]: at[`${at.kind}_id`] };
     if (!start && !Object.values(own)[0]) { setError(`Choose the ${at.kind} this document belongs to.`); return; }
+    // Saving does not wait for the reading: one still on its way is no longer wanted.
+    reads.current += 1;
+    setReading(false);
     setBusy(true);
     setError('');
     const form = new FormData();
@@ -132,7 +146,7 @@ export default function DocumentForm({ owner, preset, places, start, from, onDon
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
-        <button disabled={busy || reading} className="rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2 text-sm font-medium text-white disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button>
+        <button disabled={busy} className="rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2 text-sm font-medium text-white disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button>
       </div>
     </form>
   );

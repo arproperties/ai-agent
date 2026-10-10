@@ -9,6 +9,7 @@ const claudeAsk = (...args) => import('./ai.js').then((m) => m.ask(...args));
 
 const DETAILS = ['insurer', 'premium', 'sum_insured', 'deductible', 'cover'];
 const IMAGE = /^image\/(jpeg|png|gif|webp)$/;
+const WAIT = 45_000; // how long a reading is waited for before the form is left to be filled in by hand
 
 const PROMPT = `This is a document a property company keeps on file (an insurance policy, a licence, a certificate, a contract). Read it and reply with one JSON object and nothing else, using only these keys and leaving out any you cannot see on the page:
 "title": what the document is, in a few words (e.g. "Property insurance", "Trade License"), without the name of the company or the insurer
@@ -64,13 +65,17 @@ function block(file) {
 }
 
 /** What an uploaded file says about itself, to fill the form with. {} when it cannot be read, for any reason. */
-export async function readDocument(file, { ask = claudeAsk } = {}) {
+export async function readDocument(file, { ask = claudeAsk, timeoutMs = WAIT } = {}) {
   const b = file && block(file);
   if (!b) return {};
+  let timer;
+  const late = new Promise((_, no) => { timer = setTimeout(() => no(new Error('the reading took too long')), timeoutMs); });
   try {
-    return suggestion(await ask(null, { maxTokens: 600, content: [b, { type: 'text', text: PROMPT }] }));
+    return suggestion(await Promise.race([ask(null, { maxTokens: 600, content: [b, { type: 'text', text: PROMPT }] }), late]));
   } catch (e) {
     console.error('[document-reader]', e.message);
     return {};
+  } finally {
+    clearTimeout(timer);
   }
 }

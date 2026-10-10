@@ -33,3 +33,7 @@ test('the figures kept with a document: known names only, as short lines of text
   for (const none of ['', '{}', [1], null, undefined]) assert.deepEqual(cleanDetails(none), {});
   assert.throws(() => cleanDetails('{not json'), /details/);
 });
+
+test('a reading that does not come back is given up on, so the form is never left waiting', { timeout: 3000 }, async () => {
+  assert.deepEqual(await readDocument(pdf, { ask: () => new Promise(() => {}), timeoutMs: 20 }), {});
+});

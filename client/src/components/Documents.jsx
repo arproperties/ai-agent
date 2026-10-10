@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronRight, Loader2, Plus, Search } from 'lucide-react';
 import { api } from '../lib/api';
 import Select from './Select';
@@ -12,7 +12,7 @@ import DocumentSheet, { DOT, CHIP, chipText } from './DocumentSheet';
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const STATUS = [['', 'Any status'], ['expired', 'Expired'], ['due', 'Due for renewal'], ['valid', 'Valid'], ['on_file', 'On file']];
 
-export default function Documents({ openId, building }) {
+export default function Documents({ openId, onOpened, building }) {
   const [d, setD] = useState(null); // { documents, master }
   const [places, setPlaces] = useState(null);
   const [error, setError] = useState('');
@@ -21,11 +21,13 @@ export default function Documents({ openId, building }) {
   const [open, setOpen] = useState(null); // a row of the list, or 'new'
   const load = () => api.get('/properties/documents').then(setD).catch((e) => setError(e.message));
   useEffect(() => { load(); api.get('/properties/places').then(setPlaces).catch(() => {}); }, []);
-  // Arriving from an alert: the document it is about opens once the list is here, and only that once.
-  const arrived = useRef(false);
+  // Arriving from an alert: the document it is about opens once the list is here. Saying so
+  // (onOpened) lets whoever sent us forget it, so it does not open again on the next visit.
   useEffect(() => {
-    const row = openId && d?.documents.find((x) => x.id === openId);
-    if (row && !arrived.current) { arrived.current = true; setOpen(row); }
+    if (!openId || !d) return;
+    const row = d.documents.find((x) => x.id === openId);
+    if (row) setOpen(row);
+    onOpened?.();
   }, [openId, d]);
 
   if (error) return <p className="text-sm text-bad">{error}</p>;
