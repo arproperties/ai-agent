@@ -851,6 +851,35 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_transcripts_user ON transcripts(user_id, id DESC);
 `);
 
+// Live Translator (server/translate.js): two people, two languages, one phone. A
+// conversation is fixed to its pair of languages; each turn keeps what was said and what
+// it was turned into. side is who spoke: 'a' spoke lang_a, 'b' spoke lang_b. error is set
+// when the words were heard but could not be translated, so the turn can be tried again.
+// No audio is kept.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS translations (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title  TEXT NOT NULL DEFAULT '',
+    lang_a TEXT NOT NULL,
+    lang_b TEXT NOT NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_translations_user ON translations(user_id, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS translation_turns (
+    id SERIAL PRIMARY KEY,
+    translation_id INTEGER NOT NULL REFERENCES translations(id) ON DELETE CASCADE,
+    side TEXT NOT NULL,
+    original   TEXT NOT NULL,
+    translated TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_translation_turns ON translation_turns(translation_id, id);
+`);
+
 // A reminder one person sends to others — the tables behind server/teamReminders.js.
 //
 // Apart from todos on purpose: a todo is one person's own list, this is a message with a

@@ -8,11 +8,14 @@ export const claude = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY || proc
 // OpenAI: voice only (speech-to-text and text-to-speech)
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
-export async function transcribe(buffer, mimetype) {
+// language: an ISO 639-1 code ('ar', 'ur'…) when the caller knows what is being spoken.
+// It makes short phrases far more reliable; without it the model works the language out.
+export async function transcribe(buffer, mimetype, { language } = {}) {
   if (!openai) throw new Error('Voice is not configured (OPENAI_API_KEY missing)');
   const res = await openai.audio.transcriptions.create({
     file: await toFile(buffer, `audio.${audioExt(mimetype)}`, { type: mimetype }),
     model: 'gpt-4o-mini-transcribe',
+    ...(language ? { language } : {}),
   });
   return res.text;
 }

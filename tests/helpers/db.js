@@ -35,7 +35,7 @@ const TABLES = [
   'imports', 'documents', 'chunks', 'memories', 'outlook_accounts', 'imap_accounts', 'email_drafts', 'email_action_log',
   'dm_groups', 'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
   'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs', 'saifsys_access', 'saifsys_action_access', 'ars_booking_requests',
-  'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'team_reminders', 'team_reminder_people', 'team_reminder_photos', 'reminder_suggestions', 'suggestion_scans',
+  'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'translations', 'translation_turns', 'team_reminders', 'team_reminder_people', 'team_reminder_photos', 'reminder_suggestions', 'suggestion_scans',
   'tenant_inbox', 'tenant_inbox_members', 'tenant_asks', 'responsibilities', 'responsibility_proposals', 'hr_links',
   'checklists', 'checklist_items', 'checklist_runs', 'checklist_run_items',
   'buildings', 'building_sites', 'building_staff', 'building_jobs_seen',
