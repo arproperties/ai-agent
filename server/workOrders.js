@@ -135,13 +135,18 @@ export async function listWorkOrders({ status, building_id, unit_id, booking_id,
   if (overdue === true || overdue === 'true' || overdue === '1') add("w.status IN ('open', 'assigned', 'in_progress') AND w.scheduled_on < ?::date", today);
   const words = String(q ?? '').trim().toLowerCase();
   if (words) {
-    add(`lower(concat_ws(' ', 'WO-' || to_char(w.reported_on, 'YYYY') || '-' || lpad(w.id::text, 4, '0'), u.unit_no, bl.name, w.tenant, w.category, w.detail, w.assigned_to)) LIKE ?`, `%${words}%`);
+    add(`lower(concat_ws(' ', 'WO-' || to_char(w.reported_on, 'YYYY') || '-' || lpad(w.id::text, greatest(4, length(w.id::text)), '0'), u.unit_no, bl.name, w.tenant, w.category, w.detail, w.assigned_to)) LIKE ?`, `%${words}%`);
   }
   const rows = await db.prepare(`${SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY w.reported_on DESC, w.id DESC`).all(...args);
   return rows.map((w) => shape(w, today));
 }
 
 /** A finished one goes back to work: in progress when somebody is on it, open when nobody is. */
+/** A closed or cancelled work order is changed only after it is reopened. */
+function mustBeOpen(w) {
+  if (['closed', 'cancelled'].includes(w.status)) throw bad(`${w.ref} is ${STATUS[w.status].toLowerCase()}. Reopen it to change it.`, 409);
+}
+
 async function reopen(now, note, by, today) {
   if (LIVE.includes(now.status)) throw bad(`${now.ref} is not finished.`, 409);
   const status = now.assigned_to ? 'in_progress' : 'open';
@@ -160,7 +165,7 @@ async function reopen(now, note, by, today) {
 export async function updateWorkOrder(id, body = {}, by, today = todayHere()) {
   const now = await getWorkOrder(id, today);
   if (body.reopen) return reopen(now, body.note, by, today);
-  if (['closed', 'cancelled'].includes(now.status)) throw bad(`${now.ref} is ${STATUS[now.status].toLowerCase()}. Reopen it to change it.`, 409);
+  mustBeOpen(now);
   const f = fields(body, today, { partial: true });
   const changed = (k) => k in f && f[k] !== now[k];
   const set = {};
@@ -249,6 +254,7 @@ const FILE_DIR = `${DATA_DIR}/leasing`;
 /** Attach files: as many as are sent, added to the ones it has. */
 export async function addWorkOrderFiles(id, files, by, today = todayHere()) {
   const now = await getWorkOrder(id, today);
+  mustBeOpen(now);
   if (!files?.length) throw bad('Choose a file to attach.');
   const names = [];
   for (const file of files) {
@@ -268,6 +274,7 @@ export const getWorkOrderFile = async (id) => {
 
 export async function removeWorkOrderFile(id, by) {
   const f = await getWorkOrderFile(id);
+  mustBeOpen(await getWorkOrder(f.work_order_id));
   await db.prepare('DELETE FROM lease_work_order_files WHERE id = ?').run(f.id);
   rmSync(f.file_path, { force: true });
   await log(f.work_order_id, 'file_removed', `Removed ${f.file_name}`, by);
@@ -300,20 +307,31 @@ export async function moveMaintenanceNotes() {
       ${day('l.happened_on')} AS happened_on, ${day('l.resolved_on')} AS resolved_on, b.unit_id, t.full_name AS tenant
     FROM lease_tenant_log l JOIN lease_bookings b ON b.id = l.booking_id JOIN lease_tenants t ON t.id = l.tenant_id
     WHERE l.kind = 'maintenance' ORDER BY l.id`).all();
-  for (const n of notes) {
-    await tx(async () => {
-      const { id } = await db.prepare(`INSERT INTO lease_work_orders (unit_id, booking_id, tenant_id, tenant, category, detail, reported_by, reported_on, status, resolution, done_on, created_by, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(n.unit_id, n.booking_id, n.tenant_id, n.tenant, n.category, n.detail, n.reported_by, n.happened_on,
-        n.resolved_on ? 'closed' : 'open', n.resolved_on ? n.resolution : null, n.resolved_on, n.created_by, n.created_at);
-      await db.prepare('INSERT INTO lease_work_order_events (work_order_id, kind, detail, user_id, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(id, 'created', `Moved from the tenant’s history${n.resolved_on ? `, resolved ${n.resolved_on}` : ''}`, n.created_by, n.created_at);
-      // The files stay where they are on disk; only the rows that point at them move.
-      await db.prepare(`INSERT INTO lease_work_order_files (work_order_id, file_path, file_name, file_mime, uploaded_by, created_at)
-        SELECT ?::int, file_path, file_name, file_mime, uploaded_by, created_at FROM lease_tenant_log_files WHERE log_id = ? ORDER BY id`).run(id, n.id);
-      await db.prepare('DELETE FROM lease_tenant_log WHERE id = ?').run(n.id);
-    });
+  let moved = 0;
+  for (const first of notes) {
+    try {
+      moved += await tx(async () => {
+        // Read the note again under a lock: another run may have moved it since the list above.
+        const n = await db.prepare(`SELECT id, tenant_id, booking_id, category, detail, reported_by, resolution, created_by, created_at,
+            ${day('happened_on')} AS happened_on, ${day('resolved_on')} AS resolved_on
+          FROM lease_tenant_log WHERE id = ? AND kind = 'maintenance' FOR UPDATE`).get(first.id);
+        if (!n) return 0;
+        const { id } = await db.prepare(`INSERT INTO lease_work_orders (unit_id, booking_id, tenant_id, tenant, category, detail, reported_by, reported_on, status, resolution, done_on, created_by, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(first.unit_id, n.booking_id, n.tenant_id, first.tenant, n.category, n.detail, n.reported_by, n.happened_on,
+          n.resolved_on ? 'closed' : 'open', n.resolved_on ? n.resolution : null, n.resolved_on, n.created_by, n.created_at);
+        await db.prepare('INSERT INTO lease_work_order_events (work_order_id, kind, detail, user_id, created_at) VALUES (?, ?, ?, ?, ?)')
+          .run(id, 'created', `Moved from the tenant’s history${n.resolved_on ? `, resolved ${n.resolved_on}` : ''}`, n.created_by, n.created_at);
+        // The files stay where they are on disk; only the rows that point at them move.
+        await db.prepare(`INSERT INTO lease_work_order_files (work_order_id, file_path, file_name, file_mime, uploaded_by, created_at)
+          SELECT ?::int, file_path, file_name, file_mime, uploaded_by, created_at FROM lease_tenant_log_files WHERE log_id = ? ORDER BY id`).run(id, n.id);
+        await db.prepare('DELETE FROM lease_tenant_log WHERE id = ?').run(n.id);
+        return 1;
+      });
+    } catch (e) {
+      console.error(`[work-orders] note ${first.id} not moved: ${e.message}`);
+    }
   }
-  return notes.length;
+  return moved;
 }
 
 // ---------- routes ----------

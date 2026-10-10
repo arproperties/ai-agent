@@ -1321,7 +1321,7 @@ await db.exec('ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS tenant_energy
 // A tenant's record beyond the money: complaints made about them (noise, parking…) and
 // maintenance done for them, typed in by staff. Late rent is not here: it is worked out from
 // the schedule and its payments (leasingHistory.js).
-//   kind: complaint | maintenance. category: a free word for it (Noise, AC…).
+//   kind: complaint | maintenance. Maintenance is a work order now (server/workOrders.js); only older notes with no lease stay as maintenance here. category: a free word for it (Noise, AC…).
 //   booking_id: the booking the tenant was in that day, so the entry carries the unit.
 //   resolved_on: NULL while it is open.
 //   lease_tenant_log_files: what is attached to an entry (photos, the invoice), any number.

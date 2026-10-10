@@ -18,7 +18,7 @@ import { createWorkOrder, updateWorkOrder, addWorkOrderNote, getWorkOrder, listW
 // that exists is changed, not made a second time. She reads a unit's inspections and what comes
 // next for it, and writes one down as the person tells her how the unit is; photos are added on the screens.
 // She raises a work order for a repair, moves it on as she is told (assigned, done, closed…) and says what is open.
-// She never records a payment, cancels or deletes: people do that on the screens.
+// She never records a payment, cancels a lease or deletes: people do that on the screens.
 
 const REPORT = { rent_roll: 'rent-roll', overdue: 'aging', collections: 'collections', expiring_leases: 'expiring', vacant_units: 'vacancy' };
 const ASK = 'Use only what the user has told you: ask for anything missing, and never invent a name, a phone number, a price or a date.';
@@ -296,7 +296,7 @@ function workOrderId(ref) {
 /** A work order in one line, as Riley is told it. */
 const workOrderLine = (w) => `${w.ref} (${WORK_STATUS[w.status]}${w.overdue ? ', OVERDUE' : ''}${w.priority !== 'normal' ? `, ${w.priority}` : ''}): unit ${w.unit_no}, ${w.building}, ${w.tenant || 'vacant'}; `
   + `${w.category ? `${w.category}: ` : ''}${w.detail}; reported ${w.reported_on}${w.assigned_to ? `; assigned to ${w.assigned_to}` : ''}${w.scheduled_on ? `; scheduled ${w.scheduled_on}` : ''}`
-  + `${w.done_on ? `; done ${w.done_on}: ${w.resolution}` : ''}${w.cancel_reason ? `; cancelled: ${w.cancel_reason}` : ''}`;
+  + `${w.done_on ? `; done ${w.done_on}${w.resolution ? `: ${w.resolution}` : ''}` : ''}${w.cancel_reason ? `; cancelled: ${w.cancel_reason}` : ''}`;
 
 /** The discount and the tax a booking is given, as createBooking and updateBooking take them. */
 function terms(input) {

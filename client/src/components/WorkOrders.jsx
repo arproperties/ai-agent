@@ -159,6 +159,7 @@ function WorkOrderView({ id, onBack, onEdit }) {
   if (!w) return <Page title="Work order" onBack={onBack}>{error ? <p className="text-sm text-bad">{error}</p> : <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />}</Page>;
 
   const live = LIVE.includes(w.status);
+  const frozen = ['closed', 'cancelled'].includes(w.status); // its files are kept as they are
   const attach = (e) => { const files = [...e.target.files]; e.target.value = ''; act(() => sendFiles(w.id, files, () => {})); };
   const facts = [
     ['Unit', `Unit ${w.unit_no} · ${w.building}`],
@@ -166,7 +167,7 @@ function WorkOrderView({ id, onBack, onEdit }) {
     ['Reported', [fmt(w.reported_on), w.reported_by && `by ${w.reported_by}`].filter(Boolean).join(' ')],
     ['Assigned to', w.assigned_to || 'Nobody yet'],
     ['Scheduled for', w.scheduled_on ? fmt(w.scheduled_on) : 'Not scheduled'],
-    w.done_on && ['Done', `${fmt(w.done_on)}: ${w.resolution}`],
+    w.done_on && ['Done', `${fmt(w.done_on)}${w.resolution ? `: ${w.resolution}` : ''}`],
     w.cancel_reason && ['Cancelled', w.cancel_reason],
     ['Raised by', w.raised_by || '—'],
   ].filter(Boolean);
@@ -210,9 +211,11 @@ function WorkOrderView({ id, onBack, onEdit }) {
         <div className={CARD}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm font-medium">Photos and files</p>
-            <label className={`${GHOST} cursor-pointer`}><Paperclip size={13} /> Add
-              <input type="file" multiple accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden" onChange={attach} />
-            </label>
+            {!frozen && (
+              <label className={`${GHOST} cursor-pointer`}><Paperclip size={13} /> Add
+                <input type="file" multiple accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden" onChange={attach} />
+              </label>
+            )}
           </div>
           {w.files.length === 0 ? <p className="mt-2 text-sm text-mute">None yet.</p> : (
             <ul className="mt-2 divide-y divide-stroke/60 text-sm">
@@ -220,7 +223,7 @@ function WorkOrderView({ id, onBack, onEdit }) {
                 <li key={f.id} className="flex items-center gap-2 py-1.5">
                   <Paperclip size={14} className="shrink-0 text-mute" />
                   <a href={fileUrl(f)} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-p3 hover:underline">{f.file_name}</a>
-                  <button onClick={() => confirm(`Remove ${f.file_name}?`) && act(() => api.del(`/leasing/work-orders/files/${f.id}`))} aria-label={`Remove ${f.file_name}`} title="Remove" className={`${ROUND} hover:text-bad`}><Trash2 size={15} /></button>
+                  {!frozen && <button onClick={() => confirm(`Remove ${f.file_name}?`) && act(() => api.del(`/leasing/work-orders/files/${f.id}`))} aria-label={`Remove ${f.file_name}`} title="Remove" className={`${ROUND} hover:text-bad`}><Trash2 size={15} /></button>}
                 </li>
               ))}
             </ul>

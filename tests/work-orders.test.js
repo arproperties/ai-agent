@@ -374,3 +374,42 @@ test('a work order past its scheduled day is an alert, once a day, until it is d
   assert.equal((await listAlerts({}, AT)).filter((a) => a.rule === 'workorder').length, 0);
   assert.ok(late.id);
 });
+
+test('a moved note with no resolution reads cleanly, and two moves at once make each work order once', async () => {
+  const { staff, bk, sara } = await tower();
+  const note = (detail, resolved) => db.prepare(`INSERT INTO lease_tenant_log (tenant_id, booking_id, kind, category, detail, reported_by, happened_on, resolved_on, resolution, created_by, created_at)
+    VALUES (?, ?, 'maintenance', 'AC', ?, 'Sara', '2026-09-20', ?, NULL, ?, 1760000000) RETURNING id`).run(sara, bk.id, detail, resolved, staff);
+  await note('Filter blocked', '2026-09-22');
+  await note('Door sticks', null);
+
+  const [a, b] = await Promise.all([moveMaintenanceNotes(), moveMaintenanceNotes()]);
+  assert.equal(a + b, 2, 'each note is moved by one of them');
+  assert.equal((await listWorkOrders({}, AT)).length, 2);
+  assert.equal((await db.prepare("SELECT count(*)::int AS n FROM lease_tenant_log WHERE kind = 'maintenance'").get()).n, 0);
+
+  const kit = leasingKit({ id: staff, role: 'member' });
+  const r = await kit.run({ id: 't1', name: 'leasing_work_orders', input: { building: 'tower', status: 'all' } });
+  assert.match(r.content, /done 2026-09-22/);
+  assert.doesNotMatch(r.content, /null/);
+});
+
+test('the files of a closed or cancelled work order are kept as they are, until it is reopened', async () => {
+  const { staff, u1 } = await tower();
+  const file = (name) => ({ buffer: Buffer.from(name), originalname: name, mimetype: 'image/jpeg' });
+  const w = await createWorkOrder({ unit_id: u1.id, detail: 'Leak' }, staff, AT);
+  const withFile = await addWorkOrderFiles(w.id, [file('a.jpg')], staff, AT);
+  await updateWorkOrder(w.id, { status: 'done', resolution: 'Fixed' }, staff, AT);
+  await updateWorkOrder(w.id, { status: 'closed' }, staff, AT);
+  await assert.rejects(addWorkOrderFiles(w.id, [file('b.jpg')], staff, AT), /Reopen it to change it/);
+  await assert.rejects(removeWorkOrderFile(withFile.files[0].id, staff), /Reopen it to change it/);
+  assert.equal((await getWorkOrder(w.id, AT)).files.length, 1);
+
+  await updateWorkOrder(w.id, { reopen: true }, staff, AT);
+  assert.equal((await addWorkOrderFiles(w.id, [file('b.jpg')], staff, AT)).files.length, 2);
+  await removeWorkOrderFile(withFile.files[0].id, staff);
+  assert.equal((await getWorkOrder(w.id, AT)).files.length, 1);
+
+  const c = await createWorkOrder({ unit_id: u1.id, detail: 'Typed twice' }, staff, AT);
+  await updateWorkOrder(c.id, { status: 'cancelled', cancel_reason: 'Duplicate' }, staff, AT);
+  await assert.rejects(addWorkOrderFiles(c.id, [file('c.jpg')], staff, AT), /is cancelled\. Reopen it to change it/);
+});
