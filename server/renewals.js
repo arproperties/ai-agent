@@ -7,6 +7,7 @@ import { cleanAddresses, createDraft, logAction } from './drafts.js';
 import { store, discard } from './draftFiles.js';
 import { replySubject } from './imap.js';
 import { usDate } from './usFormat.js';
+import { todayHere } from './leasingRegion.js';
 
 // Renewals: getting a document that is due renewed, with Riley doing the legwork. A renewal
 // is a case on one document. She lists who to ask (the insurer on the policy, others found
@@ -118,6 +119,17 @@ const rawRenewal = async (id) => {
   return r;
 };
 
+/** The letters written once an offer was chosen, each with where its draft stands (null when it is only words to copy). */
+async function closingOf(r) {
+  const out = [];
+  for (const c of JSON.parse(r.closing || '[]')) {
+    const dr = c.draft_id ? await db.prepare('SELECT status, subject, body, error FROM email_drafts WHERE id = ?').get(c.draft_id) : null;
+    const live = dr && ['pending', 'approved', 'sending', 'sent'].includes(dr.status);
+    out.push({ ...c, ...(live ? { subject: dr.subject, body: dr.body } : {}), status: dr?.status ?? null, error: dr?.status === 'failed' ? dr.error : null });
+  }
+  return out;
+}
+
 /** A renewal as the screen and Riley see it: the document, who is on it and where each stands, the offers, and what was made of them. */
 export async function getRenewal(id) {
   await settle();
@@ -125,7 +137,7 @@ export async function getRenewal(id) {
   const { file_path, ...document } = await documentOf(r.document_id);
   return { id: r.id, status: r.status, opened_by: r.opened_by, created_at: Number(r.created_at), chosen_quote_id: r.chosen_quote_id, document,
     suppliers: (await requestsOf(r.id)).map(({ draft_owner, message_id, seen, ...q }) => q),
-    quotes: await quotesOf(r.id), compared: r.compared ? JSON.parse(r.compared) : null, closing: JSON.parse(r.closing || '[]') };
+    quotes: await quotesOf(r.id), compared: r.compared ? JSON.parse(r.compared) : null, closing: await closingOf(r) };
 }
 
 /** The renewals still under way, newest first, each with how far it has got. */
@@ -589,4 +601,131 @@ export function startRenewals() {
   timer = setInterval(tick, 30 * 60_000);
   timer.unref();
   setTimeout(tick, 60_000).unref();
+}
+
+// ---------- comparison and decision ----------
+
+const ROWS = ['premium', 'sum_insured', 'deductible', 'cover', 'exclusions', 'valid_until'];
+const VERDICTS = ['better', 'worse', 'same'];
+
+const LOOK = (s) => `Search the web for what can be checked about "${s.name}"${s.website ? ` (${s.website})` : ''}, a company a property owner may buy insurance or a service contract from. `
+  + 'Reply with one JSON object and nothing else, each value one short line, leaving out what you did not find: '
+  + '"licensed" (whether and by whom it is licensed or registered to trade), "rating" (a published financial-strength or credit rating, with who gave it), '
+  + '"since" (the year it began trading), "summary" (one sentence on who they are), "sources" (a list of {"title", "url"} for the pages these came from). '
+  + 'Report only what a page says. Do not judge whether the company is trustworthy.';
+
+/**
+ * What can be checked about a supplier, with where it was found: its licence, its rating,
+ * how long it has traded. Evidence for a person to weigh, never a verdict. Kept on the
+ * supplier with the day it was looked up; a search that fails leaves what was there.
+ */
+export async function lookUp(supplierId, deps) {
+  const { search } = use(deps);
+  const s = await db.prepare(`SELECT ${SUPPLIER} FROM prop_suppliers WHERE id = ?`).get(Number(supplierId));
+  if (!s) throw bad('Not found', 404);
+  let o;
+  try { o = pull(await search(LOOK(s))); } catch (e) { console.error('[renewals] looking up a supplier:', e.message); }
+  if (o) {
+    const about = Object.fromEntries(['licensed', 'rating', 'since', 'summary'].map((k) => [k, line(o[k], 400)]).filter(([, v]) => v));
+    about.sources = (Array.isArray(o.sources) ? o.sources : []).filter((x) => /^https?:\/\//i.test(line(x?.url, 1000)))
+      .slice(0, 5).map((x) => ({ title: line(x.title, 200) || line(x.url, 200), url: line(x.url, 1000) }));
+    about.checked_on = todayHere();
+    await db.prepare('UPDATE prop_suppliers SET about = ? WHERE id = ?').run(JSON.stringify(about), s.id);
+  }
+  return supplierOut(await db.prepare(`SELECT ${SUPPLIER} FROM prop_suppliers WHERE id = ?`).get(s.id));
+}
+
+const WEIGH = (d, current, offers) => 'A property company is renewing this and has these offers. Compare each offer with the current terms from the buyer\'s side, and say which you would take.\n'
+  + `${JSON.stringify({ what: d.title, for: d.where, current, offers })}\n`
+  + `Reply with one JSON object and nothing else: "verdicts": for each offer's quote_id, for each of ${ROWS.join(', ')} that can be compared, "better", "worse" or "same" than the current terms `
+  + '(a lower premium or deductible is better; wider cover, a higher sum insured and fewer exclusions are better; leave out what cannot be compared); '
+  + '"pick": the quote_id you would take, or null if none can be recommended; "why": two or three plain sentences giving the reasons; "unsure": one sentence on what a person should check before deciding. '
+  + 'Use only the figures given. What is said about a supplier is background, not a reason to trust or distrust it.';
+
+/**
+ * The offers beside the current policy: each supplier's latest, figure by figure, marked
+ * better, worse or the same, with which one Riley would take and why. Suppliers that have
+ * quoted and were never looked up are looked up first. If the model cannot be asked, the
+ * figures are still laid side by side, with no marks and nothing recommended.
+ */
+export async function compare(id, deps) {
+  const { think } = use(deps);
+  const r = await rawRenewal(id);
+  const latest = new Map(); // each supplier's newest offer replaces its older ones
+  for (const q of await quotesOf(r.id)) latest.set(q.supplier_id, q);
+  if (!latest.size) throw bad('There are no quotes to compare yet.');
+  const d = await documentOf(r.document_id);
+
+  const suppliers = new Map((await listSuppliers()).map((s) => [s.id, s]));
+  await Promise.all([...latest.keys()].filter((sid) => !suppliers.get(sid)?.about?.checked_on)
+    .map((sid) => lookUp(sid, deps).then((s) => suppliers.set(sid, s)).catch(() => {})));
+
+  const current = Object.fromEntries([['supplier', d.details.insurer], ...ROWS.map((k) => [k, d.details[k]])].filter(([, v]) => v));
+  const offers = [...latest.values()].sort((a, b) => a.id - b.id).map((q) => ({ quote_id: q.id, supplier_id: q.supplier_id, supplier: q.supplier,
+    ...Object.fromEntries(ROWS.map((k) => [k, q[k] ?? null])), verdicts: {} }));
+  const out = { at: Math.floor(Date.now() / 1000), current, offers, pick: null, why: null, unsure: null, failed: false };
+  try {
+    const o = pull(await think(WEIGH(d, current, offers.map(({ verdicts, supplier_id, ...x }) => ({ ...x, about: suppliers.get(supplier_id)?.about?.summary })))));
+    if (!o) throw new Error('no answer');
+    for (const x of offers) {
+      const v = o.verdicts?.[x.quote_id] || {};
+      x.verdicts = Object.fromEntries(ROWS.filter((k) => VERDICTS.includes(v[k])).map((k) => [k, v[k]]));
+    }
+    out.pick = offers.some((x) => x.quote_id === Number(o.pick)) ? Number(o.pick) : null;
+    out.why = line(o.why, 1500) || null;
+    out.unsure = line(o.unsure, 600) || null;
+  } catch (e) {
+    console.error('[renewals] comparing:', e.message);
+    out.failed = true;
+  }
+  await db.prepare('UPDATE prop_renewals SET compared = ? WHERE id = ?').run(JSON.stringify(out), r.id);
+  return getRenewal(r.id);
+}
+
+/** The letter to the supplier chosen, and to each of the others that were asked. What one offered is never told to another. */
+function closingWords(b, q, chosen) {
+  const sign = `Thank you,\n${b.sender}\n${b.company}`;
+  if (chosen) {
+    return { kind: 'accept', subject: `Accepting your quotation: ${b.title}, ${b.place}`,
+      body: `Dear ${q.name} team,\n\nThank you for your quotation for ${b.title} for ${b.place}${chosen.premium ? ` at ${chosen.premium}` : ''}. We would like to go ahead with it.\n\n`
+        + `Please tell us what you need from us to put the cover in place${b.expiry ? ` from ${b.expiry}, when the present policy ends` : ''}, and send the policy documents once it is.\n\n${sign}` };
+  }
+  return { kind: 'thanks', subject: `Your quotation: ${b.title}, ${b.place}`,
+    body: `Dear ${q.name} team,\n\nThank you for ${q.reply_kind === 'quote' ? 'your quotation' : 'your time'} on ${b.title} for ${b.place}. `
+      + `We have decided to place this cover ${q.is_current ? 'elsewhere' : 'with another provider'} for the coming period.\n\nWe will keep your details for next time.\n\n${sign}` };
+}
+
+/**
+ * Choose an offer. The acceptance to that supplier and a thank-you to each of the others
+ * that were asked are written as drafts, waiting like any other (or as words to copy, with
+ * no mailbox). Chosen again, the letters that have not gone are withdrawn and written anew.
+ */
+export async function decide(id, quoteId, by, deps) {
+  const { account } = use(deps);
+  await settle();
+  const r = await rawRenewal(id);
+  if (!['open', 'decided'].includes(r.status)) throw bad('This renewal is already closed.', 409);
+  const chosen = (await quotesOf(r.id)).find((q) => q.id === Number(quoteId));
+  if (!chosen) throw bad('Not found', 404);
+
+  for (const c of JSON.parse(r.closing || '[]')) {
+    if (!c.draft_id) continue;
+    const d = await db.prepare("UPDATE email_drafts SET status = 'rejected', decided_at = extract(epoch from now())::bigint WHERE id = ? AND status = 'pending' RETURNING *").get(c.draft_id);
+    if (d) discard(d);
+  }
+  const b = await brief(await documentOf(r.document_id), by);
+  const acc = await account(by);
+  const closing = [];
+  const asked = (await requestsOf(r.id)).filter((q) => q.supplier_id === chosen.supplier_id || ['sent', 'replied'].includes(q.state));
+  for (const q of asked.sort((x, y) => (y.supplier_id === chosen.supplier_id) - (x.supplier_id === chosen.supplier_id))) {
+    const w = closingWords(b, q, q.supplier_id === chosen.supplier_id ? chosen : null);
+    let draft = null;
+    if (canSend(acc) && q.email && q.email_confirmed) {
+      draft = await createDraft(by, { to: [q.email], subject: w.subject, body: w.body, from: acc.email });
+      await logAction(by, { action: 'draft', draftId: draft.id, recipients: draft.to_addrs });
+    }
+    closing.push({ supplier_id: q.supplier_id, supplier: q.name, email: q.email, kind: w.kind, draft_id: draft?.id ?? null, subject: w.subject, body: w.body });
+  }
+  await db.prepare("UPDATE prop_renewals SET status = 'decided', chosen_quote_id = ?, closing = ? WHERE id = ?").run(chosen.id, JSON.stringify(closing), r.id);
+  return getRenewal(r.id);
 }
