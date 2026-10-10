@@ -16,7 +16,7 @@ const PRIMARY = 'flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-
 const QUIET = 'flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-3.5 py-2 text-sm text-mute hover:bg-white/5 hover:text-txt disabled:opacity-50';
 const STEPS = [['suppliers', 'Who to ask'], ['requests', 'Requests'], ['quotes', 'Quotes'], ['compare', 'Compare'], ['decide', 'Decision']];
 const STATE = { listed: ['Not asked', 'bg-white/10 text-txt/80'], written: ['Written, to send by hand', 'bg-warn/10 text-warn'], drafted: ['Waiting for approval', 'bg-warn/10 text-warn'],
-  sending: ['Sending…', 'bg-p3/15 text-p3'], sent: ['Sent', 'bg-p3/15 text-p3'], replied: ['Replied', 'bg-ok/10 text-ok'] };
+  failed: ['Could not be sent', 'bg-bad/10 text-bad'], sending: ['Sending…', 'bg-p3/15 text-p3'], sent: ['Sent', 'bg-p3/15 text-p3'], replied: ['Replied', 'bg-ok/10 text-ok'] };
 const REPLY = { quote: 'Sent a quote', question: 'Asked a question', declined: 'Will not quote', other: 'Wrote back', unread: 'Wrote back (not read)' };
 const ROWS = [['premium', 'Premium'], ['sum_insured', 'Sum insured'], ['deductible', 'Deductible'], ['cover', 'What is covered'], ['exclusions', 'Exclusions'], ['valid_until', 'Offer stands until']];
 const VERDICT = { better: 'text-ok', worse: 'text-bad', same: 'text-mute' };
@@ -92,7 +92,7 @@ function Candidates({ found, onAdd, onClose }) {
           </label>
           {s.on && (
             <label className="mt-2 block text-xs text-mute">
-              Email address to write to{s.from === 'web' && s.email ? ' — found on the web, check it before you add it' : ''}
+              {s.from === 'web' ? 'Email address, if you have it. One found on the web is only a suggestion: you confirm it after adding.' : 'Email address to write to'}
               <input value={s.address} onChange={(e) => put(i, { address: e.target.value })} type="email" placeholder="quotes@company.com" className={`${FIELD} mt-1`} />
             </label>
           )}
@@ -119,6 +119,7 @@ export default function Renewal({ id, onBack, onFile }) {
   const [found, setFound] = useState(null); // what "Find more" came back with
   const [mine, setMine] = useState({ name: '', email: '' }); // a supplier typed in by hand
   const [emails, setEmails] = useState({}); // supplier → the address being typed for it
+  const [fixing, setFixing] = useState(null); // the supplier whose confirmed address is being corrected
   const [quoteFor, setQuoteFor] = useState('');
 
   const base = `/properties/renewals/${id}`;
@@ -135,7 +136,7 @@ export default function Renewal({ id, onBack, onFile }) {
   const act = (label, fn, then) => run(label, fn).then((v) => { if (v) { take(v.renewal || v); then?.(v); } return v; });
   const reload = () => api.get(base).then(take).catch(() => {});
   const here = useRef(true); // false once the page is left, so nothing still waiting writes to it
-  useEffect(() => () => { here.current = false; }, []);
+  useEffect(() => { here.current = true; return () => { here.current = false; }; }, []);
   const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
   // The search takes a minute or more, so it runs on the server while this asks after it.
   const find = async () => {
@@ -162,7 +163,12 @@ export default function Renewal({ id, onBack, onFile }) {
   const decideDraft = (draftId, verb) => run(verb === 'approve' ? 'Sending…' : 'Withdrawing…', () => api.post(`/email/drafts/${draftId}/${verb}`, {}))
     .then((ok) => { if (ok) { reload(); if (verb === 'approve') setTimeout(reload, 2500); } });
 
-  if (!r) return error ? <p className="text-sm text-bad">{error}</p> : <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
+  if (!r) return error ? (
+    <div className="space-y-3">
+      <button onClick={onBack} className="flex items-center gap-1 text-sm text-mute hover:text-txt"><ChevronLeft size={16} /> Back to documents</button>
+      <p className="text-sm text-bad">{error}</p>
+    </div>
+  ) : <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
   const d = r.document;
   const open = r.status === 'open' || r.status === 'decided';
   const ready = r.suppliers.filter((s) => ['listed', 'written'].includes(s.state) && s.email && s.email_confirmed);
@@ -203,10 +209,14 @@ export default function Renewal({ id, onBack, onFile }) {
                   <button onClick={() => act('Removing…', () => api.del(`${base}/suppliers/${s.supplier_id}`))} aria-label={`Remove ${s.name}`} className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
                 )}
               </div>
-              {s.email && s.email_confirmed ? <p className="mt-1 text-xs text-mute">{s.email}</p> : open && (
+              {s.email && s.email_confirmed && fixing !== s.supplier_id ? (
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-mute">{s.email}
+                  {open && ['listed', 'written', 'failed'].includes(s.state) && <button onClick={() => setFixing(s.supplier_id)} aria-label={`Change the address for ${s.name}`} className="grid size-6 place-items-center rounded-full hover:bg-white/10 hover:text-txt"><Pencil size={12} /></button>}
+                </p>
+              ) : open && (
                 <div className="mt-2 flex gap-2">
                   <input value={emails[s.supplier_id] ?? s.email ?? ''} onChange={(e) => setEmails({ ...emails, [s.supplier_id]: e.target.value })} type="email" placeholder="Their email address for quotations" aria-label={`Email for ${s.name}`} className={FIELD} />
-                  <button className={QUIET} disabled={!(emails[s.supplier_id] ?? s.email)} onClick={() => act('Saving…', () => api.post(`${base}/suppliers`, { suppliers: [{ supplier_id: s.supplier_id, email: emails[s.supplier_id] ?? s.email }] }))}>Confirm</button>
+                  <button className={QUIET} disabled={!(emails[s.supplier_id] ?? s.email)} onClick={() => act('Saving…', () => api.post(`${base}/suppliers`, { suppliers: [{ supplier_id: s.supplier_id, email: emails[s.supplier_id] ?? s.email }] }), () => setFixing(null))}>Confirm</button>
                 </div>
               )}
             </div>
@@ -252,9 +262,14 @@ export default function Renewal({ id, onBack, onFile }) {
                 <p className="min-w-0 flex-1 truncate text-sm font-medium">{s.name}</p>
                 <Chip tone={STATE[s.state][1]}>{STATE[s.state][0]}{s.sent_at ? ` ${when(s.sent_at)}` : ''}</Chip>
               </div>
-              {s.error && <p className="mt-1 text-sm text-bad">It could not be sent: {s.error}</p>}
+              {s.state === 'failed' && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <p className="min-w-0 flex-1 text-sm text-bad">It could not be sent: {s.error || 'no reason was given'}</p>
+                  {r.status === 'open' && <button className={QUIET} disabled={!!busy} onClick={() => act('Riley is writing it again…', () => api.post(`${base}/requests`, { supplier_ids: [s.supplier_id] }))}><Sparkles size={14} /> Write it again</button>}
+                </div>
+              )}
               {s.body && (
-                <Letter to={s.email} subject={s.subject} body={s.body} status={s.state === 'drafted' ? 'pending' : s.state === 'written' ? null : s.state} mine={s.draft_owner === r.me}
+                <Letter to={s.to} subject={s.subject} body={s.body} status={s.state === 'drafted' ? 'pending' : s.state === 'written' ? null : s.state} mine={s.draft_owner === r.me}
                   canEdit={open && (s.state === 'written' || (s.state === 'drafted' && s.draft_owner === r.me))}
                   onSave={(w) => act('Saving…', () => api.put(`${base}/requests/${s.request_id}`, w))}
                   onApprove={() => decideDraft(s.draft_id, 'approve')} onReject={() => decideDraft(s.draft_id, 'reject')}
@@ -264,7 +279,7 @@ export default function Renewal({ id, onBack, onFile }) {
               {s.chaser_status === 'pending' && (
                 <>
                   <p className="mt-3"><Riley>No reply yet, so a follow-up is written</Riley></p>
-                  <Letter to={s.email} subject={`Re: ${s.subject}`} body={s.chaser_body} status="pending" mine={s.chaser_owner === r.me}
+                  <Letter to={s.to} subject={/^re\s*:/i.test(s.subject || '') ? s.subject : `Re: ${s.subject}`} body={s.chaser_body} status="pending" mine={s.chaser_owner === r.me}
                     onApprove={() => decideDraft(s.chaser_draft_id, 'approve')} onReject={() => decideDraft(s.chaser_draft_id, 'reject')} />
                 </>
               )}
@@ -381,7 +396,7 @@ export default function Renewal({ id, onBack, onFile }) {
                   <div key={o.quote_id} className={CARD}>
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="min-w-0 flex-1 text-sm font-medium">{o.supplier}</p>
-                      {open && <button className={o.quote_id === r.chosen_quote_id ? QUIET : PRIMARY} disabled={!!busy}
+                      {open && <button className={o.quote_id === r.chosen_quote_id ? QUIET : PRIMARY} disabled={!!busy || o.quote_id === r.chosen_quote_id}
                         onClick={() => confirm(`Go with ${o.supplier}? Riley will write the acceptance and the thank-yous for you to approve. Nothing is sent yet.`) && act('Writing the letters…', () => api.post(`${base}/decide`, { quote_id: o.quote_id }), () => setTab('decide'))}>
                         <Check size={15} /> {o.quote_id === r.chosen_quote_id ? 'Chosen' : 'Choose this offer'}
                       </button>}
@@ -422,7 +437,7 @@ export default function Renewal({ id, onBack, onFile }) {
                     {c.status && <Chip tone={c.status === 'sent' ? 'bg-ok/10 text-ok' : c.status === 'pending' ? 'bg-warn/10 text-warn' : 'bg-white/10 text-txt/80'}>{c.status === 'pending' ? 'Waiting for approval' : c.status === 'sent' ? 'Sent' : c.status === 'rejected' ? 'Not sent' : c.status}</Chip>}
                   </div>
                   {c.error && <p className="mt-1 text-sm text-bad">It could not be sent: {c.error}</p>}
-                  <Letter to={c.email} subject={c.subject} body={c.body} status={c.draft_id ? c.status : null} mine={c.draft_owner === r.me}
+                  <Letter to={c.to} subject={c.subject} body={c.body} status={c.draft_id ? c.status : null} mine={c.draft_owner === r.me}
                     onApprove={() => decideDraft(c.draft_id, 'approve')} onReject={() => decideDraft(c.draft_id, 'reject')} />
                 </div>
               ))}

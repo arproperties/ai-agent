@@ -1004,7 +1004,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   const pay = (id) => openBooking(id, 'payOf');
   // An alert opens the screen that deals with it.
   const openAlert = (a) => {
-    if (a.open === 'documents') { setDocOpen(a.renewal_id ? null : a.document_id); setRenewalOpen(a.renewal_id || null); setTab('documents'); return; }
+    if (a.open === 'documents') { setDocOpen(a.document_id); setRenewalOpen(a.renewal_id || null); setTab('documents'); return; }
     if (a.open === 'tenants') { setTab('tenants'); return; }
     openBooking(a.booking_id, { pay: 'payOf', docs: 'docsOf' }[a.open]);
   };

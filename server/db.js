@@ -1160,6 +1160,10 @@ await db.exec(`
     created_at  BIGINT DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_prop_renewal_quotes ON prop_renewal_quotes(renewal_id);
+  -- When a request went, and as which message: kept on the request itself once its draft is
+  -- sent, so tidying the draft away afterwards does not undo the asking.
+  ALTER TABLE prop_renewal_requests ADD COLUMN IF NOT EXISTS sent_at BIGINT;
+  ALTER TABLE prop_renewal_requests ADD COLUMN IF NOT EXISTS message_id TEXT;
 `);
 
 // The day a company was registered, as YYYY-MM-DD. Kept as text so it reads back as written.

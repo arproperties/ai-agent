@@ -50,7 +50,7 @@ test('a renewal is a case on one document: its current insurer listed, suppliers
   // Added by a person: an address they give is one they have confirmed.
   const orient = r.suppliers[0];
   await assert.rejects(R.addSuppliers(r.id, [{ name: 'X', email: 'nope' }]), /valid email/);
-  let v = await R.addSuppliers(r.id, [{ name: 'Chubb', email: ' Quotes@Chubb.com ', website: 'https://chubb.com', found_by: 'search' },
+  let v = await R.addSuppliers(r.id, [{ name: 'Chubb', email: ' Quotes@Chubb.com ', website: 'https://chubb.com' },
     { supplier_id: orient.supplier_id, email: 'renewals@orient.com' }, { name: 'Marsh' }]);
   assert.deepEqual(row(v), [['Orient Insurance', 'renewals@orient.com', true, true, 'listed'], ['Chubb', 'quotes@chubb.com', true, false, 'listed'], ['Marsh', null, false, false, 'listed']]);
   v = await R.removeSupplier(r.id, v.suppliers[2].supplier_id);
@@ -214,7 +214,7 @@ test('a reply that cannot be read is still shown as received, and a quote handed
   const { existsSync } = await import('node:fs');
   const { r, at, chubb, marsh } = await asked();
   const mail = [{ id: 'INBOX:7', from: 'Orient <renewals@orient.com>', subject: 'Re: Renewal', at: at(1), text: 'see attached' }];
-  const got = await R.checkReplies(r.id, { ...mailbox, inbox: async () => mail, parts: async () => { throw new Error('gone'); }, think: async () => '{}' });
+  const got = await R.checkReplies(r.id, { ...mailbox, inbox: async () => mail, parts: async () => { throw new Error('That email no longer exists'); }, think: async () => '{}' });
   assert.deepEqual(got.renewal.suppliers.map((s) => [s.name, s.state, s.reply_kind]).slice(0, 1), [['Orient Insurance', 'replied', 'unread']]);
 
   // By WhatsApp or on paper: the file is put in by hand, and read like the others.
@@ -370,4 +370,108 @@ test('Riley says where renewals stand, starts one, looks for replies and compare
   assert.match(said, /Orient Insurance: premium USD 16,900/);
   assert.match(said, /It is the only offer/);
   assert.equal((await drafts()).length, 0, 'none of it wrote an email, let alone sent one');
+});
+
+// ---------- found in review ----------
+
+test('an address found on the web is not confirmed by being added: a person confirms it as its own step', async () => {
+  const { master, policy } = await tower();
+  const r = await R.startRenewal(policy.id, master);
+  let v = await R.addSuppliers(r.id, [{ name: 'Chubb', email: 'quotes@chubb.com', found_by: 'search' }]);
+  assert.deepEqual([named(v, 'Chubb').email, named(v, 'Chubb').email_confirmed], ['quotes@chubb.com', false]);
+  await assert.rejects(R.draftRequests(r.id, [named(v, 'Chubb').supplier_id], master, { ...mailbox, ...wording }), /Confirm an email address first for: Chubb/);
+  v = await R.addSuppliers(r.id, [{ supplier_id: named(v, 'Chubb').supplier_id, email: 'quotes@chubb.com' }]);
+  assert.equal(named(v, 'Chubb').email_confirmed, true);
+  // Found again later with another address: the one a person confirmed is not replaced by the web's.
+  v = await R.addSuppliers(r.id, [{ name: 'chubb', email: 'other@evil.example', found_by: 'search' }]);
+  assert.deepEqual([named(v, 'Chubb').email, named(v, 'Chubb').email_confirmed], ['quotes@chubb.com', true]);
+});
+
+test('a request that could not be sent says so and can be written again; one that went stays gone even if its draft is deleted', async () => {
+  const { master, r, orient, chubb } = await listed();
+  const deps = { ...mailbox, ...wording };
+  let v = await R.draftRequests(r.id, [orient.supplier_id, chubb.supplier_id], master, deps);
+  assert.equal(named(v, 'Chubb').to, 'quotes@chubb.com', 'the address shown is the one the draft goes to');
+
+  await db.prepare("UPDATE email_drafts SET status = 'failed', error = 'The mail server refused it' WHERE id = ?").run(named(v, 'Chubb').draft_id);
+  v = await R.getRenewal(r.id);
+  assert.deepEqual([named(v, 'Chubb').state, named(v, 'Chubb').error], ['failed', 'The mail server refused it']);
+  v = await R.draftRequests(r.id, [chubb.supplier_id], master, deps);
+  assert.equal(named(v, 'Chubb').state, 'drafted');
+
+  // The supplier's address is changed while the draft waits: the draft still says where it will really go.
+  v = await R.addSuppliers(r.id, [{ supplier_id: chubb.supplier_id, email: 'new@chubb.com' }]);
+  assert.deepEqual([named(v, 'Chubb').email, named(v, 'Chubb').to], ['new@chubb.com', 'quotes@chubb.com']);
+
+  const now = Math.floor(Date.now() / 1000);
+  await db.prepare("UPDATE email_drafts SET status = 'sent', sent_at = ?, message_id = '<o1@ace.com>' WHERE id = ?").run(now - 86400, named(v, 'Orient Insurance').draft_id);
+  assert.equal(named(await R.getRenewal(r.id), 'Orient Insurance').state, 'sent');
+  await db.prepare('DELETE FROM email_drafts WHERE id = ?').run(named(v, 'Orient Insurance').draft_id);
+  const kept = named(await R.getRenewal(r.id), 'Orient Insurance');
+  assert.deepEqual([kept.state, kept.sent_at, kept.subject], ['sent', now - 86400, 'Renewal terms: policy PAR/4471'], 'tidying the drafts away does not undo the asking');
+  await R.draftRequests(r.id, null, master, deps).catch(() => {});
+  assert.equal((await drafts()).filter((d) => d.to_addrs.includes('orient')).length, 0, 'and it is not written to a second time');
+});
+
+test('nothing is said to be attached when nothing is', async () => {
+  const { master, r, chubb } = await listed();
+  const v = await R.draftRequests(r.id, [chubb.supplier_id], master, { account: async () => null, think: async () => { throw new Error('down'); } });
+  assert.ok(!/attach/i.test(named(v, 'Chubb').body), 'copied out by hand, the email carries no file');
+});
+
+test('a reply belongs to the request it answers: not to another renewal asking the same supplier, and not when it is about something else', async () => {
+  const { master, b, r, at, now } = await asked();
+  // A second policy on the same building, with the same two suppliers asked the same day.
+  const other = await addDocument({ building_id: b.id, title: 'Liability insurance', expiry_date: '2027-01-08', details: { insurer: 'Orient Insurance' } }, pdf, master);
+  let r2 = await R.startRenewal(other.id, master);
+  r2 = await R.addSuppliers(r2.id, [{ supplier_id: named(r2, 'Orient Insurance').supplier_id, email: 'renewals@orient.com' }, { name: 'Chubb', email: 'quotes@chubb.com' }]);
+  r2 = await R.draftRequests(r2.id, null, master, { ...mailbox, ...wording });
+  await db.prepare("UPDATE email_drafts SET status = 'sent', sent_at = ?, message_id = '<m' || id || '@ace.com>' WHERE status = 'pending'").run(now - 3 * 86400);
+  const fireChubb = (await db.prepare(`SELECT dr.message_id FROM prop_renewal_requests q JOIN email_drafts dr ON dr.id = q.draft_id JOIN prop_suppliers s ON s.id = q.supplier_id WHERE q.renewal_id = ? AND s.name = 'Chubb'`).get(r.id)).message_id;
+
+  const mail = [
+    { id: 'INBOX:1', from: 'Chubb <quotes@chubb.com>', subject: 'Re: Quotation', at: at(1), text: 'Our quotation for the fire cover.', thread: [fireChubb] },
+    { id: 'INBOX:2', from: 'Orient News <news@orient.com>', subject: 'Our autumn newsletter', at: at(1), text: 'NEWSLETTER', thread: [] },
+  ];
+  const told = [];
+  const deps = { ...mailbox, inbox: async () => mail,
+    parts: async (userId, id) => { const m = mail.find((x) => x.id === id); return { text: m.text, files: [], in_reply_to: m.thread[0] || null, refs: m.thread }; },
+    think: async (content) => { const said = JSON.stringify(content); told.push(said); return JSON.stringify(said.includes('NEWSLETTER') ? { kind: 'unrelated', note: 'A newsletter.' } : OFFER); } };
+
+  const fire = await R.checkReplies(r.id, deps);
+  assert.deepEqual([fire.quotes, fire.renewal.quotes.length], [['Chubb'], 1]);
+  assert.equal(named(fire.renewal, 'Orient Insurance').state, 'sent', 'a newsletter from the insurer is not its answer, and does not stop it being chased');
+  assert.ok(told.some((s) => s.includes('Fire insurance') && s.includes('Tower')), 'the model is told what was asked for, to tell an answer from other mail');
+
+  const liability = await R.checkReplies(r2.id, deps);
+  assert.deepEqual([liability.quotes, liability.renewal.quotes.length, named(liability.renewal, 'Chubb').state], [[], 0, 'sent'], 'the answer to the fire request is not taken as an answer about liability');
+});
+
+test('a reply is only given up on when it is truly unreadable: a mailbox not answering is tried again, a reading that keeps failing is shown as received', async () => {
+  const { r, at } = await asked();
+  const mail = [{ id: 'INBOX:9', from: 'Orient <renewals@orient.com>', subject: 'Re: Renewal', at: at(1), text: 'see attached' }];
+  const state = async (deps) => named((await R.checkReplies(r.id, { ...mailbox, inbox: async () => mail, ...deps })).renewal, 'Orient Insurance');
+  assert.equal((await state({ parts: async () => { throw new Error('connection timed out'); }, think: async () => '{}' })).state, 'sent', 'the mailbox did not answer: nothing is concluded');
+  const failing = { parts: async () => ({ text: 'see attached', files: [] }), think: async () => { throw new Error('the file is too large'); } };
+  assert.equal((await state(failing)).state, 'sent');
+  assert.equal((await state(failing)).state, 'sent');
+  const third = await state(failing);
+  assert.deepEqual([third.state, third.reply_kind], ['replied', 'unread'], 'after three goes the person is told it came, and opens it themselves');
+});
+
+test('an acceptance that has been approved or sent is not quietly replaced by choosing again', async () => {
+  const { master, r, chubbQ, orientQ } = await quoted();
+  let v = await R.decide(r.id, chubbQ, master, mailbox);
+  assert.equal((await R.decide(r.id, chubbQ, master, mailbox)).closing[0].draft_id, v.closing[0].draft_id, 'choosing the same offer again writes nothing new');
+  await db.prepare("UPDATE email_drafts SET status = 'approved' WHERE id = ?").run(v.closing[0].draft_id);
+  await assert.rejects(R.decide(r.id, orientQ, master, mailbox), /acceptance to Chubb has already been approved/);
+  v = await R.getRenewal(r.id);
+  assert.deepEqual([v.chosen_quote_id, v.closing.map((c) => [c.supplier, c.status, c.to])], [chubbQ, [['Chubb', 'approved', 'quotes@chubb.com'], ['Orient Insurance', 'pending', 'renewals@orient.com']]]);
+});
+
+test('a supplier that has been written to, or has quoted, is not taken off the list for good', async () => {
+  const { r, chubb } = await quoted();
+  await assert.rejects(R.removeSupplierForGood(chubb.supplier_id), /has been written to or has quoted/);
+  const v = await R.addSuppliers(r.id, [{ name: 'Nobody Yet' }]);
+  assert.deepEqual(await R.removeSupplierForGood(named(v, 'Nobody Yet').supplier_id), { ok: true });
 });

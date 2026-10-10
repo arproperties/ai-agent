@@ -32,12 +32,12 @@ export default function Documents({ openId, openRenewal, onOpened, building }) {
   // Arriving from an alert: the document it is about opens once the list is here. Saying so
   // (onOpened) lets whoever sent us forget it, so it does not open again on the next visit.
   useEffect(() => {
-    if (!openId || !d) return;
-    const row = d.documents.find((x) => x.id === openId);
-    if (row) setOpen(row);
+    if (!d || (!openId && !openRenewal)) return;
+    // A renewal is the master's to run: for anybody else the alert opens the document itself.
+    if (openRenewal && d.master) setRenewing(openRenewal);
+    else { const row = d.documents.find((x) => x.id === openId); if (row) setOpen(row); }
     onOpened?.();
-  }, [openId, d]);
-  useEffect(() => { if (openRenewal) { setRenewing(openRenewal); onOpened?.(); } }, [openRenewal]);
+  }, [openId, openRenewal, d]);
 
   // A renewal takes the page; back is the list, read again. Filing the new policy opens the document it renews.
   if (renewing) return (
