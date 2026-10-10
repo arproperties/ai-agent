@@ -5,6 +5,7 @@ import { snapshot, dayNo, total, todayHere, bad, dueName, logEvent } from './lea
 import { region, hourHere, dayOf, cash } from './leasingRegion.js';
 import { usDate } from './usFormat.js';
 import { register } from './properties.js';
+import { openByDocument, notRenewing } from './renewals.js';
 
 // Leasing alerts: what needs somebody's attention today, and the buzz that says so.
 //
@@ -151,14 +152,19 @@ export async function openAlerts(s, cfg, q = {}) {
   // A document, from the day its own renewal window opens until a renewed copy is filed.
   // It belongs to no lease, so it is told to its building's staff (a company's, to the master alone).
   if (cfg.document.on) {
+    // One that is not being renewed has stopped asking; one being renewed says how far it has got, and opens there.
+    const [silent, under] = [await notRenewing(), await openByDocument()];
     for (const d of await register({ company_id: q.company_id, building_id: q.building_id }, s.today)) {
       const left = d.days_left;
       if (left == null || left > d.renew_days) continue;
+      if (silent.has(d.id)) continue;
+      const r = under.get(d.id);
       out.push({ rule: 'document', key: `document:${d.id}`, document_id: d.id, open: 'documents', days: left,
         level: left <= 0 ? 'bad' : left <= 30 ? 'warn' : 'info',
         building: d.building, building_id: d.in_building, company: d.company, unit_no: d.unit_no, owner: null, staff: s.staffOf.get(d.in_building) || [],
         title: left < 0 ? `${d.title} has expired` : `${d.title} expires ${left === 0 ? 'today' : `in ${left} day${left === 1 ? '' : 's'}`}`,
-        detail: `${d.where} · ${usDate(d.expiry_date)}`,
+        renewal_id: r?.id ?? null,
+        detail: `${d.where} · ${usDate(d.expiry_date)}${r ? ` · renewing: ${r.asked} asked, ${r.quotes} quote${r.quotes === 1 ? '' : 's'} in` : ''}`,
         fires: left === d.renew_days || left === 0 || (left > 0 && cfg.document.days.includes(left)) || (left < 0 && -left % cfg.document.every === 0) });
     }
   }
