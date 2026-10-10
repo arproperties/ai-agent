@@ -1,3 +1,5 @@
+import { Router } from 'express';
+import multer from 'multer';
 import { db } from './db.js';
 import { transcribe, ask } from './ai.js';
 
@@ -164,3 +166,34 @@ export async function retryTurn(userId, id, turnId) {
   return turnOut(await db.prepare('UPDATE translation_turns SET translated = ?, error = ? WHERE id = ? RETURNING *')
     .get(translated, error, turn.id));
 }
+
+// ---------- routes ----------
+
+export const translateRoutes = Router();
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const gone = (res) => res.status(404).json({ error: 'Conversation not found' });
+// A turn is at most a minute of speech; 25 MB is the same ceiling the other audio routes use.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+
+// Before '/:id', or "languages" would be read as an id.
+translateRoutes.get('/languages', (req, res) => res.json({ languages: LANGUAGES, voice: !!process.env.OPENAI_API_KEY }));
+translateRoutes.get('/', wrap(async (req, res) => res.json(await listTranslations(req.user.id))));
+translateRoutes.post('/turns', upload.single('audio'), wrap(async (req, res) => {
+  const { id, langA, langB, side } = req.body;
+  res.json(await addTurn(req.user.id, { id, langA, langB, side, buffer: req.file?.buffer, mimetype: req.file?.mimetype }));
+}));
+translateRoutes.get('/:id', wrap(async (req, res) => {
+  const c = await getTranslation(req.user.id, req.params.id);
+  c ? res.json(c) : gone(res);
+}));
+translateRoutes.post('/:id/turns/:turnId/retry', wrap(async (req, res) => {
+  const t = await retryTurn(req.user.id, req.params.id, req.params.turnId);
+  t ? res.json(t) : gone(res);
+}));
+translateRoutes.patch('/:id', wrap(async (req, res) => {
+  const c = await renameTranslation(req.user.id, req.params.id, req.body.title);
+  c ? res.json(c) : gone(res);
+}));
+translateRoutes.delete('/:id', wrap(async (req, res) => {
+  (await deleteTranslation(req.user.id, req.params.id)) ? res.json({ ok: true }) : gone(res);
+}));

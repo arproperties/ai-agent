@@ -34,6 +34,7 @@ import { startReminders } from './reminders.js';
 import { saifsysRoutes } from './saifsys/index.js';
 import { meetingRoutes, startMeetings } from './meetings.js';
 import { transcriptRoutes, startTranscripts } from './transcripts.js';
+import { translateRoutes } from './translate.js';
 import { errorRoutes, recordError } from './errors.js';
 import { replyPdfRoutes } from './replyPdf.js';
 import { meetingShareRoutes } from './meetingShare.js';
@@ -66,6 +67,7 @@ app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
 app.use('/api/meetings', meetingShareRoutes); // a meeting as a PDF, on the Shelf, or emailed
 app.use('/api/meetings', meetingRoutes); // recorded meetings: who said what, and a summary
 app.use('/api/transcripts', transcriptRoutes); // any audio file or recording, as plain text
+app.use('/api/translate', translateRoutes); // two people, two languages, one phone
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
