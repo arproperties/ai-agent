@@ -1392,6 +1392,58 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_prop_inspection_photos ON prop_inspection_photos(inspection_id);
 `);
 
+// A repair to a unit, from the day it is reported to the day it is fixed. It belongs to the
+// unit; the lease and tenant are the ones the unit had that day, filled in by the server
+// (workOrders.js), or none when it was empty. Nothing is charged: repairs are under the AMC.
+//   status: open → assigned → in_progress → done → closed, or cancelled.
+//   tenant: their name as it was, kept if the lease or the tenant goes.
+//   lease_work_order_events: its history, one row per change, written and never changed.
+//   lease_work_order_files: photos and files, any number.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lease_work_orders (
+    id SERIAL PRIMARY KEY,
+    unit_id       INTEGER NOT NULL REFERENCES prop_units(id) ON DELETE RESTRICT,
+    booking_id    INTEGER REFERENCES lease_bookings(id) ON DELETE SET NULL,
+    tenant_id     INTEGER REFERENCES lease_tenants(id) ON DELETE SET NULL,
+    tenant        TEXT,
+    category      TEXT,
+    priority      TEXT NOT NULL DEFAULT 'normal',
+    detail        TEXT NOT NULL,
+    reported_by   TEXT,
+    reported_on   DATE NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'open',
+    assigned_to   TEXT,
+    scheduled_on  DATE,
+    resolution    TEXT,
+    done_on       DATE,
+    cancel_reason TEXT,
+    created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at    BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_work_orders_unit ON lease_work_orders(unit_id, reported_on);
+  CREATE INDEX IF NOT EXISTS idx_lease_work_orders_tenant ON lease_work_orders(tenant_id, reported_on);
+  CREATE INDEX IF NOT EXISTS idx_lease_work_orders_booking ON lease_work_orders(booking_id);
+  CREATE TABLE IF NOT EXISTS lease_work_order_events (
+    id SERIAL PRIMARY KEY,
+    work_order_id INTEGER NOT NULL REFERENCES lease_work_orders(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    detail     TEXT,
+    user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_work_order_events ON lease_work_order_events(work_order_id);
+  CREATE TABLE IF NOT EXISTS lease_work_order_files (
+    id SERIAL PRIMARY KEY,
+    work_order_id INTEGER NOT NULL REFERENCES lease_work_orders(id) ON DELETE CASCADE,
+    file_path   TEXT NOT NULL,
+    file_name   TEXT,
+    file_mime   TEXT,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_work_order_files ON lease_work_order_files(work_order_id);
+`);
+
 // Checklists: the points of one job, ticked off each time it is done - see server/checklists.js.
 // Their own tables rather than a flag on todos or routines: those are single things, and
 // a checklist is several steps that belong together and are done as one.
