@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Branch `leasing-bookings` only. Never commit to, merge into or push to `main`. Do not push or deploy at all: Francis says when.
-- **Before Task 1:** run `git status --short`. If `server/db.js` or `server/properties.js` show as modified, another piece of work (the documents register) is uncommitted in them. Stop and ask Francis to commit it first; do not commit those hunks yourself.
+- **Before each task:** run `git status --short`. The documents register is being built on this branch at the same time and touches some of the same files (`server/db.js`, `server/properties.js`, `Leasing.jsx`, `LeasingAlerts.jsx`, `Properties.jsx`, `Sidebar.jsx`). If a file the task modifies shows as already modified, stop and ask Francis to commit that work first; never commit its hunks yourself, and never discard them. Line numbers in this plan are from before that work: find the place by the code quoted, not the number.
 - Each commit stages only the files its task names (`git add <paths>`), never `git add -A`.
 - No cost, price, invoice amount or charge anywhere in this module (spec D3).
 - Only office staff use it: no new role, no technician login (spec D2).
