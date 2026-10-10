@@ -85,6 +85,34 @@ async function owned(userId, id) {
   return db.prepare('SELECT * FROM translations WHERE id = ? AND user_id = ?').get(int(id), userId);
 }
 
+const convOut = ({ user_id, ...c }) => c;
+
+export async function listTranslations(userId, limit = 200) {
+  return db.prepare(`SELECT t.id, t.title, t.lang_a, t.lang_b, t.created_at, t.updated_at,
+      (SELECT count(*)::int FROM translation_turns WHERE translation_id = t.id) AS turns
+    FROM translations t WHERE t.user_id = ? ORDER BY t.updated_at DESC, t.id DESC LIMIT ?`).all(userId, limit);
+}
+
+export async function getTranslation(userId, id) {
+  const conv = await owned(userId, id);
+  if (!conv) return null;
+  const turns = await db.prepare('SELECT * FROM translation_turns WHERE translation_id = ? ORDER BY id').all(conv.id);
+  return { ...convOut(conv), turns: turns.map(turnOut) };
+}
+
+export async function renameTranslation(userId, id, title) {
+  const conv = await owned(userId, id);
+  if (!conv) return null;
+  const clear = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)
+    || `${lang(conv.lang_a)?.name || conv.lang_a} ↔ ${lang(conv.lang_b)?.name || conv.lang_b}`;
+  await db.prepare('UPDATE translations SET title = ? WHERE id = ?').run(clear, conv.id);
+  return getTranslation(userId, conv.id);
+}
+
+export async function deleteTranslation(userId, id) {
+  return !!(await db.prepare('DELETE FROM translations WHERE id = ? AND user_id = ? RETURNING id').get(int(id), userId));
+}
+
 /**
  * One person's turn: heard, translated, saved. Starts the conversation when there is no
  * id yet. Resolves { id, turn }, with turn null when nothing was said.

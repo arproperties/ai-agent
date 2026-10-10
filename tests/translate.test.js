@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, makeUser, closeDb, db } from './helpers/db.js';
-import { engine, LANGUAGES, addTurn, retryTurn, clean } from '../server/translate.js';
+import {
+  engine, LANGUAGES, addTurn, retryTurn, clean,
+  listTranslations, getTranslation, renameTranslation, deleteTranslation,
+} from '../server/translate.js';
 
 test.after(() => closeDb());
 
@@ -165,4 +168,91 @@ test('a side-B turn is retried in the right direction', async () => {
   fake({ gives: 'On the second floor' });
   await retryTurn(user, r.id, r.turn.id);
   assert.deepEqual(asked, [{ text: 'في الطابق الثاني', from: 'ar', to: 'en' }]);
+});
+
+test('history lists conversations with their languages and how many turns each has', async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  const one = await addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio });
+  await addTurn(user, { id: one.id, side: 'b', buffer: audio });
+  const two = await addTurn(user, { langA: 'en', langB: 'hi', side: 'a', buffer: audio });
+
+  const list = await listTranslations(user);
+  assert.deepEqual(list.map((c) => [c.id, c.title, c.lang_a, c.lang_b, c.turns]), [
+    [two.id, 'English ↔ Hindi', 'en', 'hi', 1],
+    [one.id, 'English ↔ Arabic', 'en', 'ar', 2],
+  ]);
+  assert.equal(list[0].user_id, undefined);
+});
+
+test('opening a conversation gives every turn in the order it was said', async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio });
+  fake({ says: 'في الطابق الثاني', gives: 'On the second floor' });
+  await addTurn(user, { id: r.id, side: 'b', buffer: audio });
+
+  const conv = await getTranslation(user, r.id);
+  assert.equal(conv.title, 'English ↔ Arabic');
+  assert.equal(conv.user_id, undefined);
+  assert.deepEqual(conv.turns.map((t) => [t.side, t.original, t.translated]), [
+    ['a', 'Where is the office?', 'أين المكتب؟'],
+    ['b', 'في الطابق الثاني', 'On the second floor'],
+  ]);
+  assert.equal(conv.turns[0].translation_id, undefined);
+});
+
+test('a conversation can be renamed, and an empty name goes back to its languages', async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio });
+  assert.equal((await renameTranslation(user, r.id, '  Plumber   on Friday ')).title, 'Plumber on Friday');
+  assert.equal((await renameTranslation(user, r.id, '   ')).title, 'English ↔ Arabic');
+  assert.equal((await renameTranslation(user, r.id, 'x'.repeat(300))).title.length, 120);
+});
+
+test('deleting a conversation removes its turns', async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  const r = await addTurn(user, { langA: 'en', langB: 'ar', side: 'a', buffer: audio });
+  assert.equal(await deleteTranslation(user, r.id), true);
+  assert.equal(await getTranslation(user, r.id), null);
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM translation_turns').get()).n, 0);
+  assert.equal(await deleteTranslation(user, r.id), false);
+});
+
+test('nobody else can read, add to, retry, rename or delete a conversation', async () => {
+  await reset();
+  fake({ gives: new Error('overloaded') }); // a failed turn, so there is something to retry
+  const sara = await makeUser('Sara');
+  const omar = await makeUser('Omar');
+  const r = await addTurn(sara, { langA: 'en', langB: 'ar', side: 'a', buffer: audio });
+  fake();
+
+  assert.equal((await listTranslations(omar)).length, 0);
+  assert.equal(await getTranslation(omar, r.id), null);
+  await assert.rejects(() => addTurn(omar, { id: r.id, side: 'a', buffer: audio }), (e) => e.status === 404);
+  assert.equal(await retryTurn(omar, r.id, r.turn.id), null);
+  assert.equal(await renameTranslation(omar, r.id, 'mine now'), null);
+  assert.equal(await deleteTranslation(omar, r.id), false);
+  assert.equal(heard.length + asked.length, 0, 'nothing is paid for on someone else\'s conversation');
+
+  const still = await getTranslation(sara, r.id);
+  assert.equal(still.title, 'English ↔ Arabic');
+  assert.equal(still.turns.length, 1);
+});
+
+test('an id that is not a number finds nothing rather than breaking', async () => {
+  await reset();
+  fake();
+  const user = await makeUser('Sara');
+  assert.equal(await getTranslation(user, 'abc'), null);
+  assert.equal(await renameTranslation(user, '1; DROP', 'x'), null);
+  assert.equal(await deleteTranslation(user, undefined), false);
+  assert.equal(await retryTurn(user, 'abc', 'def'), null);
+  await assert.rejects(() => addTurn(user, { id: 'abc', side: 'a', buffer: audio }), (e) => e.status === 404);
 });
