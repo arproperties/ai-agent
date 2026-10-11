@@ -6,6 +6,8 @@ import { MODULES, userModules, listModuleAccess, setModuleAccess, holders, neede
 import { alertRoutes } from '../server/leasingAlerts.js';
 import { adminRoutes } from '../server/admin.js';
 import { create, addDocument } from '../server/properties.js';
+import { leasingKit, LEASING_TOOLS } from '../server/leasingKit.js';
+import { RENEWAL_TOOLS } from '../server/renewals.js';
 
 test.after(() => closeDb());
 
@@ -222,4 +224,32 @@ test('only the master ticks modules, over HTTP', async () => {
     assert.equal(wrong.status, 400);
     assert.match((await wrong.json()).error, /Unknown module: payroll/);
   } finally { await new Promise((ok) => s.close(ok)); }
+});
+
+test('Riley carries only the tools of the modules a person holds', async () => {
+  const { sara } = await people();
+  const names = (modules) => leasingKit(sara, { modules }).definitions.map((d) => d.name).sort();
+
+  assert.deepEqual(names(['chats']), [], 'Chats alone looks nothing up in leasing');
+  assert.deepEqual(names(['chats', 'workorders']), ['leasing_add_work_order', 'leasing_update_work_order', 'leasing_work_orders']);
+  assert.deepEqual(names(['chats', 'reports']), ['leasing_report', 'leasing_tenant_statement']);
+  assert.deepEqual(names(['chats', 'documents']), RENEWAL_TOOLS.map((t) => t.name).sort());
+  assert.ok(names(['chats', 'tenants']).includes('leasing_tenant_history'));
+  assert.ok(!names(['chats', 'leasing']).includes('leasing_tenant_history'));
+  assert.equal(leasingKit(sara).definitions.length, LEASING_TOOLS.length + RENEWAL_TOOLS.length, 'no modules given: everything, as before');
+  // Every tool belongs to some module: none is left that nobody could be given.
+  const every = names(MODULES.map((m) => m.key));
+  assert.equal(every.length, LEASING_TOOLS.length + RENEWAL_TOOLS.length);
+
+  // A tool it does not carry is refused if asked for anyway.
+  const kit = leasingKit(sara, { modules: ['chats', 'tenants'] });
+  const report = await kit.run({ id: 't', name: 'leasing_report', input: { report: 'rent_roll' } });
+  assert.equal(report.is_error, true);
+  assert.match(report.content, /does not have that part of the app/);
+  // The list tool is shared: it answers for what they hold and refuses the rest.
+  const tenants = await kit.run({ id: 't', name: 'leasing_list', input: { what: 'tenants' } });
+  assert.notEqual(tenants.is_error, true);
+  const leases = await kit.run({ id: 't', name: 'leasing_list', input: { what: 'bookings' } });
+  assert.equal(leases.is_error, true);
+  assert.match(leases.content, /does not have that part of the app/);
 });

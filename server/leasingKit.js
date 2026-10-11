@@ -666,20 +666,41 @@ const STATUS = {
   leasing_add_work_order: 'Raising the work order…', leasing_update_work_order: 'Changing the work order…',
 };
 
+// Which modules a tool belongs to (server/modules.js): holding any one of them is enough.
+// It follows the screens: a tool is carried by whoever could do the same thing by hand.
+const TOOL_MODULES = {
+  leasing_report: ['reports'], leasing_tenant_statement: ['reports'],
+  leasing_free_units: ['leasing'], leasing_tenant_history: ['tenants'], leasing_unit_inspections: ['leasing', 'properties'],
+  leasing_work_orders: ['workorders'], leasing_list: ['leasing', 'properties', 'tenants', 'sources'],
+  leasing_add_company: ['properties'], leasing_add_building: ['properties'], leasing_add_units: ['properties'],
+  leasing_add_service: ['leasing', 'properties'], leasing_add_tenant: ['tenants', 'leasing'],
+  leasing_add_booking: ['leasing'], leasing_change_booking: ['leasing'], leasing_confirm_booking: ['leasing'], leasing_record_inspection: ['leasing', 'properties'],
+  leasing_add_work_order: ['workorders'], leasing_update_work_order: ['workorders'],
+  renewal_status: ['documents'], renewal_start: ['documents'], renewal_check_replies: ['documents'], renewal_compare: ['documents'],
+};
+// leasing_list reads several screens' lists: each kind is whose it is on the screens.
+const LIST_MODULES = { companies: ['properties', 'leasing'], buildings: ['properties', 'leasing'], units: ['properties', 'leasing'],
+  services: ['leasing', 'properties'], tenants: ['tenants', 'leasing'], sources: ['sources', 'leasing'], bookings: ['leasing'] };
+const NOT_THEIRS = 'This person does not have that part of the app. Tell them to ask the master.';
+
 /**
  * The leasing tools, in the shape chat.js keeps its toolkits in. `user` is who is asking;
- * `onChanged` is told when something was added, so an open screen can show it.
+ * `onChanged` is told when something was added, so an open screen can show it. `modules`
+ * is what they hold: only those tools are carried. Left out, every tool is.
  */
-export function leasingKit(user, { onChanged, renewals } = {}) {
+export function leasingKit(user, { onChanged, renewals, modules } = {}) {
   const change = writes(user);
   const renew = renewalTools(user, renewals); // getting a document renewed: server/renewals.js
+  const may = (keys = []) => !modules || keys.some((k) => modules.includes(k));
   return {
-    definitions: [...LEASING_TOOLS, ...RENEWAL_TOOLS],
+    definitions: [...LEASING_TOOLS, ...RENEWAL_TOOLS].filter((d) => may(TOOL_MODULES[d.name])),
     status: (name) => STATUS[name] || RENEWAL_STATUS[name] || 'Looking at the leasing records…',
     run: async (block) => {
       try {
         const fn = reads[block.name] || change[block.name] || renew[block.name];
         if (!fn) throw new Error(`Unknown tool ${block.name}`);
+        if (!may(TOOL_MODULES[block.name])) throw new Error(NOT_THEIRS);
+        if (block.name === 'leasing_list' && LIST_MODULES[block.input?.what] && !may(LIST_MODULES[block.input.what])) throw new Error(NOT_THEIRS);
         const content = await fn(block.input || {});
         if (change[block.name]) onChanged?.();
         return { type: 'tool_result', tool_use_id: block.id, content };

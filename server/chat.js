@@ -12,6 +12,7 @@ import { inventoryKit } from './inventory.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
 import { leasingKit } from './leasingKit.js';
+import { userModules } from './modules.js';
 import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
 import { chatAgents } from './access.js';
@@ -318,7 +319,8 @@ export async function chat(req, res) {
   const saifsys = await saifsysKit(user);
   // Doing things in saifsys (today: creating an ARS booking) — proposed here, done only from the card.
   const saifsysAct = await saifsysActionKit(user, { conversationId: convId, onCard: (b) => send('arsBooking', b) });
-  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), leasingKit(user, { onChanged: () => send('changed', { what: 'leasing' }) }),
+  const modules = await userModules(user); // Riley looks up only what this person's menu shows
+  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), leasingKit(user, { modules, onChanged: () => send('changed', { what: 'leasing' }) }),
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
     await buildingKit(user),
     await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),
