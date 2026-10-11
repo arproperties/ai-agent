@@ -112,6 +112,7 @@ module that owns the thing**, except where another screen already adds one inlin
 | `/leasing/work-orders…` | workorders, leasing (the 3D view marks repairs) | workorders |
 | `/leasing/reports/:name` | reports | – |
 | `/leasing/alerts…` | alerts, overview | alerts |
+| `/leasing/alerts/reminder/:id` | alerts, overview, leasing (a lease's Payments sends it) | alerts, leasing |
 | `/leasing/alerts/count` | anyone; counts are zero for kinds whose module they lack | – |
 | `/properties/renewals…` | documents | documents (and the master, as today) |
 | `/properties/documents…`, `/properties/docs…`, `/properties/places` | documents, properties | documents, properties |

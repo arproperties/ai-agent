@@ -61,10 +61,11 @@ export async function setModuleAccess(userId, wanted) {
   return keep.length;
 }
 
-/** Everyone who holds a module, masters included: who a push about it may go to. */
+/** Everyone who holds a module, masters included, disabled accounts left out: who a push about it may go to. */
 export async function holders(key) {
-  const rows = await db.prepare(`SELECT id FROM users WHERE role = 'master'
-    UNION SELECT user_id AS id FROM module_access WHERE module = ?`).all(key);
+  const rows = await db.prepare(`SELECT id FROM users WHERE role = 'master' AND NOT disabled
+    UNION SELECT m.user_id AS id FROM module_access m JOIN users u ON u.id = m.user_id
+      WHERE m.module = ? AND NOT u.disabled`).all(key);
   return new Set(rows.map((r) => r.id));
 }
 
@@ -79,20 +80,22 @@ const MASTER = []; // nobody's module: the master alone
 const RULES = [
   [/^\/leasing\/region\/?$/, ANYONE, ANYONE], // money and dates are written with it everywhere; saving it is the master's, checked in its router
   [/^\/leasing\/alerts\/count$/, ANYONE, MASTER], // the sidebar's badges; trimmed to what they hold in the route
+  [/^\/leasing\/alerts\/reminder(\/|$)/, ['alerts', 'overview', 'leasing'], ['alerts', 'leasing']], // the reminder is sent from a lease's Payments too
   [/^\/leasing\/alerts(\/|$)/, ['alerts', 'overview'], ['alerts']],
   [/^\/leasing\/reports\//, ['reports'], MASTER],
   [/^\/leasing\/overview$/, ['overview', 'leasing'], MASTER], // the 3D view is drawn from it too
   [/^\/leasing\/work-orders(\/|$)/, ['workorders', 'leasing'], ['workorders']], // the 3D view marks open repairs
-  [/^\/leasing\/(tenants\/\d+\/(history|log)|log)(\/|$)/, ['tenants'], ['tenants']],
+  // an id is whatever sits between the slashes: Express decodes it and the routes read it as a number
+  [/^\/leasing\/(tenants\/[^/]+\/(history|log)|log)(\/|$)/, ['tenants'], ['tenants']],
   [/^\/leasing\/tenants(\/|$)/, ['tenants', 'leasing', 'reports'], ['tenants', 'leasing']],
   [/^\/leasing\/services(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
   [/^\/leasing\/sources(\/|$)/, ['sources', 'leasing'], ['sources', 'leasing']],
-  [/^\/leasing\/(units\/\d+\/inspections|inspections|inspection-photos)(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
+  [/^\/leasing\/(units\/[^/]+\/inspections|inspections|inspection-photos)(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
   [/^\/leasing\/(available|bookings|installments|payments|docs)(\/|$)/, ['leasing'], ['leasing']],
   [/^\/leasing(\/|$)/, MASTER, MASTER], // a leasing route with no line above is the master's until it is given one
   [/^\/properties\/renewals(\/|$)/, ['documents'], ['documents']],
-  [/^\/properties\/(documents|docs|places|companies\/\d+\/docs)(\/|$)/, ['documents', 'properties'], ['documents', 'properties']],
-  [/^\/properties\/(plans|plan-readings|buildings\/\d+\/plan)(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
+  [/^\/properties\/(documents|docs|places|companies\/[^/]+\/docs)(\/|$)/, ['documents', 'properties'], ['documents', 'properties']],
+  [/^\/properties\/(plans|plan-readings|buildings\/[^/]+\/plan)(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
   [/^\/properties(\/|$)/, ['properties', 'leasing', 'reports'], ['properties']],
 ];
 

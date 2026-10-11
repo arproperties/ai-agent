@@ -75,6 +75,11 @@ test('holders are the master and whoever is ticked', async () => {
   assert.deepEqual([...(await holders('alerts'))].sort(), [master.id, sara.id].sort());
   assert.deepEqual([...(await holders('reports'))], [master.id]);
   assert.equal((await holders('alerts')).has(omar), false);
+  await db.prepare('UPDATE users SET disabled = true WHERE id = ?').run(sara.id);
+  assert.equal((await holders('alerts')).has(sara.id), false, 'a disabled account is not buzzed');
+  const boss2 = await makeUser('Boss2');
+  await db.prepare("UPDATE users SET role = 'master', disabled = true WHERE id = ?").run(boss2);
+  assert.equal((await holders('alerts')).has(boss2), false, 'nor a disabled master');
 });
 
 test('each route names the modules that may read it and the modules that may change it', () => {
@@ -97,7 +102,8 @@ test('each route names the modules that may read it and the modules that may cha
   assert.deepEqual(rule('/leasing/inspection-photos/4'), [['leasing', 'properties'], ['leasing', 'properties']]);
   assert.deepEqual(rule('/leasing/reports/rent_roll'), [['reports'], []]);
   assert.deepEqual(rule('/leasing/alerts'), [['alerts', 'overview'], ['alerts']]);
-  assert.deepEqual(rule('/leasing/alerts/reminder/8'), [['alerts', 'overview'], ['alerts']]);
+  assert.deepEqual(needed('GET', '/leasing/alerts/reminder/8'), ['alerts', 'overview', 'leasing']);
+  assert.deepEqual(needed('POST', '/leasing/alerts/reminder/8'), ['alerts', 'leasing']);
   assert.deepEqual(rule('/leasing/alerts/count'), ['*', []]);
   assert.deepEqual(rule('/leasing/region'), ['*', '*']);
   assert.deepEqual(rule('/properties/renewals'), [['documents'], ['documents']]);
@@ -110,6 +116,12 @@ test('each route names the modules that may read it and the modules that may cha
   assert.deepEqual(rule('/properties/companies'), [['properties', 'leasing', 'reports'], ['properties']]);
   assert.deepEqual(rule('/properties/buildings/2'), [['properties', 'leasing', 'reports'], ['properties']]);
   assert.deepEqual(rule('/properties/unit-photos/2'), [['properties', 'leasing', 'reports'], ['properties']]);
+  // An id written another way (5.0, %35) is the same id to the route, so the same rule.
+  assert.deepEqual(needed('GET', '/leasing/tenants/5.0/history'), ['tenants']);
+  assert.deepEqual(needed('GET', '/leasing/tenants/%35/history'), ['tenants']);
+  assert.deepEqual(needed('POST', '/leasing/tenants/%35/log'), ['tenants']);
+  assert.deepEqual(needed('GET', '/properties/companies/1.0/docs'), ['documents', 'properties']);
+  assert.deepEqual(needed('GET', '/properties/companies/%31/docs'), ['documents', 'properties']);
   // A leasing route nobody has given a rule is the master's until somebody does.
   assert.deepEqual(rule('/leasing/something-new'), [[], []]);
   assert.deepEqual(needed('GET', '/Leasing/Bookings'), ['leasing'], 'Express matches a mount whatever its case, so the gate does too');
@@ -163,6 +175,7 @@ test('Leasing alone can make a lease: every read its form makes is allowed', asy
   assert.equal(await hit('POST', '/leasing/work-orders'), 403);
   assert.equal(await hit('POST', '/properties/companies'), 403);
   assert.equal(await hit('GET', '/leasing/tenants/1/history'), 403, 'a tenant’s history is the Tenants screen’s');
+  assert.equal(await hit('GET', '/leasing/tenants/1.0/history'), 403, 'the id written another way is the same route');
   assert.equal(await hit('GET', '/leasing/reports/rent_roll'), 403);
 });
 
