@@ -359,19 +359,26 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
 function AppModules({ person }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     api.get(`/admin/users/${person.id}/modules`).then(setData).catch((e) => { setError(e.message); setData({ modules: [] }); });
   }, [person.id]);
 
+  // One save at a time: the whole end state is sent, so two in flight could land out of order.
   const toggle = async (key) => {
+    if (saving) return;
     const modules = data.modules.map((m) => (m.key === key ? { ...m, on: !m.on } : m));
     setData({ ...data, modules });
     setError('');
+    setSaving(true);
     try {
       await api.put(`/admin/users/${person.id}/modules`, { modules: modules.filter((m) => m.on).map((m) => m.key) });
     } catch (e) {
       setError(e.message);
-      setData(data); // put the switch back
+      // read it again, so the cards show what the server holds and not a guess
+      await api.get(`/admin/users/${person.id}/modules`).then(setData).catch(() => setData(data));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -387,7 +394,7 @@ function AppModules({ person }) {
         {data.modules.map((m) => {
           const fixed = data.master || m.locked;
           return (
-            <button key={m.key} onClick={() => !fixed && toggle(m.key)} disabled={fixed} aria-pressed={m.on}
+            <button key={m.key} onClick={() => toggle(m.key)} disabled={fixed || saving} aria-pressed={m.on}
               className={`flex w-full items-center gap-3 rounded-[1.25rem] border p-3 text-left transition ${
                 m.on ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent' : 'border-stroke bg-white/[0.035] hover:bg-white/[0.07]'}`}>
               <span className="min-w-0 flex-1">
