@@ -6,6 +6,7 @@ import { DATA_DIR } from './config.js';
 import { requireMaster } from './auth.js';
 import { saveFile, sendDoc } from './properties.js';
 import { bad, isDate, bookingRef, todayHere } from './leasing.js';
+import { holders } from './modules.js';
 
 // Work orders: a repair to a unit, from the report to the fix. It belongs to the unit, and
 // carries the lease and tenant the unit had on the day it was reported, which the server
@@ -94,7 +95,8 @@ async function tellUrgent(w, by, push) {
   if (!(await getSettings()).workorder.on) return;
   const people = await db.prepare(`SELECT user_id AS id FROM prop_building_staff WHERE building_id = ?
     UNION SELECT id FROM users WHERE role = 'master'`).all(w.building_id);
-  const to = people.map((p) => p.id).filter((id) => id !== by);
+  const may = await holders('workorders'); // it opens Work orders, so it goes only to people who have it
+  const to = people.map((p) => p.id).filter((id) => id !== by && may.has(id));
   if (!to.length) return;
   const send = push || (await import('./push.js')).sendPush;
   await send(to, { title: `Urgent: ${w.category || 'work order'} · Unit ${w.unit_no}, ${w.building}`, body: `${w.ref}: ${w.detail.slice(0, 140)}`, url: '/?leasing=workorders', tag: `work-order-${w.id}` });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reset, closeDb, db, makeUser } from './helpers/db.js';
+import { reset, closeDb, db, makeUser, giveModules } from './helpers/db.js';
 import { create, setBuildingStaff, addDocument, addDoc, updateDoc, removeDoc } from '../server/properties.js';
 import { listAlerts, runAlerts, saveSettings, getSettings } from '../server/leasingAlerts.js';
 
@@ -16,6 +16,7 @@ async function tower() {
   const b = await create('building', { name: 'Tower' }, c.id);
   const u = await create('unit', { unit_no: '101' }, b.id);
   await setBuildingStaff(b.id, [staff]);
+  await giveModules(staff, 'alerts');
   const policy = await addDocument({ building_id: b.id, title: 'Fire insurance', expiry_date: '2027-01-08' });
   return { master, staff, c, b, u, policy };
 }

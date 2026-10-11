@@ -7,7 +7,7 @@ import { usDate } from './usFormat.js';
 import { register } from './properties.js';
 import { listWorkOrders } from './workOrders.js';
 import { openByDocument, notRenewing } from './renewals.js';
-import { userModules } from './modules.js';
+import { userModules, holders } from './modules.js';
 
 // Leasing alerts: what needs somebody's attention today, and the buzz that says so.
 //
@@ -208,6 +208,7 @@ export async function runAlerts(today = todayHere(), hour = hourHere(), { mail }
   const s = await snapshot({}, today);
   const all = await openAlerts(s, cfg);
   const masters = (await db.prepare("SELECT id FROM users WHERE role = 'master'").all()).map((u) => u.id);
+  const may = await holders('alerts'); // a notice opens the Alerts screen, so it goes only to people who have it
   const fresh = (userId, key) => db.prepare('INSERT INTO lease_alerts_sent (user_id, key, day) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(userId, key, today).then((r) => r.changes > 0);
 
   const byUser = new Map();
@@ -218,7 +219,7 @@ export async function runAlerts(today = todayHere(), hour = hourHere(), { mail }
   // was down. After that it keeps to the rule's days.
   const told = async (userId, key) => !!(await db.prepare('SELECT 1 FROM lease_alerts_sent WHERE user_id = ? AND key = ? LIMIT 1').get(userId, key));
   for (const a of all) {
-    for (const userId of new Set([a.owner, ...a.staff, ...masters].filter(Boolean))) {
+    for (const userId of new Set([a.owner, ...a.staff, ...masters].filter((id) => id && may.has(id)))) {
       const goes = a.fires || ((a.rule === 'overdue' || a.rule === 'document') && !(await told(userId, a.key)));
       if (goes && await fresh(userId, a.key)) give(userId, a);
     }

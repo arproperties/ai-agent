@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reset, closeDb, db, makeUser } from './helpers/db.js';
+import { reset, closeDb, db, makeUser, giveModules } from './helpers/db.js';
 import { create, setBuildingStaff, buildingStaff } from '../server/properties.js';
 import { createBooking, bookingPayments, recordPayment, removePayment, payBooking, settleDeposit, depositState, bookingHistory, changeEnd, cancelBooking, getBooking } from '../server/leasing.js';
 import { report } from '../server/leasingReports.js';
@@ -16,6 +16,7 @@ async function tower() {
   const master = await makeUser('Boss');
   await db.prepare("UPDATE users SET role = 'master' WHERE id = ?").run(master);
   const staff = await makeUser('Staff');
+  await giveModules(staff, 'alerts');
   const c = await create('company', { name: 'ACE' });
   const b = await create('building', { name: 'Tower' }, c.id);
   const u1 = await create('unit', { unit_no: '101' }, b.id);
@@ -88,6 +89,7 @@ test('a deposit given back is in the collections, the daily report and the tenan
 test('the people who look after a building get its alerts, and the tenant can be emailed automatically', async () => {
   const { master, staff, b, bk } = await tower();
   const keeper = await makeUser('Keeper');
+  await giveModules(keeper, 'alerts');
   assert.deepEqual((await setBuildingStaff(b.id, [keeper, keeper, 9999])).map((u) => u.name), ['Keeper']);
   assert.equal((await buildingStaff(b.id)).length, 1);
 

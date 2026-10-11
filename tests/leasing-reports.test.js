@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reset, closeDb, db, makeUser } from './helpers/db.js';
+import { reset, closeDb, db, makeUser, giveModules } from './helpers/db.js';
 import { create } from '../server/properties.js';
 import { addTenant, createBooking, confirmBooking, renewBooking, bookingPayments, recordPayment, schedule, total, overview } from '../server/leasing.js';
 import { report } from '../server/leasingReports.js';
@@ -17,6 +17,7 @@ async function books() {
   const master = await makeUser('Boss');
   await db.prepare("UPDATE users SET role = 'master' WHERE id = ?").run(master);
   const staff = await makeUser('Staff');
+  await giveModules(staff, 'alerts');
   const c = await create('company', { name: 'ACE' });
   const b = await create('building', { name: 'Tower' }, c.id);
   const [u1, u2] = [await create('unit', { unit_no: '101', type: '1BR' }, b.id), await create('unit', { unit_no: '102' }, b.id)];

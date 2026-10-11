@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { reset, closeDb, db, makeUser, giveModules } from './helpers/db.js';
 import { MODULES, userModules, listModuleAccess, setModuleAccess, holders, needed, moduleGate } from '../server/modules.js';
-import { alertRoutes } from '../server/leasingAlerts.js';
+import { alertRoutes, runAlerts } from '../server/leasingAlerts.js';
+import { createWorkOrder } from '../server/workOrders.js';
 import { adminRoutes } from '../server/admin.js';
-import { create, addDocument } from '../server/properties.js';
+import { create, addDocument, setBuildingStaff } from '../server/properties.js';
 import { leasingKit, LEASING_TOOLS } from '../server/leasingKit.js';
 import { RENEWAL_TOOLS } from '../server/renewals.js';
 
@@ -252,4 +253,28 @@ test('Riley carries only the tools of the modules a person holds', async () => {
   const leases = await kit.run({ id: 't', name: 'leasing_list', input: { what: 'bookings' } });
   assert.equal(leases.is_error, true);
   assert.match(leases.content, /does not have that part of the app/);
+});
+
+test('a building’s staff are buzzed only about modules they hold', async () => {
+  const { master, sara } = await people();
+  const omar = await makeUser('Omar');
+  const c = await create('company', { name: 'ACE' });
+  const b = await create('building', { name: 'Tower' }, c.id);
+  const u = await create('unit', { unit_no: '101' }, b.id);
+  await setBuildingStaff(b.id, [sara.id, omar]);
+  await addDocument({ building_id: b.id, title: 'Fire insurance', expiry_date: '2027-01-08' }); // its window opens on 2026-10-10
+
+  // Neither has Alerts: only the master hears, and nothing breaks for the two who do not.
+  assert.deepEqual((await runAlerts('2026-10-10', 9)).map((n) => n.user_id), [master.id]);
+  // Ticked later, she is told of what she has never been told.
+  await giveModules(sara.id, 'alerts');
+  assert.deepEqual((await runAlerts('2026-10-10', 10)).map((n) => n.user_id), [sara.id]);
+
+  const sent = [];
+  const push = async (to) => { sent.push([...to].sort((x, y) => x - y)); };
+  await createWorkOrder({ unit_id: u.id, detail: 'Water through the ceiling', priority: 'urgent' }, master.id, '2026-10-10', { push });
+  assert.deepEqual(sent, [], 'neither has Work orders, and the master raised it');
+  await giveModules(omar, 'workorders');
+  await createWorkOrder({ unit_id: u.id, detail: 'Sparks from a socket', priority: 'urgent' }, master.id, '2026-10-10', { push });
+  assert.deepEqual(sent, [[omar]]);
 });

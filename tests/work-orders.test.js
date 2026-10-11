@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reset, closeDb, db, makeUser } from './helpers/db.js';
+import { reset, closeDb, db, makeUser, giveModules } from './helpers/db.js';
 import { create, remove, setBuildingStaff } from '../server/properties.js';
 import { runAlerts, listAlerts, saveSettings, getSettings } from '../server/leasingAlerts.js';
 import { createBooking } from '../server/leasing.js';
@@ -315,6 +315,8 @@ test('a new urgent work order buzzes the building’s staff and the master, not 
   const master = await makeUser('Boss');
   await db.prepare("UPDATE users SET role = 'master' WHERE id = ?").run(master);
   await setBuildingStaff(building.id, [keeper, staff]);
+  await giveModules(keeper, 'workorders');
+  await giveModules(staff, 'workorders');
   const sent = [];
   const push = async (to, note) => { sent.push([[...to].sort((a, b) => a - b), note]); };
 
@@ -345,6 +347,8 @@ test('a work order past its scheduled day is an alert, once a day, until it is d
   const { staff, building, u1, u2 } = await tower();
   const keeper = await makeUser('Keeper');
   await setBuildingStaff(building.id, [keeper]);
+  await giveModules(keeper, 'alerts');
+  await giveModules(staff, 'alerts');
   assert.equal((await getSettings()).workorder.on, true);
   const w = await createWorkOrder({ unit_id: u2.id, category: 'AC', detail: 'Service the AC', assigned_to: 'Cool Air LLC', scheduled_on: '2026-10-22' }, staff, AT);
   await createWorkOrder({ unit_id: u1.id, detail: 'Not due yet', scheduled_on: '2026-10-30' }, staff, AT);
