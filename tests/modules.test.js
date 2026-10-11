@@ -4,6 +4,7 @@ import express from 'express';
 import { reset, closeDb, db, makeUser, giveModules } from './helpers/db.js';
 import { MODULES, userModules, listModuleAccess, setModuleAccess, holders, needed, moduleGate } from '../server/modules.js';
 import { alertRoutes } from '../server/leasingAlerts.js';
+import { adminRoutes } from '../server/admin.js';
 import { create, addDocument } from '../server/properties.js';
 
 test.after(() => closeDb());
@@ -190,5 +191,33 @@ test('the sidebar counts only what the person can open', async () => {
     assert.ok((await count()).count >= 1);
     who = master;
     assert.equal((await count()).rules.document, 1);
+  } finally { await new Promise((ok) => s.close(ok)); }
+});
+
+test('only the master ticks modules, over HTTP', async () => {
+  const { master, sara } = await people();
+  let who = sara;
+  const a = express();
+  a.use(express.json());
+  a.use((req, res, next) => { req.user = who; next(); });
+  a.use('/api/admin', adminRoutes);
+  a.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message }));
+  const s = await new Promise((ok) => { const x = a.listen(0, '127.0.0.1', () => ok(x)); });
+  const url = `http://127.0.0.1:${s.address().port}/api/admin/users/${sara.id}/modules`;
+  const put = (modules) => fetch(url, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modules }) });
+  try {
+    assert.equal((await fetch(url)).status, 403);
+    assert.equal((await put(['reports'])).status, 403);
+    assert.deepEqual(await userModules(sara), ['chats'], 'she cannot tick her own');
+
+    who = master;
+    const saved = await put(['reports', 'chats']);
+    assert.deepEqual([saved.status, await saved.json()], [200, { ok: true, modules: 1 }]);
+    const read = await (await fetch(url)).json();
+    assert.deepEqual(read.modules.filter((m) => m.on).map((m) => m.key), ['chats', 'reports']);
+
+    const wrong = await put(['payroll']);
+    assert.equal(wrong.status, 400);
+    assert.match((await wrong.json()).error, /Unknown module: payroll/);
   } finally { await new Promise((ok) => s.close(ok)); }
 });

@@ -3,6 +3,7 @@ import { scrypt, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { db, tx } from './db.js';
 import { sendPasswordReset } from './mailer.js';
+import { userModules } from './modules.js';
 
 const scryptAsync = promisify(scrypt);
 const SESSION_DAYS = 60;
@@ -45,7 +46,8 @@ const fail = (key) => {
   attempts.set(key, a && a.until > Date.now() ? { ...a, count: a.count + 1 } : { count: 1, until: Date.now() + 15 * 60000 });
 };
 
-const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role });
+// `modules` is what the menu is drawn from (server/modules.js); the server checks each request again.
+const publicUser = async (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, modules: await userModules(u) });
 
 export async function currentUser(req) {
   const token = readCookie(req, COOKIE);
@@ -103,7 +105,7 @@ export const authRoutes = Router();
 authRoutes.get('/me', async (req, res, next) => {
   try {
     const user = await currentUser(req);
-    res.json({ user: user && publicUser(user) });
+    res.json({ user: user && await publicUser(user) });
   } catch (e) { next(e); }
 });
 
@@ -122,7 +124,7 @@ authRoutes.post('/login', async (req, res) => {
   if (user.disabled) return res.status(403).json({ error: 'This account has been disabled' });
   attempts.delete(key);
   await startSession(req, res, user.id);
-  res.json({ user: publicUser(user) });
+  res.json({ user: await publicUser(user) });
 });
 
 // ---------- forgot / reset password ----------
@@ -158,7 +160,7 @@ authRoutes.post('/reset', async (req, res) => {
     await db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id); // sign out everywhere else
   });
   await startSession(req, res, row.user_id);
-  res.json({ user: publicUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id)) });
+  res.json({ user: await publicUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id)) });
 });
 
 authRoutes.post('/logout', async (req, res) => {

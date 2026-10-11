@@ -4,6 +4,7 @@ import { hashPassword, requireMaster, sessionHash } from './auth.js';
 import { inlineType } from './files.js';
 import { recentErrors, errorCount } from './errors.js';
 import { MSG_SELECT, messageOut } from './messenger.js';
+import { listModuleAccess, setModuleAccess } from './modules.js';
 import { listAccess, setAccess, setActionAccess } from './saifsys/index.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
@@ -352,6 +353,15 @@ adminRoutes.put('/users/:id/saifsys', wrap(async (req, res) => {
 
 adminRoutes.put('/users/:id/saifsys-actions', wrap(async (req, res) => {
   res.json({ ok: true, actions: await setActionAccess(req.params.id, req.body.actions) });
+}));
+
+// Which of the app's own modules (the left menu) a person has. Chats is everyone's; the master has them all.
+adminRoutes.get('/users/:id/modules', wrap(async (req, res) => {
+  res.json(await listModuleAccess(req.params.id));
+}));
+
+adminRoutes.put('/users/:id/modules', wrap(async (req, res) => {
+  res.json({ ok: true, modules: await setModuleAccess(req.params.id, req.body.modules) });
 }));
 
 // Disabling keeps the data and revokes every session. Deleting a user cascades away
