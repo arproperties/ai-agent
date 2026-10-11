@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Banknote, Check, ChevronRight, Clock, Coins, Loader2, MessageSquareWarning, Paperclip, Pencil, Plus, RotateCcw, Trash2, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
+import { can } from '../lib/modules';
 import { money as aed } from '../lib/region';
 import { usDate as fmt, usPhone } from '../lib/usFormat';
 import Page from './Page';
@@ -187,8 +188,8 @@ function Item({ i, onPay, onEdit, onChanged, onWork }) {
           {error && <p className="mt-2 text-sm text-bad">{error}</p>}
         </div>
         <div className="-mr-1.5 flex shrink-0 items-center gap-1">
-          {late ? open && <button onClick={() => onPay(i.booking_id)} className={GHOST}><Banknote size={14} /> Payments</button>
-            : order ? <button onClick={() => onWork(i)} className={GHOST}>Open <ChevronRight size={14} /></button> : (
+          {late ? open && onPay && <button onClick={() => onPay(i.booking_id)} className={GHOST}><Banknote size={14} /> Payments</button>
+            : order ? can('workorders') && <button onClick={() => onWork(i)} className={GHOST}>Open <ChevronRight size={14} /></button> : (
             <>
               {open ? !resolving && <button onClick={() => setResolving(true)} className={GHOST}><Check size={14} /> Resolve</button>
                 : <button onClick={() => act(() => api.put(`/leasing/log/${i.id}`, { resolved: false, resolution: '' }))} aria-label="Open again" title="Open again" className={`${ROUND} hover:text-txt`}><RotateCcw size={15} /></button>}
@@ -227,7 +228,7 @@ export default function TenantHistory({ tenant, onBack, onPay, onWorkOrder }) {
   return (
     <Page title={`History · ${tenant.full_name}`} onBack={onBack} action={(
       <div className="flex gap-2">
-        <button onClick={() => onWorkOrder({ ...mine, startNew: true })} className={OUTLINE} title={h?.current ? `A work order for unit ${h.current.unit_no}, ${h.current.building}` : 'A work order'}><Plus size={16} /> <span className="hidden sm:inline">Add </span>maintenance</button>
+        {can('workorders') && <button onClick={() => onWorkOrder({ ...mine, startNew: true })} className={OUTLINE} title={h?.current ? `A work order for unit ${h.current.unit_no}, ${h.current.building}` : 'A work order'}><Plus size={16} /> <span className="hidden sm:inline">Add </span>maintenance</button>}
         <button onClick={() => setEntry({ kind: 'complaint' })} className={PRIMARY}><Plus size={16} /> <span className="hidden sm:inline">Add </span>complaint</button>
       </div>
     )}>

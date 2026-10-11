@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, LayoutGrid, List, BedDouble, BedSingle, Lock, History, ClipboardCheck, LogIn, Wrench } from 'lucide-react';
 import { api } from '../lib/api';
+import { can } from '../lib/modules';
 import { money as aed, currency, region } from '../lib/region';
 import { usDate as fmt, usPhone } from '../lib/usFormat';
 import Page from './Page';
@@ -569,7 +570,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
     },
       'Draft the next lease: same unit, tenant and rent, starting the day after this one ends'],
     b.status === 'confirmed' && [CalendarDays, 'Change end date', onEnd, 'The tenant stays longer, or the stay is shorter than was leased'],
-    b.status === 'confirmed' && [Wrench, 'Work orders', onWork, 'Repairs raised for this tenant during the lease'],
+    b.status === 'confirmed' && can('workorders') && [Wrench, 'Work orders', onWork, 'Repairs raised for this tenant during the lease'],
     // A draft is confirmed after its move-in inspection; a renewal has none to do.
     moveInDue || (b.status === 'draft' && !b.moved_in && !b.renewed_from) ? [LogIn, 'Move-in inspection', () => onInspect('move_in'), 'How the tenant finds the unit. The lease is confirmed after it']
       : [ClipboardCheck, 'Inspections', () => onInspect(), 'The unit’s condition: make-ready, move-in and move-out'],
@@ -1009,9 +1010,11 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   const [renewalOpen, setRenewalOpen] = useState(null); // or its renewal, when one is under way
   const close = () => { setForm(null); setKey((k) => k + 1); };
   const openBooking = (id, as) => api.get(`/leasing/bookings/${id}`).then((b) => setForm(as ? { [as]: b } : b)).catch(() => {});
-  const pay = (id) => openBooking(id, 'payOf');
-  // An alert opens the screen that deals with it.
+  // A lease is opened only by someone who has Leasing; from the other screens the way in is simply not offered.
+  const pay = can('leasing') ? (id) => openBooking(id, 'payOf') : undefined;
+  // An alert opens the screen that deals with it, when the person has that screen.
   const openAlert = (a) => {
+    if (!can({ documents: 'documents', tenants: 'tenants', workorder: 'workorders' }[a.open] || 'leasing')) return;
     if (a.open === 'documents') { setDocOpen(a.document_id); setRenewalOpen(a.renewal_id || null); setTab('documents'); return; }
     if (a.open === 'tenants') { setTab('tenants'); return; }
     if (a.open === 'workorder') { setForm({ workOf: { openId: a.work_order_id } }); return; }
@@ -1069,7 +1072,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   );
 
   // These stand alone: their own page and title, with none of Leasing's tabs.
-  const add = <button onClick={() => setForm({ preset: null })} className={PRIMARY}><Plus size={16} /> New lease</button>;
+  const add = can('leasing') && <button onClick={() => setForm({ preset: null })} className={PRIMARY}><Plus size={16} /> New lease</button>;
   if (BOOKING_TABS.some(([k]) => k === tab)) return (
     <Page title="Leasing" onBack={onBack} action={add}>
       <div className="mb-4 flex gap-5 overflow-x-auto border-b border-stroke text-sm">
@@ -1094,5 +1097,5 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   if (tab === 'alerts') return <Page title="Alerts" onBack={onBack}><LeasingAlerts key={key} rule={alert} onRule={onAlert} onOpen={openAlert} /></Page>;
   if (tab === 'documents') return <Page title="Documents" onBack={onBack}><Documents key={key} openId={docOpen} openRenewal={renewalOpen} onOpened={() => { setDocOpen(null); setRenewalOpen(null); }} /></Page>;
 
-  return <Page title="Overview" onBack={onBack} action={add}><LeasingOverview key={key} onPay={pay} onAlerts={(k) => { onAlert(k); setTab('alerts'); }} /></Page>;
+  return <Page title="Overview" onBack={onBack} action={add}><LeasingOverview key={key} onPay={pay} onAlerts={(k) => { if (!can('alerts')) return; onAlert(k); setTab('alerts'); }} /></Page>;
 }

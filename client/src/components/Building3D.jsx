@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Banknote, Check, ClipboardCheck, FileText, Layers, Loader2, Plus, RotateCw, ScanEye, Upload, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
+import { can } from '../lib/modules';
 import { money } from '../lib/region';
 import { createBuildingScene } from '../lib/buildingScene';
 import Select from './Select';
@@ -324,7 +325,7 @@ export default function Building3D({ onPay, onLease, onNew, onInspect, onWork })
             {unit.status === 'vacant' && (drafted[unit.unit_id]
               ? <button onClick={() => onInspect(drafted[unit.unit_id])} className={toggle(true)}><ClipboardCheck size={14} /> Move-in inspection</button>
               : <button onClick={() => { setLeasing(unit.unit_id); setSpin(false); }} className={toggle(true)}><Plus size={14} /> New lease</button>)}
-            <button onClick={() => onWork(unit)} className={toggle(false)}><Wrench size={14} /> Work orders</button>
+            {can('workorders') && <button onClick={() => onWork(unit)} className={toggle(false)}><Wrench size={14} /> Work orders</button>}
           </div>
         </div>
       )}
