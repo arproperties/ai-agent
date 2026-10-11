@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './lib/api';
 import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
@@ -74,6 +74,7 @@ export default function App() {
   const [dataKey, setDataKey] = useState(0); // goes up when Riley adds something from a chat, so the screen behind is read again
   const [hasBuildings, setHasBuildings] = useState(false); // the master, or someone who runs a building
   const [jumpToBuilding, setJumpToBuilding] = useState(notifiedBuilding); // a building (and job) a notification asked for
+  const signedInBefore = useRef(false); // somebody has been signed in on this page already
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
   const chatOpened = useCallback(() => setJumpToChat(null), []);
@@ -81,7 +82,7 @@ export default function App() {
   useEffect(() => {
     // Staff start on the chat, the one screen everyone has; the master on the Overview; a notification's screen is
     // kept (the guard below still closes one they do not hold). Set with the person, so nothing is drawn in between.
-    api.get('/auth/me').then((r) => { setMe(r.user); if (r.user && r.user.role !== 'master') setPanel((p) => (p === 'leasing' && !notifiedLeasing ? null : p)); }).catch(() => setMe(null));
+    api.get('/auth/me').then((r) => { setMe(r.user); if (r.user) signedInBefore.current = true; if (r.user && r.user.role !== 'master') setPanel((p) => (p === 'leasing' && !notifiedLeasing ? null : p)); }).catch(() => setMe(null));
     const out = () => setMe(null);
     window.addEventListener('jarvis:signedout', out);
     return () => window.removeEventListener('jarvis:signedout', out);
@@ -189,8 +190,11 @@ export default function App() {
   const resetting = new URLSearchParams(window.location.search).has('reset'); // opened a password-reset link
   if (!me || resetting) return <Auth onAuthed={(u) => {
     setMe(u); setChat({ key: Date.now(), id: null });
-    // Nobody inherits the screen the last person left open.
-    setPanel(u.role === 'master' ? 'leasing' : null); setTour(false); setLeasingTab('overview');
+    // Nobody inherits the screen the last person left open. The first sign-in on a page has no last person: the
+    // screen it loaded with (a tapped notification's) stays, with only the staff default applied.
+    if (signedInBefore.current) { setPanel(u.role === 'master' ? 'leasing' : null); setTour(false); setLeasingTab('overview'); }
+    else setPanel((p) => (u.role !== 'master' && p === 'leasing' && !notifiedLeasing ? null : p));
+    signedInBefore.current = true;
   }} />;
 
   const need = moduleOf(panel, leasingTab);

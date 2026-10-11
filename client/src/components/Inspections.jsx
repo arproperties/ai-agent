@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Camera, Check, ChevronLeft, ChevronRight, ClipboardCheck, GitCompareArrows, Loader2, LogIn, LogOut, Pencil, Plus, Sparkles, Trash2, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
+import { can } from '../lib/modules';
 import { usDate as fmt } from '../lib/usFormat';
 import Page from './Page';
 import Select from './Select';
@@ -363,7 +364,7 @@ export default function Inspections({ unit, booking, start, onBack }) {
   };
   const action = data && (
     <div className="flex gap-2">
-      <button onClick={() => setOrders(true)} className={OUTLINE} title="Every repair done in this unit, whoever lived in it"><Wrench size={16} /> <span className="hidden sm:inline">Work orders</span></button>
+      {can('workorders') && <button onClick={() => setOrders(true)} className={OUTLINE} title="Every repair done in this unit, whoever lived in it"><Wrench size={16} /> <span className="hidden sm:inline">Work orders</span></button>}
       {next?.also ? button(next.also, OUTLINE) : next?.late && step === 'move_in' ? button('move_out', OUTLINE) : !next && button('make_ready', OUTLINE)}
       {step && button(step, PRIMARY)}
     </div>

@@ -561,10 +561,13 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
     b.status === 'confirmed' && [RefreshCw, 'Renew', async () => {
       setError('');
       try {
-        // The tenant's record first, so nobody is renewed without it being seen.
-        const { summary: r } = await api.get(`/leasing/tenants/${b.tenant_id}/history`);
-        const record = [r.late && `${r.late} late rent payment${r.late === 1 ? '' : 's'}`, r.complaints && `${r.complaints} complaint${r.complaints === 1 ? '' : 's'} (${r.complaints_open} open)`].filter(Boolean);
-        if (record.length && !confirm(`${b.tenant}'s record: ${record.join(', ')}. Renew anyway?`)) return;
+        // The tenant's record first, so nobody is renewed without it being seen. The record is the Tenants
+        // module's: without it there is nothing to show, and the renewal goes on.
+        if (can('tenants')) {
+          const { summary: r } = await api.get(`/leasing/tenants/${b.tenant_id}/history`);
+          const record = [r.late && `${r.late} late rent payment${r.late === 1 ? '' : 's'}`, r.complaints && `${r.complaints} complaint${r.complaints === 1 ? '' : 's'} (${r.complaints_open} open)`].filter(Boolean);
+          if (record.length && !confirm(`${b.tenant}'s record: ${record.join(', ')}. Renew anyway?`)) return;
+        }
         onRenewed(await api.post(`/leasing/bookings/${b.id}/renew`));
       } catch (e) { setError(e.message); }
     },
