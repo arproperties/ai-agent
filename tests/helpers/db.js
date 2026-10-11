@@ -34,7 +34,7 @@ const TABLES = [
   'users', 'sessions', 'password_resets', 'agents', 'agent_assignments', 'conversations', 'messages',
   'imports', 'documents', 'chunks', 'memories', 'outlook_accounts', 'imap_accounts', 'email_drafts', 'email_action_log',
   'dm_groups', 'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
-  'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs', 'saifsys_access', 'saifsys_action_access', 'ars_booking_requests',
+  'push_subscriptions', 'reminders_sent', 'carried_chats', 'chat_recaps', 'saifsys_runs', 'saifsys_access', 'saifsys_action_access', 'module_access', 'ars_booking_requests',
   'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'team_reminders', 'team_reminder_people', 'team_reminder_photos', 'reminder_suggestions', 'suggestion_scans',
   'responsibilities', 'responsibility_proposals', 'hr_links',
   'checklists', 'checklist_items', 'checklist_runs', 'checklist_run_items',
@@ -83,4 +83,11 @@ export async function makeGroup(user, name = 'Office') {
   user.role = 'master';
   const { id } = await db.prepare('INSERT INTO dm_groups (name, created_by) VALUES (?, ?) RETURNING id').run(name, user.id);
   return id;
+}
+
+/** Tick modules for someone, as the master would on their People profile. */
+export async function giveModules(userId, ...keys) {
+  for (const k of keys) {
+    await db.prepare('INSERT INTO module_access (user_id, module) VALUES (?, ?) ON CONFLICT DO NOTHING').run(userId, k);
+  }
 }

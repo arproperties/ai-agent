@@ -754,6 +754,18 @@ await db.exec(`
   );
 `);
 
+// Which of the app's own modules each person has: one row per ticked place in the left
+// menu (server/modules.js). The master has them all and is never listed; Chats is
+// everyone's and is never listed either. It starts empty: nobody is given a screen
+// they were not ticked for.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS module_access (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    module TEXT NOT NULL,
+    PRIMARY KEY (user_id, module)
+  );
+`);
+
 // An ARS booking Riley has got ready in chat, waiting for the person to tap Create.
 //   status: pending (the card is showing), creating (Create was tapped; the lock that
 //     stops a double tap making two bookings), created, cancelled, failed.
