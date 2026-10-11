@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { api } from './lib/api';
 import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
@@ -28,6 +28,8 @@ import { NotifyPrompt } from './components/Notifications';
 import MessageToast from './components/MessageToast';
 import Orb from './components/Orb';
 
+const Tour3D = lazy(() => import('./components/Tour3D')); // it brings a 3D library with it, fetched only when the Tour is opened
+
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
 const outlookReturn = params.get('outlook') && { status: params.get('outlook'), message: params.get('message') };
@@ -54,7 +56,7 @@ export default function App() {
   const [drawer, setDrawer] = useState(false);
   const [history, setHistory] = useState(false); // on a phone: the list of chats is showing in place of the chat
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedDuties ? 'duties' : notifiedBuilding ? 'buildings' : notifiedReminders ? null : 'leasing'); // home is Leasing's Overview; null is the chat. 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'duties' | 'checklists' | 'buildings' | 'inventory'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedDuties ? 'duties' : notifiedBuilding ? 'buildings' : notifiedReminders ? null : 'leasing'); // home is Leasing's Overview; null is the chat. 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'duties' | 'checklists' | 'buildings' | 'inventory' | 'tour'
   const [leasingTab, setLeasingTab] = useState(notifiedLeasing || 'overview'); // which section of Leasing is open; the sidebar shortcuts set it too
   const [leasingReport, setLeasingReport] = useState('daily'); // which report is open in Leasing's Reports; the sidebar's Reports shortcuts set it
   const [leasingAlert, setLeasingAlert] = useState(''); // which kind of alert Leasing's Alerts is showing ('' is all); the sidebar's Alerts shortcuts set it
@@ -139,6 +141,18 @@ export default function App() {
     if (id === chat.id) openChat(null);
     loadConvs();
   };
+  const openLeasing = (tab = 'overview', sub) => {
+    setLeasingTab(tab);
+    if (tab === 'reports' && sub) setLeasingReport(sub);
+    if (tab === 'alerts') setLeasingAlert(sub || '');
+    setPanel('leasing'); setDrawer(false);
+  };
+  // A stop on the Tour, walked into: the same screens the sidebar opens.
+  const fromTour = (stop, sub) => {
+    if (stop === 'chats') { setPanel(null); setHistory(true); return; }
+    if (['properties', 'sources', 'region'].includes(stop)) { setPanel(stop); return; }
+    openLeasing(stop === 'leasing' ? sub || 'bookings' : stop, sub);
+  };
   const logout = async () => {
     await releasePush();
     await api.post('/auth/logout').catch(() => {});
@@ -162,12 +176,8 @@ export default function App() {
           chatsOpen={panel === null || panel === 'messages'} unreadMessages={dm.unread}
           onChats={() => { setPanel(null); setHistory(true); setDrawer(false); }}
           leasingOpen={panel === 'leasing'} leasingTab={leasingTab}
-          onLeasing={(tab = 'overview', sub) => {
-            setLeasingTab(tab);
-            if (tab === 'reports' && sub) setLeasingReport(sub);
-            if (tab === 'alerts') setLeasingAlert(sub || '');
-            setPanel('leasing'); setDrawer(false);
-          }}
+          onLeasing={openLeasing}
+          tourOpen={panel === 'tour'} onTour={() => { setPanel('tour'); setDrawer(false); }}
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
           hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
           inventoryOpen={panel === 'inventory'} onInventory={() => { setPanel('inventory'); setDrawer(false); }}
@@ -235,6 +245,7 @@ export default function App() {
         {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
         {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
+        {panel === 'tour' && <Suspense fallback={null}><Tour3D user={me} unread={dm.unread} onGo={fromTour} onBack={() => setPanel(null)} /></Suspense>}
         {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
       </main>
 
@@ -245,7 +256,7 @@ export default function App() {
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
       {/* Riley, on every screen: a small live orb in the bottom corner that opens a chat over
           whatever is on screen. Not on the chat screens themselves, which are already that. */}
-      {agents.length > 0 && panel !== null && panel !== 'messages' && panel !== 'activity' && !editing && (
+      {agents.length > 0 && panel !== null && panel !== 'messages' && panel !== 'activity' && panel !== 'tour' && !editing && (
         <>
           {helper.open && (
             <div className="sky fixed inset-0 z-50 flex flex-col overflow-hidden md:inset-auto md:bottom-24 md:right-5 md:h-[min(680px,calc(100dvh-7.5rem))] md:w-[420px] md:rounded-3xl md:border md:border-stroke md:shadow-2xl">

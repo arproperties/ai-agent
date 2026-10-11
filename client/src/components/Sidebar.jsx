@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, BellRing, ClipboardList, Eye, FileClock, Globe, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Search, Users, Wrench } from 'lucide-react';
+import { BarChart3, BellRing, ClipboardList, Compass, Eye, FileClock, Globe, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Search, Users, Wrench } from 'lucide-react';
 import { api } from '../lib/api';
 import Icon from './Icon';
 import { AGENT_COLORS } from './Avatar';
@@ -36,7 +36,7 @@ function Place({ Ico, color, label, hint, here, onClick, badge = 0 }) {
   );
 }
 
-export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, propertiesOpen, onProperties, chatsOpen, unreadMessages = 0, onChats, leasingOpen, leasingTab, onLeasing, onEditAgent, onFiles, onMemory, onEmail, onPeople, sourcesOpen, onSources, regionOpen, onRegion, onActivity, onLogout, onClose }) {
+export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, propertiesOpen, onProperties, chatsOpen, unreadMessages = 0, onChats, tourOpen, onTour, leasingOpen, leasingTab, onLeasing, onEditAgent, onFiles, onMemory, onEmail, onPeople, sourcesOpen, onSources, regionOpen, onRegion, onActivity, onLogout, onClose }) {
   // Only shown once somebody has actually looked at this account, so it is silent for
   // anyone nobody inspects - and impossible to miss for anyone who is.
   const [watched, setWatched] = useState(0);
@@ -47,6 +47,7 @@ export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodo
 
   // The main places. What is inside each is chosen on its own page.
   const places = [
+    { Ico: Compass, color: 'from-fuchsia-400 to-violet-600 shadow-fuchsia-500/30', label: 'Tour', hint: 'Walk the whole app in 3D', here: tourOpen, onClick: onTour },
     { Ico: LayoutDashboard, color: 'amber', label: 'Overview', hint: 'Occupancy, rent and what needs attention', here: leasingOpen && leasingTab === 'overview', onClick: () => onLeasing('overview') },
     { Ico: MessagesSquare, color: 'from-cyan-400 to-blue-600 shadow-cyan-500/30', label: 'Chats', hint: 'Riley, and your team chat', here: chatsOpen, onClick: onChats, badge: unreadMessages },
     { Ico: ClipboardList, color: 'teal', label: 'Leasing', hint: 'Leases, the 3D view and the calendar',
