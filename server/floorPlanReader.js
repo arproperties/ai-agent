@@ -31,7 +31,10 @@ Measure everything in metres, on the plan as it is drawn: x from the building's 
         { "unit_no": its number as printed, without the word "Unit" or "Shop" unless that is all it has ("101", "G01", "S1"),
           "type": what it is, as printed or in two words ("2-Bedroom", "Retail shop"),
           "area_sqm": its area if written, otherwise leave it out,
-          "x": , "y": , "w": its width left to right, "d": its depth bottom to top }
+          "x": , "y": , "w": its width left to right, "d": its depth bottom to top,
+          "rooms": [ the rooms inside it as the plan draws them, measured from the same corner of the building as everything else:
+            { "label": the room's name as printed ("Bed 1", "Living", "Kitchen", "Bath"), "x": , "y": , "w": , "d": }
+          ] }
       ],
       "commons": [ what is on the floor besides the units:
         { "kind": "corridor" | "core" (stairs and lifts) | "lobby" | "service" (plant, electrical, refuse, storage) | "open" (a balcony or terrace shared by the floor),
@@ -41,19 +44,19 @@ Measure everything in metres, on the plan as it is drawn: x from the building's 
   ]
 }
 
-Every unit and common area is one rectangle: for a room that is not a rectangle, give the rectangle that covers most of it. Rectangles on one floor must not overlap and must stay inside the outline. Do not give the rooms inside a unit. If these pages are not floor plans, reply {"floors": []}.`;
+Every unit and common area is one rectangle: for a room that is not a rectangle, give the rectangle that covers most of it. Rectangles on one floor must not overlap and must stay inside the outline. A unit's rooms stay inside the unit and fill it; leave "rooms" out for a unit whose rooms the plan does not draw. If these pages are not floor plans, reply {"floors": []}.`;
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
 const name = (v, max = 40) => (typeof v === 'string' || typeof v === 'number' ? String(v).trim().slice(0, max) : '');
 const round = (n) => Math.round(n * 100) / 100;
 
-/** A rectangle kept to the building's outline, or null when nothing of it is inside. */
-function inside(r, width, depth) {
+/** A rectangle kept to the one it belongs in (the building's outline, or a room's unit), or null when nothing of it is inside. */
+function inside(r, box) {
   const [x, y, w, d] = ['x', 'y', 'w', 'd'].map((f) => num(r?.[f]));
   if ([x, y, w, d].includes(null)) return null;
-  const x0 = Math.max(0, x);
-  const y0 = Math.max(0, y);
-  const out = { x: round(x0), y: round(y0), w: round(Math.min(width, x + w) - x0), d: round(Math.min(depth, y + d) - y0) };
+  const x0 = Math.max(box.x, x);
+  const y0 = Math.max(box.y, y);
+  const out = { x: round(x0), y: round(y0), w: round(Math.min(box.x + box.w, x + w) - x0), d: round(Math.min(box.y + box.d, y + d) - y0) };
   return out.w > 0 && out.d > 0 ? out : null;
 }
 
@@ -68,18 +71,20 @@ export function proposal(reply) {
   const width = num(o?.width);
   const depth = num(o?.depth);
   const seen = new Set();
+  const outline = { x: 0, y: 0, w: width, d: depth };
   const floors = (Array.isArray(o?.floors) ? o.floors : []).map((f) => {
     const floor = /^(g|ground|ground floor)$/i.test(name(f?.floor)) ? 'G' : name(f?.floor, 12).replace(/^floor\s+/i, '');
     const units = (Array.isArray(f?.units) ? f.units : []).map((u) => {
       const unit_no = name(u?.unit_no).replace(/^unit\s+/i, '');
-      const rect = inside(u, width, depth);
+      const rect = inside(u, outline);
       if (!unit_no || !rect || seen.has(unit_no.toLowerCase())) return null;
       seen.add(unit_no.toLowerCase());
       const area = num(u.area_sqm);
-      return { unit_no, type: name(u.type), ...(area > 0 ? { size_sqft: Math.round(area * SQFT) } : {}), ...rect };
+      const rooms = (Array.isArray(u.rooms) ? u.rooms : []).map((r) => { const at = inside(r, rect); return at ? { label: name(r?.label, 30), ...at } : null; }).filter(Boolean);
+      return { unit_no, type: name(u.type), ...(area > 0 ? { size_sqft: Math.round(area * SQFT) } : {}), ...rect, ...(rooms.length ? { rooms } : {}) };
     }).filter(Boolean);
     const commons = (Array.isArray(f?.commons) ? f.commons : []).map((c) => {
-      const rect = KINDS.includes(c?.kind) && inside(c, width, depth);
+      const rect = KINDS.includes(c?.kind) && inside(c, outline);
       return rect ? { kind: c.kind, label: name(c.label), ...rect } : null;
     }).filter(Boolean);
     return floor && units.length ? { floor, units, commons } : null;

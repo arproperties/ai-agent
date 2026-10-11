@@ -10,6 +10,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 //     has `rect`, where it really is ({ x, z, w, d }, from the middle of the floor, +z the
 //     front), and a floor may have `commons`, what is there besides the units: the same
 //     rectangles, each with a `kind` (corridor, core, lobby, service, open) and a `label`.
+//     A unit may also have `rooms`, each { label, x, z, w, d } from the middle of the unit:
+//     when its floor is looked at alone, the unit opens and its walls stand inside it.
 //   paint:  unit id → { color, dim, pulse, beacon }
 //     dim: a unit that is there but not the point (vacant, or outside what is being looked at)
 //     pulse: it breathes, to be noticed; beacon: a light on its face (a repair is open)
@@ -19,18 +21,19 @@ const SLAB = 0.1; // the floor between two storeys
 const UNIT_W = 1.5; // the least a unit is wide
 const UNIT_D = 2.2;
 const HALL = 0.9; // the corridor between the front row and the back
+const WALL = 0.5; // how high a room's walls stand, of a storey: low enough to look over
 const SPREAD = 1.3; // how far the floors lift apart
 const ease = (from, to, k) => from + (to - from) * k;
 
 /** The unit's number, written on its outward face. */
-function plate(text, ink) {
+function plate(text, ink, weight = 600) {
   const c = document.createElement('canvas');
   c.width = 256; c.height = 128;
   const g = c.getContext('2d');
   g.fillStyle = ink;
   g.textAlign = 'center'; g.textBaseline = 'middle';
   let size = 76;
-  do { g.font = `600 ${size}px system-ui, sans-serif`; size -= 4; } while (g.measureText(text).width > 224 && size > 20);
+  do { g.font = `${weight} ${size}px system-ui, sans-serif`; size -= 4; } while (g.measureText(text).width > 224 && size > 20);
   g.fillText(text, 128, 68);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -65,6 +68,8 @@ export function createBuildingScene(el, { onHover, onPick, onTurn, light = false
   let home = null; // where the camera starts for this building
   let fly = null; // where it is being taken to
   const lineColor = new THREE.Color(line);
+  const white = new THREE.Color(0xffffff);
+  const unseen = new THREE.MeshBasicMaterial({ visible: false }); // a room has no lid and no floor of its own
 
   function clear() {
     if (!tower) return;
@@ -168,7 +173,37 @@ export function createBuildingScene(el, { onHover, onPick, onTurn, light = false
         beacon.visible = false;
         mesh.add(beacon);
         group.add(mesh);
-        const unit = { id: u.id, floor: i, mesh, edges, face, lid, beacon, home: z, out: back ? -1 : 1, color: new THREE.Color(0x888888), opacity: 0.9, edge: 0.5, pulse: false };
+        // Its rooms, shown when the floor is looked at alone: the floor of the unit, and on it each room's four walls and its name.
+        let inner = null;
+        if (shape && u.rooms?.length) {
+          inner = { group: new THREE.Group(), walls: [], names: [], open: 0 };
+          inner.group.visible = false;
+          const base = -(UNIT_H - 0.1) / 2;
+          inner.floor = new THREE.MeshStandardMaterial({ color: 0x888888, transparent: true, opacity: 0, roughness: 0.6 });
+          const ground = new THREE.Mesh(new THREE.BoxGeometry(w - 0.1, 0.04, d - 0.1), inner.floor);
+          ground.position.y = base + 0.02;
+          inner.group.add(ground);
+          for (const r of u.rooms) {
+            const wall = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide, roughness: 0.8 });
+            const box = new THREE.BoxGeometry(Math.max(0.05, r.w - 0.02), WALL, Math.max(0.05, r.d - 0.02));
+            const room = new THREE.Mesh(box, [wall, wall, unseen, unseen, wall, wall]);
+            room.position.set(r.x, base + 0.04 + WALL / 2, r.z);
+            const rim = new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 }));
+            room.add(rim);
+            inner.walls.push(wall, rim.material);
+            if (r.label) {
+              const across = Math.min(r.w - 0.12, r.d * 2 - 0.12, 1.1);
+              const name = new THREE.Mesh(new THREE.PlaneGeometry(across, across / 2), new THREE.MeshBasicMaterial({ map: plate(r.label, ink, 500), transparent: true, opacity: 0, depthWrite: false }));
+              name.rotation.x = -Math.PI / 2;
+              name.position.y = -WALL / 2 + 0.012;
+              room.add(name);
+              inner.names.push(name.material);
+            }
+            inner.group.add(room);
+          }
+          mesh.add(inner.group);
+        }
+        const unit = { id: u.id, floor: i, mesh, edges, face, lid, beacon, inner, home: z, out: back ? -1 : 1, color: new THREE.Color(0x888888), opacity: 0.9, edge: 0.5, pulse: false };
         floor.units.push(unit);
         units.push(unit);
       });
@@ -226,10 +261,11 @@ export function createBuildingScene(el, { onHover, onPick, onTurn, light = false
       // Look at the floor that was picked, from higher up, so its back row shows too; or at the whole again.
       if (view.floor == null) fly = all();
       else {
+        // From as far as takes in the whole floor, however wide the building is.
         const y = floorY(view.floor);
-        const d = whole(home.H).at.length() * 0.62;
+        const d = Math.max(home.W * 2.2, home.D * 3.6, 10);
         const turn = Math.atan2(camera.position.x, camera.position.z);
-        fly = { at: new THREE.Vector3(Math.sin(turn) * d * 0.62, y + d * 0.72, Math.cos(turn) * d * 0.62), look: new THREE.Vector3(0, y, 0) };
+        fly = { at: new THREE.Vector3(Math.sin(turn) * d * 0.55, y + d * 0.74, Math.cos(turn) * d * 0.55), look: new THREE.Vector3(0, y, 0) };
       }
     }
   }
@@ -309,14 +345,34 @@ export function createBuildingScene(el, { onHover, onPick, onTurn, light = false
       for (const u of f.units) {
         const m = u.mesh.material;
         const picked = u.id === view.selected;
+        // On the floor looked at alone, a unit with rooms opens: its box fades and its walls show.
+        const inn = u.inner;
+        if (inn) inn.open = ease(inn.open, view.floor === i ? 1 : 0, k);
+        const open = inn ? inn.open : 0;
         m.color.lerp(u.color, k);
         m.emissive.copy(m.color).multiplyScalar((light ? 0.1 : 0.3) + (u.pulse ? beat * 0.55 : 0) + (picked ? 0.35 : 0));
-        m.opacity = ease(m.opacity, solid * (picked ? 1 : u.opacity), k);
+        m.opacity = ease(m.opacity, solid * (picked ? 1 : u.opacity) * (1 - open), k);
+        if (inn) {
+          inn.group.visible = open > 0.01;
+          if (inn.group.visible) {
+            const lit = solid * open;
+            inn.floor.color.copy(m.color);
+            inn.floor.emissive.copy(m.emissive);
+            inn.floor.opacity = lit * (u.dim && !picked ? 0.35 : 0.95);
+            inn.floor.depthWrite = inn.floor.opacity > 0.6;
+            for (const x of inn.walls) {
+              x.color.copy(m.color).lerp(white, x.isLineBasicMaterial ? 0.85 : 0.55);
+              x.opacity = lit * (x.isLineBasicMaterial ? 0.9 : u.dim && !picked ? 0.3 : 0.8);
+              x.depthWrite = x.opacity > 0.6;
+            }
+            for (const x of inn.names) x.opacity = lit * 0.9;
+          }
+        }
         m.depthWrite = m.opacity > 0.6;
         u.edges.material.opacity = ease(u.edges.material.opacity, solid * (picked ? 1 : u.edge), k);
         u.edges.material.color.copy(picked || u.dim ? m.color : lineColor).lerp(new THREE.Color(0xffffff), picked ? 1 : light ? 0 : 0.35);
         u.face.material.opacity = ease(u.face.material.opacity, solid * (u.dim && !picked ? 0.55 : 1), k);
-        u.lid.material.opacity = ease(u.lid.material.opacity, !away && (view.explode || view.floor === i) ? u.face.material.opacity : 0, k);
+        u.lid.material.opacity = ease(u.lid.material.opacity, !away && (view.explode || view.floor === i) ? u.face.material.opacity * (1 - open) : 0, k);
         u.mesh.position.z = ease(u.mesh.position.z, u.home + (picked ? u.out * 0.45 : 0), k);
         if (u.beacon.visible) {
           u.beacon.material.opacity = solid;

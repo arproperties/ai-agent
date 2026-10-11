@@ -10,7 +10,8 @@ import { startReading, reading } from './floorPlanReader.js';
 //
 // Everything is a rectangle in metres from the building's south-west corner: x runs east,
 // y runs north, w is its width (east-west) and d its depth (north-south).
-//   prop_units.plan: { x, y, w, d }, the unit.
+//   prop_units.plan: { x, y, w, d }, the unit, and `rooms`, what is inside it:
+//     [{ label, x, y, w, d }], measured from the same corner of the building.
 //   prop_buildings.plan: { width, depth, storey, commons }. `storey` is the floor-to-floor
 //     height. `commons` is what is on a floor besides the units, by the floor's name as its
 //     units have it, with '*' for every floor that has none of its own:
@@ -32,6 +33,11 @@ function rect(r, plan, what) {
   if (out.w <= 0 || out.d <= 0) throw bad(`${what} has no size.`);
   if (out.x < -EDGE || out.y < -EDGE || out.x + out.w > plan.width + EDGE || out.y + out.d > plan.depth + EDGE) throw bad(`${what} is outside the building.`);
   return out;
+}
+/** A unit: its rectangle, and its rooms when the plan shows them. */
+function unitShape(r, plan, what) {
+  const rooms = (Array.isArray(r?.rooms) ? r.rooms : []).map((room) => ({ label: String(room?.label ?? '').trim().slice(0, 30), ...rect(room, plan, `A room of ${what.toLowerCase()}`) }));
+  return { ...rect(r, plan, what), ...(rooms.length ? { rooms } : {}) };
 }
 
 /**
@@ -58,7 +64,7 @@ export async function savePlan(buildingId, body = {}) {
     for (const [no, r] of Object.entries(body.units || {})) {
       const u = units.find((x) => x.unit_no === no);
       if (!u) throw bad(`This building has no unit ${no}.`);
-      await db.prepare('UPDATE prop_units SET plan = ? WHERE id = ?').run(JSON.stringify(rect(r, plan, `Unit ${no}`)), u.id);
+      await db.prepare('UPDATE prop_units SET plan = ? WHERE id = ?').run(JSON.stringify(unitShape(r, plan, `Unit ${no}`)), u.id);
     }
     await db.prepare('UPDATE prop_buildings SET plan = ? WHERE id = ?').run(JSON.stringify(plan), id);
     return (await plans())[id];

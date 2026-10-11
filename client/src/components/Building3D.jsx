@@ -37,6 +37,11 @@ const level = (f) => { const n = String(f ?? '').replace(/\D/g, ''); return n ? 
 
 // A plan is in metres from the south-west corner; the drawing is a storey to the unit, from the middle, the south side in front.
 const placer = (p) => (r) => ({ x: (r.x + r.w / 2 - p.width / 2) / p.storey, z: (p.depth / 2 - r.y - r.d / 2) / p.storey, w: r.w / p.storey, d: r.d / p.storey });
+/** A unit as the drawing takes it: where it is, and its rooms from its own middle. */
+const placed = (at, r) => {
+  const me = at(r);
+  return { rect: me, rooms: (r.rooms || []).map((room) => { const p = at(room); return { label: room.label, x: p.x - me.x, z: p.z - me.z, w: p.w, d: p.d }; }) };
+};
 
 let lastBuilding = ''; // the building last looked at, so coming back from a lease or a repair returns to it
 
@@ -112,7 +117,7 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
       const at = placer(draft);
       scene.current?.setData(draft.floors.map((f) => ({
         label: floorName(f.floor),
-        units: f.units.map((no) => ({ id: `plan:${no}`, label: no, rect: at(draft.units[no]) })),
+        units: f.units.map((no) => ({ id: `plan:${no}`, label: no, ...placed(at, draft.units[no]) })),
         commons: (draft.commons[f.floor] || []).map((c) => ({ kind: c.kind, label: c.label, ...at(c) })),
       })), { W: draft.width / draft.storey, D: draft.depth / draft.storey });
       return;
@@ -122,7 +127,7 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
     const place = real && placer(real);
     scene.current?.setData(floors.map((f) => ({
       label: floorName(f[0]?.floor),
-      units: f.map((u) => ({ id: u.unit_id, label: u.unit_no, rect: real && place(real.units[u.unit_id]) })),
+      units: f.map((u) => ({ id: u.unit_id, label: u.unit_no, ...(real ? placed(place, real.units[u.unit_id]) : {}) })),
       commons: real ? (real.commons[f[0]?.floor] || real.commons['*'] || []).map((c) => ({ kind: c.kind, label: c.label, ...place(c) })) : [],
     })), real && { W: real.width / real.storey, D: real.depth / real.storey });
   }, [building?.id, floors, plans, draft]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -312,7 +317,7 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
       {(reading || (planError && !draft)) && (
         <div className={`${PANEL} absolute inset-x-3 top-28 mx-auto flex max-w-sm items-start gap-2.5 p-4 text-sm`}>
           {reading ? <Loader2 size={16} className="mt-0.5 shrink-0 animate-spin text-p1" /> : <X size={16} className="mt-0.5 shrink-0 text-bad" />}
-          <p className="min-w-0 flex-1">{reading ? <>Riley is reading the floor plan.<span className="block text-xs text-mute">This takes about a minute. You can keep looking around.</span></> : planError}</p>
+          <p className="min-w-0 flex-1">{reading ? <>Riley is reading the floor plan.<span className="block text-xs text-mute">This takes a minute or two. You can keep looking around.</span></> : planError}</p>
           {!reading && <button onClick={() => setPlanError('')} aria-label="Close" className="-mr-1.5 -mt-1.5 grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><X size={16} /></button>}
         </div>
       )}

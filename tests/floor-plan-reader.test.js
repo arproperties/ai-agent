@@ -30,6 +30,12 @@ test('what the model read becomes a plan: floors named as units have them, sizes
   assert.equal(odd.storey, 3, 'the usual height when none is given');
   assert.deepEqual(odd.floors, [{ floor: '1', units: [{ unit_no: 'A', type: '', x: 8, y: 0, w: 2, d: 3 }], commons: [] }]);
 
+  // A unit's rooms are kept to the unit: one reaching past it is cut back, one outside it is left out.
+  const roomy = proposal(JSON.stringify({ width: 20, depth: 10, floors: [{ floor: '1', units: [{ unit_no: '101', x: 0, y: 0, w: 9, d: 9,
+    rooms: [{ label: ' Living ', x: 3, y: 3, w: 3, d: 6 }, { label: 'Bath', x: 6, y: 6, w: 5, d: 5 }, { label: 'Next door', x: 12, y: 0, w: 3, d: 3 }, { label: 'Odd', x: 0, y: 0, w: 'x', d: 1 }] }, { unit_no: '102', x: 9, y: 0, w: 9, d: 9, rooms: [] }] }] }));
+  assert.deepEqual(roomy.floors[0].units[0].rooms, [{ label: 'Living', x: 3, y: 3, w: 3, d: 6 }, { label: 'Bath', x: 6, y: 6, w: 3, d: 3 }]);
+  assert.equal('rooms' in roomy.floors[0].units[1], false, 'a unit whose rooms are not drawn has none');
+
   for (const junk of ['', 'These are not floor plans.', '{broken', '{"floors": []}', '{"width": 40, "depth": 20, "floors": []}', JSON.stringify({ ...READ, width: 0 }), undefined]) {
     assert.throws(() => proposal(junk), /No floor plan could be read/);
   }
