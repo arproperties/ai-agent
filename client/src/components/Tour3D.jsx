@@ -12,6 +12,9 @@ import { createTourScene } from '../lib/tourScene';
 // each stop wears the colours its disc has in the sidebar.
 // Nothing is kept here: the figures are the Overview's, the Alerts' and Work orders' own,
 // and going in is the sidebar's own way in (`onGo`). The drawing itself is lib/tourScene.js.
+// Walking in does not leave: the screen opens as a window over the Tour (`inside`), which
+// goes on moving behind it, and closing the window steps back out to the stop it was opened
+// from. A place picked in the sidebar meanwhile is flown to the same way (`ask`).
 
 const PANEL = 'rounded-2xl border border-stroke bg-surface/85 backdrop-blur';
 const CHIP = 'rounded-full border px-3 py-1.5 text-xs transition';
@@ -72,13 +75,13 @@ function standing(d, alerts, repairs, unread) {
   };
 }
 
-export default function Tour3D({ user, unread = 0, onGo, onBack }) {
+export default function Tour3D({ user, unread = 0, inside = false, ask, onGo, onBack }) {
   const stops = useMemo(() => STOPS.filter((s) => !s.master || user.role === 'master'), [user.role]);
   const [at, setAt] = useState(null); // the stop stood before, or null for the whole ring
   const [touring, setTouring] = useState(false); // being taken round, a stop at a time
   const [spin, setSpin] = useState(true);
   const [hover, setHover] = useState(null); // { id, x, y }
-  const [leaving, setLeaving] = useState(false); // walking into a stop
+  const [leaving, setLeaving] = useState(false); // walking into a stop, or inside the window it opened
   const [voice, setVoice] = useState(() => { try { return canSpeak && localStorage.getItem(VOICE_KEY) === '1'; } catch { return false; } }); // the tour is read aloud
   const [d, setD] = useState(null);
   const [alerts, setAlerts] = useState({ count: 0, rules: {} });
@@ -90,11 +93,13 @@ export default function Tour3D({ user, unread = 0, onGo, onBack }) {
   const now = useRef({}); // what the scene, made once, is to call back with: a tap, as it is taken today
   const pin = (id) => (node) => { if (node) tags.current.set(id, node); else tags.current.delete(id); };
 
+  // Read on the way in, and again each time a window is closed: what was done in it shows on the stops.
   useEffect(() => {
+    if (inside) return;
     api.get('/leasing/overview?company_id=&building_id=&months=1').then(setD).catch(() => {});
     api.get('/leasing/alerts/count').then(setAlerts).catch(() => {});
     api.get('/leasing/work-orders?status=active').then((r) => setRepairs(r.work_orders.filter((w) => LIVE.includes(w.status)))).catch(() => {});
-  }, []);
+  }, [inside]);
   const state = useMemo(() => standing(d, alerts, repairs, unread), [d, alerts, repairs, unread]);
 
   const index = stops.findIndex((s) => s.id === at);
@@ -102,11 +107,11 @@ export default function Tour3D({ user, unread = 0, onGo, onBack }) {
   const stand = (id) => { setAt(id); if (id) setSpin(false); };
   const move = (by) => stand(stops[(index + by + stops.length) % stops.length].id);
   // `through` is what is walked into on screen, when it is not the stop itself: Riley, for the chats.
-  const go = (id, sub, through = id) => {
-    if (leaving) return;
+  const walk = (id, sub, through = id) => {
     setLeaving(true); setTouring(false);
     scene.current ? scene.current.enter(through, () => onGo(id, sub)) : onGo(id, sub);
   };
+  const go = (id, sub, through) => { if (!leaving) walk(id, sub, through); };
   // A tap on a stop goes to it; on the one already stood before, in; on Riley, to the chats; on the open ground, back out.
   const pick = (id) => {
     if (id === 'riley') return go('chats', undefined, 'riley');
@@ -135,7 +140,17 @@ export default function Tour3D({ user, unread = 0, onGo, onBack }) {
     scene.current?.setStops(stops.map((s, i) => ({ id: s.id, color: s.color, icon: new XMLSerializer().serializeToString(drawn[i]) })));
   }, [stops]);
   useEffect(() => { scene.current?.setBadges(new Map(stops.map((s) => [s.id, Number(state[s.id]?.badge) || 0]))); }, [stops, state]);
-  useEffect(() => { scene.current?.setFocus(at); }, [at]);
+  // Not while walking in, which has the camera: once the window is closed it is stood back before the stop.
+  useEffect(() => { if (!leaving) scene.current?.setFocus(at); }, [at, leaving]);
+  // The window closed: out again. Before the next effect, so a place asked for as it closes is still walked into.
+  useEffect(() => { if (!inside) setLeaving(false); }, [inside]);
+  // A place picked in the sidebar: gone to, and walked into.
+  useEffect(() => {
+    if (!ask) return;
+    const known = stops.some((s) => s.id === ask.stop);
+    if (known) stand(ask.stop);
+    walk(ask.stop, ask.sub, ask.stop === 'chats' ? 'riley' : ask.stop);
+  }, [ask]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { scene.current?.setSpin(spin && !at); }, [spin, at]);
 
   // The tour: on to the next stop after a while, or once it has been read out, and back out
@@ -157,7 +172,7 @@ export default function Tour3D({ user, unread = 0, onGo, onBack }) {
   // The arrows walk the ring, Enter goes in, Escape steps back.
   useEffect(() => {
     const key = (e) => {
-      if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (inside || leaving || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'ArrowRight') { setTouring(false); move(1); } else if (e.key === 'ArrowLeft') { setTouring(false); move(index < 0 ? 0 : -1); } else if (e.key === 'Enter' && stop && !typing(document.activeElement) && document.activeElement?.tagName !== 'BUTTON') go(stop.id);
       else if (e.key === 'Escape' && at) { setTouring(false); setAt(null); } else return;
       e.preventDefault();
@@ -193,7 +208,7 @@ export default function Tour3D({ user, unread = 0, onGo, onBack }) {
         ))}
       </div>
 
-      <header className="pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-center gap-2 px-4 pb-3 pt-safe md:px-8">
+      <header className={`pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-center gap-2 px-4 pb-3 pt-safe transition-opacity duration-300 md:px-8 ${leaving ? 'invisible opacity-0' : ''}`}>
         <div className="pointer-events-auto flex items-center gap-2 pt-1">
           <button onClick={onBack} aria-label="Back" className="-ml-2 grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><ChevronLeft size={22} /></button>
           <h1 className="text-lg font-light">Tour</h1>
@@ -217,7 +232,7 @@ export default function Tour3D({ user, unread = 0, onGo, onBack }) {
       )}
 
       {/* The stop stood before: what it is for, how it stands today, and the ways in. */}
-      {stop && (
+      {stop && !leaving && (
         <div key={stop.id} className={`${PANEL} absolute inset-x-3 bottom-3 max-h-[58%] animate-[rise_0.35s_ease-out] overflow-y-auto p-4 text-sm md:inset-x-auto md:bottom-auto md:right-6 md:top-24 md:w-80`}>
           {touring && !voice && <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden rounded-full bg-white/10"><div className="h-full origin-left bg-gradient-to-r from-p1 to-p2" style={{ animation: `tour-fill ${STAY}ms linear both` }} /></div>}
           <div className="flex items-start gap-3">
@@ -248,7 +263,7 @@ export default function Tour3D({ user, unread = 0, onGo, onBack }) {
       )}
 
       {/* Every stop, to go straight to: on a phone it gives way to the card. */}
-      <div className={`absolute inset-x-0 bottom-3 flex flex-col items-center gap-2 px-3 ${stop ? 'max-md:hidden' : ''}`}>
+      <div className={`absolute inset-x-0 bottom-3 flex flex-col items-center gap-2 px-3 ${stop ? 'max-md:hidden' : ''} ${leaving ? 'hidden' : ''}`}>
         {!stop && <p className="pointer-events-none text-center text-xs text-mute">Tap a place to fly to it, drag to look around, or take the tour. Riley, in the middle, opens a chat.</p>}
         <nav aria-label="Stops" className={`${PANEL} flex max-w-full gap-1 overflow-x-auto p-1.5`}>
           {stops.map((s) => (
@@ -261,8 +276,8 @@ export default function Tour3D({ user, unread = 0, onGo, onBack }) {
         </nav>
       </div>
 
-      {/* Walking in: the place closes over as the screen behind it opens. */}
-      <div className={`pointer-events-none absolute inset-0 z-40 bg-bg transition-opacity duration-500 ${leaving ? 'opacity-100' : 'opacity-0'}`} />
+      {/* Walking in: the place dims as the screen opens over it, and goes on moving behind. */}
+      <div className={`absolute inset-0 z-40 bg-bg transition-opacity duration-500 ${leaving ? 'opacity-45' : 'pointer-events-none opacity-0'}`} />
     </div>
   );
 }

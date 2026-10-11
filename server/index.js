@@ -5,6 +5,7 @@ import { ROOT, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS } from './conf
 import { db } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo } from './tts.js';
+import { command } from './voiceCommand.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, canUseAgent, isMaster } from './access.js';
@@ -346,6 +347,10 @@ app.delete('/api/memories/:id', wrap(async (req, res) => {
 app.post('/api/voice/transcribe', upload.single('audio'), wrap(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No audio' });
   res.json({ text: await transcribe(req.file.buffer, req.file.mimetype) });
+}));
+// Voice control: what was said, and what is on the speaker's screen, into presses on it. Not Riley: see voiceCommand.js.
+app.post('/api/voice/command', wrap(async (req, res) => {
+  res.json(await command(req.body));
 }));
 // Reading a reply aloud is two calls: register the text, then stream the audio.
 app.post('/api/voice/speak', wrap(async (req, res) => {

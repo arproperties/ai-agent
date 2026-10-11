@@ -218,6 +218,9 @@ const MAX_TURN_MS = 60000; // hard stop, so a hot mic can never run forever
 
 let listening = null;
 
+/** Whether something is listening now. Voice control asks, to step aside when Riley's own microphone is taken up. */
+export const micTaken = () => !!listening;
+
 /** Give up on the turn entirely — nothing is sent. */
 export function stopListening() {
   listening?.abort();

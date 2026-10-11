@@ -324,6 +324,9 @@ body::after, .sky::after {
 @keyframes tour-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @keyframes rise { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
 .rise { animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+/* A screen opened over the Tour: its own ground is let go, so the Tour shows through the frost behind it. */
+.tour-window > .sky { background-color: transparent; }
+.tour-window > .sky::before, .tour-window > .sky::after { display: none; }
 
 /* ---------- Markdown in replies ---------- */
 .md > * + * { margin-top: 0.7em; }

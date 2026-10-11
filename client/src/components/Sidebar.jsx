@@ -47,7 +47,7 @@ export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodo
 
   // The main places. What is inside each is chosen on its own page.
   const places = [
-    { Ico: Compass, color: 'from-fuchsia-400 to-violet-600 shadow-fuchsia-500/30', label: 'Tour', hint: 'Walk the whole app in 3D', here: tourOpen, onClick: onTour },
+    { Ico: Compass, color: 'from-fuchsia-400 to-violet-600 shadow-fuchsia-500/30', label: '3D Navigation', hint: 'Walk the whole app in 3D', here: tourOpen, onClick: onTour },
     { Ico: LayoutDashboard, color: 'amber', label: 'Overview', hint: 'Occupancy, rent and what needs attention', here: leasingOpen && leasingTab === 'overview', onClick: () => onLeasing('overview') },
     { Ico: MessagesSquare, color: 'from-cyan-400 to-blue-600 shadow-cyan-500/30', label: 'Chats', hint: 'Riley, and your team chat', here: chatsOpen, onClick: onChats, badge: unreadMessages },
     { Ico: ClipboardList, color: 'teal', label: 'Leasing', hint: 'Leases, the 3D view and the calendar',

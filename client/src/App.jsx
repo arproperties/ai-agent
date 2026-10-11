@@ -27,8 +27,14 @@ import { loadRegion, onRegion } from './lib/region';
 import { NotifyPrompt } from './components/Notifications';
 import MessageToast from './components/MessageToast';
 import Orb from './components/Orb';
+import VoiceControl from './components/VoiceControl';
+import { ChevronLeft } from 'lucide-react';
 
 const Tour3D = lazy(() => import('./components/Tour3D')); // it brings a 3D library with it, fetched only when the Tour is opened
+// A screen opened while the Tour is: a window over it, the Tour still moving behind.
+const WINDOW = 'tour-window rise absolute inset-2 z-20 isolate flex flex-col overflow-hidden rounded-2xl border border-stroke shadow-2xl shadow-black/40 md:inset-x-8 md:inset-y-6';
+// What the window stands on: the Tour, blurred. A layer of its own, so nothing fixed inside a screen is held to the window.
+const Frost = () => <div className="pointer-events-none absolute inset-0 -z-10 bg-bg/80 backdrop-blur-xl" />;
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
@@ -56,7 +62,9 @@ export default function App() {
   const [drawer, setDrawer] = useState(false);
   const [history, setHistory] = useState(false); // on a phone: the list of chats is showing in place of the chat
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedDuties ? 'duties' : notifiedBuilding ? 'buildings' : notifiedReminders ? null : 'leasing'); // home is Leasing's Overview; null is the chat. 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'duties' | 'checklists' | 'buildings' | 'inventory' | 'tour'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedDuties ? 'duties' : notifiedBuilding ? 'buildings' : notifiedReminders ? null : 'leasing'); // home is Leasing's Overview; null is the chat. 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'duties' | 'checklists' | 'buildings' | 'inventory' | 'chat' (the chat, in a window over the Tour)
+  const [tour, setTour] = useState(false); // the Tour is open: it stays, and whatever else is opened is a window over it
+  const [ask, setAsk] = useState(null); // a stop the sidebar asked for while the Tour is open, for the Tour to fly to: { stop, sub, n }
   const [leasingTab, setLeasingTab] = useState(notifiedLeasing || 'overview'); // which section of Leasing is open; the sidebar shortcuts set it too
   const [leasingReport, setLeasingReport] = useState('daily'); // which report is open in Leasing's Reports; the sidebar's Reports shortcuts set it
   const [leasingAlert, setLeasingAlert] = useState(''); // which kind of alert Leasing's Alerts is showing ('' is all); the sidebar's Alerts shortcuts set it
@@ -133,7 +141,7 @@ export default function App() {
     api.get('/buildings').then((b) => setHasBuildings(me.role === 'master' || b.length > 0)).catch(() => {});
   }, [me, loadAgents, loadConvs, loadExpiring, loadDue]);
 
-  const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setHistory(false); setPanel(null); };
+  const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setHistory(false); setPanel(tour ? 'chat' : null); };
   const onConversation = (id) => { if (id) setChat((c) => ({ ...c, id })); loadConvs(); };
   const deleteConv = async (id) => {
     if (!confirm('Delete this chat?')) return;
@@ -141,18 +149,24 @@ export default function App() {
     if (id === chat.id) openChat(null);
     loadConvs();
   };
-  const openLeasing = (tab = 'overview', sub) => {
+  // While the Tour is open, a place in the sidebar is flown to first, and then opened over it.
+  const visit = (stop, sub) => { setPanel(null); setDrawer(false); setAsk({ stop, sub, n: Date.now() }); };
+  const LEASES = ['bookings', '3d', 'calendar']; // Leasing's own stop, and its ways in
+  const openLeasing = (tab = 'overview', sub) => (tour ? visit(LEASES.includes(tab) ? 'leasing' : tab, LEASES.includes(tab) ? tab : sub) : showLeasing(tab, sub));
+  const showLeasing = (tab, sub) => {
     setLeasingTab(tab);
     if (tab === 'reports' && sub) setLeasingReport(sub);
     if (tab === 'alerts') setLeasingAlert(sub || '');
     setPanel('leasing'); setDrawer(false);
   };
-  // A stop on the Tour, walked into: the same screens the sidebar opens.
+  // A stop on the Tour, walked into: the same screens the sidebar opens, in a window over it.
   const fromTour = (stop, sub) => {
-    if (stop === 'chats') { setPanel(null); setHistory(true); return; }
+    if (stop === 'chats') { setHistory(true); if (agents.length) setPanel('chat'); else { setTour(false); setPanel(null); } return; } // with no agent there is no chat to lift into a window
     if (['properties', 'sources', 'region'].includes(stop)) { setPanel(stop); return; }
-    openLeasing(stop === 'leasing' ? sub || 'bookings' : stop, sub);
+    showLeasing(stop === 'leasing' ? sub || 'bookings' : stop, sub);
   };
+  const place = (stop) => () => { if (tour) return visit(stop); setPanel(stop); setDrawer(false); return undefined; };
+  const chatIn = tour && panel === 'chat';
   const logout = async () => {
     await releasePush();
     await api.post('/auth/logout').catch(() => {});
@@ -172,23 +186,36 @@ export default function App() {
           meetingsOpen={panel === 'meetings'} onMeetings={() => { setPanel('meetings'); setDrawer(false); }}
           transcribeOpen={panel === 'transcribe'} onTranscribe={() => { setPanel('transcribe'); setDrawer(false); }}
           dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
-          propertiesOpen={panel === 'properties'} onProperties={() => { setPanel('properties'); setDrawer(false); }}
-          chatsOpen={panel === null || panel === 'messages'} unreadMessages={dm.unread}
-          onChats={() => { setPanel(null); setHistory(true); setDrawer(false); }}
+          propertiesOpen={panel === 'properties'} onProperties={place('properties')}
+          chatsOpen={tour ? panel === 'chat' || panel === 'messages' : panel === null || panel === 'messages'} unreadMessages={dm.unread}
+          onChats={() => { if (tour) return visit('chats'); setPanel(null); setHistory(true); setDrawer(false); return undefined; }}
           leasingOpen={panel === 'leasing'} leasingTab={leasingTab}
           onLeasing={openLeasing}
-          tourOpen={panel === 'tour'} onTour={() => { setPanel('tour'); setDrawer(false); }}
+          tourOpen={tour} onTour={() => { setTour(true); setAsk(null); setPanel(null); setDrawer(false); }}
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
           hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
           inventoryOpen={panel === 'inventory'} onInventory={() => { setPanel('inventory'); setDrawer(false); }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
-          onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} sourcesOpen={panel === 'sources'} onSources={() => { setPanel('sources'); setDrawer(false); }} regionOpen={panel === 'region'} onRegion={() => { setPanel('region'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
+          onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} sourcesOpen={panel === 'sources'} onSources={place('sources')} regionOpen={panel === 'region'} onRegion={place('region')} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
       </aside>
 
       <main className="relative flex min-w-0 flex-1 flex-col">
+        {/* The Tour, under whatever is opened from it: first here, so the windows are drawn over it. */}
+        {tour && <Suspense fallback={null}><Tour3D user={me} unread={dm.unread} inside={panel !== null} ask={ask} onGo={fromTour} onBack={() => { setTour(false); setPanel(null); }} /></Suspense>}
         {agents.length > 0 ? (
           // The chats and the chat side by side, as in Team chat; on a phone it is one or the other.
+          // Walked into from the Tour, the same chat is lifted into a window over it.
+          <div className={chatIn ? WINDOW : 'flex min-h-0 flex-1 flex-col'}>
+          {chatIn && (
+            <>
+              <Frost />
+              <header className="flex items-center gap-2 border-b border-stroke/60 px-2 py-1 md:px-4">
+                <button onClick={() => setPanel(null)} aria-label="Back to the Tour" className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><ChevronLeft size={22} /></button>
+                <h1 className="text-lg font-light">Chats</h1>
+              </header>
+            </>
+          )}
           <div className="flex min-h-0 flex-1">
             <section className={`${history ? 'flex' : 'hidden md:flex'} w-full min-w-0 flex-col list-wash border-stroke md:w-80 md:border-r`}>
               <ChatHistory agents={agents} convs={convs} activeConvId={chat.id}
@@ -201,6 +228,7 @@ export default function App() {
                 due={due} onDueChanged={loadDue} onOpenLists={() => setPanel('todos')}
                 onConversation={onConversation} onMenu={() => setDrawer(true)} onHistory={() => setHistory(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />
             </section>
+          </div>
           </div>
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —
@@ -230,23 +258,29 @@ export default function App() {
             </div>
           </div>
         )}
-        {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => { setPanel(null); loadExpiring(); }} onOpenChat={openChat} />}
-        {panel === 'meetings' && <MeetingsPage master={me.role === 'master'} dm={dm} onOpenFiles={() => setPanel('files')} onBack={() => setPanel(null)} />}
-        {panel === 'transcribe' && <TranscribePage onBack={() => setPanel(null)} />}
-        {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
-        {panel === 'properties' && <PropertiesPage key={`p${dataKey}`} me={me} onBack={() => setPanel(null)} />}
-        {panel === 'sources' && <SourcesPage onBack={() => setPanel(null)} />}
-        {panel === 'region' && <RegionSettings onBack={() => setPanel(null)} />}
-        {panel === 'leasing' && <LeasingPage key={`l${dataKey}`} tab={leasingTab} onTab={setLeasingTab} report={leasingReport} onReport={setLeasingReport} alert={leasingAlert} onAlert={setLeasingAlert} onBack={() => setPanel(null)} />}
-        {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}
-        {panel === 'buildings' && <BuildingsPage me={me} start={jumpToBuilding} onBack={() => setPanel(null)} />}
-        {panel === 'inventory' && <InventoryPage me={me} onBack={() => setPanel(null)} />}
-        {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
-        {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
-        {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}
-        {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
-        {panel === 'tour' && <Suspense fallback={null}><Tour3D user={me} unread={dm.unread} onGo={fromTour} onBack={() => setPanel(null)} /></Suspense>}
-        {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
+        {(() => {
+          const page = (
+            <>
+              {panel === 'files' && <FilesPage folders={config.folders} me={me} onBack={() => { setPanel(null); loadExpiring(); }} onOpenChat={openChat} />}
+              {panel === 'meetings' && <MeetingsPage master={me.role === 'master'} dm={dm} onOpenFiles={() => setPanel('files')} onBack={() => setPanel(null)} />}
+              {panel === 'transcribe' && <TranscribePage onBack={() => setPanel(null)} />}
+              {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
+              {panel === 'properties' && <PropertiesPage key={`p${dataKey}`} me={me} onBack={() => setPanel(null)} />}
+              {panel === 'sources' && <SourcesPage onBack={() => setPanel(null)} />}
+              {panel === 'region' && <RegionSettings onBack={() => setPanel(null)} />}
+              {panel === 'leasing' && <LeasingPage key={`l${dataKey}`} tab={leasingTab} onTab={setLeasingTab} report={leasingReport} onReport={setLeasingReport} alert={leasingAlert} onAlert={setLeasingAlert} onBack={() => setPanel(null)} />}
+              {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}
+              {panel === 'buildings' && <BuildingsPage me={me} start={jumpToBuilding} onBack={() => setPanel(null)} />}
+              {panel === 'inventory' && <InventoryPage me={me} onBack={() => setPanel(null)} />}
+              {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
+              {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
+              {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}
+              {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
+              {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
+            </>
+          );
+          return tour && panel && !['chat', 'activity'].includes(panel) ? <div key={panel} className={WINDOW}><Frost />{page}</div> : page;
+        })()}
       </main>
 
       {editing && (
@@ -273,6 +307,9 @@ export default function App() {
           </button>
         </>
       )}
+      {/* The app worked by speaking, while the Tour is open: the Tour itself, and every screen opened as a window over it.
+          Its own microphone, apart from Riley's. Leaving the Tour switches it off. */}
+      {config.voice && tour && <VoiceControl onOpenRiley={() => { setDrawer(false); setHistory(false); setPanel(tour ? 'chat' : null); }} />}
       <NotifyPrompt />
       <MessageToast toast={dm.toast} onClose={dm.dismissToast}
         onOpen={(id) => { dm.dismissToast(); setJumpToChat(id); setPanel('messages'); setDrawer(false); }} />

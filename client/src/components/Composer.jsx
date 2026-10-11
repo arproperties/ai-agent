@@ -67,7 +67,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, 
   };
 
   return (
-    <form onSubmit={submit} className="px-3 pb-safe pt-2 md:px-6">
+    <form onSubmit={submit} data-riley-box className="px-3 pb-safe pt-2 md:px-6">
       {/* Chats brought in stay listed until the message is sent, and each one can be taken
           back off — the same chips as an attachment, because it is the same idea. */}
       {carry.length > 0 && (
