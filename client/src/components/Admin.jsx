@@ -215,7 +215,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   // a screen for it here.
   // "AI chats" and "Team chat" sit next to each other, so neither may be called just
   // "Chats": the whole point of the pair is which side of the app a message came from.
-  const TABS = [['agents', 'Agents'], ['duties', 'Responsibilities'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
+  const TABS = [['agents', 'Agents'], ['modules', 'Modules'], ['duties', 'Responsibilities'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
     ['messages', 'Team chat'], ['memory', 'Memory'], ['saifsys', 'saifsys']];
 
   return (
@@ -272,6 +272,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
 
         {tab === 'duties' && <ResponsibilitiesEditor person={person} isMe={person.id === me.id} />}
         {tab === 'memory' && <Memories person={person} />}
+        {tab === 'modules' && <AppModules key={person.id} person={person} />}
         {tab === 'saifsys' && <><HrLink person={person} /><SaifsysModules person={person} /></>}
         {(tab === 'documents' || tab === 'conversations' || tab === 'messages') && <Browse person={person} kind={tab} />}
 
@@ -347,6 +348,62 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Which places in the left menu this person has. A tap saves straight away, as the
+ * saifsys modules do: it is one switch per place, with nothing to review first. Chats is
+ * everyone's, so it is shown ticked and cannot be tapped.
+ */
+function AppModules({ person }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get(`/admin/users/${person.id}/modules`).then(setData).catch((e) => { setError(e.message); setData({ modules: [] }); });
+  }, [person.id]);
+
+  const toggle = async (key) => {
+    const modules = data.modules.map((m) => (m.key === key ? { ...m, on: !m.on } : m));
+    setData({ ...data, modules });
+    setError('');
+    try {
+      await api.put(`/admin/users/${person.id}/modules`, { modules: modules.filter((m) => m.on).map((m) => m.key) });
+    } catch (e) {
+      setError(e.message);
+      setData(data); // put the switch back
+    }
+  };
+
+  if (!data) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
+  return (
+    <>
+      <p className="text-sm leading-relaxed text-mute">
+        {data.master
+          ? 'The master has every module.'
+          : `Tick what ${person.name} sees in the left menu. Anything not ticked is hidden from them, and Riley cannot look it up for them. Everyone has Chats.`}
+      </p>
+      <div className="grid items-start gap-2 @md:grid-cols-2">
+        {data.modules.map((m) => {
+          const fixed = data.master || m.locked;
+          return (
+            <button key={m.key} onClick={() => !fixed && toggle(m.key)} disabled={fixed} aria-pressed={m.on}
+              className={`flex w-full items-center gap-3 rounded-[1.25rem] border p-3 text-left transition ${
+                m.on ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent' : 'border-stroke bg-white/[0.035] hover:bg-white/[0.07]'}`}>
+              <span className="min-w-0 flex-1">
+                <span className={`block truncate text-sm font-medium ${m.on ? 'text-txt' : 'text-mute'}`}>{m.label}</span>
+                {m.locked && <span className="block truncate text-xs text-mute">Everyone has this</span>}
+              </span>
+              <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
+                m.on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
+                {m.on && <Check size={11} strokeWidth={3.5} />}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {error && <p className="text-sm text-bad">{error}</p>}
+    </>
   );
 }
 
