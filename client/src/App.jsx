@@ -24,6 +24,7 @@ import InventoryPage from './components/Inventory';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { loadRegion, onRegion } from './lib/region';
+import { setModules, can, moduleOf } from './lib/modules';
 import { NotifyPrompt } from './components/Notifications';
 import MessageToast from './components/MessageToast';
 import Orb from './components/Orb';
@@ -89,6 +90,17 @@ export default function App() {
   // The business's currency and time zone: read once signed in, and the screens are drawn again whenever it changes.
   const [, setRegionSeen] = useState(0);
   useEffect(() => { if (me?.id) loadRegion(); return onRegion(() => setRegionSeen((n) => n + 1)); }, [me?.id]);
+  // Staff start on the chat, the one screen everyone has; the master starts on the Overview.
+  // A notification that asked for a screen is still followed.
+  useEffect(() => { if (me && me.role !== 'master') setPanel((p) => (p === 'leasing' && !notifiedLeasing ? null : p)); }, [me?.id]);
+  // Whatever asked for a screen (a link, a notification, a button, a voice command): one
+  // the person does not hold is not opened, and they are left on the chat.
+  useEffect(() => {
+    if (!me) return;
+    const need = moduleOf(panel, leasingTab);
+    if (need && !me.modules?.includes(need)) setPanel(null);
+    if (tour && !me.modules?.includes('tour')) setTour(false);
+  }, [me, panel, leasingTab, tour]);
 
   const loadAgents = useCallback(() => api.get('/agents').then(setAgents), []);
   const loadConvs = useCallback(() => api.get('/conversations').then((c) => { setConvs(c); setConvsLoaded(true); }), []);
@@ -173,6 +185,7 @@ export default function App() {
     setMe(null); setAgents([]); setConvs([]); setChat({ key: Date.now(), id: null }); setDrawer(false);
   };
 
+  setModules(me?.modules); // before anything below is drawn, so every `can` in this render is today's
   if (me === undefined) return null;
   const resetting = new URLSearchParams(window.location.search).has('reset'); // opened a password-reset link
   if (!me || resetting) return <Auth onAuthed={(u) => { setMe(u); setChat({ key: Date.now(), id: null }); }} />;

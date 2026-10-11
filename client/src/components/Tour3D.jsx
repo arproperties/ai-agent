@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, BarChart3, BellRing, ChevronLeft, ChevronRight, ClipboardList, FileClock, Globe, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Pause, Play, RotateCw, ScanEye, Sparkles, Users, Volume2, VolumeX, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { money } from '../lib/region';
+import { can } from '../lib/modules';
 import { createTourScene } from '../lib/tourScene';
 
 // Tour: the whole app as a place that can be walked. Every screen the sidebar opens is a
@@ -76,7 +77,8 @@ function standing(d, alerts, repairs, unread) {
 }
 
 export default function Tour3D({ user, unread = 0, inside = false, ask, onGo, onBack }) {
-  const stops = useMemo(() => STOPS.filter((s) => !s.master || user.role === 'master'), [user.role]);
+  // The master's stops, and for everyone else the stops of the modules they hold: a stop's id is its module.
+  const stops = useMemo(() => STOPS.filter((s) => (s.master ? user.role === 'master' : can(s.id))), [user.role, user.modules]);
   const [at, setAt] = useState(null); // the stop stood before, or null for the whole ring
   const [touring, setTouring] = useState(false); // being taken round, a stop at a time
   const [spin, setSpin] = useState(true);
@@ -96,9 +98,10 @@ export default function Tour3D({ user, unread = 0, inside = false, ask, onGo, on
   // Read on the way in, and again each time a window is closed: what was done in it shows on the stops.
   useEffect(() => {
     if (inside) return;
-    api.get('/leasing/overview?company_id=&building_id=&months=1').then(setD).catch(() => {});
-    api.get('/leasing/alerts/count').then(setAlerts).catch(() => {});
-    api.get('/leasing/work-orders?status=active').then((r) => setRepairs(r.work_orders.filter((w) => LIVE.includes(w.status)))).catch(() => {});
+    // Each figure is asked for only by someone the server would answer.
+    if (can('overview') || can('leasing')) api.get('/leasing/overview?company_id=&building_id=&months=1').then(setD).catch(() => {});
+    if (can('alerts') || can('documents')) api.get('/leasing/alerts/count').then(setAlerts).catch(() => {});
+    if (can('workorders') || can('leasing')) api.get('/leasing/work-orders?status=active').then((r) => setRepairs(r.work_orders.filter((w) => LIVE.includes(w.status)))).catch(() => {});
   }, [inside]);
   const state = useMemo(() => standing(d, alerts, repairs, unread), [d, alerts, repairs, unread]);
 

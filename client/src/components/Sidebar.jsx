@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BarChart3, BellRing, ClipboardList, Compass, Eye, FileClock, Globe, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Search, Users, Wrench } from 'lucide-react';
 import { api } from '../lib/api';
+import { can } from '../lib/modules';
 import Icon from './Icon';
 import { AGENT_COLORS } from './Avatar';
 import { NotifyBell } from './Notifications';
@@ -47,23 +48,24 @@ export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodo
 
   // The main places. What is inside each is chosen on its own page.
   const places = [
-    { Ico: Compass, color: 'from-fuchsia-400 to-violet-600 shadow-fuchsia-500/30', label: '3D Navigation', hint: 'Walk the whole app in 3D', here: tourOpen, onClick: onTour },
-    { Ico: LayoutDashboard, color: 'amber', label: 'Overview', hint: 'Occupancy, rent and what needs attention', here: leasingOpen && leasingTab === 'overview', onClick: () => onLeasing('overview') },
-    { Ico: MessagesSquare, color: 'from-cyan-400 to-blue-600 shadow-cyan-500/30', label: 'Chats', hint: 'Riley, and your team chat', here: chatsOpen, onClick: onChats, badge: unreadMessages },
-    { Ico: ClipboardList, color: 'teal', label: 'Leasing', hint: 'Leases, the 3D view and the calendar',
+    { module: 'tour', Ico: Compass, color: 'from-fuchsia-400 to-violet-600 shadow-fuchsia-500/30', label: '3D Navigation', hint: 'Walk the whole app in 3D', here: tourOpen, onClick: onTour },
+    { module: 'overview', Ico: LayoutDashboard, color: 'amber', label: 'Overview', hint: 'Occupancy, rent and what needs attention', here: leasingOpen && leasingTab === 'overview', onClick: () => onLeasing('overview') },
+    { module: 'chats', Ico: MessagesSquare, color: 'from-cyan-400 to-blue-600 shadow-cyan-500/30', label: 'Chats', hint: 'Riley, and your team chat', here: chatsOpen, onClick: onChats, badge: unreadMessages },
+    { module: 'leasing', Ico: ClipboardList, color: 'teal', label: 'Leasing', hint: 'Leases, the 3D view and the calendar',
       here: leasingOpen && ['bookings', '3d', 'calendar'].includes(leasingTab), onClick: () => onLeasing(['3d', 'calendar'].includes(leasingTab) ? leasingTab : 'bookings') },
-    { Ico: Users, color: 'rose', label: 'Tenants', hint: 'The people and companies renting', here: leasingOpen && leasingTab === 'tenants', onClick: () => onLeasing('tenants') },
-    { Ico: Wrench, color: 'from-sky-400 to-cyan-600 shadow-sky-500/30', label: 'Work orders', hint: 'Repairs: what is open, and who has it', here: leasingOpen && leasingTab === 'workorders', onClick: () => onLeasing('workorders') },
-    { Ico: BarChart3, color: 'violet', label: 'Reports', hint: 'Daily, rent roll, overdue, collections', here: leasingOpen && leasingTab === 'reports', onClick: () => onLeasing('reports') },
-    { Ico: BellRing, color: 'from-orange-400 to-red-500 shadow-red-500/30', label: 'Alerts', hint: alerts.count ? `${alerts.count} need${alerts.count === 1 ? 's' : ''} attention` : 'Nothing needs attention',
+    { module: 'tenants', Ico: Users, color: 'rose', label: 'Tenants', hint: 'The people and companies renting', here: leasingOpen && leasingTab === 'tenants', onClick: () => onLeasing('tenants') },
+    { module: 'workorders', Ico: Wrench, color: 'from-sky-400 to-cyan-600 shadow-sky-500/30', label: 'Work orders', hint: 'Repairs: what is open, and who has it', here: leasingOpen && leasingTab === 'workorders', onClick: () => onLeasing('workorders') },
+    { module: 'reports', Ico: BarChart3, color: 'violet', label: 'Reports', hint: 'Daily, rent roll, overdue, collections', here: leasingOpen && leasingTab === 'reports', onClick: () => onLeasing('reports') },
+    { module: 'alerts', Ico: BellRing, color: 'from-orange-400 to-red-500 shadow-red-500/30', label: 'Alerts', hint: alerts.count ? `${alerts.count} need${alerts.count === 1 ? 's' : ''} attention` : 'Nothing needs attention',
       here: leasingOpen && leasingTab === 'alerts', onClick: () => onLeasing('alerts'), badge: alerts.count },
-    { Ico: FileClock, color: 'from-lime-400 to-green-600 shadow-green-500/30', label: 'Documents', hint: alerts.rules.document ? `${alerts.rules.document} to renew` : 'Policies, licences and certificates, with their expiry',
+    { module: 'documents', Ico: FileClock, color: 'from-lime-400 to-green-600 shadow-green-500/30', label: 'Documents', hint: alerts.rules.document ? `${alerts.rules.document} to renew` : 'Policies, licences and certificates, with their expiry',
       here: leasingOpen && leasingTab === 'documents', onClick: () => onLeasing('documents'), badge: alerts.rules.document },
-    { Ico: Landmark, color: 'slate', label: 'Properties', hint: 'Companies, buildings, units, documents', here: propertiesOpen, onClick: onProperties },
-    { Ico: Megaphone, color: 'from-emerald-400 to-teal-600 shadow-emerald-500/30', label: 'Sources', hint: 'Where tenants come from', here: sourcesOpen, onClick: onSources },
+    { module: 'properties', Ico: Landmark, color: 'slate', label: 'Properties', hint: 'Companies, buildings, units, documents', here: propertiesOpen, onClick: onProperties },
+    { module: 'sources', Ico: Megaphone, color: 'from-emerald-400 to-teal-600 shadow-emerald-500/30', label: 'Sources', hint: 'Where tenants come from', here: sourcesOpen, onClick: onSources },
     // The business's currency, time zone and phone country code: the master's to set.
     user.role === 'master' && { Ico: Globe, color: 'from-indigo-400 to-purple-600 shadow-indigo-500/30', label: 'Region', hint: 'Currency, time zone, phone code', here: regionOpen, onClick: onRegion },
-  ].filter(Boolean);
+    // A place is shown to whoever holds its module (ticked on their People profile). Region has none: it is the master's.
+  ].filter((p) => p && (!p.module || can(p.module)));
   // The box at the top narrows the rows to those whose name or line mentions what is typed.
   const [q, setQ] = useState('');
   const term = q.trim().toLowerCase();
