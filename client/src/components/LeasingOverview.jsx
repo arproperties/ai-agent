@@ -203,52 +203,6 @@ function AlertBanner({ alerts, onOpen }) {
   );
 }
 
-/** One building: every unit as a square, a row per floor, coloured by what state it is in. */
-function BuildingCard({ b }) {
-  const [sel, setSel] = useState(null);
-  return (
-    <div className={CARD}>
-      <div className="flex items-start gap-3">
-        <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-p1/15 text-p1"><Building2 size={18} /></div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-medium">{b.name}</p>
-          <p className="truncate text-xs text-mute">{b.area} · {b.company}</p>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="text-lg font-light leading-tight">{pct(b.occupancy)}</p>
-          <p className="text-[11px] text-mute">{b.vacant} vacant of {b.total}</p>
-        </div>
-      </div>
-      <div className="mt-4 space-y-1">
-        {b.floors.map((floor) => (
-          <div key={floor[0].floor ?? ''} className="flex items-center gap-1">
-            <span className="w-5 shrink-0 truncate text-[10px] text-mute">{floor[0].floor ?? '–'}</span>
-            {floor.map((u) => {
-              const [label, tone, style] = UNIT[u.status];
-              return (
-                <button key={u.unit_no} type="button" onClick={() => setSel(sel?.unit_no === u.unit_no ? null : u)} style={style}
-                  title={`Unit ${u.unit_no} · ${label}${u.tenant ? ` · ${u.tenant}` : ''}`} aria-label={`Unit ${u.unit_no}, ${label}`}
-                  className={`h-5 min-w-0 flex-1 rounded-[5px] transition hover:brightness-125 ${tone} ${sel?.unit_no === u.unit_no ? 'ring-2 ring-white/80' : ''}`} />
-              );
-            })}
-          </div>
-        ))}
-      </div>
-      <p className="mt-3 min-h-[2.5rem] border-t border-stroke/60 pt-2 text-xs text-mute">
-        {!sel ? 'Tap a unit to see who is in it.' : (
-          <>
-            <span className="text-txt">Unit {sel.unit_no} · {UNIT[sel.status][0]}</span>
-            {sel.tenant && ` · ${sel.tenant} · ${aed(sel.rent)} / month`}
-            {sel.status === 'overdue' && ` · owes ${aed(sel.owed)}, ${sel.days_overdue} days late`}
-            {sel.days_left <= 60 && ` · ends in ${sel.days_left} days (${sel.renewal})`}
-            {sel.status === 'vacant' && (sel.days_vacant == null ? ' · never let' : ` · empty for ${sel.days_vacant} days`)}
-          </>
-        )}
-      </p>
-    </div>
-  );
-}
-
 export default function LeasingOverview({ onPay, onAlerts }) {
   const [company, setCompany] = useState('');
   const [buildingId, setBuildingId] = useState('');
@@ -400,36 +354,6 @@ export default function LeasingOverview({ onPay, onAlerts }) {
         </div>
       </div>
 
-    </div>
-  );
-}
-
-/** The Buildings section: every building as a card of its units, for one company or all of them. */
-export function LeasingBuildings() {
-  const [company, setCompany] = useState('');
-  const [d, setD] = useState(null);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    api.get(`/leasing/overview?company_id=${company}&building_id=&months=1`)
-      .then((r) => { setD(r); setError(''); }).catch((e) => setError(e.message));
-  }, [company]);
-
-  if (!d) return <p className="py-10 text-center text-sm text-mute">{error || 'Loading…'}</p>;
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <Select value={company} onChange={(e) => setCompany(e.target.value)} aria-label="Company" className={SELECT} wrap="min-w-0 flex-1 sm:min-w-[12rem] sm:flex-none"
-          options={[['', 'All companies'], ...d.filters.companies.map((c) => [c.id, c.name])]} />
-        <div className="ml-auto flex flex-wrap gap-x-3 gap-y-1 text-xs text-mute">
-          {Object.entries(UNIT).map(([k, [label, tone, style]]) => (
-            <span key={k} className="flex items-center gap-1.5"><span className={`size-3 rounded-[4px] ${tone}`} style={style} />{label}</span>
-          ))}
-        </div>
-      </div>
-      {error && <p className="text-sm text-bad">{error}</p>}
-      {d.buildings.length === 0 && <p className={`${CARD} text-sm text-mute`}>No buildings yet. Add companies, buildings and units under Properties and they appear here.</p>}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{d.buildings.map((b) => <BuildingCard key={b.id} b={b} />)}</div>
     </div>
   );
 }

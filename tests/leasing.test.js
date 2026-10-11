@@ -80,6 +80,8 @@ test('blocked units, checks on input, tenants with bookings stay', async () => {
   await assert.rejects(createBooking(stay(u1.id, '2026-11-01', '2026-11-30', { tenant: {} })), /tenant's name/);
 
   const t = await addTenant({ full_name: 'Omar Ali', phone: '+971 50 111 2222' });
+  assert.equal((await listTenants('omar'))[0].bookings, 0); // a tenant can be on file with no lease
+  await assert.rejects(addTenant({ phone: '050' }), /tenant's name/);
   const bk = await createBooking({ ...stay(u1.id, '2026-11-01', '2027-10-31'), tenant_id: t.id, tenant: undefined });
   assert.equal(bk.type, 'lease');
   assert.equal((await listTenants('omar'))[0].bookings, 1);

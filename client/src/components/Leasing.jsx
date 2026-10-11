@@ -13,7 +13,7 @@ import BookingDocs, { REQUIRED } from './BookingDocs';
 import ServiceList, { REPEAT } from './ServiceList';
 import SourceList from './SourceList';
 import BookingPayments from './BookingPayments';
-import LeasingOverview, { LeasingBuildings } from './LeasingOverview';
+import LeasingOverview from './LeasingOverview';
 import LeasingReports from './LeasingReports';
 import LeasingAlerts from './LeasingAlerts';
 import Documents from './Documents';
@@ -719,7 +719,8 @@ function TenantForm({ start, onDone, onCancel }) {
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
   const save = async (e) => {
     e.preventDefault();
-    try { await api.put(`/leasing/tenants/${start.id}`, v); onDone(); } catch (err) { setError(err.message); }
+    // No tenant to start from: a new one, on file with no lease yet.
+    try { await (start ? api.put(`/leasing/tenants/${start.id}`, v) : api.post('/leasing/tenants', v)); onDone(); } catch (err) { setError(err.message); }
   };
   return (
     <form onSubmit={save} className="space-y-3 rounded-2xl border border-p1/40 p-4 md:col-span-2 xl:col-span-3">
@@ -746,6 +747,7 @@ function Tenants({ onHistory }) {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);
+  const [adding, setAdding] = useState(false); // a tenant with no lease yet
   const [error, setError] = useState('');
   const [view, see] = useView('tenants');
   // The dates are when the tenant was added. Either end can be left open.
@@ -764,7 +766,7 @@ function Tenants({ onHistory }) {
   const tools = (t) => (
     <>
       <button onClick={() => onHistory(t)} aria-label="History" title="History: late rent, complaints, maintenance" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><History size={15} /></button>
-      <button onClick={() => setEditing(t.id)} aria-label="Edit" title="Edit" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>
+      <button onClick={() => { setAdding(false); setEditing(t.id); }} aria-label="Edit" title="Edit" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>
       <button onClick={() => remove(t)} aria-label="Delete" title="Delete" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
     </>
   );
@@ -778,13 +780,15 @@ function Tenants({ onHistory }) {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search tenants by name, phone, email, ID or passport" className={`${FIELD} pl-10`} />
       </label>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <p className="text-xs text-mute">{shown ? `${shown.length} tenant${shown.length === 1 ? '' : 's'} · ` : ''}Tenants are added from New lease.</p>
-        <span className="ml-auto flex items-center gap-2">
+        <p className="text-xs text-mute">{shown ? `${shown.length} tenant${shown.length === 1 ? '' : 's'}` : ''}</p>
+        <span className="ml-auto flex flex-wrap items-center gap-2">
           <DateRange from={from} to={to} onChange={(a, b) => { setFrom(a); setTo(b); }} placeholder="Added any date" className="glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none" />
           <ViewToggle view={view} onView={see} />
+          <button onClick={() => { setEditing(null); setAdding(true); }} className={PRIMARY}><Plus size={16} /> Add tenant</button>
         </span>
       </div>
       {error && <p className="text-sm text-bad">{error}</p>}
+      {adding && <div className="grid"><TenantForm onDone={() => { setAdding(false); load(); }} onCancel={() => setAdding(false)} /></div>}
       {!shown ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
         : shown.length === 0 ? <p className="py-3 text-sm text-mute">{rows.length ? 'No tenants match.' : 'No tenants yet.'}</p>
           : view === 'list' ? (
@@ -993,9 +997,9 @@ function Calendar({ onEdit, onNew }) {
 }
 
 // Leasing is several pages, each with its own row in the sidebar: the overview, Bookings (which
-// has the buildings beside it as a second tab), Calendar, 3D View, Tenants, Reports, Alerts and Documents. Which one
+// has the 3D View and the calendar beside it as tabs), Tenants, Reports, Alerts and Documents. Which one
 // is open is the app's to hold, as `tab`, so the sidebar can open any of them.
-const BOOKING_TABS = [['bookings', 'Leasing'], ['buildings', 'Buildings']];
+const BOOKING_TABS = [['bookings', 'Leasing'], ['3d', 'Building (3D view)'], ['calendar', 'Calendar']];
 
 export default function LeasingPage({ tab, onTab: setTab, report, onReport, alert, onAlert, onBack }) {
   const [form, setForm] = useState(null); // { preset } for a new booking, a booking being edited, { docsOf } for its documents, { payOf } for its payments, or null
@@ -1066,7 +1070,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
 
   // These stand alone: their own page and title, with none of Leasing's tabs.
   const add = <button onClick={() => setForm({ preset: null })} className={PRIMARY}><Plus size={16} /> New lease</button>;
-  if (tab === 'bookings' || tab === 'buildings') return (
+  if (BOOKING_TABS.some(([k]) => k === tab)) return (
     <Page title="Leasing" onBack={onBack} action={add}>
       <div className="mb-4 flex gap-5 overflow-x-auto border-b border-stroke text-sm">
         {BOOKING_TABS.map(([k, l]) => (
@@ -1074,20 +1078,17 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
             className={`-mb-px shrink-0 border-b-2 pb-2 pt-1 transition ${tab === k ? 'border-p1 text-txt' : 'border-transparent text-mute hover:text-txt'}`}>{l}</button>
         ))}
       </div>
-      {tab === 'buildings' ? <LeasingBuildings key={key} />
+      {tab === '3d' ? (
+          <Suspense fallback={<p className="flex items-center justify-center gap-2 py-10 text-sm text-mute"><Loader2 size={16} className="animate-spin" /> Loading…</p>}>
+            <Building3D key={key} onPay={pay} onLease={(id) => openBooking(id)} onNew={(preset) => setForm({ preset })} onInspect={(b) => setForm({ inspectOf: b, start: 'move_in' })}
+              onWork={(u) => setForm({ workOf: { scope: { unit_id: u.unit_id }, title: `Work orders · Unit ${u.unit_no}`, preset: { unit_id: u.unit_id } } })} />
+          </Suspense>
+        )
+        : tab === 'calendar' ? <Calendar key={key} onEdit={(b) => setForm(b)} onNew={(preset) => setForm({ preset })} />
         : <Bookings key={key} fresh={fresh} onEdit={(b) => setForm(b)} onDocs={(b) => setForm({ docsOf: b })} onPay={(b) => setForm({ payOf: b })} onEnd={(b) => setForm({ endOf: b })} onInspect={(b, start) => setForm({ inspectOf: b, start })} onWork={(b) => setForm({ workOf: { scope: { booking_id: b.id }, title: `Work orders · ${b.ref}`, preset: { unit_id: b.unit_id } } })} />}
     </Page>
   );
   if (tab === 'workorders') return <WorkOrders key={key} onBack={onBack} />;
-  if (tab === 'calendar') return <Page title="Calendar" onBack={onBack} action={add}><Calendar key={key} onEdit={(b) => setForm(b)} onNew={(preset) => setForm({ preset })} /></Page>;
-  if (tab === '3d') return (
-    <Page title="3D View" onBack={onBack} action={add}>
-      <Suspense fallback={<p className="flex items-center justify-center gap-2 py-10 text-sm text-mute"><Loader2 size={16} className="animate-spin" /> Loading…</p>}>
-        <Building3D key={key} onPay={pay} onLease={(id) => openBooking(id)} onNew={(preset) => setForm({ preset })}
-          onWork={(u) => setForm({ workOf: { scope: { unit_id: u.unit_id }, title: `Work orders · Unit ${u.unit_no}`, preset: { unit_id: u.unit_id } } })} />
-      </Suspense>
-    </Page>
-  );
   if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants onHistory={(t) => setForm({ historyOf: t })} /></Page>;
   if (tab === 'reports') return <Page title="Reports" onBack={onBack}><LeasingReports key={key} name={report} onName={onReport} onPay={pay} /></Page>;
   if (tab === 'alerts') return <Page title="Alerts" onBack={onBack}><LeasingAlerts key={key} rule={alert} onRule={onAlert} onOpen={openAlert} /></Page>;

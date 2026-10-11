@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Banknote, Check, FileText, Layers, Loader2, Plus, RotateCw, ScanEye, Upload, Wrench, X } from 'lucide-react';
+import { Banknote, Check, ClipboardCheck, FileText, Layers, Loader2, Plus, RotateCw, ScanEye, Upload, Wrench, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { money } from '../lib/region';
 import { createBuildingScene } from '../lib/buildingScene';
 import Select from './Select';
+import QuickLease from './QuickLease';
 
 // 3D View: one building as a tower that can be turned, pulled apart floor by floor and
 // tapped, each unit coloured by how it stands today. Nothing is kept here: the units and
@@ -12,12 +13,13 @@ import Select from './Select';
 // it is and as big as it is, with the corridor, the stairs and the lobby between them.
 // The master gives a building its plan by uploading the drawings: Riley reads them, the
 // reading is shown here as it would be drawn, and it is kept only when the master says so.
+// A vacant unit is leased where it stands (QuickLease), with the building still in view.
 // The drawing itself is lib/buildingScene.js.
 
 const SELECT = 'glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none focus:border-p1/70';
 const CHIP = 'rounded-full border px-3 py-1.5 text-xs transition';
 const PANEL = 'rounded-2xl border border-stroke bg-surface/85 backdrop-blur';
-// The same colours the Buildings tab gives each state.
+// The same colours the Overview gives each state.
 const STATUS = { occupied: ['Occupied', 'chart'], ending: ['Ending soon', 'warn'], overdue: ['Overdue', 'bad'], vacant: ['Vacant', 'mute'], blocked: ['Blocked', 'mute'] };
 const MODES = [['status', 'Status'], ['rent', 'Rent'], ['ending', 'Lease end']];
 const LIVE = ['open', 'assigned', 'in_progress']; // a repair not done yet
@@ -45,7 +47,7 @@ const placed = (at, r) => {
 
 let lastBuilding = ''; // the building last looked at, so coming back from a lease or a repair returns to it
 
-export default function Building3D({ onPay, onLease, onNew, onWork }) {
+export default function Building3D({ onPay, onLease, onNew, onInspect, onWork }) {
   const [d, setD] = useState(null);
   const [repairs, setRepairs] = useState([]);
   const [plans, setPlans] = useState({});
@@ -63,6 +65,8 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
   const [draft, setDraft] = useState(null); // what was read, shown before it is kept
   const [planError, setPlanError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [leasing, setLeasing] = useState(null); // the vacant unit a new lease is being written for
+  const [drafted, setDrafted] = useState({}); // leases drafted here and not yet inspected in, by unit: such a unit is still vacant
   const stage = useRef(null);
   const scene = useRef(null);
   const file = useRef(null);
@@ -112,7 +116,7 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
   useEffect(() => {
     if (!building) return;
     lastBuilding = String(building.id);
-    setSelected(null); setFloor(null); setOnly(null);
+    setSelected(null); setFloor(null); setOnly(null); setLeasing(null);
     if (draft) { // the reading, drawn as it would be kept
       const at = placer(draft);
       scene.current?.setData(draft.floors.map((f) => ({
@@ -277,7 +281,15 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
       )}
 
       {/* The unit that was tapped. */}
-      {unit && !draft && (
+      {unit && !draft && leasing === unit.unit_id && (
+        <div className={`${PANEL} absolute inset-x-3 bottom-3 max-h-[75%] overflow-y-auto p-4 md:inset-x-auto md:bottom-3 md:right-3 md:top-28 md:max-h-none md:w-80`}>
+          <QuickLease key={unit.unit_id} unit={unit} where={[floorName(unit.floor), building.name].join(' · ')}
+            preset={{ company_id: company, building_id: building.id, unit_id: unit.unit_id }}
+            onSaved={(made, inspect) => { if (inspect) return onInspect(made); setDrafted((now) => ({ ...now, [unit.unit_id]: made })); setLeasing(null); }}
+            onFull={onNew} onCancel={() => setLeasing(null)} />
+        </div>
+      )}
+      {unit && !draft && leasing !== unit.unit_id && (
         <div className={`${PANEL} absolute inset-x-3 bottom-3 max-h-[60%] overflow-y-auto p-4 text-sm md:inset-x-auto md:bottom-auto md:right-3 md:top-28 md:w-72`}>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -297,7 +309,8 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
               <div className="flex justify-between gap-3"><dt className="text-mute">Lease ends</dt><dd>{unit.days_left > 0 ? `in ${days(unit.days_left)}` : 'today'} · {unit.renewal}</dd></div>
             </dl>
           ) : (
-            <p className="mt-3 text-xs text-mute">{unit.status === 'blocked' ? 'Blocked: it is not being let.' : unit.days_vacant != null ? `Empty for ${days(unit.days_vacant)}.` : 'Never let.'}</p>
+            <p className="mt-3 text-xs text-mute">{unit.status === 'blocked' ? 'Blocked: it is not being let.' : unit.days_vacant != null ? `Empty for ${days(unit.days_vacant)}.` : 'Never let.'}
+              {drafted[unit.unit_id] && <span className="mt-1 block text-txt">Lease {drafted[unit.unit_id].ref} is drafted for {drafted[unit.unit_id].tenant}. It is confirmed after the move-in inspection.</span>}</p>
           )}
           {(repairsOf.get(unit.unit_id) || []).map((w) => (
             <p key={w.id} className="mt-2 flex items-start gap-1.5 rounded-lg bg-p3/10 px-2.5 py-1.5 text-xs">
@@ -308,7 +321,9 @@ export default function Building3D({ onPay, onLease, onNew, onWork }) {
           <div className="mt-3 flex flex-wrap gap-2">
             {unit.booking_id && <button onClick={() => onPay(unit.booking_id)} className={toggle(true)}><Banknote size={14} /> Payments</button>}
             {unit.booking_id && <button onClick={() => onLease(unit.booking_id)} className={toggle(false)}><FileText size={14} /> Lease</button>}
-            {unit.status === 'vacant' && <button onClick={() => onNew({ company_id: company, building_id: building.id, unit_id: unit.unit_id })} className={toggle(true)}><Plus size={14} /> New lease</button>}
+            {unit.status === 'vacant' && (drafted[unit.unit_id]
+              ? <button onClick={() => onInspect(drafted[unit.unit_id])} className={toggle(true)}><ClipboardCheck size={14} /> Move-in inspection</button>
+              : <button onClick={() => { setLeasing(unit.unit_id); setSpin(false); }} className={toggle(true)}><Plus size={14} /> New lease</button>)}
             <button onClick={() => onWork(unit)} className={toggle(false)}><Wrench size={14} /> Work orders</button>
           </div>
         </div>
