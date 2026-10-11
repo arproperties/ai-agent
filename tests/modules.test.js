@@ -109,6 +109,7 @@ test('each route names the modules that may read it and the modules that may cha
   assert.deepEqual(rule('/properties/unit-photos/2'), [['properties', 'leasing', 'reports'], ['properties']]);
   // A leasing route nobody has given a rule is the master's until somebody does.
   assert.deepEqual(rule('/leasing/something-new'), [[], []]);
+  assert.deepEqual(needed('GET', '/Leasing/Bookings'), ['leasing'], 'Express matches a mount whatever its case, so the gate does too');
   // Everything else in the app is not a module's and is left alone.
   for (const p of ['/todos', '/messenger/chats', '/admin/users', '/auth/me', '/buildings', '/leasingx']) assert.equal(needed('GET', p), null, p);
 });
@@ -129,6 +130,7 @@ test('a person reaches only the routes of the modules they hold', async () => {
   assert.equal(await hit('GET', '/leasing/bookings'), 403);
   assert.equal(await hit('GET', '/properties/companies'), 403);
   assert.equal(await hit('GET', '/leasing/something-new'), 403, 'a route with no rule is refused, not let through');
+  for (const p of ['/Leasing/bookings', '/LEASING/something-new', '/PROPERTIES/companies']) assert.equal(await hit('GET', p), 403, p);
   assert.equal(await hit('GET', '/todos'), 200, 'the rest of the app is untouched');
   assert.equal(await hit('GET', '/leasing/region'), 200);
   assert.equal(await hit('GET', '/leasing/alerts/count'), 200);

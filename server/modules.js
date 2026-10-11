@@ -98,7 +98,9 @@ const RULES = [
 
 /** Who may make this request: module keys (any one is enough), '*' for anyone signed in, or null when it is not a module's route. */
 export function needed(method, path) {
-  const rule = RULES.find(([at]) => at.test(path));
+  // Express matches mounts whatever the case, so the gate must too.
+  const lower = path.toLowerCase();
+  const rule = RULES.find(([at]) => at.test(lower));
   if (!rule) return null;
   return method === 'GET' || method === 'HEAD' ? rule[1] : rule[2];
 }
