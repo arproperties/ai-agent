@@ -79,7 +79,9 @@ export default function App() {
   const chatOpened = useCallback(() => setJumpToChat(null), []);
 
   useEffect(() => {
-    api.get('/auth/me').then((r) => setMe(r.user)).catch(() => setMe(null));
+    // Staff start on the chat, the one screen everyone has; the master on the Overview; a notification's screen is
+    // kept (the guard below still closes one they do not hold). Set with the person, so nothing is drawn in between.
+    api.get('/auth/me').then((r) => { setMe(r.user); if (r.user && r.user.role !== 'master') setPanel((p) => (p === 'leasing' && !notifiedLeasing ? null : p)); }).catch(() => setMe(null));
     const out = () => setMe(null);
     window.addEventListener('jarvis:signedout', out);
     return () => window.removeEventListener('jarvis:signedout', out);
@@ -90,9 +92,6 @@ export default function App() {
   // The business's currency and time zone: read once signed in, and the screens are drawn again whenever it changes.
   const [, setRegionSeen] = useState(0);
   useEffect(() => { if (me?.id) loadRegion(); return onRegion(() => setRegionSeen((n) => n + 1)); }, [me?.id]);
-  // Staff start on the chat, the one screen everyone has; the master starts on the Overview.
-  // A notification that asked for a screen is still followed.
-  useEffect(() => { if (me && me.role !== 'master') setPanel((p) => (p === 'leasing' && !notifiedLeasing ? null : p)); }, [me?.id]);
   // Whatever asked for a screen (a link, a notification, a button, a voice command): one
   // the person does not hold is not opened, and they are left on the chat.
   useEffect(() => {
@@ -188,8 +187,14 @@ export default function App() {
   setModules(me?.modules); // before anything below is drawn, so every `can` in this render is today's
   if (me === undefined) return null;
   const resetting = new URLSearchParams(window.location.search).has('reset'); // opened a password-reset link
-  if (!me || resetting) return <Auth onAuthed={(u) => { setMe(u); setChat({ key: Date.now(), id: null }); }} />;
+  if (!me || resetting) return <Auth onAuthed={(u) => {
+    setMe(u); setChat({ key: Date.now(), id: null });
+    // Nobody inherits the screen the last person left open.
+    setPanel(u.role === 'master' ? 'leasing' : null); setTour(false); setLeasingTab('overview');
+  }} />;
 
+  const need = moduleOf(panel, leasingTab);
+  const blocked = !!need && !can(need); // the guard effect is about to close it: draw nothing meanwhile
   return (
     <div className="relative z-10 flex h-dvh">
       {drawer && <div className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden" onClick={() => setDrawer(false)} />}
@@ -215,7 +220,7 @@ export default function App() {
 
       <main className="relative flex min-w-0 flex-1 flex-col">
         {/* The Tour, under whatever is opened from it: first here, so the windows are drawn over it. */}
-        {tour && <Suspense fallback={null}><Tour3D user={me} unread={dm.unread} inside={panel !== null} ask={ask} onGo={fromTour} onBack={() => { setTour(false); setPanel(null); }} /></Suspense>}
+        {tour && can('tour') && <Suspense fallback={null}><Tour3D user={me} unread={dm.unread} inside={panel !== null} ask={ask} onGo={fromTour} onBack={() => { setTour(false); setPanel(null); }} /></Suspense>}
         {agents.length > 0 ? (
           // The chats and the chat side by side, as in Team chat; on a phone it is one or the other.
           // Walked into from the Tour, the same chat is lifted into a window over it.
@@ -292,6 +297,7 @@ export default function App() {
               {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
             </>
           );
+          if (blocked) return null;
           return tour && panel && !['chat', 'activity'].includes(panel) ? <div key={panel} className={WINDOW}><Frost />{page}</div> : page;
         })()}
       </main>
