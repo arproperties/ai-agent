@@ -67,3 +67,45 @@ export async function holders(key) {
     UNION SELECT user_id AS id FROM module_access WHERE module = ?`).all(key);
   return new Set(rows.map((r) => r.id));
 }
+
+// ---------- which module each route needs ----------
+
+const ANYONE = '*'; // anyone signed in
+const MASTER = []; // nobody's module: the master alone
+// What follows /api, then who may read it (GET) and who may change it. The first line
+// that matches decides. Screens share data (a lease form lists tenants, units and
+// sources), so a route names every module whose screen reads it; changing belongs to the
+// module that owns the thing, and to a screen that already adds one inline.
+const RULES = [
+  [/^\/leasing\/region\/?$/, ANYONE, ANYONE], // money and dates are written with it everywhere; saving it is the master's, checked in its router
+  [/^\/leasing\/alerts\/count$/, ANYONE, MASTER], // the sidebar's badges; trimmed to what they hold in the route
+  [/^\/leasing\/alerts(\/|$)/, ['alerts', 'overview'], ['alerts']],
+  [/^\/leasing\/reports\//, ['reports'], MASTER],
+  [/^\/leasing\/overview$/, ['overview', 'leasing'], MASTER], // the 3D view is drawn from it too
+  [/^\/leasing\/work-orders(\/|$)/, ['workorders', 'leasing'], ['workorders']], // the 3D view marks open repairs
+  [/^\/leasing\/(tenants\/\d+\/(history|log)|log)(\/|$)/, ['tenants'], ['tenants']],
+  [/^\/leasing\/tenants(\/|$)/, ['tenants', 'leasing', 'reports'], ['tenants', 'leasing']],
+  [/^\/leasing\/services(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
+  [/^\/leasing\/sources(\/|$)/, ['sources', 'leasing'], ['sources', 'leasing']],
+  [/^\/leasing\/(units\/\d+\/inspections|inspections|inspection-photos)(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
+  [/^\/leasing\/(available|bookings|installments|payments|docs)(\/|$)/, ['leasing'], ['leasing']],
+  [/^\/leasing(\/|$)/, MASTER, MASTER], // a leasing route with no line above is the master's until it is given one
+  [/^\/properties\/renewals(\/|$)/, ['documents'], ['documents']],
+  [/^\/properties\/(documents|docs|places|companies\/\d+\/docs)(\/|$)/, ['documents', 'properties'], ['documents', 'properties']],
+  [/^\/properties\/(plans|plan-readings|buildings\/\d+\/plan)(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
+  [/^\/properties(\/|$)/, ['properties', 'leasing', 'reports'], ['properties']],
+];
+
+/** Who may make this request: module keys (any one is enough), '*' for anyone signed in, or null when it is not a module's route. */
+export function needed(method, path) {
+  const rule = RULES.find(([at]) => at.test(path));
+  if (!rule) return null;
+  return method === 'GET' || method === 'HEAD' ? rule[1] : rule[2];
+}
+
+/** Refuses a request to a module the person does not hold. Mount at /api, after requireUser. */
+export function moduleGate(req, res, next) {
+  const need = needed(req.method, req.path);
+  if (!need || need === ANYONE || isMaster(req.user)) return next();
+  userModules(req.user).then((have) => (need.some((k) => have.includes(k)) ? next() : res.status(403).json({ error: 'Not allowed' })), next);
+}

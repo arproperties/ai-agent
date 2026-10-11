@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import express from 'express';
 import { reset, closeDb, db, makeUser, giveModules } from './helpers/db.js';
-import { MODULES, userModules, listModuleAccess, setModuleAccess, holders } from '../server/modules.js';
+import { MODULES, userModules, listModuleAccess, setModuleAccess, holders, needed, moduleGate } from '../server/modules.js';
+import { alertRoutes } from '../server/leasingAlerts.js';
+import { create, addDocument } from '../server/properties.js';
 
 test.after(() => closeDb());
 
@@ -68,4 +71,124 @@ test('holders are the master and whoever is ticked', async () => {
   assert.deepEqual([...(await holders('alerts'))].sort(), [master.id, sara.id].sort());
   assert.deepEqual([...(await holders('reports'))], [master.id]);
   assert.equal((await holders('alerts')).has(omar), false);
+});
+
+test('each route names the modules that may read it and the modules that may change it', () => {
+  const rule = (path) => [needed('GET', path), needed('POST', path)];
+  assert.deepEqual(rule('/leasing/overview'), [['overview', 'leasing'], []]);
+  assert.deepEqual(rule('/leasing/bookings'), [['leasing'], ['leasing']]);
+  assert.deepEqual(rule('/leasing/bookings/7/payments'), [['leasing'], ['leasing']]);
+  assert.deepEqual(rule('/leasing/payments/7/receipt'), [['leasing'], ['leasing']]);
+  assert.deepEqual(rule('/leasing/available'), [['leasing'], ['leasing']]);
+  assert.deepEqual(rule('/leasing/tenants'), [['tenants', 'leasing', 'reports'], ['tenants', 'leasing']]);
+  assert.deepEqual(rule('/leasing/tenants/3'), [['tenants', 'leasing', 'reports'], ['tenants', 'leasing']]);
+  assert.deepEqual(rule('/leasing/tenants/3/history'), [['tenants'], ['tenants']]);
+  assert.deepEqual(rule('/leasing/tenants/3/log'), [['tenants'], ['tenants']]);
+  assert.deepEqual(rule('/leasing/log/9/files'), [['tenants'], ['tenants']]);
+  assert.deepEqual(rule('/leasing/services'), [['leasing', 'properties'], ['leasing', 'properties']]);
+  assert.deepEqual(rule('/leasing/sources/2'), [['sources', 'leasing'], ['sources', 'leasing']]);
+  assert.deepEqual(rule('/leasing/work-orders'), [['workorders', 'leasing'], ['workorders']]);
+  assert.deepEqual(rule('/leasing/work-orders/5/notes'), [['workorders', 'leasing'], ['workorders']]);
+  assert.deepEqual(rule('/leasing/units/4/inspections'), [['leasing', 'properties'], ['leasing', 'properties']]);
+  assert.deepEqual(rule('/leasing/inspection-photos/4'), [['leasing', 'properties'], ['leasing', 'properties']]);
+  assert.deepEqual(rule('/leasing/reports/rent_roll'), [['reports'], []]);
+  assert.deepEqual(rule('/leasing/alerts'), [['alerts', 'overview'], ['alerts']]);
+  assert.deepEqual(rule('/leasing/alerts/reminder/8'), [['alerts', 'overview'], ['alerts']]);
+  assert.deepEqual(rule('/leasing/alerts/count'), ['*', []]);
+  assert.deepEqual(rule('/leasing/region'), ['*', '*']);
+  assert.deepEqual(rule('/properties/renewals'), [['documents'], ['documents']]);
+  assert.deepEqual(rule('/properties/documents'), [['documents', 'properties'], ['documents', 'properties']]);
+  assert.deepEqual(rule('/properties/docs/3/file'), [['documents', 'properties'], ['documents', 'properties']]);
+  assert.deepEqual(rule('/properties/companies/3/docs'), [['documents', 'properties'], ['documents', 'properties']]);
+  assert.deepEqual(rule('/properties/places'), [['documents', 'properties'], ['documents', 'properties']]);
+  assert.deepEqual(rule('/properties/plans'), [['leasing', 'properties'], ['leasing', 'properties']]);
+  assert.deepEqual(rule('/properties/buildings/2/plan'), [['leasing', 'properties'], ['leasing', 'properties']]);
+  assert.deepEqual(rule('/properties/companies'), [['properties', 'leasing', 'reports'], ['properties']]);
+  assert.deepEqual(rule('/properties/buildings/2'), [['properties', 'leasing', 'reports'], ['properties']]);
+  assert.deepEqual(rule('/properties/unit-photos/2'), [['properties', 'leasing', 'reports'], ['properties']]);
+  // A leasing route nobody has given a rule is the master's until somebody does.
+  assert.deepEqual(rule('/leasing/something-new'), [[], []]);
+  // Everything else in the app is not a module's and is left alone.
+  for (const p of ['/todos', '/messenger/chats', '/admin/users', '/auth/me', '/buildings', '/leasingx']) assert.equal(needed('GET', p), null, p);
+});
+
+// The gate over real HTTP, mounted as index.js mounts it, in front of a stand-in for every route.
+let caller = { id: 0, role: 'user' };
+const app = express();
+app.use('/api', (req, res, next) => { req.user = caller; next(); });
+app.use('/api', moduleGate);
+app.use('/api', (req, res) => res.json({ ok: true }));
+const server = await new Promise((ok) => { const s = app.listen(0, '127.0.0.1', () => ok(s)); });
+test.after(() => new Promise((ok) => server.close(ok)));
+const hit = async (method, path) => (await fetch(`http://127.0.0.1:${server.address().port}/api${path}`, { method })).status;
+
+test('a person reaches only the routes of the modules they hold', async () => {
+  const { master, sara } = await people();
+  caller = sara;
+  assert.equal(await hit('GET', '/leasing/bookings'), 403);
+  assert.equal(await hit('GET', '/properties/companies'), 403);
+  assert.equal(await hit('GET', '/leasing/something-new'), 403, 'a route with no rule is refused, not let through');
+  assert.equal(await hit('GET', '/todos'), 200, 'the rest of the app is untouched');
+  assert.equal(await hit('GET', '/leasing/region'), 200);
+  assert.equal(await hit('GET', '/leasing/alerts/count'), 200);
+  const refused = await fetch(`http://127.0.0.1:${server.address().port}/api/leasing/bookings`);
+  assert.deepEqual(await refused.json(), { error: 'Not allowed' });
+
+  await giveModules(sara.id, 'workorders');
+  assert.equal(await hit('GET', '/leasing/work-orders'), 200);
+  assert.equal(await hit('POST', '/leasing/work-orders'), 200);
+  assert.equal(await hit('GET', '/leasing/bookings'), 403);
+
+  caller = master;
+  for (const p of ['/leasing/bookings', '/leasing/something-new', '/properties/companies']) assert.equal(await hit('GET', p), 200, p);
+  assert.equal(await hit('DELETE', '/leasing/reports/rent_roll'), 200, 'the master is never stopped here');
+});
+
+test('Leasing alone can make a lease: every read its form makes is allowed', async () => {
+  const { sara } = await people();
+  await giveModules(sara.id, 'leasing');
+  caller = sara;
+  for (const p of ['/properties/companies', '/properties/companies/1', '/properties/buildings/1', '/leasing/tenants', '/leasing/sources',
+    '/leasing/services', '/leasing/available', '/leasing/bookings', '/leasing/overview', '/properties/plans', '/leasing/work-orders']) {
+    assert.equal(await hit('GET', p), 200, p);
+  }
+  for (const p of ['/leasing/bookings', '/leasing/tenants', '/leasing/sources', '/leasing/services']) assert.equal(await hit('POST', p), 200, p);
+  // What it reads from another module, it may not change there.
+  assert.equal(await hit('POST', '/leasing/work-orders'), 403);
+  assert.equal(await hit('POST', '/properties/companies'), 403);
+  assert.equal(await hit('GET', '/leasing/tenants/1/history'), 403, 'a tenant’s history is the Tenants screen’s');
+  assert.equal(await hit('GET', '/leasing/reports/rent_roll'), 403);
+});
+
+test('unticking takes effect on the next request', async () => {
+  const { sara } = await people();
+  await giveModules(sara.id, 'reports');
+  caller = sara;
+  assert.equal(await hit('GET', '/leasing/reports/rent_roll'), 200);
+  await setModuleAccess(sara.id, []);
+  assert.equal(await hit('GET', '/leasing/reports/rent_roll'), 403);
+});
+
+test('the sidebar counts only what the person can open', async () => {
+  const { master, sara } = await people();
+  const c = await create('company', { name: 'ACE' });
+  const b = await create('building', { name: 'Tower' }, c.id);
+  await addDocument({ building_id: b.id, title: 'Fire insurance', expiry_date: '2020-01-01' }); // long expired: an alert today
+
+  let who = sara;
+  const counts = express();
+  counts.use((req, res, next) => { req.user = who; next(); });
+  counts.use('/api/leasing/alerts', alertRoutes);
+  const s = await new Promise((ok) => { const x = counts.listen(0, '127.0.0.1', () => ok(x)); });
+  const count = async () => (await fetch(`http://127.0.0.1:${s.address().port}/api/leasing/alerts/count`)).json();
+  try {
+    assert.deepEqual([(await count()).count, (await count()).rules.document], [0, 0], 'with neither module, nothing');
+    await giveModules(sara.id, 'documents');
+    assert.deepEqual([(await count()).count, (await count()).rules.document], [0, 1], 'Documents shows its own badge only');
+    await giveModules(sara.id, 'alerts');
+    assert.equal((await count()).rules.document, 1);
+    assert.ok((await count()).count >= 1);
+    who = master;
+    assert.equal((await count()).rules.document, 1);
+  } finally { await new Promise((ok) => s.close(ok)); }
 });

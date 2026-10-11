@@ -7,6 +7,7 @@ import { usDate } from './usFormat.js';
 import { register } from './properties.js';
 import { listWorkOrders } from './workOrders.js';
 import { openByDocument, notRenewing } from './renewals.js';
+import { userModules } from './modules.js';
 
 // Leasing alerts: what needs somebody's attention today, and the buzz that says so.
 //
@@ -374,8 +375,12 @@ alertRoutes.put('/wording', requireMaster, wrap(async (req, res) => res.json(awa
 alertRoutes.get('/reminder/:id', wrap(async (req, res) => res.json(await tenantReminder(req.params.id))));
 alertRoutes.post('/reminder/:id', wrap(async (req, res) => res.json(await noteReminder(req.params.id, req.body?.channel, req.user.id))));
 // For the sidebar's badges: how many of each kind are open, and `count`, how many of them are pressing (not just coming up).
+// Counted only for what the person can open: all of it with Alerts, the documents with Documents.
 alertRoutes.get('/count', wrap(async (req, res) => {
-  const all = await listAlerts();
-  res.json({ count: all.filter((a) => a.level !== 'info').length, rules: Object.fromEntries(RULES.map((r) => [r, all.filter((a) => a.rule === r).length])) });
+  const has = await userModules(req.user);
+  const all = has.includes('alerts') || has.includes('documents') ? await listAlerts() : [];
+  const seen = (rule) => has.includes('alerts') || (rule === 'document' && has.includes('documents'));
+  res.json({ count: has.includes('alerts') ? all.filter((a) => a.level !== 'info').length : 0,
+    rules: Object.fromEntries(RULES.map((r) => [r, seen(r) ? all.filter((a) => a.rule === r).length : 0])) });
 }));
 alertRoutes.put('/settings', requireMaster, wrap(async (req, res) => res.json(await saveSettings(req.body))));

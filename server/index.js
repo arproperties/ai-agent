@@ -50,6 +50,7 @@ import { errorRoutes, recordError } from './errors.js';
 import { replyPdfRoutes } from './replyPdf.js';
 import { meetingShareRoutes } from './meetingShare.js';
 import { drawingRoutes } from './drawing.js';
+import { moduleGate } from './modules.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -63,6 +64,7 @@ app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in 
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api', requireUser); // everything below needs a signed-in user
+app.use('/api', moduleGate); // the leasing and property screens are modules, ticked per person (server/modules.js)
 app.use('/api/outlook', outlookRoutes);
 app.use('/api/imap', imapRoutes);
 app.use('/api/email', emailRoutes);
