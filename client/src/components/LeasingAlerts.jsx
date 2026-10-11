@@ -228,7 +228,7 @@ function Wording({ start }) {
   );
 }
 
-export default function LeasingAlerts({ rule = '', onRule: setRule, onOpen }) {
+export default function LeasingAlerts({ rule = '', onRule: setRule, onOpen, canOpen }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
   const [settings, setSettings] = useState(''); // 'rules' or 'wording' while one of the master's settings is open
@@ -271,16 +271,19 @@ export default function LeasingAlerts({ rule = '', onRule: setRule, onOpen }) {
           <div className="divide-y divide-stroke/60">
             {shown.map((a) => {
               const Ico = RULE[a.rule][1];
+              // A row whose screen the person does not hold is read, not opened.
+              const opens = !canOpen || canOpen(a);
+              const Row = opens ? 'button' : 'div';
               return (
-                <button key={a.key} onClick={() => onOpen(a)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.04]">
+                <Row key={a.key} onClick={opens ? () => onOpen(a) : undefined} className={`flex w-full items-center gap-3 px-4 py-3 text-left ${opens ? 'hover:bg-white/[0.04]' : ''}`}>
                   <span className={`grid size-9 shrink-0 place-items-center rounded-lg ${LEVEL[a.level]}`}><Ico size={16} /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm">{a.title}</span>
                     <span className="block truncate text-xs text-mute">{a.detail}</span>
                   </span>
-                  <span className="hidden shrink-0 text-xs text-mute sm:block">{DOES[a.open]}</span>
-                  <ChevronRight size={16} className="shrink-0 text-mute" />
-                </button>
+                  {opens && <span className="hidden shrink-0 text-xs text-mute sm:block">{DOES[a.open]}</span>}
+                  {opens && <ChevronRight size={16} className="shrink-0 text-mute" />}
+                </Row>
               );
             })}
           </div>

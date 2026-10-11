@@ -1002,6 +1002,9 @@ function Calendar({ onEdit, onNew }) {
 // is open is the app's to hold, as `tab`, so the sidebar can open any of them.
 const BOOKING_TABS = [['bookings', 'Leasing'], ['3d', 'Building (3D view)'], ['calendar', 'Calendar']];
 
+// The module an alert's link leads into: the screen that deals with it.
+const alertModule = (a) => ({ documents: 'documents', tenants: 'tenants', workorder: 'workorders' }[a.open] || 'leasing');
+
 export default function LeasingPage({ tab, onTab: setTab, report, onReport, alert, onAlert, onBack }) {
   const [form, setForm] = useState(null); // { preset } for a new booking, a booking being edited, { docsOf } for its documents, { payOf } for its payments, or null
   const [key, setKey] = useState(0); // bumped after a save, so the list reloads
@@ -1014,7 +1017,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   const pay = can('leasing') ? (id) => openBooking(id, 'payOf') : undefined;
   // An alert opens the screen that deals with it, when the person has that screen.
   const openAlert = (a) => {
-    if (!can({ documents: 'documents', tenants: 'tenants', workorder: 'workorders' }[a.open] || 'leasing')) return;
+    if (!can(alertModule(a))) return;
     if (a.open === 'documents') { setDocOpen(a.document_id); setRenewalOpen(a.renewal_id || null); setTab('documents'); return; }
     if (a.open === 'tenants') { setTab('tenants'); return; }
     if (a.open === 'workorder') { setForm({ workOf: { openId: a.work_order_id } }); return; }
@@ -1094,8 +1097,8 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   if (tab === 'workorders') return <WorkOrders key={key} onBack={onBack} />;
   if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants onHistory={(t) => setForm({ historyOf: t })} /></Page>;
   if (tab === 'reports') return <Page title="Reports" onBack={onBack}><LeasingReports key={key} name={report} onName={onReport} onPay={pay} /></Page>;
-  if (tab === 'alerts') return <Page title="Alerts" onBack={onBack}><LeasingAlerts key={key} rule={alert} onRule={onAlert} onOpen={openAlert} /></Page>;
+  if (tab === 'alerts') return <Page title="Alerts" onBack={onBack}><LeasingAlerts key={key} rule={alert} onRule={onAlert} onOpen={openAlert} canOpen={(a) => can(alertModule(a))} /></Page>;
   if (tab === 'documents') return <Page title="Documents" onBack={onBack}><Documents key={key} openId={docOpen} openRenewal={renewalOpen} onOpened={() => { setDocOpen(null); setRenewalOpen(null); }} /></Page>;
 
-  return <Page title="Overview" onBack={onBack} action={add}><LeasingOverview key={key} onPay={pay} onAlerts={(k) => { if (!can('alerts')) return; onAlert(k); setTab('alerts'); }} /></Page>;
+  return <Page title="Overview" onBack={onBack} action={add}><LeasingOverview key={key} onPay={pay} onAlerts={can('alerts') ? (k) => { onAlert(k); setTab('alerts'); } : undefined} /></Page>;
 }
