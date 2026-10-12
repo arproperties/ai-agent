@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, EyeOff, Check, Pencil, AlertTriangle } from 'lucide-react';
+import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, EyeOff, Check, Pencil, AlertTriangle, Star } from 'lucide-react';
 import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
@@ -12,10 +12,12 @@ import HrLink from './HrLink';
  * person's own agent or ticked as a shelf - only the corner mark differs, so the two
  * grids read as one screen rather than two unrelated controls.
  */
-function AgentCard({ agent, on, label, onClick }) {
+function AgentCard({ agent, on, label, onClick, main, mainLabel, onMain }) {
   return (
-    <button onClick={onClick} aria-pressed={on} aria-label={label}
-      className={`group relative flex items-center gap-3 overflow-hidden rounded-[1.25rem] border p-3 text-left transition-all duration-200 hover:-translate-y-0.5 ${
+    // A div holding two buttons, not one button: the star is its own control, and a
+    // button may not sit inside another.
+    <div
+      className={`group relative flex items-center overflow-hidden rounded-[1.25rem] border transition-all duration-200 hover:-translate-y-0.5 ${
         on
           ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent shadow-lg shadow-p1/20'
           : 'border-stroke bg-white/[0.035] hover:border-white/20 hover:bg-white/[0.07]'}`}>
@@ -23,27 +25,36 @@ function AgentCard({ agent, on, label, onClick }) {
           reads as light rather than as one more outline. */}
       {on && <span aria-hidden className="pointer-events-none absolute -left-6 top-1/2 size-24 -translate-y-1/2 rounded-full bg-p1/30 blur-2xl" />}
 
-      <Avatar icon={agent.icon} color={agent.color} size={42}
-        className={`relative transition duration-200 ${on ? 'ring-2 ring-white/25' : 'opacity-65 saturate-50 group-hover:opacity-90 group-hover:saturate-100'}`} />
-      <span className={`relative min-w-0 flex-1 truncate text-sm font-medium transition ${on ? 'text-txt' : 'text-mute group-hover:text-txt/80'}`}>
-        {agent.name}
-      </span>
+      <button onClick={onClick} aria-pressed={on} aria-label={label}
+        className="relative flex min-w-0 flex-1 items-center gap-3 p-3 text-left">
+        <Avatar icon={agent.icon} color={agent.color} size={42}
+          className={`relative transition duration-200 ${on ? 'ring-2 ring-white/25' : 'opacity-65 saturate-50 group-hover:opacity-90 group-hover:saturate-100'}`} />
+        <span className={`relative min-w-0 flex-1 truncate text-sm font-medium transition ${on ? 'text-txt' : 'text-mute group-hover:text-txt/80'}`}>
+          {agent.name}
+        </span>
 
-      <span className={`relative grid size-[18px] shrink-0 place-items-center rounded-full transition ${
-        on ? 'bg-gradient-to-br from-p1 to-p2 text-white shadow-md shadow-p1/40' : 'border border-white/15 bg-white/[0.04] group-hover:border-white/30'}`}>
-        {on && <Check size={11} strokeWidth={3.5} />}
-      </span>
-    </button>
+        <span className={`relative grid size-[18px] shrink-0 place-items-center rounded-full transition ${
+          on ? 'bg-gradient-to-br from-p1 to-p2 text-white shadow-md shadow-p1/40' : 'border border-white/15 bg-white/[0.04] group-hover:border-white/30'}`}>
+          {on && <Check size={11} strokeWidth={3.5} />}
+        </span>
+      </button>
+
+      {on && onMain && (
+        <button onClick={onMain} aria-pressed={main} aria-label={mainLabel} title={main ? 'Their main agent' : 'Make this their main agent'}
+          className={`relative mr-2 grid size-9 shrink-0 place-items-center rounded-full transition hover:bg-white/10 ${main ? 'text-warn' : 'text-mute hover:text-txt'}`}>
+          <Star size={16} fill={main ? 'currentColor' : 'none'} />
+        </button>
+      )}
+    </div>
   );
 }
 
 // Master's people screen. Everything here is also enforced server-side in
 // server/admin.js, behind requireMaster - this is the convenient way in, not the guard.
 //
-// Assignments carry a mode, but this screen only ever writes 'chat'. The other mode,
-// 'knowledge', hides the agent while still lending its shelf; nobody wanted the choice,
-// and 'chat' is its superset - shelfIds() ignores mode entirely. The column and the
-// server still honour both, so the picker can come back without a migration.
+// Assignments carry a mode. The agents the master ticks for a person are written as
+// 'chat' - they show in that person's sidebar - and every agent left unticked is
+// written as 'knowledge', which hides it while still lending its shelf.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 
@@ -140,13 +151,14 @@ function EditPerson({ person, isMe, onSaved, onCancel }) {
  * it and sends the end state - which is also why it has to read the current set first.
  */
 function PersonDetail({ person, agents, me, onBack, onChanged }) {
-  // One question, so one piece of state: which agent this person talks to. Every other
-  // agent lends its shelf automatically - that is the rule, not a per-person choice, so
-  // there is nothing else to ask. The 'knowledge' assignments that carry it are still
-  // written on save; they are just derived rather than picked.
-  const [chatId, setChatId] = useState(null);
+  // Which agents this person talks to, in the order they were ticked, and which one of
+  // them is their main agent - the one that leads their sidebar. Every other agent
+  // lends its shelf automatically - that is the rule, not a per-person choice. The
+  // 'knowledge' assignments that carry it are written on save; they are derived
+  // rather than picked.
+  const [chatIds, setChatIds] = useState([]);
+  const [mainId, setMainId] = useState(null);
   const [loaded, setLoaded] = useState(false);
-  const [demoted, setDemoted] = useState(0);
   // Assignments to agents the master does not own - every account still holds its own
   // copy of the starter agents from before agents became master-owned. The grid cannot
   // show them, and saving replaces the whole set, so say so rather than letting one
@@ -162,22 +174,22 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
     setLoaded(false);
     api.get(`/admin/users/${person.id}/agents`)
       .then((as) => {
-        // One chat agent is the rule now, but accounts predating it hold several. Keep
-        // the starred one (or the first) and say so before they save - the rest stay
-        // reachable as shelves, so nothing anyone filed stops being findable.
-        const chat = as.filter((a) => a.mode === 'chat');
-        const pick = chat.find((a) => a.is_primary) ?? chat[0] ?? null;
-        setChatId(pick?.agent_id ?? null);
-        setDemoted(Math.max(0, chat.length - 1));
+        // Only agents the grid can show: one it cannot show could never be unticked.
+        const chat = as.filter((a) => a.mode === 'chat' && agents.some((o) => o.id === a.agent_id));
+        setChatIds(chat.map((a) => a.agent_id));
+        setMainId((chat.find((a) => a.is_primary) ?? chat[0])?.agent_id ?? null);
         setForeign(as.filter((a) => !agents.some((o) => o.id === a.agent_id)).length);
         setLoaded(true);
       })
       .catch((e) => { setError(e.message); setLoaded(true); });
   }, [person.id]);
 
-  const chooseChat = (id) => {
-    setChatId((cur) => (cur === id ? null : id));
-    setDemoted(0);
+  // The main agent is always one of the ticked ones: the first tick becomes it, and
+  // unticking it hands the star to whichever was ticked next.
+  const toggleChat = (id) => {
+    const next = chatIds.includes(id) ? chatIds.filter((x) => x !== id) : [...chatIds, id];
+    setChatIds(next);
+    setMainId(next.includes(mainId) ? mainId : next[0] ?? null);
   };
 
   const save = async () => {
@@ -185,13 +197,13 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
     setError('');
     try {
       await api.put(`/admin/users/${person.id}/agents`, {
-        agents: chatId
-          // Their agent, then every other agent as a shelf it may read.
-          ? [{ agentId: chatId, mode: 'chat', primary: true },
-             ...agents.filter((a) => a.id !== chatId).map((a) => ({ agentId: a.id, mode: 'knowledge', primary: false }))]
+        agents: chatIds.length
+          // Their agents, then every other agent as a shelf they may read.
+          ? agents.map((a) => (chatIds.includes(a.id)
+            ? { agentId: a.id, mode: 'chat', primary: a.id === mainId }
+            : { agentId: a.id, mode: 'knowledge', primary: false }))
           : [],
       });
-      setDemoted(0);
       onChanged();
       setBusy(false);
     } catch (e) { setError(e.message); setBusy(false); }
@@ -209,7 +221,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
     } catch (e) { setError(e.message); }
   };
 
-  const chatAgent = agents.find((a) => a.id === chatId);
+  const chosen = agents.filter((a) => chatIds.includes(a.id));
+  const mainAgent = agents.find((a) => a.id === mainId);
 
   // No Activity tab: reading is still recorded, and each person still sees who looked
   // at their workspace from the eye in their own sidebar - the master just does not get
@@ -283,8 +296,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
             {agents.length > 0 && (
               <div className="space-y-1.5">
                 <div className="flex items-baseline justify-between">
-                  <span className="text-[11px] font-medium tracking-[0.14em] text-mute">THEIR AGENT</span>
-                  <span className="text-[11px] text-mute">pick one</span>
+                  <span className="text-[11px] font-medium tracking-[0.14em] text-mute">THEIR AGENTS</span>
+                  <span className="text-[11px] text-mute">tick as many as you like</span>
                 </div>
                 {/* Container queries, not screen ones: this panel sits beside a
                     sidebar and a people list, so on a tablet the window is wide while
@@ -293,28 +306,31 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
                     panel itself has room for two, three once it is properly wide. */}
                 <div className="grid grid-cols-1 gap-2.5 @md:grid-cols-2 @3xl:grid-cols-3">
                   {agents.map((a) => (
-                    <AgentCard key={a.id} agent={a} on={chatId === a.id} onClick={() => chooseChat(a.id)}
-                      label={`Make ${a.name} the agent ${person.name} chats with`} />
+                    <AgentCard key={a.id} agent={a} on={chatIds.includes(a.id)} onClick={() => toggleChat(a.id)}
+                      label={`Let ${person.name} chat with ${a.name}`}
+                      // A star is only a choice when there is more than one to choose from.
+                      main={mainId === a.id} onMain={chosen.length > 1 ? () => setMainId(a.id) : undefined}
+                      mainLabel={`Make ${a.name} ${person.name}'s main agent`} />
                   ))}
                 </div>
                 <p className="pt-0.5 text-xs leading-relaxed text-mute">
-                  {chatAgent ? (
+                  {chosen.length === 0 && `${person.name} has no agent yet, so they cannot start a conversation.`}
+                  {chosen.length === 1 && (
                     <>
-                      {person.name} chats with {chatAgent.name} — and only {chatAgent.name}.
+                      {person.name} chats with {chosen[0].name} — and only {chosen[0].name}.
                       {agents.length > 1 && ` When they ask something it does not know, it reads every other agent's shelf, so nothing you have filed is out of reach. The other agents stay hidden; ${person.name} never sees them.`}
-                      {' '}Tap {chatAgent.name} again to leave them with no agent.
+                      {' '}Tick another to give them more than one.
                     </>
-                  ) : `${person.name} has no agent yet, so they cannot start a conversation.`}
+                  )}
+                  {chosen.length > 1 && (
+                    <>
+                      {person.name} chats with {chosen.length} agents, and each question goes to the one that fits it.
+                      {mainAgent && ` ${mainAgent.name} is their main agent — it leads their sidebar. Tap a star to change it.`}
+                      {chosen.length < agents.length && ` The agents you have not ticked stay hidden, but their shelves are still read in the background.`}
+                    </>
+                  )}
                 </p>
               </div>
-            )}
-
-            {demoted > 0 && (
-              <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2.5 text-xs leading-relaxed text-warn">
-                {person.name} used to chat with {demoted + 1} agents. A person has one now, so
-                {chatAgent ? ` ${chatAgent.name} is selected` : ' none is selected'} and the other {demoted === 1 ? 'one leaves' : `${demoted} leave`} their
-                sidebar when you save. Nothing is lost — {demoted === 1 ? 'its shelf is' : 'their shelves are'} still read in the background.
-              </p>
             )}
 
             {foreign > 0 && (

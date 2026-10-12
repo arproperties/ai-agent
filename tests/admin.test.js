@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
 import { createUser, updateUser, setAssignments, listUsers, listAssignments } from '../server/admin.js';
+import { chatAgents, shelfIds } from '../server/access.js';
 
 test.after(() => closeDb());
 
@@ -56,6 +57,23 @@ test('setAssignments replaces the whole set', async () => {
 
   const rows = await db.prepare('SELECT agent_id, mode FROM agent_assignments WHERE user_id = ? ORDER BY agent_id').all(sara.id);
   assert.deepEqual(rows, [{ agent_id: lawyer, mode: 'chat' }, { agent_id: hr, mode: 'knowledge' }].sort((a, b) => a.agent_id - b.agent_id));
+});
+
+test('a person given several chat agents sees all of them, the main one first', async () => {
+  const { master, lawyer, hr } = await fixture();
+  const ops = await makeAgent(master.id, 'Operations');
+  const sara = await createUser(master, { name: 'Sara', email: 'sara@example.com', password: 'hunter2hunter2' });
+
+  await setAssignments(master, sara.id, [
+    { agentId: lawyer, mode: 'chat', primary: false },
+    { agentId: hr, mode: 'chat', primary: true },
+    { agentId: ops, mode: 'knowledge', primary: false },
+  ]);
+
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(sara.id);
+  assert.deepEqual((await chatAgents(user)).map((a) => a.id), [hr, lawyer], 'both chat agents, the main one leading');
+  assert.deepEqual((await shelfIds(user)).sort((a, b) => a - b), [lawyer, hr, ops].sort((a, b) => a - b),
+    'the unticked agent still lends its shelf');
 });
 
 test('setAssignments refuses an agent the master does not own', async () => {
