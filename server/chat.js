@@ -11,6 +11,7 @@ import { buildingKit } from './buildings.js';
 import { inventoryKit } from './inventory.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
+import { shelfKit } from './shelf.js';
 import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
 import { chatAgents } from './access.js';
@@ -83,6 +84,12 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'complete_routine and pause_routine. Use a routine the moment they say "every", "each", "daily", "weekly", "monthly" or "yearly", ' +
     'and a todo for anything done once. A todo is finished and gone; a routine comes round again. ' +
     'When you are asked what is outstanding, check both lists. Routines cannot notify them either.');
+  // Said plainly, because without it the agent took the newest-files list for the whole Shelf
+  // and told people a file they had uploaded weeks ago was not there.
+  parts.push(`You can look through ${user.name}'s saved files yourself: search_files finds them by title, file name and what is written inside, ` +
+    'and read_file opens one. <file_library> is only the newest few and <knowledge> is only a first guess at what matters, ' +
+    'so a file missing from both may still be saved. Never say a file is not on the Shelf, or that you cannot open a saved file, ' +
+    'until search_files has come back empty - and when a name was spoken, try another spelling first.');
   parts.push(`${user.name} can record meetings in the app. list_meetings and read_meeting read them back — summary, decisions, ` +
     'action items and who said what. Use them for any question about a meeting, and name who said it.');
   if (mailbox) {
@@ -120,7 +127,11 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   // recalled) comes after the cache mark, or it would spoil the match.
   const context = [`Current date and time: ${new Date().toString()}.`];
   if (memories.length) context.push(`<memory>\nThings you remember about the user from earlier conversations:\n${memories.map((m) => `- ${m}`).join('\n')}\n</memory>`);
-  if (library.length) context.push(`<file_library>\nThe user's saved files (newest first). Their content is searchable; relevant excerpts appear in <knowledge>. Files can be opened from the Shelf screen in the app.\n${library.join('\n')}\n</file_library>`);
+  if (library.files.length) {
+    const some = library.total > library.files.length;
+    context.push(`<file_library>\n${some ? `The newest ${library.files.length} of the user's ${library.total} saved files - search_files reaches the rest.` : "The user's saved files (newest first)."} ` +
+      `Relevant excerpts appear in <knowledge>. Files can be opened from the Shelf screen in the app.\n${library.files.join('\n')}\n</file_library>`);
+  }
   if (knowledge.length) context.push(`<knowledge>\nExcerpts from the user's files that may be relevant:\n${knowledge.join('\n---\n')}\n</knowledge>`);
   // Chats the user deliberately brought into this one — the material for pulling several
   // conversations together, so it sits above recalled excerpts in importance, and the
@@ -292,7 +303,7 @@ export async function chat(req, res) {
   const saifsys = await saifsysKit(user);
   // Doing things in saifsys (today: creating an ARS booking) — proposed here, done only from the card.
   const saifsysAct = await saifsysActionKit(user, { conversationId: convId, onCard: (b) => send('arsBooking', b) });
-  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id),
+  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), shelfKit(user),
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
     await buildingKit(user),
     await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),

@@ -1,5 +1,7 @@
 node_modules
 .env
+.env.*
+database-creds
 data/
 client/dist
 .DS_Store

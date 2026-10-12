@@ -276,11 +276,20 @@ export async function setSharedMany(user, docIds, shared) {
 
 // Compact catalogue of the files this user can see, so agents can answer
 // "what files do I have?" or "find my lease". Same scope as recall().
+//
+// Only the newest few, with how many there are in all: on a Shelf of thousands the list
+// is a glimpse, and the agent has to know that or it reads "not listed" as "not there".
+// Captured facts are left out - they are not files, and once crowded the real ones off.
 export async function libraryCatalog(user) {
   const scope = retrievalScope(user.id);
+  const files = `${scope.sql} AND status = 'ready' AND kind IS DISTINCT FROM 'fact'`;
   const rows = await db.prepare(`SELECT title, folder, name, doc_date, expires_on FROM documents t
-    WHERE ${scope.sql} AND status = 'ready' ORDER BY id DESC LIMIT 40`).all(...scope.params);
-  return rows.map((d) => `- ${d.title} (${d.folder}${d.doc_date ? `, ${d.doc_date}` : ''}${d.expires_on ? `; expires ${d.expires_on}` : ''}; file: ${d.name})`);
+    WHERE ${files} ORDER BY id DESC LIMIT 40`).all(...scope.params);
+  const { n } = await db.prepare(`SELECT COUNT(*)::int n FROM documents t WHERE ${files}`).get(...scope.params);
+  return {
+    total: n,
+    files: rows.map((d) => `- ${d.title} (${d.folder}${d.doc_date ? `, ${d.doc_date}` : ''}${d.expires_on ? `; expires ${d.expires_on}` : ''}; file: ${d.name})`),
+  };
 }
 
 /**

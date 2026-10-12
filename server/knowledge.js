@@ -237,6 +237,14 @@ function keywordQuery(q) {
 
 // scope: SQL condition on table alias t, plus its params
 async function search(table, scope, query, qvec, k) {
+  const ids = await rank(table, scope, query, qvec, k);
+  if (!ids.length) return [];
+  const rows = await db.prepare(`SELECT id, text FROM ${table} WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+  return ids.map((id) => rows.find((r) => r.id === id).text);
+}
+
+/** The ids of the k best rows, best first. */
+async function rank(table, scope, query, qvec, k) {
   const scores = new Map();
   const add = (list) => list.forEach((id, rank) => scores.set(id, (scores.get(id) || 0) + 1 / (60 + rank)));
 
@@ -259,10 +267,19 @@ async function search(table, scope, query, qvec, k) {
       ORDER BY ts_rank_cd(t.tsv, q) DESC LIMIT 20`).all(kw, ...scope.params);
     add(rows.map((r) => r.id));
   }
-  const ids = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, k).map(([id]) => id);
+  return [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, k).map(([id]) => id);
+}
+
+/**
+ * The same search recall() runs, but saying which file each piece came from - for the
+ * agent's own look through the Shelf (server/shelf.js), which answers in files, not pieces.
+ */
+export async function findChunks(user, query, k = 20) {
+  const [qvec] = await embed([query]);
+  const ids = await rank('chunks', retrievalScope(user.id), query, qvec, k);
   if (!ids.length) return [];
-  const rows = await db.prepare(`SELECT id, text FROM ${table} WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
-  return ids.map((id) => rows.find((r) => r.id === id).text);
+  const rows = await db.prepare(`SELECT id, document_id, text FROM chunks WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+  return ids.map((id) => rows.find((r) => r.id === id));
 }
 
 /**
