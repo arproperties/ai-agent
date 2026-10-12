@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, EyeOff, Check, Pencil, AlertTriangle, Star } from 'lucide-react';
+import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, EyeOff, Check, Pencil, AlertTriangle, Star, Search, X } from 'lucide-react';
 import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
@@ -771,10 +771,14 @@ export default function AdminPage({ agents, me, onBack }) {
   const [open, setOpen] = useState(null);
   const [problems, setProblems] = useState(false);
   const [broken, setBroken] = useState(0); // faults in the last week
+  const [q, setQ] = useState('');
   const load = () => api.get('/admin/users').then(setPeople);
   useEffect(() => { load(); api.get('/admin/errors').then((r) => setBroken(r.week)).catch(() => {}); }, []);
 
   const person = open && people?.find((p) => p.id === open);
+  // By name or email, whichever the master remembers them by.
+  const needle = q.trim().toLowerCase();
+  const shown = needle ? (people || []).filter((p) => `${p.name} ${p.email || ''}`.toLowerCase().includes(needle)) : people || [];
 
   return (
     <div className="sky absolute inset-0 z-20 flex flex-col">
@@ -810,7 +814,14 @@ export default function AdminPage({ agents, me, onBack }) {
         <aside className={`min-h-0 w-full shrink-0 overflow-y-auto border-stroke/60 p-3 md:block md:w-64 md:border-r xl:w-80 ${person || adding ? 'hidden' : 'block'}`}>
           {people === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
             <ul className="space-y-1.5">
-              {people.map((p) => {
+              <li className="mb-2 flex items-center gap-2 rounded-full border border-stroke bg-white/[0.04] px-3 focus-within:border-p1/60">
+                <Search size={15} className="shrink-0 text-mute" />
+                <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people"
+                  className="w-full bg-transparent py-2 text-sm outline-none placeholder:text-mute/70" />
+                {q && <button onClick={() => setQ('')} aria-label="Clear search" className="text-mute hover:text-txt"><X size={15} /></button>}
+              </li>
+              {needle && shown.length === 0 && <li className="px-2 py-4 text-sm text-mute">Nobody matches "{q.trim()}".</li>}
+              {shown.map((p) => {
                 const active = p.id === open;
                 return (
                   <li key={p.id}>
