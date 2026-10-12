@@ -111,7 +111,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
           className={`relative flex flex-1 items-center justify-center gap-2 rounded-full border py-2.5 text-sm font-medium transition active:scale-[0.98] ${messagesOpen ? 'border-emerald-400/60 bg-emerald-400/15 text-emerald-200' : 'border-stroke bg-white/[0.05] hover:bg-white/10'}`}>
           <Users size={17} className="text-emerald-300" /> Team chat
           {unreadMessages > 0 && (
-            <span className="absolute -right-1 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-semibold text-white ring-2 ring-[#0f0d20]">
+            <span className="absolute -right-1 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-semibold text-white ring-2 ring-rail">
               {unreadMessages > 99 ? '99+' : unreadMessages}
             </span>
           )}

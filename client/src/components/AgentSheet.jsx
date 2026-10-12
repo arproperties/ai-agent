@@ -82,7 +82,7 @@ function PersonaTab({ agent, config, onSaved }) {
       <div className="flex items-center gap-3">
         <button type="button" onClick={() => setPicker(!picker)} aria-label="Change icon" title="Change icon" className="relative shrink-0">
           <Avatar icon={f.icon} color={f.color} size={48} />
-          <span className="absolute -bottom-0.5 -right-0.5 grid size-5 place-items-center rounded-full border-2 border-[#141128] bg-white/90 text-[#141128]">
+          <span className="absolute -bottom-0.5 -right-0.5 grid size-5 place-items-center rounded-full border-2 border-surface bg-hi/90 text-surface">
             <ChevronDown size={12} strokeWidth={2.5} />
           </span>
         </button>
@@ -94,7 +94,7 @@ function PersonaTab({ agent, config, onSaved }) {
           <div className="grid grid-cols-8 gap-1">
             {Object.entries(AGENT_ICONS).map(([k, Cmp]) => (
               <button type="button" key={k} onClick={() => setF({ ...f, icon: k })} aria-label={k}
-                className={`grid aspect-square place-items-center rounded-xl transition ${f.icon === k ? 'bg-white/15 text-white ring-1 ring-p1/70' : 'text-mute hover:bg-white/10 hover:text-txt'}`}>
+                className={`grid aspect-square place-items-center rounded-xl transition ${f.icon === k ? 'bg-white/15 text-hi ring-1 ring-p1/70' : 'text-mute hover:bg-white/10 hover:text-txt'}`}>
                 <Cmp size={17} strokeWidth={1.75} />
               </button>
             ))}
@@ -102,7 +102,7 @@ function PersonaTab({ agent, config, onSaved }) {
           <div className="mt-2 flex justify-center gap-2.5 border-t border-stroke/60 pt-2.5">
             {Object.entries(AGENT_COLORS).map(([k, cls]) => (
               <button type="button" key={k} onClick={() => setF({ ...f, color: k })} aria-label={`${k} colour`}
-                className={`size-6 rounded-full bg-gradient-to-br transition ${cls} ${f.color === k ? 'ring-2 ring-white ring-offset-2 ring-offset-[#141128]' : 'opacity-70 hover:opacity-100'}`} />
+                className={`size-6 rounded-full bg-gradient-to-br transition ${cls} ${f.color === k ? 'ring-2 ring-white ring-offset-2 ring-offset-surface' : 'opacity-70 hover:opacity-100'}`} />
             ))}
           </div>
         </div>

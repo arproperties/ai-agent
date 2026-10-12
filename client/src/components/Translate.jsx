@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, Mic, Square, Loader2, Trash2, Pencil, Copy, Check, AlertTriangle, ArrowLeftRight, Volume2, VolumeX, RotateCw } from 'lucide-react';
 import { api } from '../lib/api';
 import { listenUntilSilence, finishListening, stopListening, speakText, stopSpeaking, unlockAudio } from '../lib/voice';
-import { ParticleField } from './ParticleField';
 import Picker from './Picker';
 
 // Live Translator: two people who share no language, one phone between them. Each has a
@@ -189,7 +188,6 @@ export default function TranslatePage({ onBack }) {
 
   return (
     <div className="sky absolute inset-0 z-20 flex flex-col">
-      <ParticleField className="fx-canvas-panel" />
       <header className="px-4 pb-3 pt-safe md:px-8">
         <div className="mx-auto flex w-full items-center gap-1 pt-1">
           <button onClick={back} aria-label="Back" className="-ml-2 grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">

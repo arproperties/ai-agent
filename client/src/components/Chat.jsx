@@ -463,7 +463,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       {details && <FileDetail d={details} folders={folders} me={user} onClose={() => setDetails(null)} onChanged={() => {}} />}
 
       {toast && (
-        <div className="rise absolute inset-x-4 top-20 z-30 mx-auto max-w-md rounded-2xl border border-warn/30 bg-[#1d1830]/95 px-4 py-3 text-sm shadow-xl">{toast}</div>
+        <div className="rise absolute inset-x-4 top-20 z-30 mx-auto max-w-md rounded-2xl border border-warn/30 bg-surface-2/95 px-4 py-3 text-sm shadow-xl">{toast}</div>
       )}
     </div>
   );

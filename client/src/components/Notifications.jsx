@@ -182,7 +182,7 @@ export function NotifyPrompt() {
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm sm:items-center">
-      <div className="rise w-full max-w-sm rounded-3xl border border-stroke bg-[#141225] p-6 text-center shadow-2xl">
+      <div className="rise w-full max-w-sm rounded-3xl border border-stroke bg-surface p-6 text-center shadow-2xl">
         <span className="mx-auto grid size-12 place-items-center rounded-full bg-emerald-400/15 text-emerald-300"><Bell size={22} /></span>
         <p className="mt-4 text-lg font-medium">{title}</p>
         <p className="mt-1.5 text-sm text-mute">{text}</p>

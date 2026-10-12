@@ -98,7 +98,7 @@ export default function CarrySheet({ agents, currentId, picked, onClose, onDone 
         </ul>
       )}
 
-      <div className="sticky bottom-0 -mx-1 mt-3 bg-[#141128] pt-2">
+      <div className="sticky bottom-0 -mx-1 mt-3 bg-surface pt-2">
         <button onClick={() => { onDone(chosen); onClose(); }}
           className="w-full rounded-full bg-gradient-to-br from-p1 to-p2 py-3 font-medium text-white transition active:scale-[0.99]">
           {chosen.length === 0 ? 'Done' : `Bring in ${chosen.length} chat${chosen.length === 1 ? '' : 's'}`}

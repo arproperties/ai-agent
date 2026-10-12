@@ -13,7 +13,6 @@ import Sheet from './Sheet';
 import Page from './Page';
 import Picker from './Picker';
 import Orb from './Orb';
-import { ParticleField } from './ParticleField';
 
 export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
@@ -139,9 +138,9 @@ function Preview({ d, className = '', big }) {
   const [FolderIcon, tone, bg] = folderStyle(d.folder);
   if (d.kind === 'video') {
     return (
-      <div className={`relative grid place-items-center bg-black/40 ${className}`}>
+      <div className={`on-dark relative grid place-items-center bg-black/40 ${className}`}>
         <span className="grid size-11 place-items-center rounded-full bg-white/15 backdrop-blur-sm"><Play size={big ? 22 : 18} className="ml-0.5 fill-white/90 text-white/90" /></span>
-        <span className="absolute left-2.5 top-2.5 rounded-md bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white/80">{ext(d.name)}</span>
+        <span className="on-dark absolute left-2.5 top-2.5 rounded-md bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white/80">{ext(d.name)}</span>
       </div>
     );
   }
@@ -155,7 +154,7 @@ function Preview({ d, className = '', big }) {
   return (
     <div className={`relative grid place-items-center bg-gradient-to-br ${bg} ${className}`}>
       <FolderIcon size={big ? 48 : 34} strokeWidth={1.4} className={tone} />
-      <span className="absolute left-2.5 top-2.5 rounded-md bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white/80">{ext(d.name)}</span>
+      <span className="on-dark absolute left-2.5 top-2.5 rounded-md bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white/80">{ext(d.name)}</span>
     </div>
   );
 }
@@ -170,7 +169,7 @@ export function FileCard({ d, onOpen, showShelf = false }) {
       <div className="relative">
         <Preview d={d} className="aspect-[4/3]" />
         {busy && (
-          <div className="absolute inset-0 grid place-items-center bg-black/55 text-xs text-white/80">
+          <div className="on-dark absolute inset-0 grid place-items-center bg-black/55 text-xs text-white/80">
             {d.status === 'queued'
               ? <span className="flex items-center gap-2"><Clock size={15} /> Waiting…</span>
               : <span className="flex items-center gap-2"><Loader2 size={15} className="animate-spin" /> Organising…</span>}
@@ -215,7 +214,7 @@ function TextView({ d }) {
   const [text, setText] = useState(null);
   useEffect(() => { fetch(fileUrl(d)).then((r) => r.text()).then(setText).catch(() => setText('Could not load this file.')); }, [d]);
   return (
-    <div className="rise h-full w-full max-w-3xl overflow-auto rounded-2xl border border-stroke bg-[#141128] p-5 shadow-2xl md:p-8">
+    <div className="rise h-full w-full max-w-3xl overflow-auto rounded-2xl border border-stroke bg-surface p-5 shadow-2xl md:p-8">
       {text === null ? <Loader2 size={20} className="mx-auto animate-spin text-mute" />
         : <pre className="whitespace-pre-wrap break-words font-sans text-[15px] leading-relaxed text-txt/90">{text}</pre>}
     </div>
@@ -750,7 +749,6 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
     <div className="sky absolute inset-0 z-20 flex flex-col"
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)} onDrop={drop}>
       {/* The panel paints solid over the chat, so it carries its own field. */}
-      <ParticleField className="fx-canvas-panel" />
       <input ref={ref} type="file" multiple hidden accept={FILE_TYPES} onChange={(e) => { upload(e.target.files); e.target.value = ''; }} />
       <input ref={zipRef} type="file" hidden accept=".zip,application/zip"
         onChange={(e) => { const f = e.target.files[0]; if (f) startImport(f, f.name.replace(/\.zip$/i, '')); e.target.value = ''; }} />
@@ -778,7 +776,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
             {importMenu && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setImportMenu(false)} />
-                <div className="absolute right-0 top-full z-20 mt-2 w-60 overflow-hidden rounded-2xl border border-stroke bg-[#15132b] shadow-xl">
+                <div className="absolute right-0 top-full z-20 mt-2 w-60 overflow-hidden rounded-2xl border border-stroke bg-surface shadow-xl">
                   <button onClick={() => { setImportMenu(false); zipRef.current.click(); }} className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-white/10">
                     <FileArchive size={17} className="text-p1" /> <span>ZIP file<span className="block text-xs text-mute">e.g. a WhatsApp chat export</span></span>
                   </button>

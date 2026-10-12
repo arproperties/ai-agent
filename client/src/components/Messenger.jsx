@@ -5,7 +5,6 @@ import Sheet from './Sheet';
 import MessengerChat, { PersonAvatar, Ticks, listTime, preview, lastSeenText } from './MessengerChat';
 import GroupFeed from './GroupFeed';
 import { NotifyBanner } from './Notifications';
-import { ParticleField } from './ParticleField';
 
 const SearchBox = ({ value, onChange, placeholder }) => (
   <div className="mx-3 mb-2 flex items-center gap-2 rounded-full border border-stroke bg-white/[0.04] px-3 focus-within:border-emerald-400/60">
@@ -61,7 +60,7 @@ function ChatRow({ row: c, dm, active, onClick }) {
             online={c.kind === 'direct' && dm.online.has(c.peerId)} />}
         <span className="min-w-0 flex-1">
           <span className="flex items-baseline gap-2">
-            <span className={`min-w-0 flex-1 truncate font-medium ${c.unread ? 'text-white' : ''}`}>{c.name}</span>
+            <span className={`min-w-0 flex-1 truncate font-medium ${c.unread ? 'text-hi' : ''}`}>{c.name}</span>
             {c.last && <span className={`shrink-0 text-xs ${c.unread ? 'text-emerald-300' : 'text-mute'}`}>{listTime(c.last.createdAt)}</span>}
           </span>
           <span className="mt-0.5 flex items-center gap-1.5">
@@ -614,8 +613,7 @@ export default function MessengerPage({ dm, openChatId = null, onOpened, onBack,
   return (
     <div className="sky absolute inset-0 z-20 flex">
       {/* The panel paints solid over the chat, so it carries its own field. */}
-      <ParticleField className="fx-canvas-panel" />
-      <section className={`${rightOpen ? 'hidden md:flex' : 'flex'} relative w-full min-w-0 flex-col border-white/[0.06] md:w-80 md:border-r lg:w-96`}>
+      <section className={`${rightOpen ? 'hidden md:flex' : 'flex'} list-wash relative w-full min-w-0 flex-col border-stroke md:w-80 md:border-r lg:w-96`}>
         {left}
       </section>
       <section className={`${rightOpen ? 'flex' : 'hidden md:flex'} min-w-0 flex-1 flex-col`}>

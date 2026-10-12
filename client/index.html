@@ -7,6 +7,8 @@
     <meta name="description" content="Your personal AI agents" />
     <meta name="theme-color" content="#0b0a1a" />
     <meta name="color-scheme" content="dark" />
+    <!-- The chosen theme, before anything paints (see src/lib/theme.js). No choice means Aurora. -->
+    <script>try { var t = localStorage.getItem('jarvis:theme'), d = document.documentElement.dataset; if (t && t !== 'aurora') { d.theme = t; if (t === 'light') d.mode = 'light'; } } catch (e) {}</script>
     <!-- iPhone home-screen app -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />

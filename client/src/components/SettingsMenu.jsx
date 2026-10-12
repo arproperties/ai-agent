@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Megaphone } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Megaphone, Moon, Sun } from 'lucide-react';
 import Icon from './Icon';
 import { Row, Count } from './NavRow';
+import { THEMES, currentTheme, setTheme } from '../lib/theme';
 
 /**
  * The gear in the sidebar footer, and the menu it opens above itself.
@@ -13,9 +14,14 @@ import { Row, Count } from './NavRow';
  * Two of them can be waiting on you -- a licence about to lapse, a to-do that is due --
  * and a number nobody can see is a number that stops working. So the counts stay on the
  * items inside, and a single dot on the gear says "something in here wants you".
+ *
+ * Theme is the one real preference in here. Its swatches sit at the foot of the menu,
+ * and choosing one leaves the menu open, so you can try each against the app behind it
+ * before settling.
  */
 export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, modules = [], noticesOpen, onNotices, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
+  const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
 
   // Clicking anywhere else, or pressing Escape, puts it away -- the two things everyone
@@ -42,7 +48,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
         aria-label={waiting ? `Settings, ${waiting} need attention` : 'Settings'} title="Settings"
         className={`relative grid size-8 place-items-center rounded-full transition ${open ? 'bg-white/10 text-txt' : 'text-mute hover:bg-white/10 hover:text-txt'}`}>
         <Icon name="gear" size={17} />
-        {waiting > 0 && <span className="absolute right-1 top-1 size-[7px] rounded-full bg-warn ring-2 ring-[#0f0d20]" />}
+        {waiting > 0 && <span className="absolute right-1 top-1 size-[7px] rounded-full bg-warn ring-2 ring-rail" />}
       </button>
 
       {open && (
@@ -72,6 +78,21 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
           <Row role="menuitem" icon={<Icon name="mail" size={17} />} label="Email" onClick={go(onEmail)} />
           {/* Only the master manages people; the server refuses anyone else. */}
           {user.role === 'master' && <Row role="menuitem" icon={<Users size={17} />} label="People" onClick={go(onPeople)} />}
+          <div className="mt-1 flex items-center gap-3 border-t border-stroke/60 px-3 pb-1.5 pt-2.5">
+            <span className="flex-1 text-[11px] font-medium text-mute/80">Theme</span>
+            {THEMES.map((t) => {
+              const worn = t.id === theme;
+              return (
+                <button key={t.id} role="menuitemradio" aria-checked={worn} onClick={() => setWorn(setTheme(t.id))} title={t.name} aria-label={`${t.name} theme`}
+                  // The theme's own accent, fading toward its background: the dark one comes
+                  // out deep, the light one soft, and the moon or sun says which is which.
+                  style={{ background: `linear-gradient(135deg, ${t.accent}, color-mix(in srgb, ${t.accent} 55%, ${t.ground}))` }}
+                  className={`grid size-8 place-items-center rounded-full text-white shadow-lg transition hover:scale-105 active:scale-95 ${worn ? 'outline outline-2 outline-offset-2 outline-p1' : ''}`}>
+                  {t.light ? <Sun size={15} strokeWidth={1.75} /> : <Moon size={15} strokeWidth={1.75} />}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

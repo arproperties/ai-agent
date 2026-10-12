@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, Mic, Square, Upload, Loader2, Trash2, Pencil, Copy, Check, AlertTriangle, X } from 'lucide-react';
 import { api } from '../lib/api';
-import { ParticleField } from './ParticleField';
 
 // Transcribe: any audio in, the words out. Upload a file (a WhatsApp voice note, a phone
 // memo) or record straight into Reem. The work happens on the server
@@ -198,7 +197,6 @@ export default function TranscribePage({ onBack }) {
 
   return (
     <div className="sky absolute inset-0 z-20 flex flex-col">
-      <ParticleField className="fx-canvas-panel" />
       <header className="px-4 pb-3 pt-safe md:px-8">
         <div className="mx-auto flex w-full items-center gap-2 pt-1">
           <button onClick={back} disabled={!!recorder} aria-label="Back" className="-ml-2 grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt disabled:opacity-30">
