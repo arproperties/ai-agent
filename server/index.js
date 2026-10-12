@@ -40,6 +40,8 @@ import { replyPdfRoutes } from './replyPdf.js';
 import { meetingShareRoutes } from './meetingShare.js';
 import { drawingRoutes } from './drawing.js';
 import { tenantCareRoutes, startTenantCare } from './tenantCare.js';
+import { moduleRoutes } from './modules.js';
+import { noticeRoutes } from './notices.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -71,6 +73,8 @@ app.use('/api/translate', translateRoutes); // two people, two languages, one ph
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
+app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
+app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/checklists', checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it

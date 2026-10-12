@@ -46,6 +46,9 @@ export async function directory({ fresh = false } = {}) {
     buildings: (body.buildings || []).map((b) => ({ name: String(b.name || ''), units: (b.units || []).map(String) }))
       .filter((b) => b.name && !/\btest\b/i.test(b.name)),
     tenants: new Set((body.tenants || []).map((t) => String(t.email || '').trim().toLowerCase()).filter(Boolean)),
+    // Which tenant email rents which unit, for a notice about that unit (server/notices.js).
+    leases: (body.tenants || []).map((t) => ({ email: String(t.email || '').trim().toLowerCase(), building: String(t.building || ''), unit: String(t.unit || '') }))
+      .filter((t) => t.email && t.building && t.unit),
   };
   cached = { at: Date.now(), dir };
   return dir;
@@ -270,7 +273,7 @@ export async function sendAsk(user, id, body, { send = sendRaw, file = fileInSen
   return askOut(await db.prepare('SELECT * FROM tenant_asks WHERE id = ?').get(ask.id));
 }
 
-async function fileInSent(acc, raw) {
+export async function fileInSent(acc, raw) {
   await withMailbox(acc, async (c) => {
     const path = await sentPath(c);
     if (path) await c.append(path, raw, ['\\Seen']);

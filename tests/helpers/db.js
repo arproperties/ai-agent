@@ -40,6 +40,7 @@ const TABLES = [
   'checklists', 'checklist_items', 'checklist_runs', 'checklist_run_items',
   'buildings', 'building_sites', 'building_staff', 'building_jobs_seen',
   'inventory_areas', 'inventory_items', 'inventory_log', 'inventory_proposals',
+  'module_access', 'tenant_notices', 'tenant_notice_photos',
   'recurring_buildings', 'recurring_payments', 'recurring_payment_dues', 'recurring_accounts', 'recurring_transfers',
 ];
 

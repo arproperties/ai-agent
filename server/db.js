@@ -1408,3 +1408,43 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_recurring_transfers_from ON recurring_transfers(from_account_id);
   CREATE INDEX IF NOT EXISTS idx_recurring_transfers_to ON recurring_transfers(to_account_id);
 `);
+
+// Reem's own modules (server/modules.js): a screen a person gets only once the master
+// ticks it on their People profile. The master has them all and is never listed here.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS module_access (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    module TEXT NOT NULL,
+    PRIMARY KEY (user_id, module)
+  );
+`);
+
+// Tenant notices (server/notices.js): what a watchman saw at a unit, with photos, emailed
+// to that unit's tenant from the Tenant care inbox.
+//   tenant_notices: one row per report. building and unit are saifsys's own spellings,
+//     kept as text because saifsys is only ever read. to_addrs is who it was emailed to.
+//     status: sending, sent, failed (the mail server said no; error says why), or
+//     no_email when saifsys has no tenant email for the unit.
+//   tenant_notice_photos: its pictures, files under data/notices.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS tenant_notices (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    building TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    description TEXT NOT NULL,
+    to_addrs TEXT,
+    status TEXT NOT NULL DEFAULT 'sending' CHECK (status IN ('sending', 'sent', 'failed', 'no_email')),
+    error TEXT,
+    sent_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_tenant_notices_user ON tenant_notices(user_id, id DESC);
+  CREATE TABLE IF NOT EXISTS tenant_notice_photos (
+    id SERIAL PRIMARY KEY,
+    notice_id INTEGER NOT NULL REFERENCES tenant_notices(id) ON DELETE CASCADE,
+    mime TEXT NOT NULL,
+    path TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_tenant_notice_photos ON tenant_notice_photos(notice_id);
+`);
