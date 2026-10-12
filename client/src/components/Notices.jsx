@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, Loader2, Send, X, AlertTriangle, Search, Camera, CheckCircle2, RotateCw, Trash2, MailX } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronLeft, Loader2, Send, X, AlertTriangle, Search, Camera, CheckCircle2, RotateCw, Trash2, MailX, LayoutGrid, Box } from 'lucide-react';
 import { api } from '../lib/api';
+
+const NoticeTower = lazy(() => import('./NoticeTower')); // the 3D drawing is heavy: fetched only when asked for
 
 // Tenant notices: what a watchman used to post in the WhatsApp group. Building, unit,
 // photo, what he saw, Send - and Reem emails it to that unit's tenant (server/notices.js).
@@ -53,6 +55,7 @@ function NewNotice({ places, hasInbox, onSent }) {
   const [building, setBuilding] = useState(places.some((b) => b.name === remembered) ? remembered : places.length === 1 ? places[0].name : '');
   const [unit, setUnit] = useState('');
   const [find, setFind] = useState('');
+  const [view, setView] = useState('list'); // how the units are shown to pick from: the list, or the building in 3D
   const [photos, setPhotos] = useState([]); // { blob, url }
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -124,7 +127,19 @@ function NewNotice({ places, hasInbox, onSent }) {
       {/* 2. the unit */}
       {b && (
         <div className="space-y-2">
-          <Step n={2}>Unit</Step>
+          <div className="flex items-center justify-between gap-2">
+            <Step n={2}>Unit</Step>
+            {!u && b.units.length > 0 && (
+              <span className="flex rounded-full border border-stroke p-0.5">
+                {[['list', 'List', LayoutGrid], ['3d', '3D', Box]].map(([k, label, Icon]) => (
+                  <button type="button" key={k} onClick={() => { setView(k); setFind(''); }} aria-pressed={view === k}
+                    className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs ${view === k ? 'bg-p1/20 text-p1' : 'text-mute hover:text-txt'}`}>
+                    <Icon size={13} /> {label}
+                  </button>
+                ))}
+              </span>
+            )}
+          </div>
           {u ? (
             <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate rounded-2xl border border-p1/50 bg-p1/15 px-3 py-2.5 text-sm">Unit {u.number}</span>
@@ -132,6 +147,10 @@ function NewNotice({ places, hasInbox, onSent }) {
             </div>
           ) : b.units.length === 0 ? (
             <p className="text-sm text-mute">saifsys has no units for this building yet.</p>
+          ) : view === '3d' ? (
+            <Suspense fallback={<div className="grid place-items-center py-10"><Loader2 className="animate-spin text-mute" /></div>}>
+              <NoticeTower key={b.name} units={b.units} onPick={setUnit} />
+            </Suspense>
           ) : (
             <Pick items={b.units.length} label="Search units" placeholder="Type the unit number" find={find} onFind={setFind}>
               <div className="grid max-h-64 grid-cols-4 gap-2 overflow-y-auto sm:grid-cols-6">
