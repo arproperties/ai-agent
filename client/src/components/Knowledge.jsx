@@ -184,7 +184,7 @@ export function FileCard({ d, onOpen, showShelf = false }) {
         )}
         {/* only master's files are ever shared, so this doubles as "staff can read this" */}
         {d.shared && (
-          <span title="Shared" className="absolute right-2.5 top-2.5 flex items-center gap-1 rounded-full bg-p1/85 px-2 py-0.5 text-[10px] font-medium text-white">
+          <span title={d.mine === false ? `Shared with you${d.owner_name ? ` by ${d.owner_name}` : ''}` : 'Shared'} className="absolute right-2.5 top-2.5 flex items-center gap-1 rounded-full bg-p1/85 px-2 py-0.5 text-[10px] font-medium text-white">
             <Users size={11} /> Shared
           </span>
         )}
@@ -311,6 +311,9 @@ export function FileDetail({ d, folders, companies = [], me, shelfName, onClose,
   // Held locally as well as on the row: one caller passes a no-op onChanged, and the
   // control still has to respond to being pressed.
   const [shared, setShared] = useState(!!d.shared);
+  // A file somebody shared with this person: theirs to read and download, and nothing
+  // else. The server refuses the rest anyway; this is so the sheet does not offer it.
+  const readOnly = d.mine === false;
   const move = async (folder) => { await api.patch(`/documents/${d.id}`, { folder }); onChanged(); onClose(); };
   // Saved on leaving the field, not per keystroke. Cleared means "Other".
   // Companies or Others, fixable by hand because the classifier does get it wrong.
@@ -379,6 +382,15 @@ export function FileDetail({ d, folders, companies = [], me, shelfName, onClose,
           <div className="flex flex-wrap gap-1.5">{d.tags.map((t) => <span key={t} className="rounded-full bg-white/[0.06] px-2.5 py-1 text-xs text-mute">#{t}</span>)}</div>
         )}
 
+        {readOnly && (
+          <div className="space-y-1.5 rounded-xl border border-stroke bg-white/[0.04] px-3.5 py-2.5">
+            <p className="flex items-center gap-2 text-sm"><Users size={15} className="shrink-0 text-p1" /> Shared with you{d.owner_name ? ` by ${d.owner_name}` : ''}</p>
+            <p className="text-xs text-mute">{[d.company, d.folder].filter(Boolean).join(' · ')}. You can open and download it; only {d.owner_name || 'its owner'} can change it.</p>
+            {expires && <p className={`flex items-center gap-1.5 text-xs font-medium ${expiryTone(expiry({ expires_on: expires }))}`}><Clock size={13} /> {expiry({ expires_on: expires }).label}</p>}
+          </div>
+        )}
+
+        {!readOnly && <>
         <div>
           <span className="mb-1.5 block text-xs font-medium tracking-wide text-mute">FOLDER</span>
           <Picker value={d.folder} onChange={move} options={folders.map((f) => ({ value: f, label: f }))}
@@ -437,6 +449,7 @@ export function FileDetail({ d, folders, companies = [], me, shelfName, onClose,
           </div>
         )}
         {me?.role === 'master' && <Visibility shared={shared} folder={d.folder} shelfName={shelfName} onChange={share} />}
+        </>}
 
         <div className="flex gap-2 pt-1">
           <button onClick={() => setViewing(true)}
@@ -445,8 +458,10 @@ export function FileDetail({ d, folders, companies = [], me, shelfName, onClose,
           </button>
           <a href={`${fileUrl(d)}?download=1`} aria-label="Download" title="Download"
             className="glass grid size-11 place-items-center rounded-full hover:bg-white/10"><Download size={17} /></a>
-          <button onClick={remove} aria-label="Delete" title="Delete"
-            className="grid size-11 place-items-center rounded-full border border-bad/40 text-bad hover:bg-bad/10"><Trash2 size={17} /></button>
+          {!readOnly && (
+            <button onClick={remove} aria-label="Delete" title="Delete"
+              className="grid size-11 place-items-center rounded-full border border-bad/40 text-bad hover:bg-bad/10"><Trash2 size={17} /></button>
+          )}
         </div>
       </div>
       {viewing && <FileViewer d={d} onClose={() => setViewing(false)} />}

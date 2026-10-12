@@ -273,10 +273,13 @@ async function search(table, scope, query, qvec, k) {
  * keeps the agent filter - that one is a real boundary between roles.
  *
  * An empty shelf list is fine: `= ANY('{}'::int[])` is simply false.
+ *
+ * `t` is the alias to hang it on, for the queries that already call their table
+ * something else.
  */
-export function retrievalScope(userId, shelves) {
+export function retrievalScope(userId, shelves, t = 't') {
   return {
-    sql: '(t.user_id = ? OR (t.shared AND (t.agent_id IS NULL OR t.agent_id = ANY(?::int[]))))',
+    sql: `(${t}.user_id = ? OR (${t}.shared AND (${t}.agent_id IS NULL OR ${t}.agent_id = ANY(?::int[]))))`,
     params: [userId, shelves],
   };
 }

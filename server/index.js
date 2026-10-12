@@ -10,7 +10,7 @@ import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, canUseAgent, isMaster } from './access.js';
 import { deleteMessage, chat } from './chat.js';
 import { addMemory } from './knowledge.js';
-import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments } from './files.js';
+import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
@@ -195,38 +195,31 @@ app.delete('/api/messages/:id', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// ---------- files: ?agent=<id> for one agent's shelf, otherwise everything this user owns ----------
-const docOut = ({ path, hash, user_id, ...d }) => ({ ...d, tags: JSON.parse(d.tags || '[]') });
-
-const DOC_SELECT = `SELECT d.*, c.title conversation_title, a.name shelf_name FROM documents d
-  LEFT JOIN conversations c ON c.id = d.conversation_id AND c.user_id = d.user_id
-  LEFT JOIN agents a ON a.id = d.agent_id`;
-
+// ---------- files: ?agent=<id> for one agent's shelf, otherwise everything this user can read ----------
 // ?ids=1,2,3 for specific files (e.g. a chat's attachments), ?agent=<id> for one agent's shelf,
-// otherwise all of this user's files. The Shelf screen lists the lot: the classifier files
-// most uploads onto an agent, and listing only the unfiled ones made them vanish on arrival.
+// otherwise all of this user's files and the ones shared with them. The Shelf screen lists the
+// lot: the classifier files most uploads onto an agent, and listing only the unfiled ones made
+// them vanish on arrival.
 app.get('/api/documents', wrap(async (req, res) => {
   if (req.query.ids) {
     const ids = String(req.query.ids).split(',').map(Number).filter(Boolean).slice(0, 200);
     if (!ids.length) return res.json([]);
     const rows = await db.prepare(`${DOC_SELECT} WHERE d.user_id = ? AND d.id IN (${ids.map(() => '?').join(',')}) ORDER BY d.id DESC`)
       .all(req.user.id, ...ids);
-    return res.json(rows.map(docOut));
+    return res.json(rows.map((d) => docOut(d, req.user.id)));
   }
-  const agentId = Number(req.query.agent) || null;
-  const rows = await db.prepare(`${DOC_SELECT} WHERE d.user_id = ? AND (?::int IS NULL OR d.agent_id = ?)
-    ORDER BY COALESCE(d.doc_date, to_char(to_timestamp(d.created_at), 'YYYY-MM-DD')) DESC, d.id DESC`).all(req.user.id, agentId, agentId);
-  res.json(rows.map(docOut));
+  const rows = await readableDocuments(req.user, req.query.agent);
+  res.json(rows.map((d) => docOut(d, req.user.id)));
 }));
 // Above /api/documents/:id, which would otherwise read "expiring" as an id.
 // ?days=30 for the badge on the menu, the default 90 for the Shelf's own list.
 app.get('/api/documents/expiring', wrap(async (req, res) => {
-  const rows = await expiringDocuments(req.user.id, req.query.days);
-  res.json(rows.map(docOut));
+  const rows = await expiringDocuments(req.user, req.query.days);
+  res.json(rows.map((d) => docOut(d, req.user.id)));
 }));
 app.get('/api/documents/:id', wrap(async (req, res) => {
-  const doc = await db.prepare(`${DOC_SELECT} WHERE d.id = ? AND d.user_id = ?`).get(Number(req.params.id), req.user.id);
-  doc ? res.json(docOut(doc)) : notFound(res);
+  const doc = await readableDocument(req.user, req.params.id);
+  doc ? res.json(docOut(doc, req.user.id)) : notFound(res);
 }));
 app.post('/api/documents', upload.array('files', 10), wrap(async (req, res) => {
   const agentId = Number(req.body.agent) || null;
@@ -260,9 +253,10 @@ app.post('/api/documents/note', wrap(async (req, res) => {
   res.json({ id: doc.id, name: doc.name, duplicate, shelf });
 }));
 
-// view (safe types only) or download the original file
+// view (safe types only) or download the original file. Reading reaches as far as the
+// Shelf lists; everything below that changes a file stays with its owner.
 app.get('/api/documents/:id/file', wrap(async (req, res) => {
-  const doc = await own('documents', req.params.id, req.user.id);
+  const doc = await readableDocument(req.user, req.params.id);
   if (!doc?.path) return notFound(res);
   const inline = !req.query.download && inlineType(doc);
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -271,7 +265,7 @@ app.get('/api/documents/:id/file', wrap(async (req, res) => {
 }));
 // Word documents rendered as HTML for the in-app viewer
 app.get('/api/documents/:id/preview', wrap(async (req, res) => {
-  const doc = await own('documents', req.params.id, req.user.id);
+  const doc = await readableDocument(req.user, req.params.id);
   if (!doc?.path || !/\.docx$/i.test(doc.name)) return notFound(res);
   res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src data:");
   res.type('html').send(await docxPreview(doc));
@@ -297,7 +291,7 @@ app.patch('/api/documents/:id', wrap(async (req, res) => {
   // A field-level permission, not a route-level one: everyone renames and refiles here,
   // but only the master may publish. A user sending `shared` simply does not get it.
   if ('shared' in req.body && isMaster(req.user)) await setShared(req.user, doc.id, req.body.shared);
-  res.json(docOut(await db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(doc.id)));
+  res.json(docOut(await db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(doc.id), req.user.id));
 }));
 app.delete('/api/documents/:id', wrap(async (req, res) => {
   await deleteDocument(req.user.id, Number(req.params.id));

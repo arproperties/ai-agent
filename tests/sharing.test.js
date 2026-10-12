@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
-import { setShared, setSharedMany } from '../server/files.js';
+import { setShared, setSharedMany, readableDocuments, readableDocument, docOut, deleteDocument, expiringDocuments } from '../server/files.js';
 import { retrievalScope, indexChunks } from '../server/knowledge.js';
 import { shelfIds } from '../server/access.js';
 
@@ -168,4 +168,97 @@ test('bulk sharing ignores junk ids', async () => {
   const { master } = await fixture();
   assert.equal(await setSharedMany(master, ['x', null, 1.5], true), 0);
   assert.equal(await setSharedMany(master, 'nope', true), 0);
+});
+
+// ---------- a shared file on the reader's own Shelf ----------
+
+const names = (rows) => rows.map((r) => r.name).sort();
+
+test('a shared shelf file is listed on the Shelf of the people given that shelf', async () => {
+  const { master, sara, hr } = await fixture();
+  await assign(hr, sara.id);
+  const id = await makeFile(master.id, hr, 'handbook.pdf');
+  await makeFile(sara.id, null, 'sara-payslip.pdf');
+  assert.deepEqual(names(await readableDocuments(sara)), ['sara-payslip.pdf'], 'private by default');
+
+  await setShared(master, id, true);
+
+  assert.deepEqual(names(await readableDocuments(sara)), ['handbook.pdf', 'sara-payslip.pdf']);
+  assert.deepEqual(names(await readableDocuments(sara, hr)), ['handbook.pdf'], 'and inside that agent\'s own shelf');
+});
+
+test('a shared shelf file is not listed for someone without that shelf', async () => {
+  const { master, sara, hr, legal } = await fixture();
+  await assign(legal, sara.id);
+  await setShared(master, await makeFile(master.id, hr, 'handbook.pdf'), true);
+
+  assert.deepEqual(await readableDocuments(sara), []);
+});
+
+test('a shared library file is listed for everyone, and leaves again when unshared', async () => {
+  const { master, sara } = await fixture();
+  const id = await makeFile(master.id, null, 'holiday-calendar.pdf');
+  await setShared(master, id, true);
+  assert.deepEqual(names(await readableDocuments(sara)), ['holiday-calendar.pdf']);
+
+  await setShared(master, id, false);
+
+  assert.deepEqual(await readableDocuments(sara), []);
+});
+
+test('one file can be opened by its reader, and by nobody it was not shared with', async () => {
+  const { master, sara, hr } = await fixture();
+  const id = await makeFile(master.id, hr, 'handbook.pdf');
+  await setShared(master, id, true);
+  assert.equal(await readableDocument(sara, id), undefined, 'Sara was never given HR');
+
+  await assign(hr, sara.id);
+
+  assert.equal((await readableDocument(sara, id)).name, 'handbook.pdf');
+  assert.equal((await readableDocument(master, id)).name, 'handbook.pdf');
+});
+
+test('a reader is told the file is not theirs, and not which chat it came from', async () => {
+  const { master, sara } = await fixture();
+  const { id: chat } = await db.prepare("INSERT INTO conversations (user_id, title) VALUES (?, 'Salary review') RETURNING id").run(master.id);
+  const id = await makeFile(master.id, null, 'policy.pdf');
+  await db.prepare('UPDATE documents SET conversation_id = ?, origin_conversation_id = ? WHERE id = ?').run(chat, chat, id);
+  await setShared(master, id, true);
+
+  const hers = docOut(await readableDocument(sara, id), sara.id);
+  assert.equal(hers.mine, false);
+  assert.equal(hers.owner_name, 'Master');
+  assert.equal(hers.conversation_id, null);
+  assert.equal(hers.conversation_title, null, 'the master\'s chat titles are not part of what was shared');
+  assert.equal(hers.origin_conversation_id, null);
+  assert.ok(!('path' in hers) && !('user_id' in hers));
+
+  const his = docOut(await readableDocument(master, id), master.id);
+  assert.equal(his.mine, true);
+  assert.equal(his.conversation_title, 'Salary review');
+});
+
+test('a reader cannot delete a file that was shared with them', async () => {
+  const { master, sara } = await fixture();
+  const id = await makeFile(master.id, null, 'policy.pdf');
+  await setShared(master, id, true);
+
+  await deleteDocument(sara.id, id);
+
+  assert.deepEqual(await state(id), { doc: true, chunk: true });
+});
+
+test('a shared file that is running out is on the reader\'s expiry list too', async () => {
+  const { master, sara, hr } = await fixture();
+  const soon = new Date(Date.now() + 9 * 86400000).toISOString().slice(0, 10);
+  const lib = await makeFile(master.id, null, 'trade-licence.pdf');
+  const filed = await makeFile(master.id, hr, 'visa.pdf');
+  await db.prepare('UPDATE documents SET expires_on = ? WHERE id IN (?, ?)').run(soon, lib, filed);
+  assert.deepEqual(await expiringDocuments(sara, 30), [], 'private by default');
+
+  await setSharedMany(master, [lib, filed], true);
+
+  assert.deepEqual(names(await expiringDocuments(sara, 30)), ['trade-licence.pdf'], 'Sara has no HR shelf');
+  await assign(hr, sara.id);
+  assert.deepEqual(names(await expiringDocuments(sara, 30)), ['trade-licence.pdf', 'visa.pdf']);
 });

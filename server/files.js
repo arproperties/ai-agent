@@ -286,17 +286,57 @@ export async function libraryCatalog(user) {
 }
 
 /**
- * The user's own paperwork that has run out or is about to, soonest first. Their own and
- * not the wider retrieval scope: an expiry is something to act on, and nobody can renew
- * a licence that was lent to them from somebody else's shelf.
+ * The paperwork this user can read that has run out or is about to, soonest first. That
+ * is their own and whatever the master shared with them: a reader cannot renew somebody
+ * else's licence, but a second pair of eyes on the date is the point of telling them.
  *
  * `within` counts forward from today; everything already expired comes back regardless,
  * because a licence that lapsed last month is the most urgent row on the screen.
  */
-export function expiringDocuments(userId, within = 90) {
+export async function expiringDocuments(user, within = 90) {
   const days = Math.min(Math.max(Number(within) || 90, 1), 3650);
-  return db.prepare(`SELECT * FROM documents
-    WHERE user_id = ? AND status = 'ready' AND expires_on IS NOT NULL
+  const scope = retrievalScope(user.id, await shelfIds(user));
+  return db.prepare(`SELECT t.* FROM documents t
+    WHERE ${scope.sql} AND status = 'ready' AND expires_on IS NOT NULL
       AND expires_on <= to_char(now() + (? || ' days')::interval, 'YYYY-MM-DD')
-    ORDER BY expires_on ASC, id DESC LIMIT 100`).all(userId, String(days));
+    ORDER BY expires_on ASC, id DESC LIMIT 100`).all(...scope.params, String(days));
+}
+
+// ---------- the Shelf: a person's own files, and the ones shared with them ----------
+export const DOC_SELECT = `SELECT d.*, c.title conversation_title, a.name shelf_name, u.name owner_name FROM documents d
+  LEFT JOIN conversations c ON c.id = d.conversation_id AND c.user_id = d.user_id
+  LEFT JOIN agents a ON a.id = d.agent_id
+  LEFT JOIN users u ON u.id = d.user_id`;
+
+/**
+ * A document as the screen gets it. `mine` is what the Shelf goes by to decide whether
+ * to offer rename, move and delete: a file shared with someone is theirs to read, not to
+ * change. The chat a shared file came from is the owner's chat, so it does not travel.
+ */
+export function docOut({ path, hash, user_id, owner_name, ...d }, viewerId) {
+  const mine = user_id === viewerId;
+  return {
+    ...d,
+    tags: JSON.parse(d.tags || '[]'),
+    mine,
+    ...(mine ? {} : { owner_name: owner_name ?? null, conversation_id: null, conversation_title: null, origin_conversation_id: null }),
+  };
+}
+
+/**
+ * Everything on this user's Shelf, or on one agent's shelf: what they own and what was
+ * shared with them. The same reach as recall(), so the Shelf never shows less than the
+ * assistant can already quote from.
+ */
+export async function readableDocuments(user, agentId = null) {
+  const scope = retrievalScope(user.id, await shelfIds(user), 'd');
+  const shelf = Number(agentId) || null;
+  return db.prepare(`${DOC_SELECT} WHERE ${scope.sql} AND (?::int IS NULL OR d.agent_id = ?)
+    ORDER BY COALESCE(d.doc_date, to_char(to_timestamp(d.created_at), 'YYYY-MM-DD')) DESC, d.id DESC`).all(...scope.params, shelf, shelf);
+}
+
+/** One file, if this user owns it or it was shared with them. For opening, never for changing. */
+export async function readableDocument(user, docId) {
+  const scope = retrievalScope(user.id, await shelfIds(user), 'd');
+  return db.prepare(`${DOC_SELECT} WHERE d.id = ? AND ${scope.sql}`).get(Number(docId) || 0, ...scope.params);
 }
