@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { db, tx } from './db.js';
 import { ask, embed, transcribe } from './ai.js';
-import { shelfIds, isMaster } from './access.js';
+import { isMaster } from './access.js';
 
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 export const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v', 'video/3gpp'];
@@ -270,17 +270,16 @@ async function search(table, scope, query, qvec, k) {
  *
  * Own material has no agent filter: it all belongs to this user, and siloing it per
  * agent would stop their Lawyer agent reading an invoice they uploaded. Shared material
- * keeps the agent filter - that one is a real boundary between roles.
- *
- * An empty shelf list is fine: `= ANY('{}'::int[])` is simply false.
+ * has none either: what the master shares reaches every user, whichever shelf it is
+ * filed on. The shelf says where a file lives, not who may read it.
  *
  * `t` is the alias to hang it on, for the queries that already call their table
  * something else.
  */
-export function retrievalScope(userId, shelves, t = 't') {
+export function retrievalScope(userId, t = 't') {
   return {
-    sql: `(${t}.user_id = ? OR (${t}.shared AND (${t}.agent_id IS NULL OR ${t}.agent_id = ANY(?::int[]))))`,
-    params: [userId, shelves],
+    sql: `(${t}.user_id = ? OR ${t}.shared)`,
+    params: [userId],
   };
 }
 
@@ -301,7 +300,7 @@ export async function personalMemories(user, query, qvec, k = 12) {
 export async function recall(user, query) {
   const [qvec] = await embed([query]);
   const memories = await personalMemories(user, query, qvec);
-  const knowledge = await search('chunks', retrievalScope(user.id, await shelfIds(user)), query, qvec, 6);
+  const knowledge = await search('chunks', retrievalScope(user.id), query, qvec, 6);
   return { memories, knowledge };
 }
 

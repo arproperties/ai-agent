@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
 import { tooSpecificToShare, saveFact, retrievalScope } from '../server/knowledge.js';
-import { shelfIds } from '../server/access.js';
 
 test.after(() => closeDb());
 
@@ -100,7 +99,7 @@ test('an unpublished fact reaches nobody', async () => {
   const { master, sara, hr, conv } = await fixture();
   await saveFact(master, hr, conv, 'Notice period is 30 days for permanent staff');
 
-  const scope = retrievalScope(sara.id, await shelfIds(sara));
+  const scope = retrievalScope(sara.id);
   const seen = await db.prepare(`SELECT t.text FROM chunks t WHERE ${scope.sql}`).all(...scope.params);
   assert.deepEqual(seen, [], 'Sara has the HR shelf, but the fact is not shared yet');
 });
@@ -112,9 +111,9 @@ test('publishing it is the ordinary Private/Shared toggle', async () => {
 
   await setShared(master, doc.id, true);
 
-  const scope = retrievalScope(sara.id, await shelfIds(sara));
+  const scope = retrievalScope(sara.id);
   const seen = await db.prepare(`SELECT t.text FROM chunks t WHERE ${scope.sql}`).all(...scope.params);
-  assert.equal(seen.length, 1, 'now it reaches the people with that shelf');
+  assert.equal(seen.length, 1, 'now it reaches every user');
   assert.match(seen[0].text, /Notice period is 30 days/);
 });
 

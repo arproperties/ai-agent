@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
 import { setShared, setSharedMany, readableDocuments, readableDocument, docOut, deleteDocument, expiringDocuments } from '../server/files.js';
 import { retrievalScope, indexChunks } from '../server/knowledge.js';
-import { shelfIds } from '../server/access.js';
 
 test.after(() => closeDb());
 
@@ -87,7 +86,7 @@ test('re-indexing a shared document keeps its chunks shared', async () => {
 // ---------- what sharing actually does for retrieval ----------
 
 async function visibleTo(user) {
-  const scope = retrievalScope(user.id, await shelfIds(user));
+  const scope = retrievalScope(user.id);
   const rows = await db.prepare(`SELECT t.text FROM chunks t WHERE ${scope.sql} ORDER BY t.id`).all(...scope.params);
   return rows.map((r) => r.text);
 }
@@ -103,14 +102,15 @@ test('sharing a shelf file reaches the users assigned that shelf', async () => {
   assert.deepEqual(await visibleTo(sara), ['contents of handbook.pdf']);
 });
 
-test('sharing a shelf file does not reach users without that shelf', async () => {
+test('sharing a shelf file reaches users without that shelf too', async () => {
   const { master, sara, hr, legal } = await fixture();
   await assign(legal, sara.id); // Sara has Legal, never HR
   const id = await makeFile(master.id, hr, 'handbook.pdf');
+  assert.deepEqual(await visibleTo(sara), [], 'private by default');
 
   await setShared(master, id, true);
 
-  assert.deepEqual(await visibleTo(sara), [], 'the shelf filter is the boundary');
+  assert.deepEqual(await visibleTo(sara), ['contents of handbook.pdf'], 'shared means every user, whichever shelf');
 });
 
 test('sharing a library file with no shelf reaches everyone', async () => {
@@ -187,12 +187,12 @@ test('a shared shelf file is listed on the Shelf of the people given that shelf'
   assert.deepEqual(names(await readableDocuments(sara, hr)), ['handbook.pdf'], 'and inside that agent\'s own shelf');
 });
 
-test('a shared shelf file is not listed for someone without that shelf', async () => {
+test('a shared shelf file is listed for someone without that shelf too', async () => {
   const { master, sara, hr, legal } = await fixture();
   await assign(legal, sara.id);
   await setShared(master, await makeFile(master.id, hr, 'handbook.pdf'), true);
 
-  assert.deepEqual(await readableDocuments(sara), []);
+  assert.deepEqual(names(await readableDocuments(sara)), ['handbook.pdf']);
 });
 
 test('a shared library file is listed for everyone, and leaves again when unshared', async () => {
@@ -209,12 +209,11 @@ test('a shared library file is listed for everyone, and leaves again when unshar
 test('one file can be opened by its reader, and by nobody it was not shared with', async () => {
   const { master, sara, hr } = await fixture();
   const id = await makeFile(master.id, hr, 'handbook.pdf');
+  assert.equal(await readableDocument(sara, id), undefined, 'still private');
+
   await setShared(master, id, true);
-  assert.equal(await readableDocument(sara, id), undefined, 'Sara was never given HR');
 
-  await assign(hr, sara.id);
-
-  assert.equal((await readableDocument(sara, id)).name, 'handbook.pdf');
+  assert.equal((await readableDocument(sara, id)).name, 'handbook.pdf', 'Sara was never given HR, and reads it anyway');
   assert.equal((await readableDocument(master, id)).name, 'handbook.pdf');
 });
 
@@ -258,7 +257,5 @@ test('a shared file that is running out is on the reader\'s expiry list too', as
 
   await setSharedMany(master, [lib, filed], true);
 
-  assert.deepEqual(names(await expiringDocuments(sara, 30)), ['trade-licence.pdf'], 'Sara has no HR shelf');
-  await assign(hr, sara.id);
-  assert.deepEqual(names(await expiringDocuments(sara, 30)), ['trade-licence.pdf', 'visa.pdf']);
+  assert.deepEqual(names(await expiringDocuments(sara, 30)), ['trade-licence.pdf', 'visa.pdf'], 'Sara has no HR shelf, and is told about both');
 });

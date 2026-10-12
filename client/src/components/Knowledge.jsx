@@ -279,11 +279,10 @@ export function FileViewer({ d, onClose, onInfo }) {
 const USUALLY_SHARED = ['HR & Employees', 'Company & Licenses'];
 
 /**
- * Master's Private/Shared control. How far "shared" reaches depends on where the file
- * is filed, so the copy says which rather than leaving it to be guessed: on a shelf it
- * reaches the people assigned that shelf, in the library it reaches every user.
+ * Master's Private/Shared control. Shared reaches every user, whichever shelf the file
+ * is filed on, and the copy says so rather than leaving it to be guessed.
  */
-function Visibility({ shared, folder, shelfName, onChange }) {
+function Visibility({ shared, folder, onChange }) {
   return (
     <div>
       <span className="mb-1.5 block text-xs font-medium tracking-wide text-mute">VISIBILITY</span>
@@ -294,9 +293,7 @@ function Visibility({ shared, folder, shelfName, onChange }) {
         ))}
       </div>
       <p className="mt-1.5 text-xs text-mute">
-        {shared
-          ? shelfName ? `Anyone given ${shelfName} can read this.` : 'Every user can read this.'
-          : 'Only you can see this file.'}
+        {shared ? 'Every user can read this.' : 'Only you can see this file.'}
       </p>
       {!shared && USUALLY_SHARED.includes(folder) && (
         <p className="mt-1 text-xs text-p1">{folder} files are usually shared.</p>
@@ -305,7 +302,7 @@ function Visibility({ shared, folder, shelfName, onChange }) {
   );
 }
 
-export function FileDetail({ d, folders, companies = [], me, shelfName, onClose, onChanged, onOpenChat }) {
+export function FileDetail({ d, folders, companies = [], me, onClose, onChanged, onOpenChat }) {
   const [FolderIcon, tone] = folderStyle(d.folder);
   const [viewing, setViewing] = useState(false);
   // Held locally as well as on the row: one caller passes a no-op onChanged, and the
@@ -448,7 +445,7 @@ export function FileDetail({ d, folders, companies = [], me, shelfName, onClose,
             )}
           </div>
         )}
-        {me?.role === 'master' && <Visibility shared={shared} folder={d.folder} shelfName={shelfName} onChange={share} />}
+        {me?.role === 'master' && <Visibility shared={shared} folder={d.folder} onChange={share} />}
         </>}
 
         <div className="flex gap-2 pt-1">
@@ -885,14 +882,14 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
         </div>
       )}
       {viewing && <FileViewer d={viewing} onClose={() => setViewing(null)} onInfo={(d) => { setViewing(null); setOpen(d.id); }} />}
-      {openDoc && <FileDetail d={openDoc} folders={folders} companies={companies.names} me={me} shelfName={openDoc.shelf_name} onClose={() => setOpen(null)} onChanged={load} onOpenChat={onOpenChat} />}
+      {openDoc && <FileDetail d={openDoc} folders={folders} companies={companies.names} me={me} onClose={() => setOpen(null)} onChanged={load} onOpenChat={onOpenChat} />}
       {writing && <NoteSheet onSave={write} onClose={() => setWriting(false)} />}
     </div>
   );
 }
 
 // ---------- compact version for an agent's own files (inside the agent sheet) ----------
-export function FilesPanel({ agentId, hint, folders, me, shelfName }) {
+export function FilesPanel({ agentId, hint, folders, me }) {
   const { docs, load, upload, write, uploading, notes } = useFiles(agentId);
   const [open, setOpen] = useState(null);
   const [writing, setWriting] = useState(false);
@@ -916,7 +913,7 @@ export function FilesPanel({ agentId, hint, folders, me, shelfName }) {
       <div className="grid grid-cols-2 gap-2.5">
         {docs?.map((d) => <FileCard key={d.id} d={d} onOpen={(x) => setOpen(x.id)} />)}
       </div>
-      {openDoc && <FileDetail d={openDoc} folders={folders} me={me} shelfName={shelfName} onClose={() => setOpen(null)} onChanged={load} />}
+      {openDoc && <FileDetail d={openDoc} folders={folders} me={me} onClose={() => setOpen(null)} onChanged={load} />}
       {writing && <NoteSheet onSave={write} onClose={() => setWriting(false)} />}
     </div>
   );

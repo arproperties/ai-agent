@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
 import { agentLinks } from '../server/agents.js';
 import { retrievalScope } from '../server/knowledge.js';
-import { shelfIds } from '../server/access.js';
 
 test.after(() => closeDb());
 
@@ -60,7 +59,7 @@ test('a detached shared item stops being shared, so it cannot suddenly reach eve
 
   await db.prepare('DELETE FROM agents WHERE id = ?').run(hr);
 
-  const scope = retrievalScope(sara.id, await shelfIds(sara));
+  const scope = retrievalScope(sara.id);
   const seen = await db.prepare(`SELECT text FROM chunks t WHERE ${scope.sql}`).all(...scope.params);
   assert.deepEqual(seen, [], 'detaching must not widen a shared item to every user');
 

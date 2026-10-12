@@ -8,8 +8,7 @@ test.after(() => closeDb());
 // Exercises the scope as SQL against real rows, which is the only way to know the
 // clause is right. Uses chunks directly rather than going through embeddings.
 async function chunkIds(user, agentId) {
-  const { shelfIds } = await import('../server/access.js');
-  const scope = retrievalScope(user.id, await shelfIds(user));
+  const scope = retrievalScope(user.id);
   const rows = await db.prepare(`SELECT t.id, t.text FROM chunks t WHERE ${scope.sql} ORDER BY t.id`).all(...scope.params);
   return rows.map((r) => r.text);
 }
@@ -61,12 +60,15 @@ test('a user reads shared chunks on shelves they were assigned', async () => {
   assert.ok((await chunkIds(sara, lawyer)).includes('legal shelf policy'));
 });
 
-test('a user does NOT read shared chunks on shelves they were not assigned', async () => {
+test('a user reads shared chunks on shelves they were not assigned too', async () => {
   const { master, sara, lawyer, hr } = await fixture();
   await assign(lawyer, sara.id);
   await chunk(master.id, hr, 'hr payroll policy', true);
+  await chunk(master.id, hr, 'hr private note', false);
 
-  assert.ok(!(await chunkIds(sara, lawyer)).includes('hr payroll policy'));
+  const seen = await chunkIds(sara, lawyer);
+  assert.ok(seen.includes('hr payroll policy'), 'shared means every user, whichever shelf');
+  assert.ok(!seen.includes('hr private note'), 'and what is not shared stays with its owner');
 });
 
 test('a knowledge-mode assignment grants shelf access without the agent', async () => {

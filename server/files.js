@@ -6,7 +6,7 @@ import { db, tx } from './db.js';
 import { ask } from './ai.js';
 import { DATA_DIR, FOLDERS } from './config.js';
 import { IMAGE_TYPES, VIDEO_TYPES, VIDEO_EXT, extractText, describeImage, readVideo, indexChunks, retrievalScope } from './knowledge.js';
-import { shelfIds, isMaster } from './access.js';
+import { isMaster } from './access.js';
 
 const UPLOAD_DIR = `${DATA_DIR}/uploads`;
 
@@ -239,9 +239,7 @@ export async function deleteDocument(userId, id) {
  * chunks.shared is denormalised off documents.shared - recall() filters chunks without
  * joining documents - so the two move together or retrieval disagrees with the screen.
  *
- * How wide "shared" reaches depends on where the file is filed: on a shelf it reaches
- * the people assigned that shelf, in the library (agent_id NULL) it reaches everyone.
- * See retrievalScope(); the UI says which.
+ * Shared reaches every user, whichever shelf the file is filed on. See retrievalScope().
  */
 export async function setShared(user, docId, shared) {
   if (!isMaster(user)) throw Object.assign(new Error('Not allowed'), { status: 403 });
@@ -279,7 +277,7 @@ export async function setSharedMany(user, docIds, shared) {
 // Compact catalogue of the files this user can see, so agents can answer
 // "what files do I have?" or "find my lease". Same scope as recall().
 export async function libraryCatalog(user) {
-  const scope = retrievalScope(user.id, await shelfIds(user));
+  const scope = retrievalScope(user.id);
   const rows = await db.prepare(`SELECT title, folder, name, doc_date, expires_on FROM documents t
     WHERE ${scope.sql} AND status = 'ready' ORDER BY id DESC LIMIT 40`).all(...scope.params);
   return rows.map((d) => `- ${d.title} (${d.folder}${d.doc_date ? `, ${d.doc_date}` : ''}${d.expires_on ? `; expires ${d.expires_on}` : ''}; file: ${d.name})`);
@@ -295,7 +293,7 @@ export async function libraryCatalog(user) {
  */
 export async function expiringDocuments(user, within = 90) {
   const days = Math.min(Math.max(Number(within) || 90, 1), 3650);
-  const scope = retrievalScope(user.id, await shelfIds(user));
+  const scope = retrievalScope(user.id);
   return db.prepare(`SELECT t.* FROM documents t
     WHERE ${scope.sql} AND status = 'ready' AND expires_on IS NOT NULL
       AND expires_on <= to_char(now() + (? || ' days')::interval, 'YYYY-MM-DD')
@@ -329,7 +327,7 @@ export function docOut({ path, hash, user_id, owner_name, ...d }, viewerId) {
  * assistant can already quote from.
  */
 export async function readableDocuments(user, agentId = null) {
-  const scope = retrievalScope(user.id, await shelfIds(user), 'd');
+  const scope = retrievalScope(user.id, 'd');
   const shelf = Number(agentId) || null;
   return db.prepare(`${DOC_SELECT} WHERE ${scope.sql} AND (?::int IS NULL OR d.agent_id = ?)
     ORDER BY COALESCE(d.doc_date, to_char(to_timestamp(d.created_at), 'YYYY-MM-DD')) DESC, d.id DESC`).all(...scope.params, shelf, shelf);
@@ -337,6 +335,6 @@ export async function readableDocuments(user, agentId = null) {
 
 /** One file, if this user owns it or it was shared with them. For opening, never for changing. */
 export async function readableDocument(user, docId) {
-  const scope = retrievalScope(user.id, await shelfIds(user), 'd');
+  const scope = retrievalScope(user.id, 'd');
   return db.prepare(`${DOC_SELECT} WHERE d.id = ? AND ${scope.sql}`).get(Number(docId) || 0, ...scope.params);
 }
