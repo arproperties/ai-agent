@@ -23,6 +23,9 @@ import { carry, noteCarried, pickedIds } from './chatRecap.js';
 // full text still goes into the knowledge base, where later turns find what they need.
 const INLINE_BUDGET = 24000;
 const MIN_INLINE = 4000;
+// Rounds of tool use one message may take. Searching the Shelf a few ways and opening a
+// dozen files for a case history takes ten or so; eight was not enough.
+const MAX_ROUNDS = 16;
 export const inlineShare = (files) => Math.max(MIN_INLINE, Math.floor(INLINE_BUDGET / Math.max(1, files)));
 
 // Server-side web search, run by Anthropic. Sonnet 5 / Opus 5 take the newer tool version; Haiku 4.5 the basic one.
@@ -90,6 +93,13 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'and read_file opens one. <file_library> is only the newest few and <knowledge> is only a first guess at what matters, ' +
     'so a file missing from both may still be saved. Never say a file is not on the Shelf, or that you cannot open a saved file, ' +
     'until search_files has come back empty - and when a name was spoken, try another spelling first.');
+  // "The entire history of the Haley case" is a job for several searches and every file they
+  // turn up, not for the one summary that happened to be recalled.
+  parts.push('When asked for the history, the full picture or everything about a case, a person, a tenant, a unit, a contract or a project: ' +
+    'search more than once (the name, the unit or building, a case or contract number you come across), then open every file that belongs to it with read_file - ' +
+    'several at a time - and work from what the files say, not from their summaries. Answer as a dated timeline, oldest first, each line naming the file it came from; ' +
+    'then say where it stands now, and list what is missing or where two files disagree. Never fill a gap with a guess. ' +
+    'This is one of the answers that should be written out in full, as a document.');
   parts.push(`${user.name} can record meetings in the app. list_meetings and read_meeting read them back — summary, decisions, ` +
     'action items and who said what. Use them for any question about a meeting, and name who said it.');
   if (mailbox) {
@@ -336,12 +346,15 @@ export async function chat(req, res) {
 
   try {
     let prevType = null;
-    for (let turn = 0; turn < 8; turn++) {
+    for (let turn = 0; turn < MAX_ROUNDS; turn++) {
       stream = claude.messages.stream({
         model: agent.model,
         max_tokens: 16000,
         system: systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried),
         tools: [webSearch(agent.model), ...kits.flatMap((k) => k.definitions)],
+        // The last round has to be the answer: a case history once spent every round
+        // searching and reading, and the person got nothing back at all.
+        ...(turn === MAX_ROUNDS - 1 ? { tool_choice: { type: 'none' } } : {}),
         messages: turn ? withCacheMark(convo) : convo,
       });
       stream.on('streamEvent', (ev) => {

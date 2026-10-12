@@ -118,11 +118,15 @@ export async function searchFiles(user, query) {
     return `No saved file matches "${q}" (${docs.length} files looked through). Before telling the user it is not there, ` +
       'search again with other words - a different spelling of the name, the building, the kind of document.';
   }
+  // Each file comes with what it is about, so the agent can tell the ones worth opening
+  // from a near-miss on a name - and the line that matched, when the match was inside.
   const out = found.map((d) => {
+    const about = String(d.summary || '').replace(/\s+/g, ' ').slice(0, 220);
     const bit = excerpt.get(d.id);
-    return bit ? `${line(d)}\n   …${bit.replace(/\s+/g, ' ').slice(0, 300)}…` : line(d);
+    return [line(d), about && `   About: ${about}`, bit && `   Inside: …${bit.replace(/\s+/g, ' ').slice(0, 240)}…`].filter(Boolean).join('\n');
   });
-  return `${found.length} of ${docs.length} saved files, best match first. read_file opens one by its number.\n${out.join('\n')}`;
+  return `${found.length} of ${docs.length} saved files, best match first. read_file opens one by its number. ` +
+    `"About" was written when the file was filed and can be wrong - read the file before stating what it decided, an amount or a date.\n${out.join('\n')}`;
 }
 
 export async function readFile(user, { id, search } = {}) {

@@ -70,6 +70,7 @@ test('a name that is only in the summary of a file finds it, spelt as it was hea
 
   const found = await call(master, 'search_files', { query: 'Haley case' });
   assert.match(found.content.split('\n')[1], new RegExp(`^#${verdict} `), 'first in the list');
+  assert.match(found.content, /About: Eviction of the tenant Hailey/, 'with what the file is about');
 });
 
 test('nobody finds or opens a file that is not theirs and not shared', async () => {
