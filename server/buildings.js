@@ -70,6 +70,17 @@ export async function syncBuildings(ask = askSaifsys) {
   });
 }
 
+let syncedAt = 0;
+
+/**
+ * Bring the list up to date with saifsys, unless it was within `maxAge`. Never throws:
+ * with saifsys away or not connected, the buildings as last seen are what there is.
+ */
+export async function refreshBuildings(maxAge = 0) {
+  if (!saifsysConfigured() || Date.now() - syncedAt < maxAge) return;
+  try { await syncBuildings(); syncedAt = Date.now(); } catch (e) { console.warn('[buildings] sync', e.message); }
+}
+
 // ---------- writing (master) ----------
 
 /** Who runs a building: its administrator and who handles its renewals. null: no such building. */
@@ -207,7 +218,8 @@ export function startBuildings() {
     const hour = dubaiHour();
     if (busy || !saifsysConfigured() || hour < FROM_HOUR || hour >= TO_HOUR) return;
     busy = true;
-    try { await watchBuildings(); } catch (e) { console.warn('[buildings]', e.message); } finally { busy = false; }
+    // A building added in saifsys turns up within the hour, whoever opens what.
+    try { await refreshBuildings(60 * 60_000); await watchBuildings(); } catch (e) { console.warn('[buildings]', e.message); } finally { busy = false; }
   };
   timer = setInterval(tick, EVERY);
   setTimeout(tick, 30_000);
@@ -326,9 +338,8 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const send = (res, row) => (row ? res.json(row) : res.status(404).json({ error: 'Not found' }));
 
 buildingRoutes.get('/', wrap(async (req, res) => {
-  // The master opening the screen is when the list is brought up to date with saifsys;
-  // if saifsys is away, the buildings as last seen are shown.
-  if (isMaster(req.user) && saifsysConfigured()) await syncBuildings().catch((e) => console.warn('[buildings] sync', e.message));
+  // The master opening the screen sees saifsys as it is now.
+  if (isMaster(req.user)) await refreshBuildings();
   res.json(await listBuildings(req.user));
 }));
 buildingRoutes.get('/options', requireMaster, wrap(async (req, res) => res.json(await options())));

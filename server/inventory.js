@@ -4,7 +4,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { writeFile, copyFile } from 'node:fs/promises';
 import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
-import { listBuildings } from './buildings.js';
+import { listBuildings, refreshBuildings } from './buildings.js';
 import { askSaifsys } from './saifsys/client.js';
 
 // Inventory: the things that stay in a place - the AC, the fridge, the furniture, the keys.
@@ -598,7 +598,11 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const send = (res, row) => (row ? res.json(row) : res.status(404).json({ error: 'Not found' }));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
 
-inventoryRoutes.get('/', wrap(async (req, res) => res.json(await overview(req.user))));
+inventoryRoutes.get('/', wrap(async (req, res) => {
+  // As on the Buildings screen: the master opening this sees saifsys's buildings as they are now.
+  if (req.user.role === 'master') await refreshBuildings();
+  res.json(await overview(req.user));
+}));
 // Cards from chat. Before the '/:b' routes, so "proposals" is never read as a building.
 inventoryRoutes.get('/proposals', wrap(async (req, res) => {
   const rows = await db.prepare('SELECT id FROM inventory_proposals WHERE user_id = ? AND conversation_id = ? ORDER BY id')
