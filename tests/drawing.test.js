@@ -125,5 +125,9 @@ test('the files are only for the person whose reply it is', async () => {
     assert.equal((await fetch(url(drawn, 'pdf'))).status, 404);
   } finally {
     server.close();
+    // The connections fetch opened take a moment to go. On Windows the test runner's forced
+    // exit trips over one still closing (a libuv assertion) and fails the file, though every
+    // test in it passed. This is the last test here, so it waits for them.
+    await new Promise((done) => setTimeout(done, 200));
   }
 });
