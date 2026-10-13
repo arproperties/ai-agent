@@ -8,6 +8,11 @@ export const DATA_DIR = `${ROOT}data`;
 export const PORT = Number(process.env.PORT) || 3001;
 // Postgres. Uploads and the embedding model still live on disk in DATA_DIR.
 export const DATABASE_URL = process.env.DATABASE_URL || '';
+// The local embedding model (ai.js). Multilingual, because the files and the questions
+// are in Arabic as well as English. Vectors from two models cannot be compared, so each
+// stored one is marked with the model that made it: change this and db.js clears the
+// old ones at boot, and `npm run backfill-embeddings` builds them again.
+export const EMBED_MODEL = 'Xenova/multilingual-e5-small';
 
 // Web push. Generated once by `node scripts/vapid-keys.js` and pasted into .env — they
 // are this server's identity to Apple's and Google's push services, not an account with

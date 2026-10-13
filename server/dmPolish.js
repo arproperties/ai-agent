@@ -123,7 +123,7 @@ async function aboutMe(userId, query) {
   try {
     const user = await db.prepare('SELECT id, name FROM users WHERE id = ?').get(userId);
     if (!user) return '';
-    const [qvec] = await embed([query]).catch(() => []);
+    const [qvec] = await embed([query], 'query').catch(() => []);
     const lines = await personalMemories(user, query, qvec, 10);
     if (!lines.length) return '';
     return `ABOUT YOU (what this app remembers about ${user.name}, for context only - never quote it):\n${lines.map((m) => `- ${m}`).join('\n')}`;
