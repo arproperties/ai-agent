@@ -1448,3 +1448,35 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_tenant_notice_photos ON tenant_notice_photos(notice_id);
 `);
+
+// Sales & purchase (server/trade.js): the book a member of staff keeps by photographing
+// a bill and saying a few words. Kept in Reem only; saifsys is not touched.
+//   trade_entries: one row per sale or purchase. party, amount, currency, bill_date and
+//     about are what Reem read from the bill and the words; said is the words themselves,
+//     in the language they were spoken in. status is 'check' until an amount is read.
+//   trade_entry_files: its photos and voice recordings, files under data/trade.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS trade_entries (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('sale', 'purchase')),
+    party TEXT,
+    amount NUMERIC(14,2),
+    currency TEXT NOT NULL DEFAULT 'AED',
+    bill_date TEXT,
+    about TEXT,
+    said TEXT,
+    status TEXT NOT NULL DEFAULT 'check' CHECK (status IN ('ok', 'check')),
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_trade_entries_user ON trade_entries(user_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_trade_entries_created ON trade_entries(created_at);
+  CREATE TABLE IF NOT EXISTS trade_entry_files (
+    id SERIAL PRIMARY KEY,
+    entry_id INTEGER NOT NULL REFERENCES trade_entries(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('photo', 'voice')),
+    mime TEXT NOT NULL,
+    path TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_trade_entry_files ON trade_entry_files(entry_id);
+`);

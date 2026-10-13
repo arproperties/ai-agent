@@ -48,13 +48,13 @@ const outbox = () => {
 
 test('a module is the master\'s by right and anyone else\'s by a tick', async () => {
   const { boss, watch } = await people();
-  assert.deepEqual(await userModules(boss), ['notices']);
+  assert.deepEqual(await userModules(boss), ['notices', 'trade']);
   assert.deepEqual(await userModules(watch), []);
   assert.equal(await setModuleAccess(watch.id, ['notices']), 1);
   assert.deepEqual(await userModules(watch), ['notices']);
   const list = await listModuleAccess(watch.id);
   assert.equal(list.master, false);
-  assert.deepEqual(list.modules.map((m) => [m.key, m.on]), [['notices', true]]);
+  assert.deepEqual(list.modules.map((m) => [m.key, m.on]), [['notices', true], ['trade', false]]);
   assert.equal(await setModuleAccess(watch.id, []), 0, 'the caller sends the end state, so an empty list takes it away');
   assert.deepEqual(await userModules(watch), []);
 });

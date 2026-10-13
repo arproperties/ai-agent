@@ -12,6 +12,7 @@ import { isMaster } from './access.js';
 
 export const MODULES = [
   { key: 'notices', label: 'Tenant notices', about: 'Report something at a unit with a photo. Reem emails the notice to the tenant.' },
+  { key: 'trade', label: 'Sales & purchase', about: 'Record a sale or a purchase with a photo of the bill and a voice note. Reem reads the amount, the name and the date.' },
 ];
 const KEYS = MODULES.map((m) => m.key);
 const bad = (message, status) => Object.assign(new Error(message), { status });
