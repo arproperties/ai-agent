@@ -107,6 +107,13 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'and read_file opens one. <file_library> is only the newest few and <knowledge> is only a first guess at what matters, ' +
     'so a file missing from both may still be saved. Never say a file is not on the Shelf, or that you cannot open a saved file, ' +
     'until search_files has come back empty - and when a name was spoken, try another spelling first.');
+  // A member of staff sent a photo of a bill "for the school project" and was told it could
+  // not be recorded, and offered a to-do instead. It was on their Shelf all along.
+  parts.push(`Every file, photo or video ${user.name} sends in this chat is saved on their Shelf by the app as it arrives, sorted and searchable, ` +
+    'together with what they said about it - a bill, a receipt or an invoice like anything else. Only a voice note is not. ' +
+    'So when they send one and say what it is for ("this is for the school project"), answer in a line or two: what it is, and that it is saved on their Shelf for that. ' +
+    'Never say you cannot save, log or record it, and do not offer a to-do in its place. ' +
+    'Leave the Sales & purchase book out of it unless they ask about the book themselves.');
   // "The entire history of the Haley case" is a job for several searches and every file they
   // turn up, not for the one summary that happened to be recalled.
   parts.push('When asked for the history, the full picture or everything about a case, a person, a tenant, a unit, a contract or a project: ' +
@@ -206,7 +213,7 @@ const toClaude = (rows) => rows.map((r) => {
 });
 
 // Attachments are read in full for this turn, stored in the user's library, and organised in the background
-async function readAttachments(user, convId, files, send, team) {
+async function readAttachments(user, convId, files, send, team, said = '') {
   const blocks = [];
   const meta = [];
   const share = inlineShare(files.filter((f) => !isImage(f)).length);
@@ -217,7 +224,7 @@ async function readAttachments(user, convId, files, send, team) {
         const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
         blocks.push({ type: 'image', source: { type: 'base64', media_type: f.mimetype, data: f.buffer.toString('base64') } });
         blocks.push({ type: 'text', text: `<image name="${name}" />` }); // the name is how it can be attached to an email
-        if (!duplicate) processDocument(doc, f, undefined, team);
+        if (!duplicate) processDocument(doc, f, undefined, team, said);
         meta.push({ name, kind: 'image', docId: doc.id });
       } else if (isVideo(f)) {
         // The other way round from a document: ffmpeg reads off disk, so this one is
@@ -226,7 +233,7 @@ async function readAttachments(user, convId, files, send, team) {
         send('status', { label: `Watching ${name}…` });
         const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
         const content = await readVideo(doc.path);
-        if (!duplicate) processDocument(doc, f, content, team);
+        if (!duplicate) processDocument(doc, f, content, team, said);
         meta.push({ name, kind: 'video', docId: doc.id, snippet: content.slice(0, 600) });
         const inline = content.length > share ? `${content.slice(0, share)}\n…(truncated: the full reading is in the knowledge base)` : content;
         blocks.push({ type: 'text', text: `<video name="${name}">\n${inline}\n</video>` });
@@ -242,7 +249,7 @@ async function readAttachments(user, convId, files, send, team) {
         const content = await extractText({ ...f, originalname: name }); // read first, so unreadable files are never stored
         if (!content.trim()) throw new Error(`No readable text found in ${name}`);
         const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
-        if (!duplicate) processDocument(doc, f, content, team);
+        if (!duplicate) processDocument(doc, f, content, team, said);
         meta.push({ name, kind: 'doc', docId: doc.id, snippet: content.slice(0, 600) });
         const inline = content.length > share ? `${content.slice(0, share)}\n…(truncated: the full file is in the knowledge base)` : content;
         blocks.push({ type: 'text', text: `<file name="${name}">\n${inline}\n</file>` });
@@ -339,7 +346,7 @@ export async function chat(req, res) {
   // 1. Read attachments, then pick the agent (the router sees what the files are about)
   const prior = await recentMessages(convId);
   const currentAgentId = [...prior].reverse().find((m) => m.agent_id)?.agent_id;
-  const { blocks, meta } = await readAttachments(user, convId, files, send, team);
+  const { blocks, meta } = await readAttachments(user, convId, files, send, team, text);
   const savedFiles = meta.map(({ snippet, ...m }) => m);
   if (savedFiles.length) send('files', savedFiles); // lets the app link the just-sent attachments
   send('status', { label: 'Choosing the best agent…' });

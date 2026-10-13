@@ -153,6 +153,7 @@ Judge the file by its type and purpose, not by words that merely appear in it (a
  "date": "<the document's own date as YYYY-MM-DD, or null>",
  "expires": "<${EXPIRY_RULE}>"${roster}}
 Photos and videos of people, places or things with no document content go in "Photos". UAE documents write dates as DD/MM/YYYY.
+A first line "Sent with the words: ..." is what the user said as they sent it. When it says what the file is for (a project, a building, a person), put that in the summary and the tags. It is not part of the document.
 ${EXPIRY_GUIDE}${knownCompanies(companies)}${team}`,
   });
   const d = JSON.parse(out.match(/\{[\s\S]*\}/)[0]);
@@ -174,8 +175,11 @@ ${EXPIRY_GUIDE}${knownCompanies(companies)}${team}`,
  *
  * A file uploaded into a particular agent's shelf keeps that shelf: an explicit choice
  * outranks a guess. The classifier only decides for files that arrived without one.
+ *
+ * `said` is what the person wrote as they sent it in a chat ("this is for the school
+ * project"). It is filed with the file, so the Shelf can find the bill by what it was for.
  */
-export async function processDocument(doc, f, text, agents = []) {
+export async function processDocument(doc, f, text, agents = [], said = '') {
   try {
     // A video is read off disk rather than out of the buffer: ffmpeg needs a file, and
     // saveUpload has already written one.
@@ -185,8 +189,10 @@ export async function processDocument(doc, f, text, agents = []) {
       return extractText({ ...f, originalname: doc.name });
     };
     // Some PDFs carry NUL characters in their text layer, which Postgres refuses to store.
-    const content = (text ?? await read())?.replace(/\u0000/g, '');
+    let content = (text ?? await read())?.replace(/\u0000/g, '');
     if (!content?.trim()) throw new Error('No readable text found');
+    const words = String(said || '').replace(/[\u0000\s]+/g, ' ').trim().slice(0, 300);
+    if (words) content = `Sent with the words: "${words}"\n\n${content}`;
     const c = await classify(doc.name, content, doc.agent_id ? [] : agents, await userCompanies(doc.user_id));
     await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, expires_on = ?, company = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
       .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, c.expires, c.company, c.agentId, doc.id);

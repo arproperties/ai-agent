@@ -274,7 +274,8 @@ const BOOK = {
     'all of them, even when the list of entries is cut short - so take a total from there and never add the listed entries up yourself. ' +
     'from and to are the days an entry was recorded, both counted. Totals are per currency and leave out an entry whose amount could not be read (needs_checking). ' +
     'The master is shown everyone\'s entries; anyone else only their own - "whose" says which. ' +
-    'View only: an entry is added on the Sales & purchase screen, not here - say so if asked. ' +
+    'View only: an entry is added on the Sales & purchase screen, not here - say so only if asked to put something in the book. ' +
+    'A bill or receipt sent in the chat is not a request for the book: it is saved on the Shelf like any file, and this tool is not needed for it. ' +
     'This is not the Shelf: contracts and other documents are found with the Shelf tools.',
   input_schema: {
     type: 'object',
