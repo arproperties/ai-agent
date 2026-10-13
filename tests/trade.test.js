@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
 
 const { MODULES, userModules, listModuleAccess, setModuleAccess, needsModule, needsModuleUnless, giveToEveryoneOnce } = await import('../server/modules.js');
-const { tidy, monthAndDay, createEntry, addVoice, listEntries, deleteEntry } = await import('../server/trade.js');
+const { tidy, monthAndDay, dayStart, createEntry, addVoice, listEntries, deleteEntry } = await import('../server/trade.js');
 
 test.after(() => closeDb());
 
@@ -197,6 +197,35 @@ test('a person sees their own entries; the master sees everyone\'s, and the tota
   assert.equal(mine.entries[0].by, 'Sam');
   assert.deepEqual(mine.totals, [{ kind: 'sale', currency: 'AED', today: 150.5, month: 150.5 }]);
 
+  const find = async (who, q) => (await listEntries(who, { q })).entries.map((e) => e.party);
+  assert.deepEqual(await find(boss, 'sam'), ['D', 'B', 'A'], 'by who recorded it');
+  assert.deepEqual(await find(boss, '50.5'), ['B'], 'by the amount');
+  assert.deepEqual(await find(boss, ' c '), ['C'], 'by the name, whatever the case');
+  assert.deepEqual(await find(sam, 'c'), [], 'a search finds nothing of somebody else’s');
+  assert.deepEqual(await find(boss, '%'), [], 'a percent sign is a percent sign');
+  assert.deepEqual(await find(boss, '_'), [], 'and an underscore an underscore');
+  assert.deepEqual(await find(boss, '0.5'), ['B'], 'part of an amount is enough');
+  assert.deepEqual((await listEntries(sam, { q: 'zzz' })).totals, mine.totals, 'the totals are of everything, whatever is searched for');
+  assert.equal(mine.found, null, 'with nothing narrowed there is nothing found to add up');
+  assert.deepEqual((await listEntries(boss, { q: 'sam' })).found, [{ kind: 'sale', currency: 'AED', entries: 3, total: 1150.5 }]);
+
+  // The days are Dubai's, and both ends count.
+  const ymd = (secs) => new Date((secs + 4 * 3600) * 1000).toISOString().slice(0, 10);
+  const today = ymd(Date.now() / 1000);
+  const then = ymd(month - 86400);
+  const on = async (who, from, to) => (await listEntries(who, { from, to })).entries.map((e) => e.party);
+  assert.deepEqual(await on(boss, today, today), [null, 'C', 'B', 'A']);
+  assert.deepEqual(await on(boss, then, then), ['D']);
+  assert.deepEqual(await on(boss, then, today), ['D', null, 'C', 'B', 'A']);
+  assert.deepEqual(await on(boss, today, then), ['D', null, 'C', 'B', 'A'], 'the wrong way round is still the same stretch');
+  assert.deepEqual(await on(sam, today, today), ['B', 'A']);
+  assert.deepEqual((await listEntries(boss, { from: today, to: today, q: 'sam' })).found, [{ kind: 'sale', currency: 'AED', entries: 2, total: 150.5 }]);
+  assert.deepEqual((await listEntries(boss, { from: today, to: today })).found, [
+    { kind: 'purchase', currency: 'AED', entries: 2, total: 30 },
+    { kind: 'sale', currency: 'AED', entries: 2, total: 150.5 },
+  ], 'an entry with no amount is counted, and adds nothing');
+  assert.deepEqual(await on(boss, 'last week', '2026-02-30'), ['D', null, 'C', 'B', 'A'], 'a day that is not a day narrows nothing');
+
   const all = await listEntries(boss);
   assert.equal(all.entries.length, 5);
   assert.deepEqual(all.totals, [
@@ -204,6 +233,13 @@ test('a person sees their own entries; the master sees everyone\'s, and the tota
     { kind: 'sale', currency: 'AED', today: 150.5, month: 150.5 },
   ]);
   await sweep(boss);
+});
+
+test('a chosen day begins at midnight in Dubai', () => {
+  assert.equal(dayStart('2026-10-13'), Date.UTC(2026, 9, 12, 20) / 1000);
+  assert.equal(dayStart('2026-02-30'), null);
+  assert.equal(dayStart('13/10/2026'), null);
+  assert.equal(dayStart(undefined), null);
 });
 
 test('today and this month begin at midnight in Dubai', () => {

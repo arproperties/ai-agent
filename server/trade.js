@@ -142,12 +142,44 @@ export function monthAndDay(now = Date.now() / 1000) {
 
 const SELECT = 'SELECT e.*, u.name AS by_name FROM trade_entries e LEFT JOIN users u ON u.id = e.user_id';
 
-/** The latest entries and what they add up to: everybody's for the master, their own for anyone else. */
-export async function listEntries(user) {
+// What a search looks through: the name, what it was for, the words spoken, the amount
+// as it is written, and who recorded it.
+const FOUND = `(e.party ILIKE ? OR e.about ILIKE ? OR e.said ILIKE ? OR e.amount::text ILIKE ? OR u.name ILIKE ?)`;
+const like = (q) => `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
+/** When a 'YYYY-MM-DD' day begins in Dubai, in epoch seconds; null for anything that is not a day. */
+export function dayStart(s) {
+  const ms = /^\d{4}-\d{2}-\d{2}$/.test(s || '') ? Date.parse(`${s}T00:00:00Z`) : NaN;
+  return Number.isNaN(ms) || !new Date(ms).toISOString().startsWith(s) ? null : ms / 1000 - DUBAI;
+}
+
+/**
+ * The latest entries and what they add up to: everybody's for the master, their own for
+ * anyone else. q narrows the entries to the ones that mention it, and from and to (days in
+ * Dubai, both counted) to the ones recorded then, reaching back through the whole book and
+ * not only the latest. totals are always of everything; found is what the narrowed entries
+ * add up to, all of them and not only the ones listed, and is null when nothing narrows.
+ */
+export async function listEntries(user, { q = '', from = '', to = '' } = {}) {
   const all = isMaster(user);
-  const rows = all
-    ? await db.prepare(`${SELECT} ORDER BY e.id DESC LIMIT 200`).all()
-    : await db.prepare(`${SELECT} WHERE e.user_id = ? ORDER BY e.id DESC LIMIT 100`).all(user.id);
+  const find = String(q ?? '').trim().slice(0, 100);
+  const a = dayStart(from);
+  const b = dayStart(to);
+  const [since, until] = a != null && b != null && b < a ? [b, a] : [a, b]; // the wrong way round is still a stretch
+  const narrow = [
+    ...(find ? [[FOUND, Array(5).fill(like(find))]] : []),
+    ...(since != null ? [['e.created_at >= ?', [since]]] : []),
+    ...(until != null ? [['e.created_at < ?', [until + 86400]]] : []),
+  ];
+  const conds = [...(all ? [] : [['e.user_id = ?', [user.id]]]), ...narrow];
+  const where = conds.length ? `WHERE ${conds.map((c) => c[0]).join(' AND ')}` : '';
+  const args = conds.flatMap((c) => c[1]);
+  const rows = await db.prepare(`${SELECT} ${where} ORDER BY e.id DESC LIMIT ${all ? 200 : 100}`).all(...args);
+  const found = narrow.length
+    ? (await db.prepare(`SELECT e.kind, e.currency, count(*)::int AS entries, COALESCE(sum(e.amount), 0) AS total
+        FROM trade_entries e LEFT JOIN users u ON u.id = e.user_id ${where} GROUP BY e.kind, e.currency ORDER BY e.kind, e.currency`).all(...args))
+      .map((s) => ({ kind: s.kind, currency: s.currency, entries: s.entries, total: Number(s.total) }))
+    : null;
   const files = await filesOf(rows.map((r) => r.id));
   const { day, month } = monthAndDay();
   const sums = await db.prepare(`SELECT kind, currency, COALESCE(sum(amount) FILTER (WHERE created_at >= ?), 0) AS today, sum(amount) AS month
@@ -157,6 +189,7 @@ export async function listEntries(user) {
   return {
     entries: rows.map((e) => out(e, files, user, now)),
     totals: sums.map((s) => ({ kind: s.kind, currency: s.currency, today: Number(s.today), month: Number(s.month) })),
+    found,
   };
 }
 
@@ -233,7 +266,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024, files: MAX_PHOTOS + 1 } });
 
 tradeRoutes.get('/', wrap(async (req, res) => {
-  res.json(await listEntries(req.user));
+  res.json(await listEntries(req.user, { q: req.query.q, from: req.query.from, to: req.query.to }));
 }));
 
 tradeRoutes.post('/', upload.fields([{ name: 'photos', maxCount: MAX_PHOTOS }, { name: 'voice', maxCount: 1 }]), wrap(async (req, res) => {
