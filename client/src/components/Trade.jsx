@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, Loader2, X, AlertTriangle, Camera, ImagePlus, Mic, Square, Check, CheckCircle2, Trash2, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { ChevronLeft, Loader2, X, AlertTriangle, Camera, ImagePlus, Mic, Square, Check, CheckCircle2, Trash2, ArrowUpRight, ArrowDownLeft, Search } from 'lucide-react';
 import { api } from '../lib/api';
+import DateRange, { rangeLabel } from './DateRange';
 
 // Sales & purchase: the book a member of staff keeps without typing anything. Sale or
 // Purchase, a photo of the bill, a few spoken words in any language, Save - and Reem
@@ -319,10 +320,21 @@ export default function TradePage({ me, onBack }) {
   const [error, setError] = useState('');
   const [last, setLast] = useState(null); // the entry just saved, to show what Reem read
   const [show, setShow] = useState('all');
-  const load = useCallback(() => api.get('/trade').then(setData).catch((e) => setError(e.message)), []);
-  useEffect(() => { load(); }, [load]);
+  const [find, setFind] = useState('');
+  const [dates, setDates] = useState({ from: '', to: '' }); // the days recorded, both counted
+  const asked = useRef(0); // only the latest search may fill the list: an earlier one can come back late
+  const load = useCallback(() => {
+    const mine = ++asked.current;
+    const ask = new URLSearchParams({ ...(find.trim() ? { q: find.trim() } : {}), ...(dates.from ? dates : {}) }).toString();
+    return api.get(ask ? `/trade?${ask}` : '/trade')
+      .then((d) => { if (mine === asked.current) setData(d); }).catch((e) => setError(e.message));
+  }, [find, dates]);
+  // Straight away the first time and when the box is emptied; a moment after the last key otherwise.
+  useEffect(() => { const t = setTimeout(load, find.trim() ? 300 : 0); return () => clearTimeout(t); }, [load, find]);
 
   const entries = (data?.entries || []).filter((e) => e.id !== last?.id && (show === 'all' || e.kind === show));
+  const narrowed = !!(find.trim() || dates.from);
+  const found = (data?.found || []).filter((f) => show === 'all' || f.kind === show);
   return (
     <div className="sky absolute inset-0 z-20 flex flex-col">
       <header className="px-4 pb-3 pt-safe md:px-8">
@@ -341,8 +353,18 @@ export default function TradePage({ me, onBack }) {
             ? <JustSaved key={last.id} e={last} onChanged={(e) => { setLast(e); load(); }} onDone={() => { setLast(null); load(); }} />
             : <NewEntry onSaved={(e) => { setLast(e); load(); }} />}
           {data && <Totals totals={data.totals} />}
-          {data?.entries.length > 0 && (
+          {data && (data.entries.length > 0 || narrowed) && (
             <div className="space-y-3 pt-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-stroke bg-white/[0.04] px-4 py-2.5 focus-within:border-p1/60">
+                  <Search size={15} className="shrink-0 text-mute" />
+                  <input value={find} onChange={(e) => setFind(e.target.value)} aria-label="Search entries"
+                    placeholder={master ? 'Search a name, an amount, an item or a person' : 'Search a name, an amount or an item'}
+                    className="w-full bg-transparent text-sm outline-none" />
+                  {find && <button type="button" onClick={() => setFind('')} aria-label="Clear" className="text-mute hover:text-txt"><X size={15} /></button>}
+                </label>
+                <DateRange value={dates} onChange={setDates} className="sm:w-56" />
+              </div>
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm text-mute">{master ? 'Everyone’s entries' : 'Your entries'}</p>
                 <span className="flex rounded-full border border-stroke p-0.5">
@@ -352,7 +374,23 @@ export default function TradePage({ me, onBack }) {
                   ))}
                 </span>
               </div>
+              {/* What the search or the dates add up to: all of it, not only the entries listed below. */}
+              {narrowed && found.length > 0 && (
+                <div className="flex flex-wrap gap-x-5 gap-y-1 rounded-2xl border border-stroke bg-white/[0.03] px-4 py-2.5 text-sm">
+                  {found.map((f) => (
+                    <span key={`${f.kind}-${f.currency}`}>
+                      <span className={KIND[f.kind].tone}>{f.entries} {f.entries === 1 ? KIND[f.kind].label.toLowerCase() : `${KIND[f.kind].label.toLowerCase()}s`}</span>
+                      <span className="ml-1.5 tabular-nums">{money(f.total, f.currency)}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
               {entries.map((e) => <Entry key={e.id} e={e} master={master} onChanged={load} />)}
+              {entries.length === 0 && (
+                <p className="py-4 text-center text-sm text-mute">
+                  {!narrowed ? 'Nothing here yet.' : `Nothing found${find.trim() ? ` for “${find.trim()}”` : ''}${dates.from ? ` ${dates.from === dates.to ? 'on' : 'from'} ${rangeLabel(dates)}` : ''}.`}
+                </p>
+              )}
             </div>
           )}
         </div>
