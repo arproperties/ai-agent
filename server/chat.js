@@ -17,7 +17,7 @@ import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
 import { chatAgents } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
 import { userModules } from './modules.js';
-import { pictureTag, makePicture } from './pictures.js';
+import { pictureTag, makePicture, pictureKit } from './pictures.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
 // files. The agent's model costs several times the filing model, and the whole turn is re-sent
@@ -37,7 +37,7 @@ const webSearch = (model) => ({
   max_uses: 5, // location hint isn't used: the API doesn't accept country AE; the system prompt keeps searches UAE-focused
 });
 
-function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = []) {
+function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false) {
   const others = team.filter((a) => a.id !== agent.id).map((a) => a.name);
   const parts = [
     agent.persona || `You are ${agent.name}, a helpful assistant.`,
@@ -80,6 +80,17 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'or <!--export:dxf--> for AutoCAD, and one short line such as "Here it is as a PDF." This comes before the document markers above whenever the thing to convert is a drawing. ' +
     'For any other format for a drawing (video, audio, Word or anything else), say in one line that drawings come as PDF, image or AutoCAD. ' +
     'A written document can only be made into a PDF.');
+  // Only for those given Pictures (server/pictures.js). Without this paragraph a request for
+  // an image was answered in words, or with the line drawing above.
+  if (canPicture) {
+    parts.push('You can also make pictures. make_picture draws a finished, illustrated infographic and the app shows it in the chat. ' +
+      `Use it straight away, without asking first, whenever ${user.name} wants an image: "generate an image", "make a picture", "show me in a picture", ` +
+      '"an infographic", "a poster", "a visual", "illustrate this", however it is worded and in any language. Make the picture rather than describing one. ' +
+      'Only when this message itself asks to see something: "how does an AC work" is a question and is answered in words, ' +
+      'however well a picture would suit it and whatever they asked for earlier or you remember about them. ' +
+      'The drawing block above is still the way for what has to be exact or to size - a floor plan, a layout, a seating plan, an org chart - and for changing a drawing already made. ' +
+      'A picture takes half a minute and is paid for: one for each request, and never a second unless they ask.');
+  }
   parts.push(`You keep ${user.name}'s to-do list: add_todo writes something down, list_todos reads it back, ` +
     'complete_todo ticks one off and reschedule_todo moves or drops a reminder. ' +
     'Add a todo whenever they ask you to remember something, ask to be reminded, or say they must do something later — and say you have. ' +
@@ -320,8 +331,9 @@ export async function chat(req, res) {
 
   // /explain, /breakdown, /explore: drawn rather than answered, for those given Pictures.
   // With a file attached, or without the module, the tag is only words and the turn is an ordinary one.
-  const asked = !files.length && pictureTag(text);
-  if (asked && (await userModules(user)).includes('pictures')) return pictureTurn({ user, team, convId, text, asked, send, res });
+  const canPicture = (await userModules(user)).includes('pictures');
+  const asked = canPicture && !files.length && pictureTag(text);
+  if (asked) return pictureTurn({ user, team, convId, text, asked, send, res });
 
   // 1. Read attachments, then pick the agent (the router sees what the files are about)
   const prior = await recentMessages(convId);
@@ -357,6 +369,16 @@ export async function chat(req, res) {
     await buildingKit(user),
     await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),
     ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
+  // A picture asked for in their own words. It is hung on this reply; its own words are
+  // what the reply says if the agent adds none.
+  const pictures = [];
+  let caption = '';
+  if (canPicture) {
+    kits.push(pictureKit(user, {
+      conversationId: convId,
+      onPicture: (drawn, says) => { pictures.push(...drawn); caption = says; send('picture', pictures); },
+    }));
+  }
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
   const library = await libraryCatalog(user); // same every turn, so read it once
@@ -389,7 +411,7 @@ export async function chat(req, res) {
       stream = claude.messages.stream({
         model: agent.model,
         max_tokens: 16000,
-        system: systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried),
+        system: systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture),
         tools: [webSearch(agent.model), ...kits.flatMap((k) => k.definitions)],
         // The last round has to be the answer: a case history once spent every round
         // searching and reading, and the person got nothing back at all.
@@ -433,14 +455,15 @@ export async function chat(req, res) {
     }
   }
   finished = true;
+  if (!reply && caption) emit(caption); // a picture with nothing said about it still reads as a reply
 
   let messageId = null;
   const official = (u) => /\.gov\.ae|difc|adgm|u\.ae/i.test(new URL(u.url).hostname) ? 0 : 1;
   const sources = (cited.size ? [...cited.values()] : [...searched.values()].sort((a, b) => official(a) - official(b))).slice(0, 6);
   if (sources.length) send('sources', sources);
   if (reply) {
-    ({ id: messageId } = await db.prepare('INSERT INTO messages (conversation_id, agent_id, role, content, sources) VALUES (?, ?, ?, ?, ?) RETURNING id')
-      .run(convId, agent.id, 'assistant', reply.trim(), JSON.stringify(sources)));
+    ({ id: messageId } = await db.prepare('INSERT INTO messages (conversation_id, agent_id, role, content, files, sources) VALUES (?, ?, ?, ?, ?, ?) RETURNING id')
+      .run(convId, agent.id, 'assistant', reply.trim(), JSON.stringify(pictures), JSON.stringify(sources)));
   }
   await db.prepare('UPDATE conversations SET updated_at = extract(epoch from now()) WHERE id = ?').run(convId);
   if (!res.writableEnded) { send('done', { messageId, userMessageId }); res.end(); }

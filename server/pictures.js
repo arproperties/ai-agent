@@ -141,6 +141,57 @@ export async function makePicture(user, conversationId, { tag, topic }, { plan =
   };
 }
 
+// ---------- asked for in their own words ----------
+
+// The tags are the shortcut. Asked for any other way ("generate an image to explain how
+// an AC works"), the agent calls this, and picks which of the three kinds fits.
+export const PICTURE_TOOLS = [{
+  name: 'make_picture',
+  description: 'Draw a finished, illustrated infographic and show it in the chat. Use it whenever the user wants an image, a picture, ' +
+    'an infographic, a poster or a visual of something, however they word it and in any language. Never for a question that does not ask ' +
+    'to see something. It takes about half a minute and is paid for.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      style: {
+        type: 'string',
+        enum: Object.keys(TAGS),
+        description: `explain: ${TAGS.explain.asks}, as a labelled diagram with numbered steps. breakdown: ${TAGS.breakdown.asks}, as a box for each part. ` +
+          `explore: ${TAGS.explore.asks}, as a topic map.`,
+      },
+      topic: { type: 'string', description: 'What the picture is of, in the user\'s own words and language, with any figures or names they gave. E.g. "how an AC works".' },
+    },
+    required: ['style', 'topic'],
+  },
+}];
+
+const PER_TURN = 2; // a reply that kept drawing would keep spending
+
+/** Same shape as todoKit, so chat.js can hold it with the others. onPicture(files, caption) hangs it on the reply. */
+export function pictureKit(user, { conversationId, onPicture }, { make = makePicture } = {}) {
+  let drawn = 0;
+  return {
+    definitions: PICTURE_TOOLS,
+    status: () => 'Drawing your picture…',
+    run: async (block) => {
+      const say = (content, is_error) => ({ type: 'tool_result', tool_use_id: block.id, content, ...(is_error ? { is_error } : {}) });
+      const topic = String(block.input?.topic || '').trim().slice(0, 500);
+      if (!topic) return say('Say what the picture is of.', true);
+      if (drawn >= PER_TURN) return say(`Only ${PER_TURN} pictures can be made in one reply. Ask the user before making more.`, true);
+      drawn++;
+      try {
+        const { content, files } = await make(user, conversationId, { tag: TAGS[block.input?.style] ? block.input.style : 'explain', topic });
+        onPicture(files, content);
+        return say('The picture is drawn and is already showing in the chat, above your reply, with a link to save it. This is what it says:\n\n' +
+          `${content}\n\nDo not describe it or repeat its words. Reply with one short line at most.`);
+      } catch (e) {
+        console.error('[picture]', e.message);
+        return say('The picture could not be drawn. Say so plainly and offer to try again.', true);
+      }
+    },
+  };
+}
+
 /** A picture, for the person it was drawn for. The master can open anyone's, as with their chats. */
 export async function pictureFor(user, id) {
   const p = await db.prepare('SELECT * FROM pictures WHERE id = ?').get(Number(id) || 0);

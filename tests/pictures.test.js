@@ -4,7 +4,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
 
 const { MODULES, userModules, setModuleAccess } = await import('../server/modules.js');
-const { TAGS, pictureTag, tidyPlan, imagePrompt, makePicture, pictureFor } = await import('../server/pictures.js');
+const { TAGS, PICTURE_TOOLS, pictureTag, tidyPlan, imagePrompt, makePicture, pictureFor, pictureKit } = await import('../server/pictures.js');
 const { pictureTurn } = await import('../server/chat.js');
 
 test.after(() => closeDb());
@@ -139,6 +139,61 @@ test('Pictures is a module the master ticks; nobody starts with it', async () =>
   assert.ok(!(await userModules(sam)).includes('pictures'));
   await setModuleAccess(sam.id, ['pictures']);
   assert.deepEqual(await userModules(sam), ['pictures']);
+});
+
+// ---------- asked for in their own words ----------
+
+/** A kit whose drawing is a stand-in, with what it was asked to draw and what it hung on the reply. */
+const kit = (make) => {
+  const asked = [];
+  const hung = [];
+  const user = { id: 1 };
+  const k = pictureKit(user, { conversationId: 5, onPicture: (files, caption) => hung.push({ files, caption }) }, {
+    make: make ?? (async (u, convId, q) => { asked.push({ u, convId, q }); return { content: `**${q.topic}**`, files: [{ name: 'p.jpg', kind: 'picture', pictureId: asked.length }] }; }),
+  });
+  const call = (input) => k.run({ id: 'toolu_1', name: 'make_picture', input });
+  return { k, user, asked, hung, call };
+};
+
+test('the agent can make a picture when one is asked for in plain words, in the kind it chooses', async () => {
+  const { k, user, asked, hung, call } = kit();
+  assert.deepEqual(k.definitions, PICTURE_TOOLS);
+  assert.deepEqual(PICTURE_TOOLS[0].input_schema.properties.style.enum, ['explain', 'breakdown', 'explore']);
+  assert.equal(k.status('make_picture', {}), 'Drawing your picture…');
+
+  const out = await call({ style: 'breakdown', topic: ' service charges ' });
+  assert.deepEqual(asked, [{ u: user, convId: 5, q: { tag: 'breakdown', topic: 'service charges' } }]);
+  assert.deepEqual(hung, [{ files: [{ name: 'p.jpg', kind: 'picture', pictureId: 1 }], caption: '**service charges**' }]);
+  assert.equal(out.tool_use_id, 'toolu_1');
+  assert.ok(!out.is_error);
+  assert.match(out.content, /already showing in the chat/);
+  assert.match(out.content, /\*\*service charges\*\*/, 'the agent is told what the picture says, so it does not contradict it');
+
+  await call({ style: 'watercolour', topic: 'how an AC works' });
+  assert.equal(asked[1].q.tag, 'explain', 'a kind that does not exist is the ordinary one');
+});
+
+test('one reply cannot keep drawing, and a picture with no subject is never paid for', async () => {
+  const { asked, hung, call } = kit();
+  assert.ok((await call({ style: 'explain', topic: '  ' })).is_error);
+  assert.ok((await call({})).is_error);
+  assert.equal(asked.length, 0);
+
+  await call({ style: 'explain', topic: 'one' });
+  await call({ style: 'explain', topic: 'two' });
+  const third = await call({ style: 'explain', topic: 'three' });
+  assert.ok(third.is_error);
+  assert.match(third.content, /Only 2 pictures/);
+  assert.equal(asked.length, 2);
+  assert.equal(hung.length, 2);
+});
+
+test('a picture that cannot be drawn is told to the agent, not thrown at the chat', async () => {
+  const { hung, call } = kit(async () => { throw new Error('quota'); });
+  const out = await call({ style: 'explore', topic: 'types of AC' });
+  assert.ok(out.is_error);
+  assert.match(out.content, /could not be drawn/);
+  assert.equal(hung.length, 0);
 });
 
 // ---------- the chat turn ----------
