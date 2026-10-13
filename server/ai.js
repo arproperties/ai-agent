@@ -1,11 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI, { toFile } from 'openai';
-import { DATA_DIR, FAST_MODEL } from './config.js';
+import { DATA_DIR, FAST_MODEL, IMAGE_MODEL } from './config.js';
 
 // Claude: chat, reading attachments, learning memories
 export const claude = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY });
 
-// OpenAI: voice only (speech-to-text and text-to-speech)
+// OpenAI: voice (speech-to-text and text-to-speech) and drawing pictures
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
 // language: an ISO 639-1 code ('ar', 'ur'…) when the caller knows what is being spoken.
@@ -64,6 +64,16 @@ export async function speakStream(text, voice, tone, signal) {
     response_format: 'mp3',
     stream_format: 'audio',
   }, { signal }); // stops generating (and billing) the moment the listener gives up
+}
+
+// A picture from a description, as JPEG bytes. Landscape, to fit an infographic; JPEG
+// because a PNG of one is several times the size on disk and over a phone's connection.
+export async function drawPicture(prompt) {
+  if (!openai) throw new Error('Pictures are not configured (OPENAI_API_KEY missing)');
+  const res = await openai.images.generate({
+    model: IMAGE_MODEL, prompt, size: '1536x1024', quality: 'medium', output_format: 'jpeg', output_compression: 85, n: 1,
+  });
+  return Buffer.from(res.data[0].b64_json, 'base64');
 }
 
 // Quick one-shot Claude call returning plain text

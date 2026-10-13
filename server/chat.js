@@ -16,6 +16,8 @@ import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
 import { chatAgents } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
+import { userModules } from './modules.js';
+import { pictureTag, makePicture } from './pictures.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
 // files. The agent's model costs several times the filing model, and the whole turn is re-sent
@@ -265,6 +267,38 @@ export async function deleteMessage(userId, id) {
   return r.changes > 0;
 }
 
+/**
+ * The turn for a message that opened with a picture tag: no agent is picked and nothing is
+ * recalled, the picture is drawn and hung on a reply. Answered by whoever was already
+ * talking in this chat, so the conversation keeps one face.
+ */
+export async function pictureTurn({ user, team, convId, text, asked, send, res }, { make = makePicture } = {}) {
+  const prior = await recentMessages(convId);
+  const current = [...prior].reverse().find((m) => m.agent_id)?.agent_id;
+  const agent = team.find((a) => a.id === current) ?? team[0];
+  send('agent', { id: agent.id, why: 'Picture' });
+  const { id: userMessageId, repeat } = await saveQuestion(convId, text, []);
+  if (repeat) send('repeat', { userMessageId });
+
+  let messageId = null;
+  try {
+    let reply = { content: `Say what to draw after the tag, for example: /${asked.tag} how an AC works`, files: [] };
+    if (asked.topic) {
+      send('status', { label: 'Drawing your picture…' });
+      reply = await make(user, convId, asked);
+    }
+    ({ id: messageId } = await db.prepare('INSERT INTO messages (conversation_id, agent_id, role, content, files) VALUES (?, ?, ?, ?, ?) RETURNING id')
+      .run(convId, agent.id, 'assistant', reply.content, JSON.stringify(reply.files)));
+    if (reply.files.length) send('picture', reply.files);
+    send('delta', { text: reply.content });
+  } catch (e) {
+    console.error('[picture]', e.message);
+    send('error', { message: 'Reem could not draw that picture. Please try again.' });
+  }
+  await db.prepare('UPDATE conversations SET updated_at = extract(epoch from now()) WHERE id = ?').run(convId);
+  if (!res.writableEnded) { send('done', { messageId, userMessageId }); res.end(); }
+}
+
 export async function chat(req, res) {
   const user = req.user;
   const team = await chatAgents(user);
@@ -283,6 +317,11 @@ export async function chat(req, res) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
   const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   send('meta', { conversationId: convId });
+
+  // /explain, /breakdown, /explore: drawn rather than answered, for those given Pictures.
+  // With a file attached, or without the module, the tag is only words and the turn is an ordinary one.
+  const asked = !files.length && pictureTag(text);
+  if (asked && (await userModules(user)).includes('pictures')) return pictureTurn({ user, team, convId, text, asked, send, res });
 
   // 1. Read attachments, then pick the agent (the router sees what the files are about)
   const prior = await recentMessages(convId);

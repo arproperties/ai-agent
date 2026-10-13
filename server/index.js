@@ -43,6 +43,7 @@ import { tenantCareRoutes, startTenantCare } from './tenantCare.js';
 import { moduleRoutes, needsModule, needsModuleUnless, userModules, giveToEveryoneOnce } from './modules.js';
 import { noticeRoutes } from './notices.js';
 import { tradeRoutes } from './trade.js';
+import { pictureRoutes } from './pictures.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -81,6 +82,7 @@ app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks 
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
 app.use('/api/trade', tradeRoutes); // the sales and purchase book: a photo of the bill, a voice note, and Reem reads the rest
+app.use('/api/pictures', pictureRoutes); // the pictures a chat drew for /explain, /breakdown and /explore
 app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/checklists', needsModule('checklists'), checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress

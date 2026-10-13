@@ -1485,3 +1485,20 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_trade_entry_files ON trade_entry_files(entry_id);
 `);
+
+// Pictures (server/pictures.js): an infographic drawn for a chat message that opened with
+// /explain, /breakdown or /explore. The file is under data/pictures; the reply's message
+// carries the picture's id in its files.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS pictures (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    tag TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    title TEXT NOT NULL,
+    path TEXT NOT NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_pictures_user ON pictures(user_id, id DESC);
+`);

@@ -172,6 +172,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           else if (event === 'notice') flash(d.message);
           else if (event === 'error') { failed = true; update({ error: d.message }); }
           else if (event === 'sources') update({ sources: d });
+          else if (event === 'picture') { update({ files: d }); toBottom(); } // drawn for /explain, /breakdown or /explore
           else if (event === 'done') {
             savedId = d.messageId;
             // their own message gets its saved id too, so it can be made into a PDF

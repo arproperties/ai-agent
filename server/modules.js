@@ -32,6 +32,8 @@ export const MODULES = [
   { key: 'checklists', label: 'Checklists', about: 'The points of a job, ticked each time it is done.', everyone: true },
   { key: 'memory', label: 'Memory', about: 'See and remove what Reem remembers about them.', everyone: true },
   { key: 'email', label: 'Email', about: 'Connect their own mailbox and see what Reem has sent from it.', everyone: true },
+  // Not a screen: what a chat does with /explain, /breakdown and /explore (server/pictures.js).
+  { key: 'pictures', label: 'Pictures', about: 'Start a chat message with /explain, /breakdown or /explore and Reem draws it as a picture. Each picture is paid for.' },
 ];
 const KEYS = MODULES.map((m) => m.key);
 const bad = (message, status) => Object.assign(new Error(message), { status });

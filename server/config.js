@@ -23,6 +23,8 @@ export const MODELS = [
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 · fastest' },
 ];
 export const FAST_MODEL = 'claude-haiku-4-5-20251001';
+// OpenAI's image model, for the pictures a chat tag asks for (server/pictures.js).
+export const IMAGE_MODEL = process.env.IMAGE_MODEL || 'gpt-image-2.5-sunburst';
 export const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'];
 export const COLORS = ['violet', 'blue', 'teal', 'amber', 'rose', 'slate'];
 export const AGENT_ICONS = ['bot', 'sparkles', 'building', 'home', 'briefcase', 'headset', 'users', 'pen', 'megaphone', 'graduation', 'brain', 'code', 'calculator', 'wallet', 'scale', 'stethoscope', 'dumbbell', 'heart', 'chef', 'plane', 'shopping', 'camera', 'globe', 'rocket'];

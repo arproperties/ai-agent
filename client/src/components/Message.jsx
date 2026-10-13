@@ -54,6 +54,25 @@ function Attachments({ files, onOpenFile }) {
   );
 }
 
+// A picture Reem drew for /explain, /breakdown or /explore (server/pictures.js): shown
+// whole, opened full size by a tap, with a way to keep it. The frame holds the picture's
+// shape before it loads, so the chat does not jump.
+function Pictures({ files }) {
+  const pics = (files || []).filter((f) => f.pictureId);
+  return pics.map((f) => (
+    <div key={f.pictureId} className="mb-3 max-w-2xl">
+      <a href={`/api/pictures/${f.pictureId}`} target="_blank" rel="noreferrer" aria-label={`Open ${f.name}`}
+        className="block aspect-[3/2] overflow-hidden rounded-2xl border border-stroke bg-white transition hover:border-white/30">
+        <img src={`/api/pictures/${f.pictureId}`} alt={f.name} className="size-full object-contain" />
+      </a>
+      <a href={`/api/pictures/${f.pictureId}?download=1`} download={f.name}
+        className="mt-1.5 inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs text-mute hover:bg-white/10 hover:text-txt">
+        <Icon name="download" size={14} /> Save picture
+      </a>
+    </div>
+  ));
+}
+
 // What the read-aloud button shows in each state. Tapping always does the
 // obvious thing: start, pause, resume — or, while it is still being generated,
 // give up waiting.
@@ -145,6 +164,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
           {msg.why && <span className="truncate">· {msg.why}</span>}
         </div>
       )}
+      <Pictures files={msg.files} />
       {msg.error ? (
         <div className="rounded-2xl border border-bad/30 bg-bad/10 px-4 py-3 text-sm">{msg.error}</div>
       ) : msg.content ? (
