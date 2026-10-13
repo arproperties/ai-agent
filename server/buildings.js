@@ -3,28 +3,27 @@ import { Readable } from 'node:stream';
 import { db, tx } from './db.js';
 import { requireMaster } from './auth.js';
 import { sendPush } from './push.js';
-import { lookupCode } from './hrLinks.js';
 import { askSaifsys, fileFromSaifsys, saifsysConfigured, dubaiHour } from './saifsys/client.js';
 
-// Buildings: who runs each one, and the cleaners and technicians given to them.
+// Buildings: who runs each one, and the cleaning and maintenance jobs done in it.
 //
-// The master sets it up: a building has one administrator (a Reem account), someone for
-// renewals when that is not the administrator, and its field staff by HR employee code.
+// The buildings are saifsys's own, under saifsys's names - the same list Tenant notices
+// reads. Nothing is typed here: every building saifsys has is copied in as one row, and
+// the master picks only two things for it, its administrator (a Reem account) and someone
+// for renewals when that is not the administrator.
+//
 // The field staff have no Reem account - they do their jobs on the saifsys staff app.
 // This is the administrator's window onto that work: the jobs in their building, with
 // the photos, the checklist and the messages, and a buzz when something needs them.
 //
 // Nothing here writes to saifsys. The jobs come from its Operations module through
 // api/jarvis/v1/modules/operations.php, which answers only for the scope it is sent:
-// the saifsys buildings behind this one, and its staff (for their jobs that carry no
-// building). So an administrator can never be shown another building's work.
+// this one building. So an administrator can never be shown another building's work,
+// and a job saifsys holds with no building on it is shown to nobody here.
 
-const MAX_NAME = 80;
-export const KINDS = ['cleaner', 'technician'];
 const NOW = 'extract(epoch from now())::bigint';
 
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
-const line = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const isMaster = (user) => user?.role === 'master';
 
 // ---------- reading ----------
@@ -34,141 +33,88 @@ const isMaster = (user) => user?.role === 'master';
  * administrator, none for anyone else.
  */
 export async function listBuildings(user) {
-  const rows = await db.prepare(`SELECT b.id, b.name, b.admin_id, a.name AS admin_name, b.renewals_id, r.name AS renewals_name
+  const rows = await db.prepare(`SELECT b.id, b.site_id, b.name, b.admin_id, a.name AS admin_name, b.renewals_id, r.name AS renewals_name
     FROM buildings b LEFT JOIN users a ON a.id = b.admin_id LEFT JOIN users r ON r.id = b.renewals_id
     ${isMaster(user) ? '' : 'WHERE b.admin_id = ?'} ORDER BY lower(b.name), b.id`).all(...(isMaster(user) ? [] : [user.id]));
-  if (!rows.length) return [];
-  const ids = rows.map((b) => b.id);
-  const sites = await db.prepare('SELECT building_id, site_id AS id, name FROM building_sites WHERE building_id = ANY(?::int[]) ORDER BY lower(name)').all(ids);
-  const staff = await db.prepare(`SELECT building_id, employee_code AS code, name, kind FROM building_staff
-    WHERE building_id = ANY(?::int[]) ORDER BY kind, lower(name)`).all(ids);
-  const of = (list, id) => list.filter((x) => x.building_id === id).map(({ building_id, ...x }) => x);
   return rows.map((b) => ({
     id: b.id,
+    site_id: b.site_id,
     name: b.name,
     admin: b.admin_id ? { id: b.admin_id, name: b.admin_name } : null,
     // Renewals fall to the administrator unless someone else is named.
     renewals: b.renewals_id ? { id: b.renewals_id, name: b.renewals_name } : null,
-    sites: of(sites, b.id),
-    staff: of(staff, b.id),
   }));
 }
 
 const visible = async (user, id) => (await listBuildings(user)).find((b) => b.id === Number(id)) || null;
 
-/** What saifsys is asked to stay inside for this building. null when it has nothing set. */
-function scopeOf(b) {
-  if (!b.sites.length && !b.staff.length) return null;
-  return { buildings: b.sites.map((s) => s.id).join(','), codes: b.staff.map((s) => s.code).join(',') };
+/** What saifsys is asked to stay inside for this building. */
+const scopeOf = (b) => ({ buildings: String(b.site_id) });
+
+// ---------- the list, from saifsys ----------
+
+/**
+ * Make the buildings here the ones saifsys has: a new one is added, a renamed one takes
+ * its new name, and one saifsys no longer has goes. Who runs each is left as it is.
+ */
+export async function syncBuildings(ask = askSaifsys) {
+  // saifsys has made-up buildings for trying things out ("TEST BUILDING"); as in Tenant notices, left out.
+  const sites = ((await ask('operations', 'buildings')).buildings || []).filter((s) => s.id && s.name && !/\btest\b/i.test(s.name));
+  // An empty answer is saifsys having a bad day, not every building being sold.
+  if (!sites.length) return;
+  await tx(async () => {
+    for (const s of sites) {
+      await db.prepare('INSERT INTO buildings (site_id, name) VALUES (?, ?) ON CONFLICT (site_id) DO UPDATE SET name = EXCLUDED.name').run(s.id, s.name);
+    }
+    await db.prepare('DELETE FROM buildings WHERE NOT (site_id = ANY(?::int[]))').run(sites.map((s) => s.id));
+  });
 }
 
 // ---------- writing (master) ----------
 
-/**
- * Create a building (id null) or replace one. The caller sends the end state.
- * Every saifsys building and every employee code is checked against saifsys first, and
- * the names kept are the ones saifsys has, so a typo cannot quietly attach the wrong one.
- */
-export async function saveBuilding(master, id, input, ask = askSaifsys) {
-  const name = line(input?.name, MAX_NAME);
-  if (!name) throw bad('Give the building a name');
+/** Who runs a building: its administrator and who handles its renewals. null: no such building. */
+export async function setBuilding(master, id, input) {
   const person = async (v, what) => {
     if (v === null || v === undefined || v === '') return null;
     const u = await db.prepare('SELECT id FROM users WHERE id = ? AND NOT disabled').get(Number(v) || 0);
     if (!u) throw bad(`Pick ${what} from the people in Reem`);
     return u.id;
   };
-  const adminId = await person(input.admin_id, 'the administrator');
-  const renewalsId = await person(input.renewals_id, 'who handles renewals');
-
-  const old = id ? await db.prepare('SELECT id FROM buildings WHERE id = ?').get(Number(id) || 0) : null;
-  if (id && !old) return null;
-
-  const wantSites = [...new Set((Array.isArray(input.sites) ? input.sites : []).map((s) => Number(s?.id ?? s)).filter(Boolean))];
-  let sites = [];
-  if (wantSites.length) {
-    const known = new Map((await ask('operations', 'buildings')).buildings.map((s) => [s.id, s.name]));
-    const unknown = wantSites.find((s) => !known.has(s));
-    if (unknown) throw bad(`saifsys has no building with id ${unknown}.`);
-    sites = wantSites.map((s) => ({ id: s, name: known.get(s) }));
-  }
-
-  const have = new Map(old
-    ? (await db.prepare('SELECT employee_code, name FROM building_staff WHERE building_id = ?').all(old.id)).map((s) => [s.employee_code, s.name])
-    : []);
-  const staff = new Map();
-  for (const s of Array.isArray(input.staff) ? input.staff : []) {
-    const code = String(s?.code ?? '').trim().toUpperCase();
-    if (!code) continue;
-    if (!KINDS.includes(s.kind)) throw bad('Each person is either a cleaner or a technician');
-    // Someone already in this building was checked when they were added.
-    const hrName = have.get(code) ?? (await lookupCode(code, ask)).name;
-    staff.set(code, { code, name: hrName, kind: s.kind });
-  }
-
-  const savedId = await tx(async () => {
-    const bid = old
-      ? (await db.prepare(`UPDATE buildings SET name = ?, admin_id = ?, renewals_id = ?, updated_at = ${NOW} WHERE id = ? RETURNING id`)
-        .run(name, adminId, renewalsId, old.id)).id
-      : (await db.prepare('INSERT INTO buildings (name, admin_id, renewals_id) VALUES (?, ?, ?) RETURNING id').run(name, adminId, renewalsId)).id;
-    await db.prepare('DELETE FROM building_sites WHERE building_id = ?').run(bid);
-    for (const s of sites) await db.prepare('INSERT INTO building_sites (building_id, site_id, name) VALUES (?, ?, ?)').run(bid, s.id, s.name);
-    await db.prepare('DELETE FROM building_staff WHERE building_id = ?').run(bid);
-    for (const s of staff.values()) {
-      await db.prepare('INSERT INTO building_staff (building_id, employee_code, name, kind) VALUES (?, ?, ?, ?)').run(bid, s.code, s.name, s.kind);
-    }
-    return bid;
-  });
-  return visible(master, savedId);
+  const adminId = await person(input?.admin_id, 'the administrator');
+  const renewalsId = await person(input?.renewals_id, 'who handles renewals');
+  const old = await db.prepare('SELECT id FROM buildings WHERE id = ?').get(Number(id) || 0);
+  if (!old) return null;
+  await db.prepare(`UPDATE buildings SET admin_id = ?, renewals_id = ?, updated_at = ${NOW} WHERE id = ?`).run(adminId, renewalsId, old.id);
+  return visible(master, old.id);
 }
 
-export const deleteBuilding = async (id) =>
-  (await db.prepare('DELETE FROM buildings WHERE id = ?').run(Number(id) || 0)).changes > 0;
-
-/** For the editor: the saifsys buildings to tick, and the people who can be picked. */
-export async function options(ask = askSaifsys) {
-  const [sites, people] = await Promise.all([
-    ask('operations', 'buildings').then((a) => a.buildings),
-    db.prepare('SELECT id, name FROM users WHERE NOT disabled ORDER BY lower(name)').all(),
-  ]);
-  return { sites, people };
-}
-
-/** HR employees by part of a name or code, for adding a cleaner or technician. */
-export async function searchStaff(q, ask = askSaifsys) {
-  const want = line(q, 60);
-  if (want.length < 2) return [];
-  const answer = await ask('hr', 'employees', { q: want });
-  return (answer.employees || []).filter((e) => e.code).slice(0, 20)
-    .map((e) => ({ code: e.code, name: e.name, position: e.position, company: e.company }));
+/** For the editor: the people who can be picked. */
+export async function options() {
+  return { people: await db.prepare('SELECT id, name FROM users WHERE NOT disabled ORDER BY lower(name)').all() };
 }
 
 // ---------- the jobs ----------
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const EMPTY = { total: 0, more: false, counts: { open: 0, in_progress: 0, done: 0, cancelled: 0, late: 0, needs_materials: 0 }, staff: [], jobs: [] };
 
 /**
  * The staff jobs of one building for a day or a span of days (today when none is given).
  * With `late`, the unfinished ones from before are included too. null: not their building.
  */
-export async function teamJobs(user, buildingId, { from, to, late = true, code, status, type } = {}, ask = askSaifsys) {
+export async function teamJobs(user, buildingId, { from, to, late = true, status, type } = {}, ask = askSaifsys) {
   const b = await visible(user, buildingId);
   if (!b) return null;
-  const scope = scopeOf(b);
-  if (!scope) return { ...EMPTY, building: b, unset: true };
   for (const d of [from, to]) if (d && !DAY.test(d)) throw bad('Dates look like 2026-10-03');
-  const { ok, ...answer } = await ask('operations', 'jobs', { ...scope, from, to, late: late ? 1 : undefined, code, status, type });
+  const { ok, ...answer } = await ask('operations', 'jobs', { ...scopeOf(b), from, to, late: late ? 1 : undefined, status, type });
   return { ...answer, building: b };
 }
 
 /** One job in full, if it is inside this building. */
 export async function teamJob(user, buildingId, jobId, ask = askSaifsys) {
   const b = await visible(user, buildingId);
-  const scope = b && scopeOf(b);
-  if (!scope) return null;
+  if (!b) return null;
   try {
-    return (await ask('operations', 'job', { ...scope, id: Number(jobId) || 0 })).job;
+    return (await ask('operations', 'job', { ...scopeOf(b), id: Number(jobId) || 0 })).job;
   } catch (e) {
     if (e.status === 502 && /No such job/.test(e.message)) return null;
     throw e;
@@ -223,10 +169,9 @@ export async function watchBuildings({ ask = askSaifsys, push = sendPush } = {})
   const all = await listBuildings({ role: 'master' });
   const sent = [];
   for (const b of all) {
-    const scope = scopeOf(b);
-    if (!b.admin || !scope) continue;
+    if (!b.admin) continue;
     let answer;
-    try { answer = await ask('operations', 'jobs', { ...scope, late: 1 }); } catch (e) { console.warn('[buildings]', b.name, e.message); continue; }
+    try { answer = await ask('operations', 'jobs', { ...scopeOf(b), late: 1 }); } catch (e) { console.warn('[buildings]', b.name, e.message); continue; }
     const { watched_at: watched } = await db.prepare('SELECT watched_at FROM buildings WHERE id = ?').get(b.id);
     const seen = new Map((await db.prepare('SELECT * FROM building_jobs_seen WHERE building_id = ?').all(b.id)).map((s) => [s.job_id, s]));
     const events = [];
@@ -274,8 +219,8 @@ const DATE = { type: 'string', description: 'YYYY-MM-DD. Work it out from the cu
 const DEFS = {
   building_teams: {
     name: 'building_teams',
-    description: 'Who runs each building: its administrator, who handles its renewals, and the cleaners and technicians given to it. ' +
-      'Use for "who is the admin of Ayla?", "who handles renewals at Ladies Camp?", "who cleans Park Place?", "which buildings does Jessa have?". ' +
+    description: 'Who runs each building: its administrator and who handles its renewals. ' +
+      'Use for "who is the admin of Ayla?", "who handles renewals at Ladies Camp?", "which buildings does Jessa have?". ' +
       'Renewals are handled by the administrator unless someone else is named. Leave building empty for all of them.',
     input_schema: { type: 'object', properties: { building: { type: 'string', description: 'Optional. A building name, or part of it.' } } },
   },
@@ -291,7 +236,7 @@ const DEFS = {
       type: 'object',
       properties: {
         building: { type: 'string', description: 'Optional. A building name, or part of it. Empty = every building the user has.' },
-        person: { type: 'string', description: 'Optional. A cleaner\'s or technician\'s name: only their jobs.' },
+        person: { type: 'string', description: 'Optional. A cleaner\'s or technician\'s name, or part of it: only the jobs assigned to them.' },
         from: DATE,
         to: DATE,
         status: { type: 'string', enum: ['open', 'in_progress', 'done', 'cancelled'], description: 'Optional. open = not started.' },
@@ -314,11 +259,7 @@ const has = (text, part) => String(text).toLowerCase().includes(String(part ?? '
 async function directory(input) {
   const all = (await listBuildings({ role: 'master' })).filter((b) => !input.building || has(b.name, input.building));
   if (!all.length) return input.building ? `No building matches "${input.building}".` : 'No buildings have been set up yet.';
-  return all.map((b) => {
-    const names = (kind) => b.staff.filter((s) => s.kind === kind).map((s) => `${s.name} [HR ${s.code}]`).join(', ') || 'none yet';
-    return `${b.name}\n  Administrator: ${b.admin?.name || 'not set'}\n  Renewals: ${(b.renewals || b.admin)?.name || 'not set'}` +
-      `\n  Cleaners: ${names('cleaner')}\n  Technicians: ${names('technician')}`;
-  }).join('\n\n');
+  return all.map((b) => `${b.name}\n  Administrator: ${b.admin?.name || 'not set'}\n  Renewals: ${(b.renewals || b.admin)?.name || 'not set'}`).join('\n\n');
 }
 
 async function jobsForChat(user, input, ask) {
@@ -326,20 +267,16 @@ async function jobsForChat(user, input, ask) {
   if (!mine.length) return input.building ? `No building of yours matches "${input.building}".` : 'This user has no buildings.';
   const out = [];
   for (const b of mine) {
-    let code;
-    if (input.person) {
-      const match = b.staff.filter((s) => has(s.name, input.person));
-      if (!match.length) continue;
-      if (match.length > 1) return `Several people match "${input.person}" in ${b.name}: ${match.map((s) => s.name).join(', ')}. Ask which one.`;
-      code = match[0].code;
-    }
-    const a = await teamJobs(user, b.id, { from: input.from, to: input.to, late: !input.from, code, status: input.status, type: input.type }, ask);
+    const a = await teamJobs(user, b.id, { from: input.from, to: input.to, late: !input.from, status: input.status, type: input.type }, ask);
+    // The people are the ones saifsys put on the jobs; there is no list of them here.
+    const jobs = input.person ? a.jobs.filter((j) => has(j.assignee?.name || '', input.person)) : a.jobs;
+    if (input.person && !jobs.length) continue;
     out.push({
-      building: b.name, from: a.from, to: a.to, total: a.total, more: a.more || undefined, counts: a.counts,
-      jobs: a.jobs.map(({ building_ids, created_at, source, status, paused, ...j }) => j),
+      building: b.name, from: a.from, to: a.to, total: jobs.length, more: a.more || undefined, counts: input.person ? undefined : a.counts,
+      jobs: jobs.map(({ building_ids, created_at, source, status, paused, ...j }) => j),
     });
   }
-  if (!out.length) return `Nobody called "${input.person}" is in these buildings.`;
+  if (!out.length) return `Nobody called "${input.person}" has a job in these buildings on those days.`;
   return JSON.stringify(out);
 }
 
@@ -388,12 +325,14 @@ export const buildingRoutes = Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const send = (res, row) => (row ? res.json(row) : res.status(404).json({ error: 'Not found' }));
 
-buildingRoutes.get('/', wrap(async (req, res) => res.json(await listBuildings(req.user))));
+buildingRoutes.get('/', wrap(async (req, res) => {
+  // The master opening the screen is when the list is brought up to date with saifsys;
+  // if saifsys is away, the buildings as last seen are shown.
+  if (isMaster(req.user) && saifsysConfigured()) await syncBuildings().catch((e) => console.warn('[buildings] sync', e.message));
+  res.json(await listBuildings(req.user));
+}));
 buildingRoutes.get('/options', requireMaster, wrap(async (req, res) => res.json(await options())));
-buildingRoutes.get('/staff-search', requireMaster, wrap(async (req, res) => res.json(await searchStaff(req.query.q))));
-buildingRoutes.post('/', requireMaster, wrap(async (req, res) => res.json(await saveBuilding(req.user, null, req.body || {}))));
-buildingRoutes.put('/:id', requireMaster, wrap(async (req, res) => send(res, await saveBuilding(req.user, req.params.id, req.body || {}))));
-buildingRoutes.delete('/:id', requireMaster, wrap(async (req, res) => send(res, (await deleteBuilding(req.params.id)) && { ok: true })));
+buildingRoutes.put('/:id', requireMaster, wrap(async (req, res) => send(res, await setBuilding(req.user, req.params.id, req.body || {}))));
 
 buildingRoutes.get('/:id/jobs', wrap(async (req, res) => {
   const { from, to } = req.query;
@@ -405,9 +344,8 @@ buildingRoutes.get('/:id/jobs/:job', wrap(async (req, res) => send(res, await te
 // through from saifsys, which checks again that the file belongs to this building.
 const file = (what) => wrap(async (req, res) => {
   const b = await visible(req.user, req.params.id);
-  const scope = b && scopeOf(b);
-  if (!scope) return res.status(404).json({ error: 'Not found' });
-  const got = await fileFromSaifsys('operations', what, { ...scope, id: Number(req.params.file) || 0 }, req.headers.range);
+  if (!b) return res.status(404).json({ error: 'Not found' });
+  const got = await fileFromSaifsys('operations', what, { ...scopeOf(b), id: Number(req.params.file) || 0 }, req.headers.range);
   res.status(got.status);
   for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
     if (got.headers.get(h)) res.setHeader(h, got.headers.get(h));

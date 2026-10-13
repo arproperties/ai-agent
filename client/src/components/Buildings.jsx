@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Building2, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, MessageSquare, Minus, Package, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Building2, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, MessageSquare, Minus, Package, Pencil } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 import Picker from './Picker';
 
-// Buildings: who runs each one and the field staff given to them, and the cleaning and
-// maintenance jobs those staff do on the saifsys staff app. The master sets the buildings
-// up and sees them all; an administrator sees their own. Nothing here changes a job -
-// it is a window onto the work. The server is server/buildings.js.
+// Buildings: the saifsys buildings, who runs each one, and the cleaning and maintenance
+// jobs the field staff do in it on the saifsys staff app. The master sees them all and
+// picks each one's administrator; an administrator sees their own. Nothing here changes
+// a job - it is a window onto the work. The server is server/buildings.js.
 
-const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
-const KIND = { cleaner: 'Cleaner', technician: 'Technician' };
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
 const shift = (day, by) => { const d = new Date(`${day}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + by); return d.toISOString().slice(0, 10); };
 const dayName = (day) => new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
@@ -182,7 +180,6 @@ function BuildingView({ b, startJob, master, onEdit }) {
     return () => clearInterval(t);
   }, [isToday, load]);
 
-  const people = (kind) => b.staff.filter((s) => s.kind === kind).map((s) => s.name).join(', ');
   return (
     <div className="space-y-3">
       <div className="rounded-2xl bg-white/5 px-4 py-3 text-sm">
@@ -190,8 +187,6 @@ function BuildingView({ b, startJob, master, onEdit }) {
           <div className="min-w-0 flex-1 space-y-0.5">
             <p><span className="text-mute">Administrator:</span> {b.admin?.name || 'Not set'}</p>
             <p><span className="text-mute">Renewals:</span> {(b.renewals || b.admin)?.name || 'Not set'}</p>
-            <p><span className="text-mute">Cleaners:</span> {people('cleaner') || 'None yet'}</p>
-            <p><span className="text-mute">Technicians:</span> {people('technician') || 'None yet'}</p>
           </div>
           {master && (
             <button onClick={onEdit} aria-label="Edit" title="Edit"
@@ -209,8 +204,7 @@ function BuildingView({ b, startJob, master, onEdit }) {
 
       {error && <p className="text-sm text-bad">{error}</p>}
       {!data && !error && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />}
-      {data?.unset && <p className="py-8 text-center text-sm text-mute">No saifsys building or staff has been set for this building yet.</p>}
-      {data && !data.unset && (() => {
+      {data && (() => {
         const groups = GROUPS.map(([label, pick]) => [label, data.jobs.filter(pick)]);
         // The job a notification asked for decides the tab it opens on.
         const shownTab = tab
@@ -246,79 +240,29 @@ function BuildingView({ b, startJob, master, onEdit }) {
 
 // ---------- the master's editor ----------
 
-function StaffSearch({ taken, onAdd }) {
-  const [q, setQ] = useState('');
-  const [found, setFound] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const search = async (e) => {
-    e.preventDefault();
-    setBusy(true); setError('');
-    try { setFound(await api.get(`/buildings/staff-search?q=${encodeURIComponent(q.trim())}`)); } catch (x) { setError(x.message); }
-    setBusy(false);
-  };
-  return (
-    <div className="space-y-1.5">
-      <div className="flex gap-2">
-        <input value={q} onChange={(e) => { setQ(e.target.value); setFound(null); }} placeholder="Find in HR by name or code"
-          onKeyDown={(e) => e.key === 'Enter' && search(e)}
-          className="glass min-w-0 flex-1 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-p1/70" />
-        <button type="button" onClick={search} disabled={busy || q.trim().length < 2} className="flex items-center gap-1 rounded-full border border-stroke px-3 text-sm text-mute hover:text-txt disabled:opacity-50">
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} Find
-        </button>
-      </div>
-      {error && <p className="text-xs text-bad">{error}</p>}
-      {found?.length === 0 && <p className="text-xs text-mute">HR has nobody like that.</p>}
-      {found?.map((e) => (
-        <div key={e.code} className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-1.5 text-sm">
-          <div className="min-w-0 flex-1">
-            <p className="truncate">{e.name} <span className="text-mute">· {e.code}</span></p>
-            <p className="truncate text-xs text-mute">{[e.position, e.company].filter(Boolean).join(' · ')}</p>
-          </div>
-          {taken.includes(e.code) ? <span className="text-xs text-mute">Added</span> : Object.entries(KIND).map(([k, l]) => (
-            <button key={k} type="button" onClick={() => onAdd({ code: e.code, name: e.name, kind: k })}
-              className="shrink-0 rounded-full border border-stroke px-2.5 py-1 text-xs hover:bg-white/10">+ {l}</button>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function Editor({ start, onSaved, onCancel }) {
   const [opts, setOpts] = useState(null);
-  const [name, setName] = useState(start?.name || '');
-  const [adminId, setAdminId] = useState(start?.admin?.id || '');
-  const [renewalsId, setRenewalsId] = useState(start?.renewals?.id || '');
-  const [sites, setSites] = useState(start?.sites.map((s) => s.id) || []);
-  const [staff, setStaff] = useState(start?.staff || []);
-  const [busy, setBusy] = useState('');
+  const [adminId, setAdminId] = useState(start.admin?.id || '');
+  const [renewalsId, setRenewalsId] = useState(start.renewals?.id || '');
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => { api.get('/buildings/options').then(setOpts).catch((e) => { setError(e.message); setOpts({ sites: [], people: [] }); }); }, []);
+  useEffect(() => { api.get('/buildings/options').then(setOpts).catch((e) => { setError(e.message); setOpts({ people: [] }); }); }, []);
 
-  const act = async (what, fn) => {
-    if (busy) return;
-    setBusy(what); setError('');
-    try { await fn(); } catch (e) { setError(e.message); } finally { setBusy(''); }
-  };
-  const save = (e) => {
+  const save = async (e) => {
     e.preventDefault();
-    act('save', async () => {
-      const body = { name, admin_id: adminId || null, renewals_id: renewalsId || null, sites, staff };
-      await (start ? api.put(`/buildings/${start.id}`, body) : api.post('/buildings', body));
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      await api.put(`/buildings/${start.id}`, { admin_id: adminId || null, renewals_id: renewalsId || null });
       await onSaved();
-    });
+    } catch (x) { setError(x.message); } finally { setBusy(false); }
   };
-  const remove = () => confirm(`Delete "${start.name}"? The jobs in saifsys are not touched.`)
-    && act('delete', async () => { await api.del(`/buildings/${start.id}`); await onSaved(); });
-  const toggle = (id) => setSites((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]));
 
   if (!opts) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
   const people = opts.people.map((p) => ({ value: p.id, label: p.name }));
   const label = 'text-[11px] font-medium tracking-[0.14em] text-mute';
   return (
     <form onSubmit={save} className="space-y-3 rounded-2xl border border-stroke/60 bg-white/[0.03] p-3">
-      <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="Building name, e.g. Park Place" className={FIELD} autoFocus={!start} />
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="space-y-1">
           <span className={label}>ADMINISTRATOR</span>
@@ -330,46 +274,12 @@ function Editor({ start, onSaved, onCancel }) {
         </div>
       </div>
 
-      <div className="space-y-1">
-        <span className={label}>BUILDING IN SAIFSYS</span>
-        <p className="text-xs text-mute">Tick the one this is in saifsys. Tick several if this name covers more than one.</p>
-        <div className="flex flex-wrap gap-1.5">
-          {opts.sites.map((s) => (
-            <button key={s.id} type="button" onClick={() => toggle(s.id)}
-              className={`rounded-full border px-3 py-1 text-sm transition ${sites.includes(s.id) ? 'border-p1/60 bg-p1/15' : 'border-stroke text-mute hover:text-txt'}`}>{s.name}</button>
-          ))}
-          {opts.sites.length === 0 && <p className="text-xs text-mute">saifsys gave no buildings.</p>}
-        </div>
-      </div>
-
-      <div className="space-y-1.5">
-        <span className={label}>CLEANERS AND TECHNICIANS</span>
-        {staff.map((s) => (
-          <div key={s.code} className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-1.5 text-sm">
-            <span className="min-w-0 flex-1 truncate">{s.name} <span className="text-mute">· {s.code}</span></span>
-            <div className="flex shrink-0 rounded-full bg-white/5 p-0.5 text-xs">
-              {Object.entries(KIND).map(([k, l]) => (
-                <button key={k} type="button" onClick={() => setStaff((list) => list.map((x) => (x.code === s.code ? { ...x, kind: k } : x)))}
-                  className={`rounded-full px-2.5 py-1 transition ${s.kind === k ? 'bg-white/15 text-txt' : 'text-mute hover:text-txt'}`}>{l}</button>
-              ))}
-            </div>
-            <button type="button" onClick={() => setStaff((list) => list.filter((x) => x.code !== s.code))} aria-label={`Remove ${s.name}`}
-              className="grid size-7 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={14} /></button>
-          </div>
-        ))}
-        <StaffSearch taken={staff.map((s) => s.code)} onAdd={(s) => setStaff((list) => [...list, s])} />
-      </div>
-
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex items-center gap-2">
-        {start && (
-          <button type="button" onClick={remove} disabled={!!busy} aria-label="Delete" title="Delete"
-            className="grid size-10 shrink-0 place-items-center rounded-full border border-stroke text-mute transition hover:border-bad/50 hover:text-bad disabled:opacity-50"><Trash2 size={16} /></button>
-        )}
         <span className="flex-1" />
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
-        <button disabled={!!busy || !name.trim()} className="rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2 text-sm font-medium text-white disabled:opacity-60">
-          {busy === 'save' ? 'Saving…' : 'Save'}
+        <button disabled={busy} className="rounded-full bg-gradient-to-br from-p1 to-p2 px-6 py-2 text-sm font-medium text-white disabled:opacity-60">
+          {busy ? 'Saving…' : 'Save'}
         </button>
       </div>
     </form>
@@ -386,12 +296,11 @@ function BuildingCard({ b, onOpen }) {
       <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-p1/25 to-p2/10 text-p1"><Building2 size={19} strokeWidth={1.6} /></span>
       <div className="min-w-0 flex-1">
         <p className="font-medium">{b.name}</p>
-        <p className="text-xs text-mute">{b.admin?.name || 'No administrator yet'} · {b.staff.length} staff</p>
+        <p className="text-xs text-mute">{b.admin?.name || 'No administrator yet'}</p>
         <p className="mt-0.5 text-xs">
           {!data ? <span className="text-mute">…</span>
             : data.failed ? <span className="text-mute">Could not reach saifsys</span>
-              : data.unset ? <span className="text-mute">Not set up yet</span>
-                : <Summary jobs={data.jobs} />}
+              : <Summary jobs={data.jobs} />}
         </p>
       </div>
       <ChevronRight size={18} className="shrink-0 text-mute" />
@@ -403,7 +312,7 @@ export default function BuildingsPage({ me, start, onBack }) {
   const master = me.role === 'master';
   const [rows, setRows] = useState(null);
   const [openId, setOpenId] = useState(start?.building || null);
-  const [editing, setEditing] = useState(null); // an id, 'new', or null
+  const [editing, setEditing] = useState(null); // the id of the building being edited, or null
   const load = useCallback(() => api.get('/buildings').then(setRows).catch(() => setRows([])), []);
   useEffect(() => { load(); }, [load]);
   // A notification tapped while this page was already open.
@@ -418,27 +327,19 @@ export default function BuildingsPage({ me, start, onBack }) {
   return (
     <Page title={open ? open.name : 'Buildings'} onBack={back}>
       {rows === null && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />}
-      {rows && editing && (
-        <Editor start={editing === 'new' ? null : rows.find((b) => b.id === editing)} onCancel={() => setEditing(null)} onSaved={saved} />
-      )}
+      {rows && editing && open && <Editor start={open} onCancel={() => setEditing(null)} onSaved={saved} />}
       {rows && !editing && open && (
         <BuildingView key={open.id} b={open} master={master} startJob={start?.building === open.id ? start.job : null} onEdit={() => setEditing(open.id)} />
       )}
       {rows && !editing && !open && (
         <div className="space-y-2.5">
-          {master && (
-            <button onClick={() => setEditing('new')}
-              className="flex w-full items-center justify-center gap-2 rounded-full border border-stroke/70 py-2.5 text-sm text-mute hover:bg-white/5 hover:text-txt">
-              <Plus size={16} /> New building
-            </button>
-          )}
           {rows.length === 0 && (
             <div className="flex flex-col items-center gap-4 py-16 text-center">
               <span className="grid size-20 place-items-center rounded-3xl bg-gradient-to-br from-p1/25 to-p2/10 text-p1"><Building2 size={34} strokeWidth={1.4} /></span>
               <div>
                 <p className="text-lg font-light">No buildings yet</p>
                 <p className="max-w-xs text-sm text-mute">{master
-                  ? 'Add a building, pick its administrator and the cleaners and technicians given to it.'
+                  ? 'The buildings come from saifsys, and it has given none yet.'
                   : 'You have not been given a building yet.'}</p>
               </div>
             </div>

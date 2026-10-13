@@ -1124,21 +1124,19 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_checklist_run_items ON checklist_run_items(run_id, position);
 `);
 
-// Buildings: who runs each building and which field staff were given to them - see
-// server/buildings.js. Its own tables: this is the company's structure, not HR's manager
-// field and not a responsibility.
-//   buildings: the name the office uses ("Townhouses"), its administrator, and who
-//     handles its renewals when that is not the administrator. watched_at: when the
-//     job watcher first looked, so the first look records what is there without buzzing.
-//   building_sites: the saifsys buildings (re_buildings.id) behind that name - usually
-//     one, several where the office's name covers more than one.
-//   building_staff: the cleaners and technicians, by HR employee code. They have no Reem
-//     account; they work on the saifsys staff app. One person can be in several buildings.
+// Buildings: who runs each building - see server/buildings.js. Its own tables: this is
+// the company's structure, not HR's manager field and not a responsibility.
+//   buildings: one row per saifsys building (site_id = re_buildings.id), under saifsys's
+//     own name, with its administrator and who handles its renewals when that is not
+//     the administrator. Nothing is typed: the rows are copied from saifsys. watched_at:
+//     when the job watcher first looked, so the first look records what is there
+//     without buzzing.
 //   building_jobs_seen: each staff job as the watcher last saw it, so a buzz goes out
 //     once when something changes and never again for the same thing.
 await db.exec(`
   CREATE TABLE IF NOT EXISTS buildings (
     id SERIAL PRIMARY KEY,
+    site_id     INTEGER NOT NULL,
     name        TEXT NOT NULL,
     admin_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
     renewals_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -1147,21 +1145,6 @@ await db.exec(`
     updated_at BIGINT DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_buildings_admin ON buildings(admin_id);
-
-  CREATE TABLE IF NOT EXISTS building_sites (
-    building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
-    site_id     INTEGER NOT NULL,
-    name        TEXT NOT NULL,
-    PRIMARY KEY (building_id, site_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS building_staff (
-    building_id   INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
-    employee_code TEXT NOT NULL,
-    name TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('cleaner', 'technician')),
-    PRIMARY KEY (building_id, employee_code)
-  );
 
   CREATE TABLE IF NOT EXISTS building_jobs_seen (
     building_id INTEGER NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
@@ -1244,7 +1227,9 @@ await db.exec(`
 // covering several buildings carried "Name · unit" and goes to that building with the
 // plain unit; everything else goes to the entry's building, the first by name when it
 // covered several. An entry with nothing ticked had no real building: its rows stay
-// unmoved and unseen.
+// unmoved and unseen. building_sites is where an entry's buildings were kept; it is gone
+// once the Buildings screen itself is one row per saifsys building (below), and with it
+// there is nothing left to move.
 const FIRST_SITE = (alias) => `(SELECT s.site_id FROM building_sites s WHERE s.building_id = ${alias}.building_id ORDER BY lower(s.name), s.site_id LIMIT 1)`;
 await db.exec(`
   ALTER TABLE inventory_areas     ADD COLUMN IF NOT EXISTS site_id INTEGER;
@@ -1258,6 +1243,7 @@ await db.exec(`
   ALTER TABLE inventory_items ALTER COLUMN building_id DROP NOT NULL;
   ALTER TABLE inventory_log   ALTER COLUMN building_id DROP NOT NULL;
 
+  DO $move$ BEGIN IF to_regclass('building_sites') IS NOT NULL THEN
   UPDATE inventory_areas a SET site_id = ${FIRST_SITE('a')} WHERE a.site_id IS NULL AND a.building_id IS NOT NULL;
   UPDATE inventory_items i SET site_id = s.site_id, unit = substr(i.unit, length(s.name) + 4)
     FROM building_sites s
@@ -1268,6 +1254,7 @@ await db.exec(`
   UPDATE inventory_items i SET site_id = ${FIRST_SITE('i')} WHERE i.site_id IS NULL AND i.building_id IS NOT NULL;
   UPDATE inventory_log l SET site_id = i.site_id FROM inventory_items i WHERE l.site_id IS NULL AND l.item_id = i.id;
   UPDATE inventory_log l SET site_id = ${FIRST_SITE('l')} WHERE l.site_id IS NULL AND l.building_id IS NOT NULL;
+  END IF; END $move$;
 
   -- Two entries that both covered one building may each have had a "Store room": the
   -- later one keeps its items and gets its number in the name, so the index below holds.
@@ -1277,6 +1264,36 @@ await db.exec(`
   DROP INDEX IF EXISTS idx_inventory_areas_name;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_areas_site_name ON inventory_areas(site_id, lower(name)) WHERE site_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_inventory_items_site ON inventory_items(site_id);
+`);
+
+// The Buildings screen is the saifsys buildings themselves: no name of the office's own
+// over one or several of them, and no cleaners and technicians from HR.
+//
+// Entries from before are moved once (building_sites still being there marks it). Each
+// entry becomes its first saifsys building, by name, and takes that building's name; any
+// other building it covered gets a row of its own with the same administrator and
+// renewals. Where two entries covered one building the earlier entry keeps it. An entry
+// with nothing ticked had no real building and goes. After the inventory's own move
+// above, which reads building_sites.
+await db.exec(`
+  ALTER TABLE buildings ADD COLUMN IF NOT EXISTS site_id INTEGER;
+  DO $sites$ BEGIN IF to_regclass('building_sites') IS NOT NULL THEN
+  UPDATE buildings b SET site_id = f.site_id, name = f.name FROM (
+      SELECT DISTINCT ON (site_id) building_id, site_id, name FROM (
+        SELECT DISTINCT ON (building_id) building_id, site_id, name FROM building_sites ORDER BY building_id, lower(name), site_id
+      ) first_of ORDER BY site_id, building_id
+    ) f WHERE b.id = f.building_id AND b.site_id IS NULL;
+  INSERT INTO buildings (site_id, name, admin_id, renewals_id)
+    SELECT DISTINCT ON (s.site_id) s.site_id, s.name, b.admin_id, b.renewals_id
+    FROM building_sites s JOIN buildings b ON b.id = s.building_id
+    WHERE NOT EXISTS (SELECT 1 FROM buildings x WHERE x.site_id = s.site_id)
+    ORDER BY s.site_id, b.id;
+  DELETE FROM buildings WHERE site_id IS NULL;
+  DROP TABLE building_sites;
+  DROP TABLE IF EXISTS building_staff;
+  END IF; END $sites$;
+  ALTER TABLE buildings ALTER COLUMN site_id SET NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_buildings_site ON buildings(site_id);
 `);
 
 // Inventory items got ready from chat, waiting for Add or Cancel on their card - see

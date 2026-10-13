@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { reset, makeUser, closeDb, db } from './helpers/db.js';
-import { saveBuilding, deleteBuilding } from '../server/buildings.js';
+import { listBuildings, syncBuildings, setBuilding } from '../server/buildings.js';
 import {
   overview, getInventory, addArea, deleteArea, saveItem, deleteItem, history, setPhoto, unitsOf, inventoryKit, propose, decide, getProposal,
   takeItem, takenForJob,
@@ -33,25 +33,25 @@ async function setup() {
   const master = { id: await makeUser('Owner'), role: 'master' };
   const jessa = { id: await makeUser('Jessa'), role: 'user' };
   const sabha = { id: await makeUser('Sabha'), role: 'user' };
-  // Two entries on the Buildings screen: one covering a single saifsys building, one covering two.
-  const parkEntry = await saveBuilding(master, null, { name: 'Park Place', admin_id: jessa.id, sites: [3] }, ask);
-  const townEntry = await saveBuilding(master, null, { name: 'Townhouses', admin_id: sabha.id, sites: [7, 8] }, ask);
-  // In the inventory every real saifsys building is its own, by its saifsys id and name.
-  return { ask, state, master, jessa, sabha, parkEntry, townEntry, park: { id: 3 }, town: { id: 7 }, townB: { id: 8 } };
+  // The saifsys buildings, as on the Buildings screen: Jessa runs one, Sabha the other two.
+  await syncBuildings(ask);
+  const row = Object.fromEntries((await listBuildings(master)).map((b) => [b.site_id, b.id]));
+  await setBuilding(master, row[3], { admin_id: jessa.id });
+  await setBuilding(master, row[7], { admin_id: sabha.id });
+  await setBuilding(master, row[8], { admin_id: sabha.id });
+  // In the inventory a building goes by its saifsys id, not by its row on that screen.
+  return { ask, state, master, jessa, sabha, row, park: { id: 3 }, town: { id: 7 }, townB: { id: 8 } };
 }
 
 test('the units are the ones saifsys has, in counting order', async () => {
-  const { ask, parkEntry, townEntry, town, townB, master } = await setup();
-  assert.deepEqual(await unitsOf(parkEntry, ask), ['204', '205', '206 (Staff)', '304', '1001']);
-  assert.deepEqual(await unitsOf(townEntry, ask), ['Townhouse A · 1', 'Townhouse A · 2', 'Townhouse B · 1'], 'two buildings under one name can both have a unit 1');
-  const bare = await saveBuilding(master, null, { name: 'Bare' }, ask);
-  assert.deepEqual(await unitsOf(bare, ask), []);
+  const { ask, town, townB, master } = await setup();
+  assert.deepEqual(await unitsOf({ name: 'Park Place' }, ask), ['204', '205', '206 (Staff)', '304', '1001']);
+  assert.deepEqual(await unitsOf({ name: 'Nowhere' }, ask), []);
 
-  // The inventory never shows the entry's name: each building it covers is its own, with plain units.
   assert.deepEqual((await overview(master)).map((b) => [b.id, b.name]), [[3, 'Park Place'], [7, 'Townhouse A'], [8, 'Townhouse B']]);
   assert.deepEqual((await getInventory(master, town.id, ask)).units, ['1', '2']);
   assert.deepEqual((await getInventory(master, townB.id, ask)).building, { id: 8, name: 'Townhouse B' });
-  assert.equal(await getInventory(master, bare.id + 1000, ask), null, 'an entry with nothing ticked has no inventory');
+  assert.equal(await getInventory(master, 1000, ask), null, 'not a building saifsys has');
 });
 
 test('an item goes in a unit or an area, and comes back with its place', async () => {
@@ -97,7 +97,7 @@ test('an administrator keeps only their own building; the master keeps all', asy
     { id: 8, name: 'Townhouse B', items: 0, damaged: 0, missing: 0 },
   ]);
   assert.deepEqual((await overview(jessa)).map((b) => b.name), ['Park Place']);
-  assert.deepEqual((await overview(sabha)).map((b) => b.name), ['Townhouse A', 'Townhouse B'], 'one entry, both of its buildings');
+  assert.deepEqual((await overview(sabha)).map((b) => b.name), ['Townhouse A', 'Townhouse B']);
   assert.deepEqual(await overview({ id: await makeUser('Nobody'), role: 'user' }), []);
 
   assert.equal(await getInventory(sabha, park.id, ask), null);
@@ -174,28 +174,33 @@ test('a photo is kept on disk and goes when the item goes', async () => {
   assert.equal(await deleteArea(jessa, park.id, lobby.id), null);
 });
 
-test('the inventory stays with the real building when the entries on the Buildings screen change', async () => {
-  const { ask, master, jessa, sabha, park, parkEntry, townEntry } = await setup();
+test('the inventory stays with the real building when who runs it changes', async () => {
+  const { ask, master, jessa, sabha, park, row } = await setup();
   await addArea(jessa, park.id, { name: 'Lobby' });
   await saveItem(jessa, park.id, null, { place: 'u:304', name: 'AC' }, ask);
 
-  // The entry goes: nobody keeps Park Place now, but nothing of it is lost.
-  await deleteBuilding(parkEntry.id);
-  assert.deepEqual((await overview(master)).map((b) => b.name), ['Townhouse A', 'Townhouse B']);
+  // Nobody runs Park Place now: only the master keeps it, and nothing of it is lost.
+  await setBuilding(master, row[3], {});
   assert.equal(await getInventory(jessa, park.id, ask), null);
-  for (const t of ['inventory_areas', 'inventory_items', 'inventory_log']) {
-    assert.equal((await db.prepare(`SELECT count(*)::int AS n FROM ${t}`).get()).n, 1, t);
-  }
+  assert.deepEqual((await overview(master)).map((b) => [b.name, b.items]), [['Park Place', 1], ['Townhouse A', 0], ['Townhouse B', 0]]);
 
-  // Ticked on another entry, under another name and administrator: it is all there again.
-  await saveBuilding(master, townEntry.id, { name: 'Everything', admin_id: sabha.id, sites: [3, 7, 8] }, ask);
+  // Given to another administrator: it is all there for her.
+  await setBuilding(master, row[3], { admin_id: sabha.id });
   assert.deepEqual((await overview(sabha)).map((b) => [b.name, b.items]), [['Park Place', 1], ['Townhouse A', 0], ['Townhouse B', 0]]);
   const inv = await getInventory(sabha, park.id, ask);
   assert.deepEqual([inv.areas.map((a) => a.name), inv.items.map((i) => i.place.label)], [['Lobby'], ['Unit 304']]);
 });
 
 test('rows from before the change are moved to their real building once', async () => {
-  const { ask, master, park, town, townB, parkEntry, townEntry } = await setup();
+  const { ask, master, park, town, townB } = await setup();
+  // As it was: entries on the Buildings screen, one covering a single saifsys building, one covering two.
+  const parkEntry = { id: 101 };
+  const townEntry = { id: 102 };
+  await db.exec(`
+    DROP TABLE IF EXISTS building_sites, building_staff;
+    CREATE TABLE building_sites (building_id INTEGER NOT NULL, site_id INTEGER NOT NULL, name TEXT NOT NULL);
+    INSERT INTO building_sites VALUES (101, 3, 'Park Place'), (102, 7, 'Townhouse A'), (102, 8, 'Townhouse B');
+  `);
   const old = async (table, cols, vals) => (await db.prepare(`INSERT INTO ${table} (${cols}) VALUES (${vals.map(() => '?').join(', ')}) RETURNING id`).run(...vals)).id;
   // As they were written before: by entry, a grouped unit carrying its building's name.
   const lobby = await old('inventory_areas', 'building_id, name', [townEntry.id, 'Lobby']);
@@ -204,11 +209,12 @@ test('rows from before the change are moved to their real building once', async 
   await old('inventory_items', 'building_id, area_id, name', [townEntry.id, lobby, 'Sofa']);
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(new URL('../server/db.js', import.meta.url), 'utf8');
-  const moves = source.slice(source.indexOf('  UPDATE inventory_areas a SET site_id'), source.indexOf('  DROP INDEX IF EXISTS idx_inventory_areas_name;'))
+  const moves = source.slice(source.indexOf('  UPDATE inventory_areas a SET site_id'), source.indexOf('  END IF; END $move$;'))
     .replaceAll("${FIRST_SITE('a')}", first('a')).replaceAll("${FIRST_SITE('i')}", first('i')).replaceAll("${FIRST_SITE('l')}", first('l'));
   function first(alias) { return `(SELECT s.site_id FROM building_sites s WHERE s.building_id = ${alias}.building_id ORDER BY lower(s.name), s.site_id LIMIT 1)`; }
   await db.exec(moves);
   await db.exec(moves); // boots again: nothing moves twice
+  await db.exec('DROP TABLE building_sites');
 
   const at = async (id) => (await getInventory(master, id, ask)).items.map((i) => [i.name, i.place.label]);
   assert.deepEqual(await at(park.id), [['AC', 'Unit 304']]);
@@ -320,7 +326,7 @@ test('from chat: places are found the way people say them, or asked about', asyn
 });
 
 test('from chat: a card whose area or building has gone adds nothing and stays to be cancelled', async () => {
-  const { ask, master, jessa, park, parkEntry } = await setup();
+  const { ask, master, jessa, park, row } = await setup();
   const lobby = await addArea(jessa, park.id, { name: 'Lobby' });
   const p = await propose(jessa, { places: ['204', 'Lobby'], items: [{ name: 'Chair' }] }, {}, ask);
   await deleteArea(jessa, park.id, lobby.id);
@@ -328,7 +334,7 @@ test('from chat: a card whose area or building has gone adds nothing and stays t
   assert.equal((await getInventory(jessa, park.id, ask)).items.length, 0, 'not half of it');
   assert.equal((await getProposal(jessa, p.id)).status, 'pending');
 
-  await saveBuilding(master, parkEntry.id, { name: 'Park Place', admin_id: master.id, sites: [3] }, ask);
+  await setBuilding(master, row[3], { admin_id: master.id });
   await assert.rejects(decide(jessa, p.id, true), /no longer keep/);
   assert.equal((await decide(jessa, p.id, false)).status, 'cancelled');
 });

@@ -9,19 +9,17 @@ import { askSaifsys } from './saifsys/client.js';
 
 // Inventory: the things that stay in a place - the AC, the fridge, the furniture, the keys.
 //
-// A building here is one real saifsys building, under its own name. The Buildings screen
-// lets one entry cover several of them (one administrator, one set of staff); here each
-// of those is its own building with its own units, areas and items, and no group name is
-// shown. Inventory rows carry site_id, the saifsys building id, so they stay with the
-// real building when the grouping on that screen is changed.
+// A building here is one real saifsys building, under its own name - the same buildings
+// as the Buildings screen. Inventory rows carry site_id, the saifsys building id, not that
+// screen's row, so they stay with the real building whatever happens there.
 //
 // A place is a unit of a building or an area of it (lobby, store room, roof). The units
 // are saifsys's own, read through its Real Estate module and never typed here; the areas
 // are added per building. Each item has a name, how many, what it is counted in, its
 // condition, a photo and a note, and every change is written down with who made it.
 //
-// The master keeps every building's inventory, an administrator that of the saifsys
-// buildings ticked on the entries they run (the same rule as server/buildings.js).
+// The master keeps every building's inventory, an administrator that of the buildings
+// they run (the same rule as server/buildings.js).
 // Nothing here is written to saifsys.
 
 const MAX_NAME = 80;
@@ -45,17 +43,10 @@ const line = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, ma
 const has = (text, part) => String(text).toLowerCase().includes(String(part ?? '').trim().toLowerCase());
 const amount = (i) => [i.quantity, i.counted_in].filter((x) => x !== null && x !== '').join(' ');
 
-/**
- * The buildings whose inventory this person keeps: every saifsys building ticked on the
- * entries they run, each once, by name. Shaped like a listBuildings() row with that one
- * site, so unitsOf() gives its units plain ("101", never "Name · 101").
- */
+/** The buildings whose inventory this person keeps, by name. id is the saifsys building id. */
 export async function keptBuildings(user) {
-  const out = new Map();
-  for (const b of await listBuildings(user)) {
-    for (const s of b.sites) if (!out.has(s.id)) out.set(s.id, { id: s.id, name: s.name, sites: [s] });
-  }
-  return [...out.values()].sort((x, y) => x.name.localeCompare(y.name, undefined, { sensitivity: 'base' }) || x.id - y.id);
+  return (await listBuildings(user)).map((b) => ({ id: b.site_id, name: b.name }))
+    .sort((x, y) => x.name.localeCompare(y.name, undefined, { sensitivity: 'base' }) || x.id - y.id);
 }
 
 /** The building, if this person keeps its inventory. */
@@ -66,12 +57,8 @@ const building = async (user, id) => (await keptBuildings(user)).find((b) => b.i
 const UNITS_FOR = 10 * 60_000;
 let cached = { at: 0, buildings: null };
 
-/**
- * The unit numbers of a building, as saifsys has them. Where the office's name covers
- * several saifsys buildings the unit carries which one, since two can both have a "101".
- */
+/** The unit numbers of a building, as saifsys has them. */
 export async function unitsOf(b, ask = askSaifsys) {
-  if (!b.sites.length) return [];
   // Only the real saifsys is remembered; a stand-in in a test answers every time.
   const keep = ask === askSaifsys;
   let all = keep && Date.now() - cached.at < UNITS_FOR ? cached.buildings : null;
@@ -79,13 +66,8 @@ export async function unitsOf(b, ask = askSaifsys) {
     all = (await ask('realestate', 'directory')).buildings || [];
     if (keep) cached = { at: Date.now(), buildings: all };
   }
-  const several = b.sites.length > 1;
-  const out = [];
-  for (const s of b.sites) {
-    const found = all.find((x) => String(x.name).trim().toLowerCase() === s.name.trim().toLowerCase());
-    for (const u of found?.units || []) out.push(several ? `${s.name} · ${u}` : String(u));
-  }
-  return out.sort((x, y) => x.localeCompare(y, undefined, { numeric: true }));
+  const found = all.find((x) => String(x.name).trim().toLowerCase() === b.name.trim().toLowerCase());
+  return (found?.units || []).map(String).sort((x, y) => x.localeCompare(y, undefined, { numeric: true }));
 }
 
 // ---------- reading ----------
@@ -173,7 +155,6 @@ async function readPlace(b, key, ask) {
     return { unit: null, area_id: area.id };
   }
   if (kind !== 'u' || !value) throw bad('Say where it is: pick a unit or an area');
-  if (!b.sites.length) throw bad(`${b.name} has no saifsys building set, so it has no units yet. Add an area instead.`);
   if (!(await unitsOf(b, ask)).includes(value)) throw bad(`${b.name} has no unit ${value} in saifsys.`);
   return { unit: value, area_id: null };
 }
@@ -387,7 +368,7 @@ async function chatPhoto(userId, conversationId, name) {
   return doc;
 }
 
-const proposalRow = (userId, id) => db.prepare(`SELECT p.*, (SELECT s.name FROM building_sites s WHERE s.site_id = p.site_id LIMIT 1) AS building
+const proposalRow = (userId, id) => db.prepare(`SELECT p.*, (SELECT s.name FROM buildings s WHERE s.site_id = p.site_id) AS building
   FROM inventory_proposals p WHERE p.id = ? AND p.user_id = ?`).get(Number(id) || 0, userId);
 
 /** The card: places that are getting the same things are said once, together. */
