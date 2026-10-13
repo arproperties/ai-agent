@@ -40,7 +40,7 @@ import { replyPdfRoutes } from './replyPdf.js';
 import { meetingShareRoutes } from './meetingShare.js';
 import { drawingRoutes } from './drawing.js';
 import { tenantCareRoutes, startTenantCare } from './tenantCare.js';
-import { moduleRoutes } from './modules.js';
+import { moduleRoutes, needsModule, needsModuleUnless, userModules, giveToEveryoneOnce } from './modules.js';
 import { noticeRoutes } from './notices.js';
 import { tradeRoutes } from './trade.js';
 
@@ -56,29 +56,34 @@ app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in 
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api', requireUser); // everything below needs a signed-in user
-app.use('/api/outlook', outlookRoutes);
-app.use('/api/imap', imapRoutes);
+// Reem's own modules (server/modules.js) stand in front of each screen's routes. Where a
+// chat reads the same data, only what the screen alone does is closed.
+const glance = (req) => req.method === 'GET' && req.path === '/'; // which mailbox is connected: a chat asks too
+app.use('/api/outlook', needsModuleUnless('email', glance), outlookRoutes);
+app.use('/api/imap', needsModuleUnless('email', glance), imapRoutes);
+app.use('/api/email/activity', needsModule('email')); // the drafts beside it are approved from a chat
 app.use('/api/email', emailRoutes);
-app.use('/api/imports', importRoutes);
+app.use('/api/imports', needsModule('shelf'), importRoutes);
 app.use('/api/messenger', messengerRoutes); // people-to-people chat, separate from the AI chats
-app.use('/api/todos', todoRoutes);
+app.use('/api/todos', needsModule('todos'), todoRoutes);
 app.use('/api/team-reminders', teamReminderRoutes); // reminders sent to other people, proposed in chat
 app.use('/api/suggestions', suggestionRoutes); // reminders Reem spots in new email and chat, one tap to keep
-app.use('/api/routines', routineRoutes); // things that come back, kept apart from the one-off todos
+app.use('/api/routines', needsModule('todos'), routineRoutes); // things that come back, kept apart from the one-off todos
 app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
 app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
-app.use('/api/meetings', meetingShareRoutes); // a meeting as a PDF, on the Shelf, or emailed
+app.use('/api/meetings', needsModule('meetings'), meetingShareRoutes); // a meeting as a PDF, on the Shelf, or emailed
 app.use('/api/meetings', meetingRoutes); // recorded meetings: who said what, and a summary
-app.use('/api/transcripts', transcriptRoutes); // any audio file or recording, as plain text
-app.use('/api/translate', translateRoutes); // two people, two languages, one phone
+app.use('/api/transcripts', needsModule('transcribe'), transcriptRoutes); // any audio file or recording, as plain text
+app.use('/api/translate', needsModule('translate'), translateRoutes); // two people, two languages, one phone
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
 app.use('/api/trade', tradeRoutes); // the sales and purchase book: a photo of the bill, a voice note, and Reem reads the rest
+app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
-app.use('/api/checklists', checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
+app.use('/api/checklists', needsModule('checklists'), checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
@@ -214,12 +219,14 @@ app.get('/api/documents', wrap(async (req, res) => {
       .all(req.user.id, ...ids);
     return res.json(rows.map((d) => docOut(d, req.user.id)));
   }
+  // The list itself is the Shelf screen's. A chat's own files, above, are anybody's to see.
+  if (!(await userModules(req.user)).includes('shelf')) return res.status(403).json({ error: 'You do not have this module' });
   const rows = await readableDocuments(req.user, req.query.agent);
   res.json(rows.map((d) => docOut(d, req.user.id)));
 }));
 // Above /api/documents/:id, which would otherwise read "expiring" as an id.
 // ?days=30 for the badge on the menu, the default 90 for the Shelf's own list.
-app.get('/api/documents/expiring', wrap(async (req, res) => {
+app.get('/api/documents/expiring', needsModule('shelf'), wrap(async (req, res) => {
   const rows = await expiringDocuments(req.user, req.query.days);
   res.json(rows.map((d) => docOut(d, req.user.id)));
 }));
@@ -227,7 +234,7 @@ app.get('/api/documents/:id', wrap(async (req, res) => {
   const doc = await readableDocument(req.user, req.params.id);
   doc ? res.json(docOut(doc, req.user.id)) : notFound(res);
 }));
-app.post('/api/documents', upload.array('files', 10), wrap(async (req, res) => {
+app.post('/api/documents', needsModule('shelf'), upload.array('files', 10), wrap(async (req, res) => {
   const agentId = Number(req.body.agent) || null;
   if (agentId && !await canUseAgent(req.user, agentId)) return notFound(res);
   // Only needed when no shelf was chosen, but reading it once beats once per file.
@@ -248,7 +255,7 @@ app.post('/api/documents', upload.array('files', 10), wrap(async (req, res) => {
 // A typed note. Runs the identical path as an upload - classify, file to a shelf,
 // index - so it is searchable and openable like any other file. Users get these too:
 // their notes are their own, and like their uploads can never be shared.
-app.post('/api/documents/note', wrap(async (req, res) => {
+app.post('/api/documents/note', needsModule('shelf'), wrap(async (req, res) => {
   const agentId = Number(req.body.agent) || null;
   if (agentId && !await canUseAgent(req.user, agentId)) return notFound(res);
   const { doc, duplicate } = await saveNote(req.user.id, agentId, req.body.text);
@@ -277,11 +284,11 @@ app.get('/api/documents/:id/preview', wrap(async (req, res) => {
   res.type('html').send(await docxPreview(doc));
 }));
 // master only: share or unshare a whole company or folder in one go
-app.post('/api/documents/share', wrap(async (req, res) => {
+app.post('/api/documents/share', needsModule('shelf'), wrap(async (req, res) => {
   res.json({ changed: await setSharedMany(req.user, req.body.ids, req.body.shared) });
 }));
 // move to another folder or company, rename, or (master only) publish to the shelf
-app.patch('/api/documents/:id', wrap(async (req, res) => {
+app.patch('/api/documents/:id', needsModule('shelf'), wrap(async (req, res) => {
   const doc = await own('documents', req.params.id, req.user.id);
   if (!doc) return notFound(res);
   const folder = FOLDERS.includes(req.body.folder) ? req.body.folder : doc.folder;
@@ -299,7 +306,7 @@ app.patch('/api/documents/:id', wrap(async (req, res) => {
   if ('shared' in req.body && isMaster(req.user)) await setShared(req.user, doc.id, req.body.shared);
   res.json(docOut(await db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(doc.id), req.user.id));
 }));
-app.delete('/api/documents/:id', wrap(async (req, res) => {
+app.delete('/api/documents/:id', needsModule('shelf'), wrap(async (req, res) => {
   await deleteDocument(req.user.id, Number(req.params.id));
   res.json({ ok: true });
 }));
@@ -311,6 +318,7 @@ app.get('/api/access', wrap(async (req, res) => {
 }));
 
 // ---------- memory (shared by all of the user's agents) ----------
+app.use('/api/memories', needsModule('memory'));
 app.get('/api/memories', wrap(async (req, res) => {
   res.json(await db.prepare('SELECT id, text, created_at FROM memories WHERE user_id = ? ORDER BY id DESC').all(req.user.id));
 }));
@@ -377,6 +385,12 @@ if (existsSync(dist)) {
   app.use(express.static(dist, { index: false, setHeaders: (res, p) => p.endsWith('sw.js') && res.setHeader('Cache-Control', 'no-cache') }));
   app.use((req, res, next) => (req.method === 'GET' ? res.sendFile(`${dist}/index.html`) : next()));
 }
+
+// Before anyone is let in: the screens that have just become modules go to the people
+// who already had them, so nobody opens Reem to find a screen gone.
+await giveToEveryoneOnce()
+  .then((given) => given.length && console.log('[modules] given to everyone already here:', given.join(', ')))
+  .catch((e) => console.error('[modules] could not give the new modules to everyone:', e.message));
 
 app.listen(PORT, '0.0.0.0', () => {
   // drafts approved while the rate limit was full go out when it clears

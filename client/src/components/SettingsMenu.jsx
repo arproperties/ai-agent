@@ -38,6 +38,9 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
   // Picking somewhere closes the menu on the way there.
   const go = (fn) => () => { setOpen(false); fn(); };
   const waiting = expiring + dueTodos + (tenantCare?.waiting || 0);
+  // Reem's own modules (server/modules.js): a row is there only for the people the master
+  // has given it to, and for the master.
+  const has = (key) => modules.includes(key);
 
   return (
     // Not `relative`: the menu is positioned against the footer instead, so it spans
@@ -54,29 +57,32 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
       {open && (
         <div role="menu" aria-label="Settings"
           className="menu-glass absolute bottom-full left-2 right-2 z-50 mb-1 space-y-0.5 rounded-xl p-1.5">
-          <Row role="menuitem" icon={<Icon name="folder" size={17} />} label="Shelf" active={filesOpen} onClick={go(onFiles)}
-            aria-label={expiring ? `Shelf (${expiring} expiring)` : 'Shelf'} badge={<Count n={expiring} />} />
-          <Row role="menuitem" icon={<ListTodo size={17} strokeWidth={1.75} />} label="To-do" active={todosOpen} onClick={go(onTodos)}
-            aria-label={dueTodos ? `To-do (${dueTodos} due)` : 'To-do'} badge={<Count n={dueTodos} />} />
-          <Row role="menuitem" icon={<Languages size={17} strokeWidth={1.75} />} label="Live Translator" active={translateOpen} onClick={go(onTranslate)} />
-          <Row role="menuitem" icon={<AudioLines size={17} strokeWidth={1.75} />} label="Meetings" active={meetingsOpen} onClick={go(onMeetings)} />
-          <Row role="menuitem" icon={<Captions size={17} strokeWidth={1.75} />} label="Transcribe" active={transcribeOpen} onClick={go(onTranscribe)} />
+          {has('shelf') && (
+            <Row role="menuitem" icon={<Icon name="folder" size={17} />} label="Shelf" active={filesOpen} onClick={go(onFiles)}
+              aria-label={expiring ? `Shelf (${expiring} expiring)` : 'Shelf'} badge={<Count n={expiring} />} />
+          )}
+          {has('todos') && (
+            <Row role="menuitem" icon={<ListTodo size={17} strokeWidth={1.75} />} label="To-do" active={todosOpen} onClick={go(onTodos)}
+              aria-label={dueTodos ? `To-do (${dueTodos} due)` : 'To-do'} badge={<Count n={dueTodos} />} />
+          )}
+          {has('translate') && <Row role="menuitem" icon={<Languages size={17} strokeWidth={1.75} />} label="Live Translator" active={translateOpen} onClick={go(onTranslate)} />}
+          {has('meetings') && <Row role="menuitem" icon={<AudioLines size={17} strokeWidth={1.75} />} label="Meetings" active={meetingsOpen} onClick={go(onMeetings)} />}
+          {has('transcribe') && <Row role="menuitem" icon={<Captions size={17} strokeWidth={1.75} />} label="Transcribe" active={transcribeOpen} onClick={go(onTranscribe)} />}
           {/* Only for the people who look after the tenant inbox (and the master). */}
           {tenantCare?.member && (
             <Row role="menuitem" icon={<Building2 size={17} strokeWidth={1.75} />} label="Tenant care" active={tenantCareOpen} onClick={go(onTenantCare)}
               aria-label={tenantCare.waiting ? `Tenant care (${tenantCare.waiting} waiting)` : 'Tenant care'} badge={<Count n={tenantCare.waiting} />} />
           )}
-          {/* Only for the people the master has given the module (and the master). */}
-          {modules.includes('notices') && <Row role="menuitem" icon={<Megaphone size={17} strokeWidth={1.75} />} label="Tenant notices" active={noticesOpen} onClick={go(onNotices)} />}
-          {modules.includes('trade') && <Row role="menuitem" icon={<Receipt size={17} strokeWidth={1.75} />} label="Sales & purchase" active={tradeOpen} onClick={go(onTrade)} />}
-          <Row role="menuitem" icon={<ClipboardList size={17} strokeWidth={1.75} />} label="My responsibilities" active={dutiesOpen} onClick={go(onDuties)} />
-          <Row role="menuitem" icon={<ListChecks size={17} strokeWidth={1.75} />} label="Checklists" active={checklistsOpen} onClick={go(onChecklists)} />
+          {has('notices') && <Row role="menuitem" icon={<Megaphone size={17} strokeWidth={1.75} />} label="Tenant notices" active={noticesOpen} onClick={go(onNotices)} />}
+          {has('trade') && <Row role="menuitem" icon={<Receipt size={17} strokeWidth={1.75} />} label="Sales & purchase" active={tradeOpen} onClick={go(onTrade)} />}
+          {has('duties') && <Row role="menuitem" icon={<ClipboardList size={17} strokeWidth={1.75} />} label="My responsibilities" active={dutiesOpen} onClick={go(onDuties)} />}
+          {has('checklists') && <Row role="menuitem" icon={<ListChecks size={17} strokeWidth={1.75} />} label="Checklists" active={checklistsOpen} onClick={go(onChecklists)} />}
           {/* Only for the master and for whoever runs a building: the field staff's jobs. */}
           {hasBuildings && <Row role="menuitem" icon={<HardHat size={17} strokeWidth={1.75} />} label="Buildings" active={buildingsOpen} onClick={go(onBuildings)} />}
           {/* The same people keep the inventory of those buildings. */}
           {hasBuildings && <Row role="menuitem" icon={<Package size={17} strokeWidth={1.75} />} label="Inventory" active={inventoryOpen} onClick={go(onInventory)} />}
-          <Row role="menuitem" icon={<Icon name="brain" size={17} />} label="Memory" onClick={go(onMemory)} />
-          <Row role="menuitem" icon={<Icon name="mail" size={17} />} label="Email" onClick={go(onEmail)} />
+          {has('memory') && <Row role="menuitem" icon={<Icon name="brain" size={17} />} label="Memory" onClick={go(onMemory)} />}
+          {has('email') && <Row role="menuitem" icon={<Icon name="mail" size={17} />} label="Email" onClick={go(onEmail)} />}
           {/* Only the master manages people; the server refuses anyone else. */}
           {user.role === 'master' && <Row role="menuitem" icon={<Users size={17} />} label="People" onClick={go(onPeople)} />}
           <div className="mt-1 flex items-center gap-3 border-t border-stroke/60 px-3 pb-1.5 pt-2.5">

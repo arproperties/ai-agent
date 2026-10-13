@@ -1417,6 +1417,11 @@ await db.exec(`
     module TEXT NOT NULL,
     PRIMARY KEY (user_id, module)
   );
+  -- A screen that became a module, and has been given once to everyone who was here then.
+  CREATE TABLE IF NOT EXISTS module_rollouts (
+    module TEXT PRIMARY KEY,
+    done_at BIGINT DEFAULT ${NOW}
+  );
 `);
 
 // Tenant notices (server/notices.js): what a watchman saw at a unit, with photos, emailed

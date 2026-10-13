@@ -9,10 +9,29 @@ import { isMaster } from './access.js';
 // Not the saifsys modules (server/saifsys/index.js), which decide what a person's agents
 // may look up in saifsys. To add a module: a line here, its routes behind needsModule(key),
 // and its row in the client's settings menu.
+//
+// everyone: a screen that was everybody's before it became a module. Whoever already had
+// an account on the day it became one keeps it (giveToEveryoneOnce); the master unticks
+// it from there. A person added afterwards starts with nothing, like any other module.
+//
+// A module is the screen and what only the screen does. What a chat needs of the same
+// data - opening a file an agent quoted, approving an email an agent drafted - stays open
+// to everyone, or taking Shelf or Email from a person would break their chats.
+//
+// In the order of the settings menu.
 
 export const MODULES = [
+  { key: 'shelf', label: 'Shelf', about: 'Their files and the ones shared with them: upload, sort, search and open.', everyone: true },
+  { key: 'todos', label: 'To-do', about: 'Their to-do list and the things that come back, with reminders.', everyone: true },
+  { key: 'translate', label: 'Live Translator', about: 'Two people, two languages, one phone.', everyone: true },
+  { key: 'meetings', label: 'Meetings', about: 'Record a meeting and get who said what, with a summary.', everyone: true },
+  { key: 'transcribe', label: 'Transcribe', about: 'Turn a recording or an audio file into text.', everyone: true },
   { key: 'notices', label: 'Tenant notices', about: 'Report something at a unit with a photo. Reem emails the notice to the tenant.' },
   { key: 'trade', label: 'Sales & purchase', about: 'Record a sale or a purchase with a photo of the bill and a voice note. Reem reads the amount, the name and the date.' },
+  { key: 'duties', label: 'My responsibilities', about: 'See what they look after, as you have written it.', everyone: true },
+  { key: 'checklists', label: 'Checklists', about: 'The points of a job, ticked each time it is done.', everyone: true },
+  { key: 'memory', label: 'Memory', about: 'See and remove what Reem remembers about them.', everyone: true },
+  { key: 'email', label: 'Email', about: 'Connect their own mailbox and see what Reem has sent from it.', everyone: true },
 ];
 const KEYS = MODULES.map((m) => m.key);
 const bad = (message, status) => Object.assign(new Error(message), { status });
@@ -57,6 +76,26 @@ export async function setModuleAccess(userId, wanted) {
 export const needsModule = (key) => (req, res, next) => {
   userModules(req.user).then((have) => (have.includes(key) ? next() : res.status(403).json({ error: 'You do not have this module' })), next);
 };
+
+/** The same, except for the requests open(req) lets through: the ones a chat makes too. */
+export const needsModuleUnless = (key, open) => (req, res, next) => (open(req) ? next() : needsModule(key)(req, res, next));
+
+/**
+ * Run at start-up. A screen that has just become a module is given, once, to everyone who
+ * has an account at that moment; module_rollouts remembers that it was done, so a tick the
+ * master has since taken away is not put back by the next restart. Returns what it gave.
+ */
+export async function giveToEveryoneOnce() {
+  const done = new Set((await db.prepare('SELECT module FROM module_rollouts').all()).map((r) => r.module));
+  const due = MODULES.filter((m) => m.everyone && !done.has(m.key)).map((m) => m.key);
+  await tx(async () => {
+    for (const key of due) {
+      await db.prepare('INSERT INTO module_access (user_id, module) SELECT id, ? FROM users ON CONFLICT DO NOTHING').run(key);
+      await db.prepare('INSERT INTO module_rollouts (module) VALUES (?)').run(key);
+    }
+  });
+  return due;
+}
 
 // ---------- routes ----------
 

@@ -38,6 +38,10 @@ const notifiedDuties = params.get('responsibilities') === '1'; // the master gav
 const notifiedBuilding = Number(params.get('building')) ? { building: Number(params.get('building')), job: Number(params.get('job')) || null } : null;
 if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedDuties || notifiedBuilding) window.history.replaceState(null, '', '/');
 
+// The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
+const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
+  notices: 'notices', trade: 'trade', duties: 'duties', checklists: 'checklists', memory: 'memory', email: 'email' };
+
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
   const [config, setConfig] = useState({ models: [], voices: [], folders: [], voice: false });
@@ -53,7 +57,7 @@ export default function App() {
   const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedDuties ? 'duties' : notifiedBuilding ? 'buildings' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings' | 'notices' | 'trade'
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const [hasBuildings, setHasBuildings] = useState(false); // the master, or someone who runs a building
-  const [modules, setModules] = useState([]); // Reem's own modules the master has given this person
+  const [modules, setModules] = useState(null); // Reem's own modules the master has given this person; null until they are known
   const [jumpToBuilding, setJumpToBuilding] = useState(notifiedBuilding); // a building (and job) a notification asked for
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
@@ -124,6 +128,12 @@ export default function App() {
     api.get('/modules/me').then((r) => setModules(r.modules)).catch(() => {});
   }, [me, loadAgents, loadConvs, loadExpiring, loadDue, loadTenantCare]);
 
+  // A screen can be asked for from outside the menu - a notification, a link on the first
+  // screen. If it is a module this person has not been given, they stay where they were.
+  useEffect(() => {
+    if (modules && PANEL_MODULE[panel] && !modules.includes(PANEL_MODULE[panel])) setPanel(null);
+  }, [modules, panel]);
+
   const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setPanel(null); };
   const onConversation = (id) => { if (id) setChat((c) => ({ ...c, id })); loadConvs(); };
   const deleteConv = async (id) => {
@@ -158,7 +168,7 @@ export default function App() {
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
           hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
           inventoryOpen={panel === 'inventory'} onInventory={() => { setPanel('inventory'); setDrawer(false); }}
-          modules={modules} noticesOpen={panel === 'notices'} onNotices={() => { setPanel('notices'); setDrawer(false); }} tradeOpen={panel === 'trade'} onTrade={() => { setPanel('trade'); setDrawer(false); }}
+          modules={modules || []} noticesOpen={panel === 'notices'} onNotices={() => { setPanel('notices'); setDrawer(false); }} tradeOpen={panel === 'trade'} onTrade={() => { setPanel('trade'); setDrawer(false); }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />

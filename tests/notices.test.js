@@ -6,7 +6,7 @@ import { db, reset, makeUser, closeDb } from './helpers/db.js';
 process.env.EMAIL_KEY ||= Buffer.alloc(32, 7).toString('base64');
 process.env.SAIFSYS_API_KEY = ''; // nothing here may reach the real saifsys
 const { encrypt } = await import('../server/secrets.js');
-const { userModules, listModuleAccess, setModuleAccess, needsModule } = await import('../server/modules.js');
+const { MODULES, userModules, listModuleAccess, setModuleAccess, needsModule } = await import('../server/modules.js');
 const { places, tenantsOf, noticeText, noticeSubject, createNotice, resendNotice, listNotices, deleteNotice } = await import('../server/notices.js');
 
 test.after(() => closeDb());
@@ -48,13 +48,14 @@ const outbox = () => {
 
 test('a module is the master\'s by right and anyone else\'s by a tick', async () => {
   const { boss, watch } = await people();
-  assert.deepEqual(await userModules(boss), ['notices', 'trade']);
+  assert.deepEqual(await userModules(boss), MODULES.map((m) => m.key));
   assert.deepEqual(await userModules(watch), []);
   assert.equal(await setModuleAccess(watch.id, ['notices']), 1);
   assert.deepEqual(await userModules(watch), ['notices']);
   const list = await listModuleAccess(watch.id);
   assert.equal(list.master, false);
-  assert.deepEqual(list.modules.map((m) => [m.key, m.on]), [['notices', true], ['trade', false]]);
+  assert.deepEqual(list.modules.filter((m) => m.on).map((m) => m.key), ['notices']);
+  assert.equal(list.modules.length, MODULES.length, 'every module is listed, ticked or not');
   assert.equal(await setModuleAccess(watch.id, []), 0, 'the caller sends the end state, so an empty list takes it away');
   assert.deepEqual(await userModules(watch), []);
 });

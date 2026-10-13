@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
 
-const { userModules, listModuleAccess, setModuleAccess, needsModule } = await import('../server/modules.js');
+const { MODULES, userModules, listModuleAccess, setModuleAccess, needsModule, needsModuleUnless, giveToEveryoneOnce } = await import('../server/modules.js');
 const { tidy, monthAndDay, createEntry, addVoice, listEntries, deleteEntry } = await import('../server/trade.js');
 
 test.after(() => closeDb());
@@ -35,10 +35,10 @@ const sweep = async (boss) => { for (const e of (await listEntries(boss)).entrie
 
 test('a person can hold several modules at once, and each opens only its own routes', async () => {
   const { boss, sam } = await people();
-  assert.deepEqual(await userModules(boss), ['notices', 'trade']);
+  assert.deepEqual(await userModules(boss), MODULES.map((m) => m.key));
   assert.equal(await setModuleAccess(sam.id, ['trade', 'notices']), 2);
   assert.deepEqual(await userModules(sam), ['notices', 'trade']);
-  assert.deepEqual((await listModuleAccess(sam.id)).modules.map((m) => [m.label, m.on]), [['Tenant notices', true], ['Sales & purchase', true]]);
+  assert.deepEqual((await listModuleAccess(sam.id)).modules.filter((m) => m.on).map((m) => m.label), ['Tenant notices', 'Sales & purchase']);
 
   await setModuleAccess(sam.id, ['trade']);
   const knock = (key) => new Promise((done) => {
@@ -46,6 +46,34 @@ test('a person can hold several modules at once, and each opens only its own rou
   });
   assert.equal(await knock('trade'), 'in');
   assert.equal(await knock('notices'), 403, 'taking one module away leaves the other');
+});
+
+test('a screen that becomes a module stays with whoever had it, once, and the master can then take it away', async () => {
+  const { boss, sam } = await people();
+  const old = MODULES.filter((m) => m.everyone).map((m) => m.key);
+  assert.deepEqual(old, ['shelf', 'todos', 'translate', 'meetings', 'transcribe', 'duties', 'checklists', 'memory', 'email']);
+  assert.deepEqual(await userModules(sam), [], 'before the day it is done, nobody but the master has any');
+  assert.deepEqual(await giveToEveryoneOnce(), old);
+  assert.deepEqual(await userModules(sam), old, 'not the new ones: those are still a tick');
+
+  await setModuleAccess(sam.id, ['shelf', 'trade']);
+  const late = { id: await makeUser('Late'), role: 'user' };
+  assert.deepEqual(await giveToEveryoneOnce(), [], 'a restart does it again to nobody');
+  assert.deepEqual(await userModules(sam), ['shelf', 'trade'], 'what the master took away stays away');
+  assert.deepEqual(await userModules(late), [], 'someone added afterwards starts with nothing');
+});
+
+test('what a chat asks of the same data stays open to someone without the module', async () => {
+  const { sam } = await people();
+  const glance = (req) => req.method === 'GET' && req.path === '/';
+  const knock = (req) => new Promise((done) => {
+    needsModuleUnless('email', glance)({ user: sam, ...req }, { status: (code) => ({ json: () => done(code) }) }, () => done('in'));
+  });
+  assert.equal(await knock({ method: 'GET', path: '/' }), 'in');
+  assert.equal(await knock({ method: 'POST', path: '/' }), 403);
+  assert.equal(await knock({ method: 'GET', path: '/suggest' }), 403);
+  await setModuleAccess(sam.id, ['email']);
+  assert.equal(await knock({ method: 'POST', path: '/' }), 'in');
 });
 
 // ---------- recording ----------
