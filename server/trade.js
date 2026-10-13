@@ -7,7 +7,7 @@ import { db } from './db.js';
 import { DATA_DIR, MODELS } from './config.js';
 import { isMaster } from './access.js';
 import { claude, transcribe, audioExt } from './ai.js';
-import { needsModule } from './modules.js';
+import { needsModule, userModules } from './modules.js';
 
 // Sales & purchase: a book of what was sold and what was bought, kept by someone who is
 // not at home with forms. They say which of the two it is, photograph the bill, and may
@@ -256,6 +256,70 @@ export async function deleteEntry(user, id) {
   await db.prepare('DELETE FROM trade_entries WHERE id = ?').run(e.id);
   // Only ever inside our own folder, whatever the row says.
   for (const f of files) if (f.path.startsWith(`${DIR}/`)) rmSync(f.path, { force: true });
+}
+
+// ---------- Reem in chat ----------
+
+// Asking only. An entry is still made on the screen, from a photo of the bill; nothing a
+// chat says can add one, change one or take one away.
+
+const MAX_CHAT_ENTRIES = 40;
+const DAY = { type: 'string', description: 'YYYY-MM-DD, a day in Dubai. Work it out from the current date given to you.' };
+const BOOK = {
+  name: 'sales_purchases',
+  description: 'The Sales & purchase book: what staff recorded as sold or bought from a photo of the bill - who it was sold to or bought from, ' +
+    'how much, the date on the bill, what it was for, when it was recorded and by whom. ' +
+    'Use for "how much did we sell today?", "total purchases this month?", "what did Ahmed record this week?", "any bill from Al Noor?", "what did we buy on 5 October?". ' +
+    'It always gives the totals for today and for this month. With search, from or to it also gives "found": what the matching entries add up to - ' +
+    'all of them, even when the list of entries is cut short - so take a total from there and never add the listed entries up yourself. ' +
+    'from and to are the days an entry was recorded, both counted. Totals are per currency and leave out an entry whose amount could not be read (needs_checking). ' +
+    'The master is shown everyone\'s entries; anyone else only their own - "whose" says which. ' +
+    'View only: an entry is added on the Sales & purchase screen, not here - say so if asked. ' +
+    'This is not the Shelf: contracts and other documents are found with the Shelf tools.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      search: { type: 'string', description: 'Optional. Part of the name, what it was for, the amount, or the name of who recorded it.' },
+      from: DAY,
+      to: DAY,
+      kind: { type: 'string', enum: KINDS, description: 'Optional. Only sales, or only purchases.' },
+    },
+  },
+};
+
+async function bookForChat(user, input) {
+  for (const d of [input.from, input.to]) if (d && dayStart(d) == null) throw new Error('Dates look like 2026-10-13');
+  const of = (list) => (KINDS.includes(input.kind) ? list.filter((x) => x.kind === input.kind) : list);
+  const { entries, totals, found } = await listEntries(user, { q: input.search, from: input.from, to: input.to });
+  const list = of(entries);
+  const day = (secs) => new Date((secs + DUBAI) * 1000).toISOString().slice(0, 10);
+  return JSON.stringify({
+    whose: isMaster(user) ? 'everyone\'s entries' : 'this user\'s own entries only',
+    totals: of(totals),
+    ...(found ? { found: of(found) } : {}),
+    entries: list.slice(0, MAX_CHAT_ENTRIES).map((e) => ({
+      id: e.id, kind: e.kind, party: e.party, amount: e.amount, currency: e.currency, bill_date: e.date, about: e.about,
+      recorded: day(e.createdAt), by: e.by, ...(e.status === 'check' ? { needs_checking: true } : {}),
+    })),
+    ...(list.length > MAX_CHAT_ENTRIES ? { more: `Only the latest ${MAX_CHAT_ENTRIES} entries are listed. Narrow it with search or dates to see others.` } : {}),
+  });
+}
+
+/** The book's one tool, same shape as buildingKit(). Only for someone who has the module. */
+export async function tradeKit(user) {
+  const has = (await userModules(user)).includes('trade');
+  return {
+    definitions: has ? [BOOK] : [],
+    status: () => 'Looking at the sales and purchases…',
+    run: async (block) => {
+      try {
+        if (!has || block.name !== BOOK.name) throw new Error(`Unknown tool ${block.name}`);
+        return { type: 'tool_result', tool_use_id: block.id, content: await bookForChat(user, block.input || {}) };
+      } catch (e) {
+        return { type: 'tool_result', tool_use_id: block.id, content: e.message, is_error: true };
+      }
+    },
+  };
 }
 
 // ---------- routes ----------

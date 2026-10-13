@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
 
 const { MODULES, userModules, listModuleAccess, setModuleAccess, needsModule, needsModuleUnless, giveToEveryoneOnce } = await import('../server/modules.js');
-const { tidy, monthAndDay, dayStart, createEntry, addVoice, listEntries, deleteEntry } = await import('../server/trade.js');
+const { tidy, monthAndDay, dayStart, createEntry, addVoice, listEntries, deleteEntry, tradeKit } = await import('../server/trade.js');
 
 test.after(() => closeDb());
 
@@ -232,6 +232,50 @@ test('a person sees their own entries; the master sees everyone\'s, and the tota
     { kind: 'purchase', currency: 'AED', today: 30, month: 30 },
     { kind: 'sale', currency: 'AED', today: 150.5, month: 150.5 },
   ]);
+  await sweep(boss);
+});
+
+test('Reem: the book can be asked about in chat, by whoever has the module, and only read', async () => {
+  const { boss, sam, other } = await people();
+  await setModuleAccess(sam.id, ['trade']);
+  await createEntry(sam, { kind: 'sale', photos: [jpg()] }, ai({ party: 'Al Noor Trading', amount: 100, currency: 'AED', date: '2026-10-12', about: 'Paint' }));
+  await createEntry(sam, { kind: 'purchase', photos: [jpg()] }, ai({ party: 'Gulf Hardware', amount: 40, currency: 'AED' }));
+  await createEntry(boss, { kind: 'sale', photos: [jpg()] }, ai({ party: 'Zed', amount: 7, currency: 'AED' }));
+  await createEntry(boss, { kind: 'purchase', photos: [jpg()] }, ai({ party: null, amount: null }));
+  const ask = async (user, input = {}) => (await tradeKit(user)).run({ id: 't', name: 'sales_purchases', input });
+  const told = async (user, input) => JSON.parse((await ask(user, input)).content);
+
+  assert.deepEqual((await tradeKit(other)).definitions, [], 'without the module there is no such tool');
+  assert.equal((await ask(other)).is_error, true);
+  assert.deepEqual((await tradeKit(sam)).definitions.map((d) => d.name), ['sales_purchases']);
+
+  const mine = await told(sam);
+  assert.equal(mine.whose, 'this user\'s own entries only');
+  assert.deepEqual(mine.totals, [{ kind: 'purchase', currency: 'AED', today: 40, month: 40 }, { kind: 'sale', currency: 'AED', today: 100, month: 100 }]);
+  assert.equal(mine.found, undefined, 'nothing narrowed, nothing found to add up');
+  assert.deepEqual(mine.entries.map((e) => [e.kind, e.party, e.amount, e.bill_date, e.about, e.by]), [
+    ['purchase', 'Gulf Hardware', 40, null, null, 'Sam'], ['sale', 'Al Noor Trading', 100, '2026-10-12', 'Paint', 'Sam'],
+  ]);
+  assert.match(mine.entries[0].recorded, /^\d{4}-\d{2}-\d{2}$/);
+
+  const all = await told(boss);
+  assert.equal(all.whose, 'everyone\'s entries');
+  assert.deepEqual(all.totals, [{ kind: 'purchase', currency: 'AED', today: 40, month: 40 }, { kind: 'sale', currency: 'AED', today: 107, month: 107 }]);
+  assert.equal(all.entries.length, 4);
+  assert.equal(all.entries[0].needs_checking, true, 'a bill that could not be read says so');
+
+  // Narrowed: what was found is added up by the book, not by the model.
+  assert.deepEqual((await told(boss, { search: 'sam' })).found, [{ kind: 'purchase', currency: 'AED', entries: 1, total: 40 }, { kind: 'sale', currency: 'AED', entries: 1, total: 100 }]);
+  const sales = await told(boss, { search: 'sam', kind: 'sale' });
+  assert.deepEqual([sales.found, sales.totals.map((t) => t.kind), sales.entries.map((e) => e.party)],
+    [[{ kind: 'sale', currency: 'AED', entries: 1, total: 100 }], ['sale'], ['Al Noor Trading']]);
+  assert.deepEqual((await told(sam, { search: 'zed' })).entries, [], 'nothing of somebody else\'s');
+  const today = new Date((Date.now() / 1000 + 4 * 3600) * 1000).toISOString().slice(0, 10);
+  assert.deepEqual((await told(sam, { from: today, to: today, kind: 'purchase' })).found, [{ kind: 'purchase', currency: 'AED', entries: 1, total: 40 }]);
+  assert.match((await ask(sam, { from: 'yesterday' })).content, /Dates look like/);
+
+  assert.equal((await (await tradeKit(sam)).run({ id: 't', name: 'delete_entry', input: {} })).is_error, true, 'there is nothing here that changes the book');
+  assert.equal((await listEntries(boss)).entries.length, 4);
   await sweep(boss);
 });
 

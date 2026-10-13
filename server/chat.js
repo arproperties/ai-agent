@@ -9,6 +9,7 @@ import { teamReminderKit } from './teamReminders.js';
 import { responsibilityKit } from './responsibilities.js';
 import { buildingKit } from './buildings.js';
 import { inventoryKit } from './inventory.js';
+import { tradeKit } from './trade.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
 import { shelfKit } from './shelf.js';
@@ -368,6 +369,7 @@ export async function chat(req, res) {
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
     await buildingKit(user),
     await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),
+    await tradeKit(user), // asking about the Sales & purchase book; only with the module
     ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
   // A picture asked for in their own words. It is hung on this reply; its own words are
   // what the reply says if the agent adds none.
