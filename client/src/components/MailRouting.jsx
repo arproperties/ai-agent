@@ -266,12 +266,19 @@ function Entry({ l, names, people, onChanged }) {
 
   if (l.kind === 'out') {
     const direct = l.status === 'direct';
+    // A staff reply Reem sent on from the shared mailbox: it carries the person's own name.
+    const relayed = l.status === 'replied' || (l.status === 'failed' && l.mailbox !== l.from);
     return (
-      <div className={`space-y-1 rounded-2xl border p-3 text-sm ${direct ? 'border-bad/50 bg-bad/[0.06]' : 'border-stroke bg-white/[0.03]'}`}>
+      <div className={`space-y-1 rounded-2xl border p-3 text-sm ${direct || l.status === 'failed' ? 'border-bad/50 bg-bad/[0.06]' : 'border-stroke bg-white/[0.03]'}`}>
         <div className="flex items-start gap-2">
-          <p className="min-w-0 flex-1 truncate"><span className="font-medium">{names.get(l.mailbox) || l.name || l.mailbox}</span> <span className="text-mute">sent to</span> {who(l.to) || '—'}</p>
+          <p className="min-w-0 flex-1 truncate">
+            <span className="font-medium">{relayed ? l.name || names.get(l.from) || l.from : names.get(l.mailbox) || l.name || l.mailbox}</span>
+            <span className="text-mute">{relayed ? ' replied to ' : ' sent to '}</span>{who(l.to) || '—'}
+          </p>
           <span className="shrink-0 text-xs text-mute">{dated(l.at)}</span>
         </div>
+        {relayed && l.status === 'replied' && <p className="text-xs text-emerald-400">Sent from the shared mailbox by Reem</p>}
+        {relayed && l.status === 'failed' && <p className="flex items-center gap-1.5 text-xs text-bad"><AlertTriangle size={13} /> Not sent: {l.error}</p>}
         {direct && <p className="flex items-center gap-1.5 text-xs font-medium text-bad"><AlertTriangle size={13} /> Sent from the shared mailbox directly, not through Reem</p>}
         <p className="truncate">{l.subject || '(no subject)'}</p>
         {l.reason && <p className="text-xs text-mute">{l.reason}</p>}

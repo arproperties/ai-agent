@@ -1,8 +1,9 @@
 import { Router } from 'express';
+import { createHmac } from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import { db, tx } from './db.js';
 import { encrypt, decrypt } from './secrets.js';
-import { client, detectHost, friendly, withMailbox, sentPath, applySmtp } from './imap.js';
+import { client, detectHost, friendly, withMailbox, sentPath, applySmtp, replySubject } from './imap.js';
 import { compose, sendRaw, friendlySmtp } from './smtp.js';
 import { ask } from './ai.js';
 import { sendPush } from './push.js';
@@ -12,8 +13,11 @@ import { sendPush } from './push.js';
 //
 // Every few minutes Reem reads the new emails in it and, by the master's own words ("legal
 // goes to Mohammad, accounts to the accountant and Tauqeer, the rest to Rona"), forwards each
-// to the right person's own mailbox, with Reply-To set to whoever wrote it — so their reply
-// goes straight back to the sender, from their own address. Until the master turns on
+// to the right person's own mailbox. Its Reply-To is the shared mailbox itself, tagged with
+// the email it answers (shared+r12x...@gmail.com): when they press Reply as usual, the answer
+// comes back here and Reem sends it on to the sender from the shared address, in the same
+// thread, logged under their name. Senders who wrote to the shared address get their answer
+// from it, and nobody needs its password. Until the master turns on
 // "Forward by itself", Reem only writes down who it would have sent each one to.
 //
 // The other half is knowing who sent what. Reem reads the Sent folder of every mailbox it
@@ -264,7 +268,7 @@ export function forwardText(mail, reason, { dropped = false } = {}) {
   const sender = mail.name ? `${mail.name} <${mail.from}>` : mail.from;
   return [
     reason ? `Reem passed this email on to you: ${reason}` : 'Reem passed this email on to you.',
-    `Reply as usual: your reply goes to ${mail.replyTo || mail.from}.`,
+    `Reply as usual: Reem sends your reply to ${mail.replyTo || mail.from} from the shared address. Write only your answer; this note is not sent.`,
     ...(dropped ? ['', 'The attachments were too big to forward. They are still in the shared mailbox.'] : []),
     '', '---------- Forwarded message ----------',
     `From: ${sender}`,
@@ -286,12 +290,77 @@ async function forward(acc, row, mail, to, { send = sendRaw } = {}) {
   const dropped = size > MAX_ATTACH;
   const built = await compose({
     from: { name: `${mail.name || mail.from} via Reem`, address: acc.email },
-    to, replyTo: mail.replyTo || mail.from,
+    to, replyTo: replyAddress(acc.email, row.id),
     subject: fwdSubject(mail.subject), text: forwardText(mail, row.reason, { dropped }),
     attachments: dropped ? [] : mail.attachments.map((a) => ({ filename: a.filename, contentType: a.contentType, content: a.content.toString('base64') })),
   });
   await db.prepare('UPDATE mail_log SET forward_id = ? WHERE id = ?').run(built.messageId, row.id);
   await send(acc, decrypt(acc.password_enc), built);
+}
+
+// ---------- replies, sent on from the shared address ----------
+
+// The tag on the reply address says which email a reply answers. It is signed, so nobody can
+// make Reem send mail from the shared address by guessing one.
+const sign = (id) => createHmac('sha256', String(process.env.EMAIL_KEY || 'mail-routing')).update(`reply:${id}`).digest('hex').slice(0, 10);
+export function replyAddress(shared, id) {
+  const [local, domain] = lower(shared).split('@');
+  return `${local}+r${id}x${sign(id)}@${domain}`;
+}
+/** The logged email a reply answers, from the tagged address it was sent to; null if none or forged. */
+export function replyTag(shared, list) {
+  const [local, domain] = lower(shared).split('@');
+  for (const a of list || []) {
+    const m = lower(a).match(/^([^+@]+)\+r(\d+)x([0-9a-f]{10})@(.+)$/);
+    if (m && m[1] === local && m[4] === domain && m[3] === sign(Number(m[2]))) return Number(m[2]);
+  }
+  return null;
+}
+
+/** What the person wrote, without the forward quoted under it (Reem's note must not go out). */
+export function ownReply(text) {
+  const cut = String(text || '').split(/\n[ \t]*(?:On [^\n]{0,250}wrote:|-{2,}\s*(?:Original Message|Forwarded message)|_{5,}|From: [^\n]*\n\s*(?:Sent|Date): |Reem passed this email on to you)/i)[0];
+  return cut.split('\n').filter((l) => !/^\s*>/.test(l)).join('\n').trim();
+}
+
+/**
+ * A staff reply that came back to the shared mailbox: sent on to whoever wrote the email, from
+ * the shared address, threaded onto it, with the original quoted underneath. Only someone the
+ * email was passed to, or anyone on the people list, may answer through it. Returns
+ * { id, failed }, or null when the reply is not one Reem should send on.
+ */
+async function relay(acc, m, id, uidValidity, { send = sendRaw, summarize = summarizeSent } = {}) {
+  const row = await db.prepare(`SELECT * FROM mail_log WHERE id = ? AND kind = 'in'`).get(id);
+  if (!row) return null;
+  const allowed = new Set([...String(row.route_to || '').split(','), ...(await people()).map((p) => p.email)].map(lower).filter(Boolean));
+  if (!allowed.has(m.from)) return null;
+  const who = (await db.prepare('SELECT name FROM mail_people WHERE email = ?').get(m.from))?.name || m.name || m.from;
+  const answer = ownReply(m.text);
+  const to = row.reply_addr || row.from_addr;
+  const quote = row.preview ? `\n\nOn ${new Date(Number(row.at) * 1000).toUTCString()}, ${row.from_name || row.from_addr} wrote:\n> ${row.preview}` : '';
+  const built = await compose({
+    from: { address: acc.email }, to: [to], subject: replySubject(row.subject),
+    text: `${answer}${quote}`, inReplyTo: row.message_id || undefined, references: row.message_id || undefined,
+    attachments: (m.attachments || []).filter((a) => a.content?.length).slice(0, 10)
+      .map((a) => ({ filename: a.filename, contentType: a.contentType, content: a.content.toString('base64') })),
+  });
+  const mine = lower(acc.email);
+  // Logged before it is sent, with its Message-ID, so the Sent check knows it as Reem's.
+  const r = await db.prepare(`INSERT INTO mail_log (kind, ref, mailbox, uid, uid_validity, message_id, from_addr, from_name, to_addrs, subject, preview, at, status, forward_id)
+    VALUES ('out', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'replied', ?) ON CONFLICT (ref) DO NOTHING RETURNING id`)
+    .run(`${mine}:reply:${uidValidity}:${m.uid}`, mine, m.uid, uidValidity, built.messageId, m.from, who, to,
+      replySubject(row.subject).slice(0, 300), answer.replace(/\s+/g, ' ').slice(0, 400), m.at, built.messageId);
+  if (!r.id) return { id: null, failed: false }; // already sent on
+  try {
+    if (!answer) throw new Error('The reply was empty, so nothing was sent');
+    await send(acc, decrypt(acc.password_enc), built);
+  } catch (e) {
+    await db.prepare(`UPDATE mail_log SET status = 'failed', error = ? WHERE id = ?`).run(String(e.code ? friendlySmtp(e, acc.smtp_host) : e.message).slice(0, 300), r.id);
+    return { id: r.id, failed: true };
+  }
+  const reason = await summarize({ ...m, text: answer, to: [to], cc: [] });
+  if (reason) await db.prepare('UPDATE mail_log SET reason = ? WHERE id = ?').run(reason, r.id);
+  return { id: r.id, failed: false };
 }
 
 // ---------- one look ----------
@@ -310,7 +379,7 @@ function isAutoReply(m) {
  * has turned it on, forwarded. read, decide and send are injectable for the tests. Returns
  * how many emails it logged.
  */
-export async function lookFront({ read = readNew, decide = decideRoute, send } = {}) {
+export async function lookFront({ read = readNew, decide = decideRoute, send, summarize } = {}) {
   const acc = await front();
   if (!acc) return 0;
   const { rules: text, auto } = await rules();
@@ -318,8 +387,16 @@ export async function lookFront({ read = readNew, decide = decideRoute, send } =
   const { mail, lastUid, uidValidity } = await read(acc, 'inbox', acc.last_uid, acc.uid_validity);
   const mine = lower(acc.email);
   const logged = [];
+  let failed = 0;
   for (const m of mail) {
     if (!m.from || m.from === mine || isAutoReply(m)) continue;
+    // A staff reply to a forward: sent on from here, never passed round again.
+    const answering = replyTag(acc.email, [...m.to, ...m.cc]);
+    if (answering) {
+      const out = await relay(acc, m, answering, uidValidity, { ...(send ? { send } : {}), ...(summarize ? { summarize } : {}) });
+      if (out?.failed) failed++;
+      if (out) continue;
+    }
     let to = [];
     let reason = null;
     let error = null;
@@ -328,11 +405,11 @@ export async function lookFront({ read = readNew, decide = decideRoute, send } =
       try { ({ to, reason } = await decide({ rules: text, people: list, mail: m })); } catch (e) { error = `Reem could not read it: ${e.message}`.slice(0, 300); }
     }
     const status = error ? 'failed' : !to.length ? 'none' : 'would';
-    const r = await db.prepare(`INSERT INTO mail_log (kind, ref, mailbox, uid, uid_validity, message_id, from_addr, from_name, to_addrs, subject, preview, at, reason, route_to, status, error)
-      VALUES ('in', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ref) DO NOTHING RETURNING id`)
+    const r = await db.prepare(`INSERT INTO mail_log (kind, ref, mailbox, uid, uid_validity, message_id, from_addr, from_name, to_addrs, subject, preview, at, reason, route_to, status, error, reply_addr)
+      VALUES ('in', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ref) DO NOTHING RETURNING id`)
       .run(`${mine}:inbox:${uidValidity}:${m.uid}`, mine, m.uid, uidValidity, m.messageId, m.from, m.name || null,
         [...m.to, ...m.cc].join(', '), String(m.subject).slice(0, 300), String(m.text).replace(/\s+/g, ' ').trim().slice(0, 400),
-        m.at, reason, to.join(', ') || null, status, error);
+        m.at, reason, to.join(', ') || null, status, error, m.replyTo || null);
     if (r.id) logged.push({ id: r.id, mail: m, to, reason, status });
   }
   await db.prepare(`UPDATE mail_front SET last_uid = ?, uid_validity = ?, checked_at = ${NOW}, error = NULL WHERE id = 1`).run(lastUid, uidValidity);
@@ -340,7 +417,7 @@ export async function lookFront({ read = readNew, decide = decideRoute, send } =
   // Forwarded one by one after last_uid has moved on, so a slow mail server can never make
   // the next look forward the same emails again.
   // Before there are rules, nothing has failed: the master is still setting the page up.
-  let failed = text.trim() && list.length ? logged.filter((l) => l.status === 'failed').length : 0;
+  failed += text.trim() && list.length ? logged.filter((l) => l.status === 'failed').length : 0;
   if (auto) {
     for (const l of logged.filter((x) => x.status === 'would')) {
       try {

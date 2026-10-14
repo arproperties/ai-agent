@@ -1619,4 +1619,9 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_mail_log_forward ON mail_log(forward_id) WHERE forward_id IS NOT NULL;
   ALTER TABLE mail_people ADD COLUMN IF NOT EXISTS in_rules BOOLEAN NOT NULL DEFAULT true;
   ALTER TABLE mail_route_rules ADD COLUMN IF NOT EXISTS missing TEXT NOT NULL DEFAULT '[]';
+  -- Replies from staff go out from the shared mailbox (see server/mailRouting.js): reply_addr
+  -- is where the email's own sender wants answers; 'replied' is a staff reply Reem sent on.
+  ALTER TABLE mail_log ADD COLUMN IF NOT EXISTS reply_addr TEXT;
+  ALTER TABLE mail_log DROP CONSTRAINT IF EXISTS mail_log_status_check;
+  ALTER TABLE mail_log ADD CONSTRAINT mail_log_status_check CHECK (status IN ('would', 'forwarded', 'failed', 'none', 'sent', 'direct', 'replied'));
 `);

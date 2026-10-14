@@ -5,7 +5,7 @@ import { db, tx, reset, makeUser, closeDb } from './helpers/db.js';
 
 process.env.EMAIL_KEY ||= Buffer.alloc(32, 7).toString('base64');
 const { encrypt } = await import('../server/secrets.js');
-const { decideRoute, summarizeSent, forwardText, lookFront, lookSent, forwardByHand, resolvePeople, syncPeople, staff, draftRules } = await import('../server/mailRouting.js');
+const { decideRoute, summarizeSent, forwardText, lookFront, lookSent, forwardByHand, resolvePeople, syncPeople, staff, draftRules, replyAddress, replyTag, ownReply } = await import('../server/mailRouting.js');
 
 test.after(() => closeDb());
 
@@ -60,7 +60,7 @@ test('a sent email gets one line, or none when the model is away', async () => {
 test('the forward says why, who to reply to, and carries the original', () => {
   const t = forwardText(mail(1, { from: 'client@co.com', name: 'Client', subject: 'Notice', text: 'Please see the notice.' }), 'A legal notice');
   assert.match(t, /^Reem passed this email on to you: A legal notice/);
-  assert.match(t, /your reply goes to client@co\.com/);
+  assert.match(t, /Reem sends your reply to client@co\.com from the shared address/);
   assert.match(t, /From: Client <client@co\.com>/);
   assert.match(t, /Please see the notice\.$/);
 });
@@ -90,7 +90,7 @@ test('with forwarding off, Reem only writes down who each email would go to', as
   assert.equal(await lookFront({ read, decide, send }), 0, 'the same emails are never logged twice');
 });
 
-test('with forwarding on, each email goes to its people, replies going to the sender', async () => {
+test('with forwarding on, each email goes to its people, their replies coming back to the shared address', async () => {
   await connected({ auto: true });
   const read = async () => ({ uidValidity: 1, lastUid: 11, mail: [
     mail(11, { from: 'client@co.com', name: 'Client', subject: 'Contract', text: 'Draft attached',
@@ -104,7 +104,7 @@ test('with forwarding on, each email goes to its people, replies going to the se
   assert.equal(sent[0].pw, 'pw');
   const raw = sent[0].m.raw.toString();
   assert.match(raw, /To: legal@ainalreempro\.com, rona@ainalreempro\.com/);
-  assert.match(raw, /Reply-To: client@co\.com/);
+  assert.match(raw, new RegExp(`Reply-To: ${replyAddress('shared@gmail.com', 1).replace(/[+.]/g, '\\$&')}`));
   assert.match(raw, /From: "?Client via Reem"? <shared@gmail\.com>/);
   assert.match(raw, /Subject: Fwd: Contract/);
   assert.match(raw, /filename=c\.pdf/);
@@ -275,4 +275,84 @@ test('what the master said out loud is worked into the rules', async () => {
   assert.match(seen.o.system, /said what they want out loud/);
   await draftRules('', { ask: async (c) => { seen = { c }; return 'x'; }, notes: [] });
   assert.doesNotMatch(seen.c, /just said/, 'nothing said, nothing added');
+});
+
+test('the reply address says which email it answers, and cannot be guessed', () => {
+  const a = replyAddress('Shared@gmail.com', 12);
+  assert.match(a, /^shared\+r12x[0-9a-f]{10}@gmail\.com$/);
+  assert.equal(replyTag('shared@gmail.com', ['x@y.com', a.toUpperCase()]), 12);
+  assert.equal(replyTag('shared@gmail.com', ['shared+r12x0000000000@gmail.com']), null, 'a forged tag is nobody');
+  assert.equal(replyTag('other@gmail.com', [a]), null, 'another mailbox\'s tag is nobody');
+});
+
+test('only what the person wrote goes out, not the forward under it', () => {
+  assert.equal(ownReply('Dear Vishal,\nWe are on it.\n\nOn Tue, 14 Oct 2026, Vishal via Reem wrote:\n> Reem passed this email on to you'), 'Dear Vishal,\nWe are on it.');
+  assert.equal(ownReply('Noted.\n\n________________________________\nFrom: Vishal via Reem\nSent: Tuesday'), 'Noted.');
+  assert.equal(ownReply('Done.\n\nReem passed this email on to you: a complaint'), 'Done.');
+});
+
+async function forwarded() {
+  await connected({ auto: true });
+  await db.prepare(`INSERT INTO mail_log (kind, ref, mailbox, uid, uid_validity, message_id, from_addr, from_name, reply_addr, subject, preview, at, route_to, status)
+    VALUES ('in', 'r1', 'shared@gmail.com', 11, 1, '<v1@hotmail.com>', 'vishal@hotmail.com', 'Vishal', NULL, 'Missing items', 'My store was opened.', 1760000000, 'rona@ainalreempro.com', 'forwarded')`).run();
+  return replyAddress('shared@gmail.com', 1);
+}
+
+test('a staff reply comes back and goes on to the sender from the shared address, logged under their name', async () => {
+  const tag = await forwarded();
+  const read = async () => ({ uidValidity: 1, lastUid: 12, mail: [
+    mail(12, { from: 'rona@ainalreempro.com', name: 'Rona M', to: [tag], subject: 'Re: Fwd: Missing items',
+      text: 'Dear Vishal, security is checking the cameras.\n\nOn Tue, Vishal via Reem wrote:\n> Reem passed this email on to you: a complaint',
+      attachments: [{ filename: 'photo.jpg', contentType: 'image/jpeg', content: Buffer.from('JPG') }] }),
+  ] });
+  const sent = [];
+  const send = async (acc, pw, m) => { sent.push(m); };
+  await lookFront({ read, decide: async () => assert.fail('a reply is not routed again'), send, summarize: async () => 'Told Vishal the cameras are being checked' });
+  assert.equal(sent.length, 1);
+  const raw = sent[0].raw.toString();
+  assert.match(raw, /From: shared@gmail\.com/);
+  assert.match(raw, /To: vishal@hotmail\.com/);
+  assert.match(raw, /Subject: Re: Missing items/);
+  assert.match(raw, /In-Reply-To: <v1@hotmail\.com>/);
+  assert.match(raw, /security is checking the cameras/);
+  assert.match(raw, /> My store was opened\./, 'the sender\'s own words are quoted');
+  assert.doesNotMatch(raw, /Reem passed this email/, 'the note to staff never goes out');
+  assert.match(raw, /filename=photo\.jpg/);
+  const out = await db.prepare(`SELECT * FROM mail_log WHERE kind = 'out'`).get();
+  assert.equal(out.status, 'replied');
+  assert.equal(out.from_name, 'Rona', 'the name on the people list');
+  assert.equal(out.to_addrs, 'vishal@hotmail.com');
+  assert.equal(out.reason, 'Told Vishal the cameras are being checked');
+  assert.equal(out.forward_id, sent[0].messageId, 'so the Sent check knows it as Reem\'s');
+  assert.equal((await db.prepare(`SELECT count(*)::int AS n FROM mail_log WHERE kind = 'in'`).get()).n, 1, 'the reply is not logged as a new email');
+  await lookFront({ read, send });
+  assert.equal(sent.length, 1, 'read again, it is not sent twice');
+});
+
+test('the Sent check does not take a reply Reem sent on for someone using the mailbox by hand', async () => {
+  const tag = await forwarded();
+  let id;
+  await lookFront({ read: async () => ({ uidValidity: 1, lastUid: 12, mail: [mail(12, { from: 'rona@ainalreempro.com', to: [tag], text: 'On it.' })] }),
+    send: async (acc, pw, m) => { id = m.messageId; }, summarize: async () => null });
+  const n = await lookSent({ read: async () => ({ uidValidity: 1, lastUid: 6, mail: [mail(6, { from: 'shared@gmail.com', messageId: id, to: ['vishal@hotmail.com'] })] }), summarize: async () => null });
+  assert.equal(n, 0);
+  assert.equal((await db.prepare(`SELECT count(*)::int AS n FROM mail_log WHERE status = 'direct'`).get()).n, 0);
+});
+
+test('a reply from someone the email was not for is not sent on from the shared address', async () => {
+  const tag = await forwarded();
+  const sent = [];
+  await lookFront({ read: async () => ({ uidValidity: 1, lastUid: 12, mail: [mail(12, { from: 'stranger@evil.com', to: [tag], subject: 'Re: x', text: 'pay me' })] }),
+    decide: async () => ({ to: ['rona@ainalreempro.com'], reason: 'Unknown sender' }), send: async (acc, pw, m) => { sent.push(m); } });
+  assert.ok(sent.every((m) => !/To: vishal/.test(m.raw.toString())), 'nothing went to Vishal');
+  assert.equal((await db.prepare(`SELECT count(*)::int AS n FROM mail_log WHERE status = 'replied'`).get()).n, 0);
+});
+
+test('a reply that cannot go out is marked for the master', async () => {
+  const tag = await forwarded();
+  await lookFront({ read: async () => ({ uidValidity: 1, lastUid: 12, mail: [mail(12, { from: 'rona@ainalreempro.com', to: [tag], text: 'On it.' })] }),
+    send: async () => { throw Object.assign(new Error('nope'), { code: 'EAUTH' }); } });
+  const out = await db.prepare(`SELECT status, error FROM mail_log WHERE kind = 'out'`).get();
+  assert.equal(out.status, 'failed');
+  assert.match(out.error, /password/);
 });
