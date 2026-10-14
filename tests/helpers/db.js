@@ -43,6 +43,7 @@ const TABLES = [
   'module_access', 'module_rollouts', 'tenant_notices', 'tenant_notice_photos', 'pictures',
   'recurring_buildings', 'recurring_payments', 'recurring_payment_dues', 'recurring_accounts', 'recurring_transfers', 'recurring_heads',
   'mail_front', 'mail_route_rules', 'mail_people', 'mail_log',
+  'renewal_settings', 'renewal_cases', 'renewal_messages', 'renewal_files',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

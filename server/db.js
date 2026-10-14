@@ -1625,3 +1625,80 @@ await db.exec(`
   ALTER TABLE mail_log DROP CONSTRAINT IF EXISTS mail_log_status_check;
   ALTER TABLE mail_log ADD CONSTRAINT mail_log_status_check CHECK (status IN ('would', 'forwarded', 'failed', 'none', 'sent', 'direct', 'replied'));
 `);
+
+// Lease renewals (server/renewals.js): Reem runs each renewal with the tenant by email, from
+// the notice to the signed agreement and the cheques, and tells saifsys only at the end.
+//   renewal_settings: the boss's rules, one row. Nothing is emailed while enabled is false.
+//   renewal_cases: one per lease and end date. lease is saifsys's row when it was opened;
+//     dld what Reem read off the DLD screenshot; quote saifsys's cheques for the rent on
+//     offer; received what the tenant has sent back so far (agreement, cheques).
+//   renewal_messages: every email of a case, both ways. An outgoing one keeps its exact
+//     bytes (raw) so a retry sends the same Message-ID; an incoming one is 'new' until Reem
+//     has read it, and its attachments are files under data/renewals.
+//   renewal_files: those attachments, and the DLD screenshots.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS renewal_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    enabled BOOLEAN NOT NULL DEFAULT false,
+    floor_pct NUMERIC NOT NULL DEFAULT 0,
+    building_floors JSONB NOT NULL DEFAULT '{}',
+    max_rounds INTEGER NOT NULL DEFAULT 2,
+    payee TEXT,
+    actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS renewal_cases (
+    id SERIAL PRIMARY KEY,
+    lease_id INTEGER NOT NULL,
+    end_date TEXT NOT NULL,
+    lease JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'dld_needed' CHECK (status IN ('dld_needed', 'dld_read', 'notice_sent', 'negotiating', 'agreed',
+      'converting', 'renewed', 'boss', 'not_renewing', 'no_reply', 'closed')),
+    dld JSONB,
+    quote JSONB,
+    offer NUMERIC,
+    floor NUMERIC,
+    agreed NUMERIC,
+    rounds INTEGER NOT NULL DEFAULT 0,
+    tenant_offer NUMERIC,
+    needs TEXT,
+    received JSONB NOT NULL DEFAULT '{}',
+    reminders INTEGER NOT NULL DEFAULT 0,
+    last_out_at BIGINT,
+    last_in_at BIGINT,
+    saifsys JSONB,
+    error TEXT,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW},
+    UNIQUE (lease_id, end_date)
+  );
+  CREATE INDEX IF NOT EXISTS idx_renewal_cases_status ON renewal_cases(status);
+  CREATE TABLE IF NOT EXISTS renewal_messages (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES renewal_cases(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK (direction IN ('out', 'in')),
+    kind TEXT,
+    subject TEXT,
+    body TEXT,
+    message_id TEXT,
+    ref TEXT,
+    raw BYTEA,
+    status TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'new', 'read', 'error')),
+    reading JSONB,
+    error TEXT,
+    at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_renewal_messages_case ON renewal_messages(case_id, id);
+  CREATE INDEX IF NOT EXISTS idx_renewal_messages_mid ON renewal_messages(message_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_renewal_messages_ref ON renewal_messages(ref) WHERE ref IS NOT NULL;
+  CREATE TABLE IF NOT EXISTS renewal_files (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES renewal_cases(id) ON DELETE CASCADE,
+    message_id INTEGER REFERENCES renewal_messages(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    path TEXT NOT NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_renewal_files_case ON renewal_files(case_id);
+`);
