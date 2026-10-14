@@ -43,7 +43,6 @@ import { tenantCareRoutes, startTenantCare } from './tenantCare.js';
 import { mailRoutingRoutes, startMailRouting } from './mailRouting.js';
 import { moduleRoutes, needsModule, needsModuleUnless, userModules, giveToEveryoneOnce } from './modules.js';
 import { noticeRoutes } from './notices.js';
-import { tradeRoutes } from './trade.js';
 import { pictureRoutes } from './pictures.js';
 
 const app = express();
@@ -83,7 +82,6 @@ app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks 
 app.use('/api/mail-routing', requireMaster, mailRoutingRoutes); // the shared mailbox: who each email is passed on to, and who sent what (master only)
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
-app.use('/api/trade', tradeRoutes); // the sales and purchase book: a photo of the bill, a voice note, and Reem reads the rest
 app.use('/api/pictures', pictureRoutes); // the pictures a chat drew for /explain, /breakdown and /explore
 app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person

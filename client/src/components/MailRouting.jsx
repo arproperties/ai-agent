@@ -84,28 +84,34 @@ function Person({ p, onPeople }) {
     try { onPeople((await fn()).people); setPw(null); } catch (e) { setError(e.message); }
     setBusy(false);
   };
+  const logged = p.watched && !p.error;
   return (
     <div className="space-y-2 rounded-2xl border border-stroke bg-black/10 p-3">
-      <div className="flex items-start gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">{p.name}</p>
           <p className="truncate text-xs text-mute">{p.email}</p>
-          {!p.inRules && <p className="mt-1 text-xs text-mute">No longer in the rules: gets no email, still logged while watched</p>}
-          {p.watched
-            ? <p className={`mt-1 text-xs ${p.error ? 'text-bad' : 'text-emerald-400'}`}>{p.error ? `Sent mail: ${p.error}` : 'Reem logs what they send'}</p>
-            : <p className="mt-1 text-xs text-mute">Not watching what they send</p>}
+          {!p.inRules && <p className="mt-1 text-xs text-mute">No longer in the rules, so gets no email. What they send is still logged.</p>}
         </div>
-        <button onClick={() => setPw(pw === null ? '' : null)} title={p.watched ? 'Change password' : 'Add password to log what they send'}
-          className="grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><KeyRound size={16} /></button>
+        {pw === null && (
+          <button onClick={() => setPw('')} title={p.watched ? 'Change the password Reem uses' : 'Give Reem their mailbox password to log every email they send'}
+            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs ${
+              logged ? 'border-emerald-500/40 text-emerald-400' : p.watched ? 'border-bad/50 text-bad' : 'border-stroke text-mute hover:text-txt'}`}>
+            {logged ? <><CheckCircle2 size={13} /> Logging what they send</> : p.watched ? <><XCircle size={13} /> Logging stopped: fix password</> : <><KeyRound size={13} /> Log what they send</>}
+          </button>
+        )}
       </div>
+      {p.watched && p.error && pw === null && <p className="text-xs text-bad">{p.error}</p>}
       {pw !== null && (
         <div className="space-y-2">
-          <input type="password" placeholder={`Password of ${p.email}`} value={pw} onChange={(e) => setPw(e.target.value)} className={field} />
+          <p className="text-xs text-mute">The password of {p.email}. Reem only reads its Sent folder, to log who they wrote to and why. It never sends from it.</p>
+          <input type="password" autoFocus placeholder="Mailbox password" value={pw} onChange={(e) => setPw(e.target.value)} className={field} />
           <div className="flex flex-wrap gap-2">
             <button disabled={busy || !pw} onClick={() => act(() => api.patch(`/mail-routing/people/${p.id}`, { password: pw }))} className={primary}>
-              {busy && <Loader2 size={14} className="animate-spin" />} Save
+              {busy && <Loader2 size={14} className="animate-spin" />} Start logging
             </button>
-            {p.watched && <button disabled={busy} onClick={() => act(() => api.patch(`/mail-routing/people/${p.id}`, { forget: true }))} className={quiet}>Stop watching</button>}
+            {p.watched && <button disabled={busy} onClick={() => act(() => api.patch(`/mail-routing/people/${p.id}`, { forget: true }))} className={quiet}>Stop logging</button>}
+            <button disabled={busy} onClick={() => setPw(null)} className={quiet}>Cancel</button>
           </div>
         </div>
       )}
@@ -114,18 +120,15 @@ function Person({ p, onPeople }) {
   );
 }
 
-// Who the rules name, as Reem found them among the staff: nothing to type here but, for
-// anyone whose sent mail should be logged, their mailbox password.
-function People({ people, missing, onPeople }) {
+// Who sends what from their own mailbox: the people in the rules, each logged only once the
+// master gives Reem that mailbox's password. Who gets which email is the rules' business,
+// not this card's.
+function People({ people, onPeople }) {
+  if (!people.length) return null;
   return (
-    <Card title="Who Reem found in the rules">
-      {people.length === 0 && missing.length === 0 && <p className="text-sm text-mute">Nobody yet. Save the rules and Reem finds each person they name among the staff.</p>}
+    <Card title="Log what staff send">
+      <p className="text-sm text-mute">Give Reem a person's mailbox password and every email they send shows in the Log: who they wrote to and what it was about. Reem only reads their Sent folder; it never sends from it.</p>
       {people.map((p) => <Person key={p.id} p={p} onPeople={onPeople} />)}
-      {missing.map((m) => (
-        <p key={m} className="flex items-start gap-1.5 text-sm text-warn"><AlertTriangle size={15} className="mt-0.5 shrink-0" /> {m}</p>
-      ))}
-      {missing.length > 0 && <p className="text-xs text-mute">For someone without an account in Reem, write their email in the rules, e.g. "accounts go to Tauqeer (tauqeer@ainalreempro.com)".</p>}
-      {people.length > 0 && <p className="text-xs text-mute">Tap the key to add someone's mailbox password, and Reem logs every email they send.</p>}
     </Card>
   );
 }
@@ -194,6 +197,13 @@ function Rules({ data, onSaved }) {
           {busy === 'try' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Try on the newest 10 emails
         </button>
       </div>
+      {/* A name in the saved rules Reem could not match: until fixed, those emails go to nobody. */}
+      {!changed && data.missing?.length > 0 && (
+        <div className="space-y-1 rounded-2xl border border-warn/40 bg-warn/[0.06] p-3 text-sm">
+          {data.missing.map((m) => <p key={m} className="flex items-start gap-1.5"><AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" /> {m}</p>)}
+          <p className="text-xs text-mute">Reem could not tell who this is, so those emails go to nobody. Use a person's name in the rules, or write their email.</p>
+        </div>
+      )}
       {rec.recording && <p className="text-xs text-mute">Say who should get which emails, in any language. Tap stop when done.</p>}
       {before !== null && <p className="text-xs text-mute">Reem wrote this. Read it, change anything, fill in any ___, then Save rules.</p>}
       {error && <p className="text-sm text-bad">{error}</p>}
@@ -398,7 +408,7 @@ export default function MailRoutingPage({ onBack }) {
             <>
               <SharedMailbox front={data.front} onChanged={load} />
               <Rules key={data.rules} data={data} onSaved={(r) => setData((d) => ({ ...d, ...r }))} />
-              <People people={data.people} missing={data.missing} onPeople={(people) => setData((d) => ({ ...d, people }))} />
+              <People people={data.people} onPeople={(people) => setData((d) => ({ ...d, people }))} />
             </>
           )}
         </div>

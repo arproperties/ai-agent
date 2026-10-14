@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// A voice note: Sales & purchase, and the Mail routing rules spoken instead of typed.
+// A voice note: the Mail routing rules spoken instead of typed.
 
 /** Tap to start, tap to stop. onDone gets the recording; it stops by itself after max seconds. */
 export function useRecorder(onDone, max = 120) {

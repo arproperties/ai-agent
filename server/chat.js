@@ -9,7 +9,6 @@ import { teamReminderKit } from './teamReminders.js';
 import { responsibilityKit } from './responsibilities.js';
 import { buildingKit } from './buildings.js';
 import { inventoryKit } from './inventory.js';
-import { tradeKit } from './trade.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
 import { shelfKit } from './shelf.js';
@@ -112,8 +111,7 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   parts.push(`Every file, photo or video ${user.name} sends in this chat is saved on their Shelf by the app as it arrives, sorted and searchable, ` +
     'together with what they said about it - a bill, a receipt or an invoice like anything else. Only a voice note is not. ' +
     'So when they send one and say what it is for ("this is for the school project"), answer in a line or two: what it is, and that it is saved on their Shelf for that. ' +
-    'Never say you cannot save, log or record it, and do not offer a to-do in its place. ' +
-    'Leave the Sales & purchase book out of it unless they ask about the book themselves.');
+    'Never say you cannot save, log or record it, and do not offer a to-do in its place.');
   // "The entire history of the Haley case" is a job for several searches and every file they
   // turn up, not for the one summary that happened to be recalled.
   parts.push('When asked for the history, the full picture or everything about a case, a person, a tenant, a unit, a contract or a project: ' +
@@ -376,7 +374,6 @@ export async function chat(req, res) {
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
     await buildingKit(user),
     await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),
-    await tradeKit(user), // asking about the Sales & purchase book; only with the module
     ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
   // A picture asked for in their own words. It is hung on this reply; its own words are
   // what the reply says if the agent adds none.

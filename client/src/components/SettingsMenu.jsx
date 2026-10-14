@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Megaphone, Receipt, Split, Moon, Sun } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Megaphone, Split, Moon, Sun } from 'lucide-react';
 import Icon from './Icon';
 import { Row, Count } from './NavRow';
 import { THEMES, currentTheme, setTheme } from '../lib/theme';
@@ -19,7 +19,7 @@ import { THEMES, currentTheme, setTheme } from '../lib/theme';
  * and choosing one leaves the menu open, so you can try each against the app behind it
  * before settling.
  */
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, modules = [], noticesOpen, onNotices, tradeOpen, onTrade, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, modules = [], noticesOpen, onNotices, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -76,7 +76,6 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
           {/* The shared mailbox: who each email goes to, and who sent what. The master's alone. */}
           {user.role === 'master' && <Row role="menuitem" icon={<Split size={17} strokeWidth={1.75} />} label="Mail routing" active={mailRoutingOpen} onClick={go(onMailRouting)} />}
           {has('notices') && <Row role="menuitem" icon={<Megaphone size={17} strokeWidth={1.75} />} label="Tenant notices" active={noticesOpen} onClick={go(onNotices)} />}
-          {has('trade') && <Row role="menuitem" icon={<Receipt size={17} strokeWidth={1.75} />} label="Sales & purchase" active={tradeOpen} onClick={go(onTrade)} />}
           {has('duties') && <Row role="menuitem" icon={<ClipboardList size={17} strokeWidth={1.75} />} label="My responsibilities" active={dutiesOpen} onClick={go(onDuties)} />}
           {has('checklists') && <Row role="menuitem" icon={<ListChecks size={17} strokeWidth={1.75} />} label="Checklists" active={checklistsOpen} onClick={go(onChecklists)} />}
           {/* Only for the master and for whoever runs a building: the field staff's jobs. */}
