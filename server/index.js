@@ -40,6 +40,7 @@ import { replyPdfRoutes } from './replyPdf.js';
 import { meetingShareRoutes } from './meetingShare.js';
 import { drawingRoutes } from './drawing.js';
 import { tenantCareRoutes, startTenantCare } from './tenantCare.js';
+import { mailRoutingRoutes, startMailRouting } from './mailRouting.js';
 import { moduleRoutes, needsModule, needsModuleUnless, userModules, giveToEveryoneOnce } from './modules.js';
 import { noticeRoutes } from './notices.js';
 import { tradeRoutes } from './trade.js';
@@ -79,6 +80,7 @@ app.use('/api/translate', needsModule('translate'), translateRoutes); // two peo
 app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to download or keep
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
+app.use('/api/mail-routing', requireMaster, mailRoutingRoutes); // the shared mailbox: who each email is passed on to, and who sent what (master only)
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
 app.use('/api/trade', tradeRoutes); // the sales and purchase book: a photo of the bill, a voice note, and Reem reads the rest
@@ -403,6 +405,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // unchanged and keep working on their own if this timer ever stops.
   startReminders();
   startTenantCare(); // does nothing until the Tenant care inbox is connected
+  startMailRouting(); // does nothing until the shared mailbox is connected
   startBuildings(); // buzzes a building's administrator when a staff job needs them
   startRecurringPayments(); // creates each recurring payment's line on its day of the month
   // meeting recordings that were still waiting to be transcribed when the server stopped

@@ -1537,3 +1537,92 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_pictures_user ON pictures(user_id, id DESC);
 `);
+
+// Mail routing (server/mailRouting.js): the shared inbox everyone writes to, and who each
+// email is passed on to. Master only.
+//   mail_front: at most one row (id = 1), the shared mailbox. last_uid/uid_validity follow its
+//     inbox and sent_uid/sent_validity its Sent folder, each starting from the moment it is
+//     connected so old mail is never passed on. rules: the master's own words for who gets
+//     what; missing: the names in them Reem could not find among the staff (JSON). auto: off, Reem only writes down who it would pass each email to; on, it does.
+//   mail_people: who emails can go to, found by Reem in the master's rules (in_rules) from the
+//     staff in Reem. A password is optional: given, Reem also reads that mailbox's Sent
+//     folder, so the log shows what they send. Someone dropped from the rules keeps their row
+//     while it holds a password, so what they send is still logged.
+//   mail_log: one row per email. kind 'in' is an email to the shared inbox and where it went;
+//     'out' is an email someone sent. ref = "<mailbox>:<folder>:<uid_validity>:<uid>", unique,
+//     so reading the same email twice logs it once. status for 'in': would (auto off),
+//     forwarded, failed, none (the rules say nobody); for 'out': sent (from a person's own
+//     mailbox) or direct (from the shared mailbox, not by Reem: someone used it themselves).
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS mail_front (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    email TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 993,
+    username TEXT NOT NULL,
+    password_enc TEXT NOT NULL,
+    smtp_host TEXT NOT NULL,
+    smtp_port INTEGER NOT NULL,
+    smtp_secure BOOLEAN NOT NULL DEFAULT true,
+    last_uid BIGINT,
+    uid_validity BIGINT,
+    sent_uid BIGINT,
+    sent_validity BIGINT,
+    checked_at BIGINT,
+    error TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS mail_route_rules (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    rules TEXT NOT NULL DEFAULT '',
+    auto BOOLEAN NOT NULL DEFAULT false,
+    missing TEXT NOT NULL DEFAULT '[]',
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS mail_people (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    in_rules BOOLEAN NOT NULL DEFAULT true,
+    host TEXT,
+    port INTEGER DEFAULT 993,
+    username TEXT,
+    password_enc TEXT,
+    smtp_host TEXT,
+    smtp_port INTEGER,
+    smtp_secure BOOLEAN DEFAULT true,
+    sent_uid BIGINT,
+    sent_validity BIGINT,
+    checked_at BIGINT,
+    error TEXT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS mail_log (
+    id SERIAL PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('in', 'out')),
+    ref TEXT NOT NULL UNIQUE,
+    mailbox TEXT NOT NULL,
+    uid BIGINT,
+    uid_validity BIGINT,
+    message_id TEXT,
+    from_addr TEXT,
+    from_name TEXT,
+    to_addrs TEXT,
+    subject TEXT,
+    preview TEXT,
+    at BIGINT,
+    reason TEXT,
+    route_to TEXT,
+    status TEXT NOT NULL CHECK (status IN ('would', 'forwarded', 'failed', 'none', 'sent', 'direct')),
+    forward_id TEXT,
+    error TEXT,
+    forwarded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_mail_log_at ON mail_log(at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_mail_log_forward ON mail_log(forward_id) WHERE forward_id IS NOT NULL;
+  ALTER TABLE mail_people ADD COLUMN IF NOT EXISTS in_rules BOOLEAN NOT NULL DEFAULT true;
+  ALTER TABLE mail_route_rules ADD COLUMN IF NOT EXISTS missing TEXT NOT NULL DEFAULT '[]';
+`);
