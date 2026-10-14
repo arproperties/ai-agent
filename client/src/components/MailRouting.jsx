@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronLeft, Loader2, Search, CheckCircle2, XCircle, AlertTriangle, Send, KeyRound, Play, ArrowRight, Sparkles, Undo2 } from 'lucide-react';
+import { ChevronLeft, Loader2, Search, CheckCircle2, XCircle, AlertTriangle, Send, KeyRound, Play, ArrowRight, Sparkles, Undo2, Mic, Square } from 'lucide-react';
 import { api } from '../lib/api';
+import { useRecorder } from '../lib/useRecorder';
 
 // Mail routing, the master's alone: the one mailbox the company is written to, and who each
 // email in it is passed on to (server/mailRouting.js). The master only writes the rules;
@@ -27,6 +28,15 @@ const Card = ({ title, children }) => (
 );
 
 // ---------- settings ----------
+
+// What the box holds before the master has saved any rules: a start to change, not a blank.
+const DEFAULT_RULES = [
+  'Legal emails (courts, lawyers, contracts, notices) go to Mohammad.',
+  'Accounts emails (invoices, payments, bank, cheques) go to the accountant and Tauqeer.',
+  'Everything else goes to Rona.',
+  'Adverts and newsletters go to nobody.',
+].join('\n');
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 function SharedMailbox({ front, onChanged }) {
   const [email, setEmail] = useState('');
@@ -121,7 +131,7 @@ function People({ people, missing, onPeople }) {
 }
 
 function Rules({ data, onSaved }) {
-  const [text, setText] = useState(data.rules);
+  const [text, setText] = useState(data.rules || DEFAULT_RULES);
   const [auto, setAuto] = useState(data.auto);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -132,14 +142,26 @@ function Rules({ data, onSaved }) {
     setBusy('');
   };
   const [before, setBefore] = useState(null); // the text before Reem wrote over it, for Undo
-  const draft = async () => {
+  const draft = async (spoken = '') => {
     setBusy('draft'); setError('');
     try {
-      const r = await api.post('/mail-routing/rules/draft', { rules: text });
+      const r = await api.post('/mail-routing/rules/draft', { rules: text, spoken });
       setBefore(text); setText(r.rules); setTried(null);
     } catch (e) { setError(e.message); }
     setBusy('');
   };
+  // Said instead of typed: the words are turned into text, then Reem works them into the rules.
+  const heard = async (blob) => {
+    setBusy('voice'); setError('');
+    try {
+      const form = new FormData();
+      form.append('audio', blob, `rules.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`);
+      const said = (await api.upload('/voice/transcribe', form)).text?.trim();
+      if (!said) { setError('Reem did not hear anything. Try again, a little closer to the microphone.'); setBusy(''); return; }
+      await draft(said);
+    } catch (e) { setError(e.message); setBusy(''); }
+  };
+  const rec = useRecorder(heard, 180);
   const tryIt = async () => {
     setBusy('try'); setError(''); setTried(null);
     try { setTried(await api.post('/mail-routing/try', { rules: text })); } catch (e) { setError(e.message); }
@@ -149,22 +171,30 @@ function Rules({ data, onSaved }) {
   return (
     <Card title="Rules">
       <p className="text-sm text-mute">Write who gets what, in plain words, by name or by job. Reem finds each person among the staff in Reem, then reads each new email and follows this.</p>
-      <textarea value={text} onChange={(e) => { setText(e.target.value); setBefore(null); }} rows={7} disabled={busy === 'draft'}
-        placeholder={'For example:\nLegal emails (courts, lawyers, contracts, notices) go to Mohammad.\nAccounts emails (invoices, payments, bank, cheques) go to the accountant and Tauqeer.\nEverything else goes to Rona.\nAdverts and newsletters go to nobody.'}
+      <textarea value={text} onChange={(e) => { setText(e.target.value); setBefore(null); }} rows={7} disabled={busy === 'draft' || busy === 'voice'}
+        placeholder="Who gets which emails, one line each"
         className={`${field} resize-y`} />
       <div className="flex flex-wrap gap-2">
-        <button onClick={draft} disabled={!!busy} className={quiet}>
+        <button type="button" onClick={() => (rec.recording ? rec.stop() : rec.start().catch((e) => setError(e.message)))}
+          disabled={!!busy && !rec.recording}
+          className={rec.recording ? 'flex items-center gap-1.5 rounded-full border border-bad/60 bg-bad/15 px-4 py-2 text-sm text-bad' : quiet}>
+          {rec.recording
+            ? <><Square size={13} fill="currentColor" /> <span className="font-mono tabular-nums">{clock(rec.secs)}</span> Tap to stop</>
+            : busy === 'voice' ? <><Loader2 size={14} className="animate-spin" /> Reem is listening back…</> : <><Mic size={14} /> Speak</>}
+        </button>
+        <button onClick={() => draft()} disabled={!!busy || rec.recording} className={quiet}>
           {busy === 'draft' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
           {busy === 'draft' ? 'Reem is writing…' : text.trim() ? 'Improve with Reem' : 'Write with Reem'}
         </button>
         {before !== null && (
           <button onClick={() => { setText(before); setBefore(null); }} disabled={!!busy} className={quiet}><Undo2 size={14} /> Undo</button>
         )}
-        <button onClick={() => save()} disabled={!!busy || !changed} className={primary}>{busy === 'save' && <Loader2 size={14} className="animate-spin" />} {busy === 'save' ? 'Reem is reading the rules…' : 'Save rules'}</button>
+        <button onClick={() => save()} disabled={!!busy || rec.recording || !changed} className={primary}>{busy === 'save' && <Loader2 size={14} className="animate-spin" />} {busy === 'save' ? 'Reem is reading the rules…' : 'Save rules'}</button>
         <button onClick={tryIt} disabled={!!busy || !text.trim()} className={quiet}>
           {busy === 'try' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Try on the newest 10 emails
         </button>
       </div>
+      {rec.recording && <p className="text-xs text-mute">Say who should get which emails, in any language. Tap stop when done.</p>}
       {before !== null && <p className="text-xs text-mute">Reem wrote this. Read it, change anything, fill in any ___, then Save rules.</p>}
       {error && <p className="text-sm text-bad">{error}</p>}
       {tried && (

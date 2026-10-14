@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, Loader2, X, AlertTriangle, Camera, ImagePlus, Mic, Square, Check, CheckCircle2, Trash2, ArrowUpRight, ArrowDownLeft, Search } from 'lucide-react';
 import { api } from '../lib/api';
 import DateRange, { rangeLabel } from './DateRange';
+import { useRecorder } from '../lib/useRecorder';
 
 // Sales & purchase: the book a member of staff keeps without typing anything. Sale or
 // Purchase, a photo of the bill, a few spoken words in any language, Save - and Reem
@@ -33,49 +34,6 @@ async function shrink(file) {
 }
 
 // ---------- the voice note ----------
-
-/** Tap to start, tap to stop. onDone gets the recording; it stops by itself at MAX_VOICE. */
-function useRecorder(onDone) {
-  const [secs, setSecs] = useState(null); // null when not recording
-  const live = useRef(null);
-  const done = useRef(onDone);
-  done.current = onDone;
-
-  const stop = useCallback((keep = true) => {
-    const r = live.current;
-    if (!r) return;
-    live.current = null;
-    clearInterval(r.timer);
-    r.rec.onstop = () => {
-      r.stream.getTracks().forEach((t) => t.stop());
-      const blob = new Blob(r.parts, { type: r.rec.mimeType || 'audio/webm' });
-      if (keep && blob.size) done.current(blob);
-    };
-    r.rec.state === 'inactive' ? r.rec.onstop() : r.rec.stop();
-    setSecs(null);
-  }, []);
-
-  const start = useCallback(async () => {
-    const stream = await navigator.mediaDevices?.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
-      .catch(() => null);
-    if (!stream) throw new Error('The microphone is not available. Allow it in your browser settings.');
-    const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((t) => window.MediaRecorder?.isTypeSupported(t)) || '';
-    const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    const parts = [];
-    rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
-    rec.start(1000);
-    const startedAt = Date.now();
-    const timer = setInterval(() => {
-      const s = (Date.now() - startedAt) / 1000;
-      s >= MAX_VOICE ? stop() : setSecs(s);
-    }, 250);
-    live.current = { rec, stream, parts, timer };
-    setSecs(0);
-  }, [stop]);
-
-  useEffect(() => () => stop(false), [stop]); // leaving the page lets go of the microphone
-  return { secs, recording: secs !== null, start, stop };
-}
 
 function MicButton({ rec, onError, idle, disabled }) {
   const tap = () => (rec.recording ? rec.stop() : rec.start().catch((e) => onError(e.message)));
@@ -139,14 +97,14 @@ function NewEntry({ onSaved }) {
   const [error, setError] = useState('');
   const camera = useRef(null);
   const gallery = useRef(null);
-  const rec = useRecorder((blob) => setVoice((old) => { if (old) URL.revokeObjectURL(old.url); return { blob, url: URL.createObjectURL(blob) }; }));
+  const rec = useRecorder((blob) => setVoice((old) => { if (old) URL.revokeObjectURL(old.url); return { blob, url: URL.createObjectURL(blob) }; }), MAX_VOICE);
 
   const addPhotos = async (e) => {
     const chosen = [...e.target.files].slice(0, MAX_PHOTOS - photos.length);
     e.target.value = ''; // so the same picture can be picked again after removing it
     setError('');
     try {
-      const made = await Promise.all(chosen.map(async (f) => { const blob = await shrink(f); return { blob, url: URL.createObjectURL(blob) }; }));
+      const made = await Promise.all(chosen.map(async (f) => { const blob = await shrink(f); return { blob, url: URL.createObjectURL(blob) }; }), MAX_VOICE);
       setPhotos((p) => [...p, ...made]);
     } catch (err) { setError(err.message); }
   };
@@ -245,7 +203,7 @@ function JustSaved({ e, onChanged, onDone }) {
     } catch (err) { setError(err.message); }
     setBusy('');
   };
-  const rec = useRecorder(say);
+  const rec = useRecorder(say, MAX_VOICE);
   const remove = async () => {
     setBusy('remove'); setError('');
     try { await api.del(`/trade/${e.id}`); onDone(true); } catch (err) { setError(err.message); setBusy(''); }

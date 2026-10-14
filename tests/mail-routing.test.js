@@ -267,3 +267,12 @@ test('improving keeps the owner\'s words as the starting point', async () => {
   assert.match(seen, /The owner's rules so far:\nlegal stuff mohammad/);
   await assert.rejects(draftRules('x', { ask: async () => '  ', notes: [] }), /wrote nothing/);
 });
+
+test('what the master said out loud is worked into the rules', async () => {
+  let seen;
+  await draftRules('Legal emails go to Mohammad.', { ask: async (c, o) => { seen = { c, o }; return 'x'; }, notes: [], spoken: 'umm and the DEWA bills go to Tauqeer' });
+  assert.match(seen.c, /The owner's rules so far:\nLegal emails go to Mohammad\.\n\nWhat the owner just said:\numm and the DEWA bills go to Tauqeer/);
+  assert.match(seen.o.system, /said what they want out loud/);
+  await draftRules('', { ask: async (c) => { seen = { c }; return 'x'; }, notes: [] });
+  assert.doesNotMatch(seen.c, /just said/, 'nothing said, nothing added');
+});
