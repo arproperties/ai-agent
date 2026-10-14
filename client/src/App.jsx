@@ -31,7 +31,7 @@ const outlookReturn = params.get('outlook') && { status: params.get('outlook'), 
 // a notification tapped while Reem was closed: /?chat=12 opens that team chat,
 // /?todos=1 opens the list of what is due
 const notifiedChat = Number(params.get('chat')) || null;
-const notifiedTodos = params.get('todos') === '1';
+const notifiedTodos = params.get('todos') === '1' || params.get('reminders') === '1'; // reminders=1: an older notice from someone else
 const notifiedTenantCare = params.get('tenantcare') === '1'; // a tenant email is waiting for a reply
 const notifiedMailRouting = params.get('mailrouting') === '1'; // an email to the shared mailbox could not be passed on
 const notifiedDuties = params.get('responsibilities') === '1'; // the master gave them a new responsibility
@@ -50,7 +50,7 @@ export default function App() {
   const [convs, setConvs] = useState([]);
   const [convsLoaded, setConvsLoaded] = useState(false); // an empty list means nothing until it has arrived
   const [expiring, setExpiring] = useState([]); // paperwork running out inside a month
-  const [due, setDue] = useState({ todos: [], routines: [], fromOthers: [] }); // reminders that have come round, and routines asking to be done
+  const [due, setDue] = useState({ todos: [], routines: [] }); // reminders that have come round (to-dos others gave them among them), and routines asking to be done
   const [tenantCare, setTenantCare] = useState({ member: false, waiting: 0 }); // the shared tenant inbox, for those who look after it
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
@@ -85,8 +85,7 @@ export default function App() {
   const loadDue = useCallback(() => Promise.all([
     api.get('/todos/due').catch(() => []),
     api.get('/routines/due').catch(() => []),
-    api.get('/team-reminders/inbox').catch(() => []), // what other people have asked of them
-  ]).then(([todos, routines, fromOthers]) => setDue({ todos, routines, fromOthers })), []);
+  ]).then(([todos, routines]) => setDue({ todos, routines })), []);
 
   const loadTenantCare = useCallback(() => api.get('/tenant-care/me').then(setTenantCare).catch(() => {}), []);
 
@@ -107,8 +106,8 @@ export default function App() {
         setPanel('buildings');
         return;
       }
-      // A reminder from someone else waits on the first screen of a new chat.
-      if (where.get('reminders') === '1') { setChat({ key: Date.now(), id: null }); setPanel(null); loadDue(); return; }
+      // A reminder from someone else, sent before they became to-dos: on the list now too.
+      if (where.get('reminders') === '1') { setPanel('todos'); loadDue(); return; }
       const id = Number(where.get('chat')) || null;
       if (!id) return;
       setPanel('messages');

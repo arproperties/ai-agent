@@ -12,7 +12,9 @@ import { db } from './db.js';
 // and the first screen are what this table guarantees, and they keep working on their own
 // if the timer ever stops. Nothing here knows or cares whether a notice was sent.
 
-const MAX_TEXT = 300;
+// Long enough for an instruction with its reasons, which is what a to-do from the boss is.
+// 300 cut "reseal with weatherproof silicone (not standard ba" off mid-word.
+const MAX_TEXT = 1000;
 const MAX_NOTES = 2000;
 const NOW = 'extract(epoch from now())::bigint';
 
@@ -39,10 +41,17 @@ export function remindAt(value) {
   return Math.round(ms / 1000);
 }
 
-const SELECT = `SELECT t.*, a.name agent_name, d.title doc_title, d.name doc_name
+// A to-do someone else gave them (server/teamReminders.js) carries who it is from and the
+// photos or video sent with it, read through the reminder it came from.
+const SELECT = `SELECT t.*, a.name agent_name, d.title doc_title, d.name doc_name, fu.name from_name,
+    (SELECT COALESCE(json_agg(json_build_object('id', f.id, 'name', f.name, 'mime', f.mime,
+        'url', '/api/team-reminders/photos/' || f.id) ORDER BY f.id), '[]'::json)
+      FROM team_reminder_photos f WHERE f.reminder_id = t.team_reminder_id) photos
   FROM todos t
   LEFT JOIN agents a ON a.id = t.agent_id
-  LEFT JOIN documents d ON d.id = t.document_id AND d.user_id = t.user_id`;
+  LEFT JOIN documents d ON d.id = t.document_id AND d.user_id = t.user_id
+  LEFT JOIN team_reminders tr ON tr.id = t.team_reminder_id
+  LEFT JOIN users fu ON fu.id = tr.sender_id`;
 
 export const todoOut = ({ user_id, ...t }) => t;
 
@@ -97,8 +106,13 @@ export async function updateTodo(userId, id, patch) {
   return getTodo(userId, id);
 }
 
-export const deleteTodo = async (userId, id) =>
-  (await db.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?').run(Number(id), userId)).changes > 0;
+/** A to-do someone gave them is ticked, never deleted: the sender is watching for that tick. */
+export async function deleteTodo(userId, id) {
+  const t = await getTodo(userId, id);
+  if (!t) return false;
+  if (t.team_reminder_id) throw bad(`${t.from_name || 'Whoever sent this'} is waiting to see it done, so it can't be deleted. Tick it when it's done.`);
+  return (await db.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?').run(t.id, userId)).changes > 0;
+}
 
 // ---------- how a todo reads back to an agent ----------
 
@@ -110,6 +124,7 @@ const stamp = (secs) => new Date(secs * 1000).toLocaleString('en-GB', {
 
 function line(t, now) {
   const bits = [`#${t.id}`, t.text];
+  if (t.from_name) bits.push(`(from ${t.from_name}${t.photos?.length ? `, with ${t.photos.length} attachment${t.photos.length === 1 ? '' : 's'}` : ''})`);
   if (t.remind_at) bits.push(t.done ? `(was due ${stamp(t.remind_at)})` : t.remind_at <= now ? `— DUE since ${stamp(t.remind_at)}` : `— due ${stamp(t.remind_at)}`);
   if (t.notes) bits.push(`\n    ${t.notes}`);
   if (t.doc_title || t.doc_name) bits.push(`[file: ${t.doc_title || t.doc_name}]`);
@@ -141,7 +156,8 @@ export const TODO_TOOLS = [
   {
     name: 'list_todos',
     description: "Read back the user's to-do list. Use it when they ask what is on their list, what is outstanding, " +
-      'what is due, or before saying anything about what they still have to do. Returns each todo with its id.',
+      'what is due, what they have been asked to do, or before saying anything about what they still have to do. ' +
+      'It includes the to-dos other people gave them, marked "(from …)". Returns each todo with its id.',
     input_schema: {
       type: 'object',
       properties: {
@@ -209,7 +225,7 @@ const handlers = {
   complete_todo: async (userId, ctx, input) => {
     const t = await updateTodo(userId, input.id, { done: true });
     if (!t) throw new Error(`There is no todo #${input.id} on this list. Call list_todos to see the ids.`);
-    return `Ticked off #${t.id}: "${t.text}".`;
+    return `Ticked off #${t.id}: "${t.text}".${t.from_name ? ` ${t.from_name} can see it is done.` : ''}`;
   },
 
   reschedule_todo: async (userId, ctx, input) => {

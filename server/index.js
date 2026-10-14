@@ -20,7 +20,7 @@ import { importRoutes, startImportQueue } from './imports.js';
 import { messengerRoutes } from './messenger.js';
 import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
-import { teamReminderRoutes } from './teamReminders.js';
+import { teamReminderRoutes, bringOldRemindersIntoTodos } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
@@ -393,6 +393,10 @@ if (existsSync(dist)) {
 await giveToEveryoneOnce()
   .then((given) => given.length && console.log('[modules] given to everyone already here:', given.join(', ')))
   .catch((e) => console.error('[modules] could not give the new modules to everyone:', e.message));
+// Reminders sent before they landed as to-dos are put on each person's list. Once only.
+await bringOldRemindersIntoTodos()
+  .then((n) => n && console.log(`[team-reminders] ${n} sent reminders put on people's to-do lists`))
+  .catch((e) => console.error('[team-reminders] could not bring old reminders into to-dos:', e.message));
 
 app.listen(PORT, '0.0.0.0', () => {
   // drafts approved while the rate limit was full go out when it clears

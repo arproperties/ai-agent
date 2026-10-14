@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Check, X, BellRing, RefreshCw } from 'lucide-react';
+import { Loader2, Check, X, BellRing, RefreshCw, Play } from 'lucide-react';
 import { api } from '../lib/api';
 
 // A reminder for other people that Reem has got ready, waiting for the person sending it.
@@ -19,20 +19,32 @@ const at = (ts) => {
   return new Date().toDateString() === d.toDateString() ? `today ${time}` : `${d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })}, ${time}`;
 };
 
-/** The pictures sent with a reminder: small on the card, full screen on a tap. */
+/** The pictures and videos sent with a reminder: small on the card, full screen on a tap. */
 export function ReminderPhotos({ photos = [], className = '' }) {
   const [viewing, setViewing] = useState(null);
   if (!photos.length) return null;
+  const isVideo = (p) => p.mime?.startsWith('video/');
   return (
     <div className={`flex flex-wrap gap-1.5 ${className}`}>
       {photos.map((p) => (
-        <button key={p.id} onClick={() => setViewing(p.url)} aria-label={`Open ${p.name}`} className="overflow-hidden rounded-lg">
-          <img src={p.url} alt={p.name} loading="lazy" className="size-16 object-cover" />
+        <button key={p.id} onClick={(e) => { e.stopPropagation(); setViewing(p); }} aria-label={`Open ${p.name}`}
+          className="relative overflow-hidden rounded-lg">
+          {isVideo(p) ? (
+            <>
+              {/* The first frame, as the thumbnail. */}
+              <video src={`${p.url}#t=0.1`} preload="metadata" muted playsInline className="size-16 bg-black object-cover" />
+              <span className="absolute inset-0 grid place-items-center bg-black/30 text-white"><Play size={20} fill="currentColor" /></span>
+            </>
+          ) : (
+            <img src={p.url} alt={p.name} loading="lazy" className="size-16 object-cover" />
+          )}
         </button>
       ))}
       {viewing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setViewing(null)}>
-          <img src={viewing} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={(e) => { e.stopPropagation(); setViewing(null); }}>
+          {isVideo(viewing)
+            ? <video src={viewing.url} controls autoPlay playsInline onClick={(e) => e.stopPropagation()} className="max-h-full max-w-full rounded-lg" />
+            : <img src={viewing.url} alt="" className="max-h-full max-w-full rounded-lg object-contain" />}
         </div>
       )}
     </div>
@@ -60,7 +72,7 @@ export default function TeamReminderCard({ reminder: r, onChanged }) {
     <div className={`rounded-2xl border p-3.5 text-sm ${s.tone}`}>
       <p className={`mb-2.5 flex items-center gap-1.5 text-xs font-medium ${s.dot}`}>
         <BellRing size={13} strokeWidth={2} />
-        Reminder · {s.label}
+        To-do · {s.label}
         {r.status === 'scheduled' && r.remind_at && ` ${at(r.remind_at)}`}
         {r.status === 'delivered' && r.delivered_at && ` ${at(r.delivered_at)}`}
         {r.status === 'delivered' && (

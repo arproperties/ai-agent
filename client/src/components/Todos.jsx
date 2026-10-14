@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronLeft, Check, Bell, BellOff, Trash2, ListTodo, Loader2, Plus } from 'lucide-react';
+import { Check, Bell, BellOff, Trash2, ListTodo, Loader2, Plus, UserRound } from 'lucide-react';
 import { api } from '../lib/api';
 import Sheet from './Sheet';
 import Icon from './Icon';
+import Picker from './Picker';
+import { ReminderPhotos } from './TeamReminderCard';
 
 // ---------- time ----------
 // The picker works in the browser's own timezone, which is the user's, so converting to
@@ -103,12 +105,24 @@ function ReminderField({ value, onChange }) {
 }
 
 // ---------- add ----------
+// "For" is empty unless someone is picked: a to-do is your own by default. Picked, it goes
+// to that person's list at once, marked as from you (server/teamReminders.js, assignTodo).
 function AddTodo({ onAdded }) {
   const [text, setText] = useState('');
   const [when, setWhen] = useState('');
   const [showWhen, setShowWhen] = useState(false);
+  const [forWho, setForWho] = useState('');
+  const [showFor, setShowFor] = useState(false);
+  const [people, setPeople] = useState(null); // loaded the first time "For" is opened
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [note, setNote] = useState('');
+
+  const openFor = () => {
+    setShowFor((v) => !v);
+    if (!people) api.get('/team-reminders/people').then(setPeople).catch(() => setPeople([]));
+  };
+  const person = people?.find((p) => String(p.id) === forWho);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -116,8 +130,10 @@ function AddTodo({ onAdded }) {
     if (!body || busy) return;
     setBusy(true);
     try {
-      await api.post('/todos', { text: body, remind_at: fromInput(when) });
-      setText(''); setWhen(''); setShowWhen(false); setError('');
+      if (person) await api.post('/team-reminders/assign', { text: body, user_id: person.id, remind_at: fromInput(when) });
+      else await api.post('/todos', { text: body, remind_at: fromInput(when) });
+      setText(''); setWhen(''); setShowWhen(false); setForWho(''); setShowFor(false); setError('');
+      setNote(person ? `Sent to ${person.name}'s list` : '');
       await onAdded();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
@@ -125,8 +141,13 @@ function AddTodo({ onAdded }) {
   return (
     <form onSubmit={submit} className="space-y-2.5 rounded-2xl border border-stroke bg-white/[0.04] p-3">
       <div className="flex items-center gap-2">
-        <input value={text} onChange={(e) => setText(e.target.value)} maxLength={300} placeholder="What needs doing?"
+        <input value={text} onChange={(e) => { setText(e.target.value); setNote(''); }} maxLength={1000} placeholder="What needs doing?"
           className="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-[15px] outline-none placeholder:text-mute/70" />
+        <button type="button" onClick={openFor} aria-label={person ? `For ${person.name}` : 'Give it to someone'}
+          title={person ? `For ${person.name}` : 'Give it to someone'}
+          className={`grid size-9 shrink-0 place-items-center rounded-full transition ${person || showFor ? 'bg-p2/20 text-p2' : 'text-mute hover:bg-white/10 hover:text-txt'}`}>
+          <UserRound size={17} />
+        </button>
         {/* The bell is the whole "optional" part: a todo without it is just a todo. */}
         <button type="button" onClick={() => setShowWhen((v) => !v)} aria-label={when ? 'Change the reminder' : 'Add a reminder'}
           title={when ? 'Change the reminder' : 'Add a reminder'}
@@ -138,8 +159,15 @@ function AddTodo({ onAdded }) {
           {busy ? <Loader2 size={17} className="animate-spin" /> : <Plus size={18} />}
         </button>
       </div>
+      {showFor && (
+        <Picker value={forWho} onChange={(v) => { setForWho(v); setShowFor(false); }} none="Me" placeholder="Me"
+          searchPlaceholder="Search people" icon={<UserRound size={15} className="shrink-0 text-mute" />}
+          options={(people || []).map((p) => ({ value: String(p.id), label: p.name }))} />
+      )}
+      {person && !showFor && <p className="px-1 text-xs text-p2">For {person.name} — goes to their list when you add it</p>}
       {showWhen && <ReminderField value={when} onChange={setWhen} />}
       {when && !showWhen && <p className="px-1 text-xs text-warn">Reminder: {reminder({ remind_at: fromInput(when) })?.label}</p>}
+      {note && <p className="px-1 text-xs text-ok">{note}</p>}
       {error && <p className="px-1 text-xs text-bad">{error}</p>}
     </form>
   );
@@ -156,17 +184,24 @@ function Row({ t, onToggle, onOpen }) {
           t.done ? 'border-ok/60 bg-ok/20 text-ok' : 'border-white/25 text-transparent hover:border-p1 hover:text-p1/60'}`}>
         <Check size={14} strokeWidth={3} />
       </button>
-      <button onClick={() => onOpen(t)} className="min-w-0 flex-1 text-left">
-        <span className={`block text-[15px] leading-snug ${t.done ? 'text-mute line-through' : ''}`}>{t.text}</span>
-        {t.notes && <span className="mt-0.5 block line-clamp-2 text-xs leading-snug text-mute">{t.notes}</span>}
-        <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
-          {t.done && t.done_at && <span className="text-mute">Done {stamp(t.done_at)}</span>}
-          {r && <span className={`flex items-center gap-1 ${tone}`}><Bell size={11} /> {r.label}</span>}
-          {!t.done && !r && t.created_at && <span className="text-mute">Added {stamp(t.created_at)}</span>}
-          {(t.doc_title || t.doc_name) && <span className="flex items-center gap-1 text-mute"><Icon name="file" size={11} /> {t.doc_title || t.doc_name}</span>}
-          {t.agent_name && <span className="text-mute">from {t.agent_name}</span>}
-        </span>
-      </button>
+      <div className="min-w-0 flex-1">
+        <button onClick={() => onOpen(t)} className="block w-full text-left">
+          {/* Who gave it comes first: it says whose instruction this is before what it says. */}
+          {t.from_name && <span className="mb-0.5 flex items-center gap-1 text-[11px] font-medium text-p2"><UserRound size={11} /> From {t.from_name}</span>}
+          <span className={`block whitespace-pre-line break-words text-[15px] leading-snug ${t.done ? 'text-mute line-through' : ''}`}>{t.text}</span>
+          {t.notes && <span className="mt-0.5 block line-clamp-2 text-xs leading-snug text-mute">{t.notes}</span>}
+          <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
+            {t.done && t.done_at && <span className="text-mute">Done {stamp(t.done_at)}</span>}
+            {/* "Due" says nothing on a to-do someone sent: it was due the moment it came. */}
+            {r && !t.from_name && <span className={`flex items-center gap-1 ${tone}`}><Bell size={11} /> {r.label}</span>}
+            {t.from_name && !t.done && <span className="text-mute">Sent {stamp(t.remind_at || t.created_at)}</span>}
+            {!t.done && !r && t.created_at && <span className="text-mute">Added {stamp(t.created_at)}</span>}
+            {(t.doc_title || t.doc_name) && <span className="flex items-center gap-1 text-mute"><Icon name="file" size={11} /> {t.doc_title || t.doc_name}</span>}
+            {t.agent_name && <span className="text-mute">from {t.agent_name}</span>}
+          </span>
+        </button>
+        <ReminderPhotos photos={t.photos || []} className="mt-2" />
+      </div>
     </li>
   );
 }
@@ -191,38 +226,65 @@ function TodoSheet({ t, onClose, onSaved }) {
     try { await fn(); await onSaved(); onClose(); }
     catch (e) { setError(e.message); setBusy(false); }
   };
-  const save = () => act(() => api.patch(`/todos/${t.id}`, { text, notes, remind_at: fromInput(when) }));
+  // A to-do someone gave them keeps the words they sent and is ticked rather than deleted;
+  // the notes are still theirs to keep.
+  const given = !!t.from_name;
+  const save = () => act(() => api.patch(`/todos/${t.id}`, given ? { notes } : { text, notes, remind_at: fromInput(when) }));
   const remove = () => confirm('Delete this todo?') && act(() => api.del(`/todos/${t.id}`));
+  const tick = () => act(() => api.patch(`/todos/${t.id}`, { notes, done: !t.done }));
 
   return (
-    <Sheet title="Todo" onClose={onClose}
-      icon={<span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><ListTodo size={16} /></span>}>
+    <Sheet title={given ? `From ${t.from_name}` : 'Todo'} onClose={onClose}
+      icon={<span className={`grid size-8 place-items-center rounded-full ${given ? 'bg-p2/20 text-p2' : 'bg-p1/20 text-p1'}`}>{given ? <UserRound size={16} /> : <ListTodo size={16} />}</span>}>
       <div className="space-y-4">
-        <input value={text} onChange={(e) => setText(e.target.value)} maxLength={300}
-          className="w-full rounded-xl border border-stroke bg-white/[0.04] px-3 py-2.5 text-[15px] outline-none focus:border-p1/60" />
+        {given ? (
+          <div className="space-y-2.5">
+            <p className="whitespace-pre-line break-words text-[15px] leading-relaxed">{t.text}</p>
+            <ReminderPhotos photos={t.photos || []} />
+            <p className="text-[11px] text-mute">Sent {stamp(t.remind_at || t.created_at)}. {t.from_name} sees it when you tick it done.</p>
+          </div>
+        ) : (
+          <textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={1000} rows={Math.min(6, Math.max(2, Math.ceil(text.length / 45)))}
+            className="w-full resize-none rounded-xl border border-stroke bg-white/[0.04] px-3 py-2.5 text-[15px] outline-none focus:border-p1/60" />
+        )}
         <label className="block space-y-1.5">
           <span className="text-xs text-mute">Notes</span>
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} maxLength={2000} placeholder="Anything worth keeping with it"
             className="w-full resize-none rounded-xl border border-stroke bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-p1/60 placeholder:text-mute/70" />
         </label>
-        <div className="space-y-1.5">
-          <span className="text-xs text-mute">Remind me</span>
-          <ReminderField value={when} onChange={setWhen} />
-          {/* Said plainly here, where somebody is in the middle of setting one, rather than
-              left to be discovered the first time a reminder does not arrive. */}
-          <p className="text-[11px] leading-snug text-mute">When the time comes this moves to the top of your list and shows on the menu. Reem can't reach you outside the app.</p>
-        </div>
+        {!given && (
+          <div className="space-y-1.5">
+            <span className="text-xs text-mute">Remind me</span>
+            <ReminderField value={when} onChange={setWhen} />
+            {/* Said plainly here, where somebody is in the middle of setting one, rather than
+                left to be discovered the first time a reminder does not arrive. */}
+            <p className="text-[11px] leading-snug text-mute">When the time comes this moves to the top of your list and shows on the menu. Reem can't reach you outside the app.</p>
+          </div>
+        )}
         {error && <p className="text-sm text-bad">{error}</p>}
-        <div className="flex items-center gap-2 pt-1">
-          <button onClick={remove} disabled={busy}
-            className="flex items-center gap-2 rounded-full border border-stroke px-4 py-2.5 text-sm text-mute transition hover:border-bad/50 hover:text-bad disabled:opacity-50">
-            <Trash2 size={15} /> Delete
-          </button>
-          <button onClick={save} disabled={busy || !text.trim()}
-            className="flex flex-1 items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98] disabled:opacity-50">
-            {busy ? <Loader2 size={16} className="animate-spin" /> : 'Save'}
-          </button>
-        </div>
+        {given ? (
+          <div className="flex items-center gap-2 pt-1">
+            <button onClick={save} disabled={busy}
+              className="rounded-full border border-stroke px-4 py-2.5 text-sm text-mute transition hover:text-txt disabled:opacity-50">
+              Save notes
+            </button>
+            <button onClick={tick} disabled={busy}
+              className="flex flex-1 items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98] disabled:opacity-50">
+              {busy ? <Loader2 size={16} className="animate-spin" /> : <><Check size={16} /> {t.done ? 'Not done yet' : 'Done'}</>}
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 pt-1">
+            <button onClick={remove} disabled={busy}
+              className="flex items-center gap-2 rounded-full border border-stroke px-4 py-2.5 text-sm text-mute transition hover:border-bad/50 hover:text-bad disabled:opacity-50">
+              <Trash2 size={15} /> Delete
+            </button>
+            <button onClick={save} disabled={busy || !text.trim()}
+              className="flex flex-1 items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98] disabled:opacity-50">
+              {busy ? <Loader2 size={16} className="animate-spin" /> : 'Save'}
+            </button>
+          </div>
+        )}
       </div>
     </Sheet>
   );
@@ -243,12 +305,15 @@ export default function TodoPanel({ onChanged, onDue }) {
 
   // The server already sorts by reminder, soonest first with the unreminded last, so
   // these three buckets only have to split that order — never re-sort it.
-  const due = (open || []).filter((t) => reminder(t)?.due);
-  const later = (open || []).filter((t) => reminder(t) && !reminder(t).due);
-  const someday = (open || []).filter((t) => !t.remind_at);
+  // What someone else gave them leads, in its own group: somebody is waiting on those.
+  const fromOthers = (open || []).filter((t) => t.from_name);
+  const mine = (open || []).filter((t) => !t.from_name);
+  const due = mine.filter((t) => reminder(t)?.due);
+  const later = mine.filter((t) => reminder(t) && !reminder(t).due);
+  const someday = mine.filter((t) => !t.remind_at);
   const editingRow = editing && [...(open || []), ...done].find((t) => t.id === editing);
 
-  useEffect(() => { if (open) onDue?.(due.length); }, [open, due.length, onDue]);
+  useEffect(() => { if (open) onDue?.(due.length + fromOthers.length); }, [open, due.length, fromOthers.length, onDue]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -267,6 +332,7 @@ export default function TodoPanel({ onChanged, onDue }) {
             </div>
           ) : open && (
             <>
+              {fromOthers.length > 0 && <Group title="From others" count={fromOthers.length} tone="text-p2">{fromOthers.map((t) => <Row key={t.id} t={t} onToggle={toggle} onOpen={(x) => setEditing(x.id)} />)}</Group>}
               {due.length > 0 && <Group title="Due now" count={due.length} tone="text-bad">{due.map((t) => <Row key={t.id} t={t} onToggle={toggle} onOpen={(x) => setEditing(x.id)} />)}</Group>}
               {later.length > 0 && <Group title="Coming up" count={later.length} tone="text-warn">{later.map((t) => <Row key={t.id} t={t} onToggle={toggle} onOpen={(x) => setEditing(x.id)} />)}</Group>}
               {someday.length > 0 && <Group title="No reminder" count={someday.length}>{someday.map((t) => <Row key={t.id} t={t} onToggle={toggle} onOpen={(x) => setEditing(x.id)} />)}</Group>}

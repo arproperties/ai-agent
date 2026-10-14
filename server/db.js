@@ -925,6 +925,18 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_team_rem_photos ON team_reminder_photos(reminder_id);
 `);
 
+// Since 2026-10-14 a sent reminder lands as a to-do on each person's own list, so what
+// they have to do is in one place and not split between the list and the first screen.
+//   todos.team_reminder_id: set on a to-do someone else gave them. Who it is from, and the
+//     photos, are read through it. One per person per reminder, so it is only made once.
+//   team_reminder_people.todo_id: that person's to-do. The tick lives on the to-do; the
+//     old done column is only read for a row that has no to-do.
+await db.exec(`
+  ALTER TABLE todos ADD COLUMN IF NOT EXISTS team_reminder_id INTEGER REFERENCES team_reminders(id) ON DELETE SET NULL;
+  ALTER TABLE team_reminder_people ADD COLUMN IF NOT EXISTS todo_id INTEGER REFERENCES todos(id) ON DELETE SET NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_team ON todos(team_reminder_id, user_id) WHERE team_reminder_id IS NOT NULL;
+`);
+
 // Reminders Reem thinks someone might want — the tables behind server/suggestions.js.
 //
 // Only ever suggested: nothing becomes a todo until the person taps "Remind me". So this

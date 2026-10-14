@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ListTodo, BellRing, Check, Lightbulb, X, Bell } from 'lucide-react';
+import { ListTodo, Lightbulb, X, Bell } from 'lucide-react';
 import { api, streamChat } from '../lib/api';
 import { speakText, stopSpeaking, togglePause } from '../lib/voice';
 import Icon from './Icon';
@@ -7,7 +7,7 @@ import Orb from './Orb';
 import Avatar from './Avatar';
 import Message from './Message';
 import DraftCard from './DraftCard';
-import TeamReminderCard, { ReminderPhotos } from './TeamReminderCard';
+import TeamReminderCard from './TeamReminderCard';
 import ResponsibilityCard from './ResponsibilityCard';
 import InventoryCard from './InventoryCard';
 import BookingCard from './BookingCard';
@@ -44,7 +44,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [], fromOthers: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0 }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0 }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -226,11 +226,19 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const firstName = user.name.split(' ')[0];
   // The two lists are counted apart and named apart — "2 reminders and 1 routine" says
   // where to look, which a bare total would not — but they lead to the same screen.
+  // To-dos someone else gave them are named first and by who sent them — "3 to-dos from
+  // Admin" — since that is who is waiting. They are on the same list as their own.
   const dueNow = useMemo(() => {
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-    const parts = [due.todos.length && plural(due.todos.length, 'reminder'), due.routines.length && plural(due.routines.length, 'routine')];
+    const given = due.todos.filter((t) => t.from_name);
+    const own = due.todos.length - given.length;
+    const senders = [...new Set(given.map((t) => t.from_name))];
+    const parts = [
+      given.length && `${plural(given.length, 'to-do')} from ${senders.length === 1 ? senders[0] : 'others'}`,
+      (own || due.routines.length) && `${[own && plural(own, 'reminder'), due.routines.length && plural(due.routines.length, 'routine')].filter(Boolean).join(' and ')} due`,
+    ];
     const count = due.todos.length + due.routines.length;
-    return { count, label: `${parts.filter(Boolean).join(' and ')} due`, first: (due.todos[0] || due.routines[0])?.text };
+    return { count, label: parts.filter(Boolean).join(' · '), first: (given[0] || due.todos[0] || due.routines[0])?.text };
   }, [due]);
 
   return (
@@ -288,26 +296,6 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             <div className="flex -space-x-2">
               {agents.slice(0, 7).map((a) => <Avatar key={a.id} icon={a.icon} color={a.color} size={30} className="ring-2 ring-bg" />)}
             </div>
-            {/* A reminder that has come round is the closest thing this app has to being
-                tapped on the shoulder, so it sits above the paperwork warning. Both lists
-                are counted here: separate screens, one answer to "what needs me now". */}
-            {/* Sent by someone else: each one on its own, with its own Done, because the
-                sender is waiting to see that tick and there is no other screen for it. */}
-            {(due.fromOthers || []).map((r) => (
-              <div key={`from${r.id}`}
-                className="flex w-full max-w-md items-center gap-3 rounded-2xl border border-p2/40 bg-p2/[0.09] px-3.5 py-3 text-left">
-                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-p2/20 text-p2"><BellRing size={16} /></span>
-                <span className="min-w-0 flex-1">
-                  <b className="block text-sm font-medium">{r.text}</b>
-                  <span className="block truncate text-xs text-mute">From {r.sender_name}</span>
-                  <ReminderPhotos photos={r.photos} className="mt-2" />
-                </span>
-                <button onClick={() => api.post(`/team-reminders/inbox/${r.id}/done`).then(onDueChanged).catch((e) => flash(e.message))}
-                  className="flex shrink-0 items-center gap-1 rounded-full border border-stroke px-3 py-1.5 text-xs hover:border-ok/60 hover:text-ok">
-                  <Check size={13} /> Done
-                </button>
-              </div>
-            ))}
             {/* Spotted by Reem in new email and chat. A suggestion, never a reminder until
                 "Remind me" is tapped — then it is an ordinary todo on their own list. */}
             {suggested.map((sg) => (

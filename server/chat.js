@@ -95,6 +95,8 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'complete_todo ticks one off and reschedule_todo moves or drops a reminder. ' +
     'Add a todo whenever they ask you to remember something, ask to be reminded, or say they must do something later — and say you have. ' +
     'Check the list before answering anything about what they still have to do. The reminder is optional: set a time only when one was actually meant. ' +
+    'The list also holds to-dos other people gave them, marked "(from …)"; complete_todo ticks those too, and the sender sees the tick. ' +
+    'A task for someone else is remind_people, never add_todo. ' +
     'A reminder is not an alert — Reem cannot reach them outside the app, so say it will be waiting on their list, and never promise to notify them.');
   parts.push('Things that come back on a rhythm are routines, not todos, and live on their own list: add_routine, list_routines, ' +
     'complete_routine and pause_routine. Use a routine the moment they say "every", "each", "daily", "weekly", "monthly" or "yearly", ' +
