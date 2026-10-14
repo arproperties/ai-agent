@@ -1501,6 +1501,16 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_tenant_notice_photos ON tenant_notice_photos(notice_id);
 `);
 
+// A notice can also be got ready in a chat (server/notices.js, noticeKit): it waits there as
+// a draft on a card until Send is tapped, or is cancelled. Neither is on the Tenant notices list.
+await db.exec(`
+  ALTER TABLE tenant_notices ADD COLUMN IF NOT EXISTS conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL;
+  ALTER TABLE tenant_notices DROP CONSTRAINT IF EXISTS tenant_notices_status_check;
+  ALTER TABLE tenant_notices ADD CONSTRAINT tenant_notices_status_check
+    CHECK (status IN ('draft', 'cancelled', 'sending', 'sent', 'failed', 'no_email'));
+  CREATE INDEX IF NOT EXISTS idx_tenant_notices_chat ON tenant_notices(user_id, conversation_id, id);
+`);
+
 // Sales & purchase was taken out on 2026-10-14, before anything was recorded in it: its two
 // tables were empty and are dropped.
 await db.exec(`DROP TABLE IF EXISTS trade_entry_files, trade_entries;`);

@@ -187,3 +187,86 @@ test('a watchman sees his own notices; the master sees everyone\'s and where the
   await deleteNotice(boss, mine.id);
   assert.deepEqual(await listNotices(watch), []);
 });
+
+// ---------- from a chat ----------
+
+const { proposeNotice, decideNotice, noticeKit, findBuilding } = await import('../server/notices.js');
+const { mkdtempSync, writeFileSync } = await import('node:fs');
+const { tmpdir } = await import('node:os');
+
+/** A conversation with a photo sent in it, as the chat would have saved it. */
+async function chatWithPhoto(user, name = 'leak.jpg') {
+  const { id: conv } = await db.prepare('INSERT INTO conversations (user_id, title) VALUES (?, ?) RETURNING id').run(user.id, 'leak');
+  const path = `${mkdtempSync(`${tmpdir()}/notice-`)}/${name}`;
+  writeFileSync(path, 'not really a picture');
+  await db.prepare(`INSERT INTO documents (user_id, conversation_id, name, title, kind, mime, hash, path, status)
+    VALUES (?, ?, ?, ?, 'image', 'image/jpeg', ?, ?, 'ready')`).run(user.id, conv, name, name, `h-${conv}`, path);
+  return conv;
+}
+
+test('a building is found by part of its name, and a doubt is asked about rather than guessed', () => {
+  assert.equal(findBuilding(dir, 'ayla').name, 'Ayla Residence');
+  assert.equal(findBuilding(dir, 'Park Place Tower').name, 'Park Place Tower');
+  const two = { buildings: [...dir.buildings, { name: 'Ayla Gardens', units: ['1'] }] };
+  assert.throws(() => findBuilding(two, 'ayla'), /Which building\? "ayla" could be Ayla Residence, Ayla Gardens/);
+  assert.throws(() => findBuilding(dir, 'Marina'), /No building matches "Marina"/);
+});
+
+test('a notice from a chat waits on a card, with the tenant\'s email, and goes only when Send is tapped', async () => {
+  const { watch } = await connected();
+  const conv = await chatWithPhoto(watch);
+  const { sent, send, file } = outbox();
+  const card = await proposeNotice(watch, { building: 'ayla', unit: 'Unit 507', description: 'Water is leaking from the AC.', photos: ['leak.jpg'] }, { conversationId: conv }, { dir });
+  assert.equal(card.status, 'draft');
+  assert.equal(card.building, 'Ayla Residence');
+  assert.equal(card.unit, '507');
+  assert.deepEqual(card.to, ['a@tenant.com', 'b@tenant.com'], 'the one sending it sees who it goes to');
+  assert.equal(card.photos.length, 1);
+  assert.equal(sent.length, 0, 'nothing is sent by getting it ready');
+  assert.deepEqual(await listNotices(watch), [], 'a card not yet sent is not on the Tenant notices list');
+
+  const done = await decideNotice(watch, card.id, true, { dir, send, file });
+  assert.equal(done.status, 'sent');
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].raw.toString(), /To: a@tenant\.com, b@tenant\.com/);
+  assert.match(sent[0].raw.toString(), /photo-1\.jpg/);
+  assert.equal((await listNotices(watch)).length, 1, 'once sent it is on the list like any other');
+  await assert.rejects(decideNotice(watch, card.id, true, { dir, send, file }), /already sent/);
+  assert.equal(sent.length, 1, 'a second tap does not send it twice');
+});
+
+test('a card can be cancelled, and is only its maker\'s to decide', async () => {
+  const { watch, other } = await connected();
+  const conv = await chatWithPhoto(watch);
+  const { sent, send, file } = outbox();
+  const card = await proposeNotice(watch, { building: 'Park Place', unit: '1203', description: 'Car in the wrong bay.' }, { conversationId: conv }, { dir });
+  assert.equal(await decideNotice(other, card.id, true, { dir, send, file }), null, 'somebody else cannot send it');
+  assert.equal((await decideNotice(watch, card.id, false)).status, 'cancelled');
+  await assert.rejects(decideNotice(watch, card.id, true, { dir, send, file }), /cancelled/);
+  assert.equal(sent.length, 0);
+  assert.deepEqual(await listNotices(watch), []);
+});
+
+test('a card needs a real unit and a picture sent in the chat', async () => {
+  const { watch } = await connected();
+  const conv = await chatWithPhoto(watch);
+  const make = (o) => proposeNotice(watch, { building: 'Ayla Residence', unit: '507', description: 'x', ...o }, { conversationId: conv }, { dir });
+  await assert.rejects(make({ unit: '999' }), /has no unit "999"/);
+  await assert.rejects(make({ photos: ['other.jpg'] }), /no picture called "other.jpg"/);
+  await assert.rejects(make({ description: ' ' }), /Say what was seen/);
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM tenant_notices').get()).n, 0, 'nothing refused is left behind');
+});
+
+test('the chat tool is there only with the Tenant notices module, and puts the card up', async () => {
+  const { watch } = await connected();
+  assert.deepEqual((await noticeKit(watch)).definitions, []);
+  await setModuleAccess(watch.id, ['notices']);
+  const cards = [];
+  const kit = await noticeKit(watch, { conversationId: null, onCard: (c) => cards.push(c) }, { dir });
+  assert.deepEqual(kit.definitions.map((d) => d.name), ['tenant_notice']);
+  const r = await kit.run({ id: 't', name: 'tenant_notice', input: { building: 'Ayla', unit: '101', description: 'Door left open.' } });
+  assert.equal(r.is_error, undefined);
+  assert.match(r.content, /NOT sent yet/);
+  assert.match(r.content, /no tenant email/, 'a unit with no email is said, not hidden');
+  assert.equal(cards.length, 1);
+});
