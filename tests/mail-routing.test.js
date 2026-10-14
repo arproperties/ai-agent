@@ -5,7 +5,7 @@ import { db, tx, reset, makeUser, closeDb } from './helpers/db.js';
 
 process.env.EMAIL_KEY ||= Buffer.alloc(32, 7).toString('base64');
 const { encrypt } = await import('../server/secrets.js');
-const { decideRoute, summarizeSent, forwardText, lookFront, lookSent, forwardByHand, resolvePeople, syncPeople, staff } = await import('../server/mailRouting.js');
+const { decideRoute, summarizeSent, forwardText, lookFront, lookSent, forwardByHand, resolvePeople, syncPeople, staff, draftRules } = await import('../server/mailRouting.js');
 
 test.after(() => closeDb());
 
@@ -247,4 +247,23 @@ test('the people list follows the rules, and someone dropped is kept only while 
   const read = async () => ({ uidValidity: 1, lastUid: 11, mail: [mail(11, { from: 'a@co.com' })] });
   await lookFront({ read, decide: async ({ people: list }) => { offered = list.map((p) => p.email); return { to: [], reason: 'x' }; } });
   assert.deepEqual(offered.sort(), ['accounts@ainalreempro.com', 'rona@ainalreempro.com'], 'someone the rules dropped is not offered');
+});
+
+test('Reem drafts the rules from the staff, what they look after, and what arrives', async () => {
+  let seen;
+  const ask = async (content, opts) => { seen = { content, opts }; return '```\nLegal notices go to Mohammad.\nEverything else goes to ___.\n```'; };
+  const notes = [{ name: 'Mohammad', email: 'legal@ainalreempro.com', duties: 'Legal: contracts and court cases' }];
+  const out = await draftRules('', { ask, notes, recent: [{ from: 'court@gov.ae', subject: 'Hearing' }] });
+  assert.equal(out, 'Legal notices go to Mohammad.\nEverything else goes to ___.', 'the fences are taken off');
+  assert.match(seen.content, /The owner's rules so far:\n\(none yet\)/);
+  assert.match(seen.content, /- Mohammad <legal@ainalreempro\.com>: Legal: contracts and court cases/);
+  assert.match(seen.content, /<recent_emails>\n- from court@gov\.ae: Hearing\n<\/recent_emails>/);
+  assert.match(seen.opts.system, /Never invent a person/);
+});
+
+test('improving keeps the owner\'s words as the starting point', async () => {
+  let seen;
+  await draftRules('legal stuff mohammad', { ask: async (c) => { seen = c; return 'Legal emails go to Mohammad.'; }, notes: [] });
+  assert.match(seen, /The owner's rules so far:\nlegal stuff mohammad/);
+  await assert.rejects(draftRules('x', { ask: async () => '  ', notes: [] }), /wrote nothing/);
 });

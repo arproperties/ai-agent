@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronLeft, Loader2, Search, CheckCircle2, XCircle, AlertTriangle, Send, KeyRound, Play, ArrowRight } from 'lucide-react';
+import { ChevronLeft, Loader2, Search, CheckCircle2, XCircle, AlertTriangle, Send, KeyRound, Play, ArrowRight, Sparkles, Undo2 } from 'lucide-react';
 import { api } from '../lib/api';
 
 // Mail routing, the master's alone: the one mailbox the company is written to, and who each
@@ -131,6 +131,15 @@ function Rules({ data, onSaved }) {
     try { const r = await api.put('/mail-routing/rules', { rules: text, auto: next }); setAuto(r.auto); onSaved(r); } catch (e) { setError(e.message); }
     setBusy('');
   };
+  const [before, setBefore] = useState(null); // the text before Reem wrote over it, for Undo
+  const draft = async () => {
+    setBusy('draft'); setError('');
+    try {
+      const r = await api.post('/mail-routing/rules/draft', { rules: text });
+      setBefore(text); setText(r.rules); setTried(null);
+    } catch (e) { setError(e.message); }
+    setBusy('');
+  };
   const tryIt = async () => {
     setBusy('try'); setError(''); setTried(null);
     try { setTried(await api.post('/mail-routing/try', { rules: text })); } catch (e) { setError(e.message); }
@@ -140,15 +149,23 @@ function Rules({ data, onSaved }) {
   return (
     <Card title="Rules">
       <p className="text-sm text-mute">Write who gets what, in plain words, by name or by job. Reem finds each person among the staff in Reem, then reads each new email and follows this.</p>
-      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={6}
-        placeholder={'Legal emails (courts, lawyers, contracts, notices) go to Mohammad.\nAccounts emails (invoices, payments, bank, cheques) go to the accountant and Tauqeer.\nEverything else goes to Rona.\nAdverts and newsletters go to nobody.'}
+      <textarea value={text} onChange={(e) => { setText(e.target.value); setBefore(null); }} rows={7} disabled={busy === 'draft'}
+        placeholder={'For example:\nLegal emails (courts, lawyers, contracts, notices) go to Mohammad.\nAccounts emails (invoices, payments, bank, cheques) go to the accountant and Tauqeer.\nEverything else goes to Rona.\nAdverts and newsletters go to nobody.'}
         className={`${field} resize-y`} />
       <div className="flex flex-wrap gap-2">
+        <button onClick={draft} disabled={!!busy} className={quiet}>
+          {busy === 'draft' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+          {busy === 'draft' ? 'Reem is writing…' : text.trim() ? 'Improve with Reem' : 'Write with Reem'}
+        </button>
+        {before !== null && (
+          <button onClick={() => { setText(before); setBefore(null); }} disabled={!!busy} className={quiet}><Undo2 size={14} /> Undo</button>
+        )}
         <button onClick={() => save()} disabled={!!busy || !changed} className={primary}>{busy === 'save' && <Loader2 size={14} className="animate-spin" />} {busy === 'save' ? 'Reem is reading the rules…' : 'Save rules'}</button>
         <button onClick={tryIt} disabled={!!busy || !text.trim()} className={quiet}>
           {busy === 'try' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Try on the newest 10 emails
         </button>
       </div>
+      {before !== null && <p className="text-xs text-mute">Reem wrote this. Read it, change anything, fill in any ___, then Save rules.</p>}
       {error && <p className="text-sm text-bad">{error}</p>}
       {tried && (
         <div className="space-y-2">
