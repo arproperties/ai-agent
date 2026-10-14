@@ -17,6 +17,10 @@ import { DATA_DIR } from './config.js';
 // Tauqeer", "Bank"). Marking a line paid says which account the money went into; a
 // transfer hands money from one account to another; both can carry a file (a receipt).
 //
+// What the money is for is the module's own as well: a free list of income heads ("Shop",
+// "DEWA", "Washing Machine"), one list for every building. An entry comes under one, and
+// the report adds up each building by head.
+//
 // The module stands on its own. Its buildings are its own list, typed here - not the
 // Buildings screen, not the inventory, not the saifsys building list - and nothing else
 // reads them. It is the accountants' list: whoever saifsys lets open its Recurring
@@ -108,42 +112,79 @@ export async function deleteBuilding(user, id) {
   return { ok: true };
 }
 
+// ---------- the income heads ----------
+
+/** The module's own income heads, by name, each with how many entries come under it. */
+export const listHeads = async () => (await db.prepare(`SELECT h.id, h.name,
+    (SELECT count(*)::int FROM recurring_payments p WHERE p.head_id = h.id) AS entries
+  FROM recurring_heads h ORDER BY lower(h.name), h.id`).all());
+
+const headOf = async (id) => (await db.prepare('SELECT id, name FROM recurring_heads WHERE id = ?').get(Number(id) || 0)) || null;
+const headNamed = async (name) => (await db.prepare('SELECT id, name FROM recurring_heads WHERE lower(name) = lower(?)').get(name)) || null;
+const headPicks = async () => (await listHeads()).map((h) => ({ id: h.id, name: h.name }));
+
+/** Add an income head (id null) or rename one. A name is there once, whatever its capitals. null: no such head. */
+export async function saveHead(user, id, input) {
+  const old = id === null ? null : await headOf(id);
+  if (id !== null && !old) return null;
+  const name = line(input?.name, MAX_NAME);
+  if (!name) throw bad('Give the income head a name, like Shop or DEWA');
+  const same = await headNamed(name);
+  if (same && same.id !== old?.id) throw bad(`"${same.name}" is already in the list`, 409);
+  if (old) await db.prepare('UPDATE recurring_heads SET name = ? WHERE id = ?').run(name, old.id);
+  const savedId = old?.id ?? (await db.prepare('INSERT INTO recurring_heads (name, created_by) VALUES (?, ?) RETURNING id').run(name, user.id)).id;
+  return (await listHeads()).find((h) => h.id === savedId);
+}
+
+/** Only an income head with no entries can go. */
+export async function deleteHead(user, id) {
+  const h = (await listHeads()).find((x) => x.id === Number(id));
+  if (!h) return null;
+  if (h.entries > 0) throw bad(`"${h.name}" has ${h.entries} ${h.entries === 1 ? 'entry' : 'entries'}, so it cannot be deleted. Move or delete those first.`, 409);
+  await db.prepare('DELETE FROM recurring_heads WHERE id = ?').run(h.id);
+  return { ok: true };
+}
+
 // ---------- reading ----------
 
 const picks = async () => (await listBuildings()).map((b) => ({ id: b.id, name: b.name }));
 
-const ENTRY = `SELECT p.*, b.name AS building_name, (SELECT count(*)::int FROM recurring_payment_dues d WHERE d.payment_id = p.id) AS payments,
+const ENTRY = `SELECT p.*, b.name AS building_name, h.name AS head_name, (SELECT count(*)::int FROM recurring_payment_dues d WHERE d.payment_id = p.id) AS payments,
     EXISTS (SELECT 1 FROM recurring_payment_dues d WHERE d.payment_id = p.id AND d.month = ?) AS has_this_month
-  FROM recurring_payments p JOIN recurring_buildings b ON b.id = p.building_id`;
+  FROM recurring_payments p JOIN recurring_buildings b ON b.id = p.building_id LEFT JOIN recurring_heads h ON h.id = p.head_id`;
 const DUE = `SELECT d.id, d.payment_id, d.month, d.due_date, d.amount, d.status, d.paid_at, d.paid_on, u.name AS paid_by,
-    d.account_id, a.name AS account_name, d.attachment, p.title, p.unit, p.building_id, b.name AS building_name
+    d.account_id, a.name AS account_name, d.attachment, p.title, p.unit, p.building_id, b.name AS building_name,
+    p.head_id, h.name AS head_name
   FROM recurring_payment_dues d JOIN recurring_payments p ON p.id = d.payment_id JOIN recurring_buildings b ON b.id = p.building_id
+  LEFT JOIN recurring_heads h ON h.id = p.head_id
   LEFT JOIN users u ON u.id = d.paid_by LEFT JOIN recurring_accounts a ON a.id = d.account_id`;
 
+const shapeHead = (row) => (row.head_id ? { id: row.head_id, name: row.head_name } : null);
 const shapeEntry = (p) => ({
-  id: p.id, title: p.title, building: { id: p.building_id, name: p.building_name }, unit: p.unit, amount: p.amount, day: p.day,
+  id: p.id, title: p.title, building: { id: p.building_id, name: p.building_name }, unit: p.unit, head: shapeHead(p), amount: p.amount, day: p.day,
   auto_create: p.auto_create, first_month: p.first_month, active: p.active, notes: p.notes,
   payments: p.payments, has_this_month: p.has_this_month,
 });
 const shapeDue = (d) => ({
-  id: d.id, entry_id: d.payment_id, month: d.month, title: d.title, building: { id: d.building_id, name: d.building_name }, unit: d.unit,
+  id: d.id, entry_id: d.payment_id, month: d.month, title: d.title, building: { id: d.building_id, name: d.building_name }, unit: d.unit, head: shapeHead(d),
   due_date: d.due_date, amount: d.amount, status: d.status, paid_at: d.paid_at, paid_on: d.paid_on, paid_by: d.paid_by,
   account: d.account_id ? { id: d.account_id, name: d.account_name } : null, attachment: !!d.attachment,
 });
 
 const entryOf = async (user, id, now = today()) => (await db.prepare(`${ENTRY} WHERE p.id = ?`).get(now.slice(0, 7), Number(id) || 0)) || null;
 
-/** Every entry, and the buildings to pick from. */
+/** Every entry, and the buildings and the income heads to pick from. */
 export async function listEntries(user, now = today()) {
   const rows = await db.prepare(`${ENTRY} ORDER BY lower(b.name), lower(p.title), p.id`).all(now.slice(0, 7));
-  return { month: now.slice(0, 7), buildings: await picks(), entries: rows.map(shapeEntry) };
+  return { month: now.slice(0, 7), buildings: await picks(), heads: await headPicks(), entries: rows.map(shapeEntry) };
 }
 
 /**
  * One month's lines, with what is still pending and what has
- * been paid. The totals are the month's (and the building's and the shop or unit's, when
- * one is picked), whatever status is being looked at. No month said = this month.
- * units: every shop or unit typed on an entry of the buildings looked at, to pick from.
+ * been paid. The totals are the month's (and the building's, the income head's and the shop
+ * or unit's, when one is picked), whatever status is being looked at. No month said = this
+ * month. units: every shop or unit typed on an entry of the buildings looked at, to pick
+ * from. head: a head's id, or "none" for the entries that have no head yet.
  */
 export async function listDues(user, query = {}, now = today()) {
   const buildings = await picks();
@@ -151,19 +192,53 @@ export async function listDues(user, query = {}, now = today()) {
   const one = Number(query.building) || 0;
   const ids = buildings.map((b) => b.id).filter((id) => !one || id === one);
   const unit = line(query.unit, MAX_UNIT).toLowerCase();
+  const head = Number(query.head) || 0;
   const units = (await db.prepare(`SELECT min(unit) AS unit FROM recurring_payments WHERE building_id = ANY(?::int[]) AND unit IS NOT NULL
     GROUP BY lower(unit) ORDER BY lower(unit)`).all(ids)).map((r) => r.unit);
   const rows = (await db.prepare(`${DUE} WHERE d.month = ? AND p.building_id = ANY(?::int[]) ORDER BY d.due_date, lower(p.title), d.id`).all(month, ids))
-    .map(shapeDue).filter((d) => !unit || (d.unit || '').toLowerCase() === unit);
+    .map(shapeDue).filter((d) => !unit || (d.unit || '').toLowerCase() === unit)
+    .filter((d) => (query.head === 'none' ? !d.head : !head || d.head?.id === head));
   const of = (status) => rows.filter((d) => d.status === status);
   const sum = (list) => Math.round(list.reduce((t, d) => t + d.amount, 0) * 100) / 100;
   return {
     month,
     buildings,
     units,
+    heads: await headPicks(),
     dues: ['pending', 'paid'].includes(query.status) ? of(query.status) : rows,
     totals: { pending: sum(of('pending')), paid: sum(of('paid')), pending_count: of('pending').length, paid_count: of('paid').length },
   };
+}
+
+/**
+ * What each building brought in from each income head, over the months from..to (both
+ * counted; none said = this month): paid, still pending, and the two together. A building
+ * with no line in those months is left out; its entries with no head are its last row.
+ */
+export async function getReport(user, query = {}, now = today()) {
+  const month = (v) => (MONTH.test(v || '') ? v : now.slice(0, 7));
+  const [from, to] = [month(query.from), month(query.to)].sort();
+  const one = Number(query.building) || null;
+  const found = await db.prepare(`SELECT p.building_id, b.name AS building_name, p.head_id, h.name AS head_name,
+      COALESCE(sum(d.amount) FILTER (WHERE d.status = 'paid'), 0)::float8 AS paid,
+      COALESCE(sum(d.amount) FILTER (WHERE d.status <> 'paid'), 0)::float8 AS pending
+    FROM recurring_payment_dues d JOIN recurring_payments p ON p.id = d.payment_id JOIN recurring_buildings b ON b.id = p.building_id
+    LEFT JOIN recurring_heads h ON h.id = p.head_id
+    WHERE d.month >= ? AND d.month <= ? AND (?::int IS NULL OR p.building_id = ?::int)
+    GROUP BY p.building_id, b.name, p.head_id, h.name
+    ORDER BY lower(b.name), p.building_id, (p.head_id IS NULL), lower(h.name), p.head_id`).all(from, to, one, one);
+  const sums = (list) => {
+    const paid = money(list.reduce((t, x) => t + x.paid, 0));
+    const pending = money(list.reduce((t, x) => t + x.pending, 0));
+    return { paid, pending, total: money(paid + pending) };
+  };
+  const rows = [];
+  for (const f of found) {
+    if (rows.at(-1)?.building.id !== f.building_id) rows.push({ building: { id: f.building_id, name: f.building_name }, heads: [] });
+    rows.at(-1).heads.push({ head: shapeHead(f), ...sums([f]) });
+  }
+  for (const r of rows) Object.assign(r, sums(r.heads));
+  return { from, to, buildings: await picks(), rows, totals: sums(rows) };
 }
 
 // ---------- writing ----------
@@ -176,6 +251,11 @@ async function readEntry(user, input, now) {
   const typed = line(input.new_building, MAX_NAME);
   const building = typed ? (await buildingNamed(typed)) || (await saveBuilding(user, null, { name: typed })) : await buildingOf(input.building_id);
   if (!building) throw bad('Pick the building from the list, or type a new one');
+  // The income head is the same: picked, or typed. None at all is allowed.
+  const typedHead = line(input.new_head, MAX_NAME);
+  const picked = Number(input.head_id) || 0;
+  const head = typedHead ? (await headNamed(typedHead)) || (await saveHead(user, null, { name: typedHead })) : picked ? await headOf(picked) : null;
+  if (picked && !typedHead && !head) throw bad('Pick the income head from the list, or type a new one');
   const amount = Math.round(Number(input.amount) * 100) / 100;
   if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT) throw bad('The amount must be a number more than 0');
   const day = Number(input.day);
@@ -185,7 +265,7 @@ async function readEntry(user, input, now) {
   // A typo in the year must not create years of payments nobody is owed.
   if (first < `${Number(now.slice(0, 4)) - 3}${now.slice(4, 7)}`) throw bad('The first month cannot be more than three years back');
   return {
-    title, building_id: building.id, unit: line(input.unit, MAX_UNIT) || null, amount, day,
+    title, building_id: building.id, head_id: head?.id ?? null, unit: line(input.unit, MAX_UNIT) || null, amount, day,
     auto_create: input.auto_create === undefined ? true : !!input.auto_create,
     first_month: first, notes: String(input.notes ?? '').trim().slice(0, MAX_NOTES) || null,
   };
@@ -201,14 +281,14 @@ export async function saveEntry(user, id, input, now = today()) {
   const old = id === null ? null : await entryOf(user, id, now);
   if (id !== null && !old) return null;
   const f = await readEntry(user, input || {}, now);
-  const values = [f.building_id, f.unit, f.title, f.amount, f.day, f.auto_create, f.first_month, f.notes, user.id];
+  const values = [f.building_id, f.head_id, f.unit, f.title, f.amount, f.day, f.auto_create, f.first_month, f.notes, user.id];
   let entryId = old?.id;
   if (old) {
-    await db.prepare(`UPDATE recurring_payments SET building_id = ?, unit = ?, title = ?, amount = ?, day = ?, auto_create = ?,
+    await db.prepare(`UPDATE recurring_payments SET building_id = ?, head_id = ?, unit = ?, title = ?, amount = ?, day = ?, auto_create = ?,
       first_month = ?, notes = ?, updated_by = ?, updated_at = ${NOW} WHERE id = ?`).run(...values, old.id);
   } else {
-    entryId = (await db.prepare(`INSERT INTO recurring_payments (building_id, unit, title, amount, day, auto_create, first_month, notes, updated_by, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(...values, user.id)).id;
+    entryId = (await db.prepare(`INSERT INTO recurring_payments (building_id, head_id, unit, title, amount, day, auto_create, first_month, notes, updated_by, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(...values, user.id)).id;
   }
   await createDuePayments(now, entryId);
   return shapeEntry(await entryOf(user, entryId, now));
@@ -442,6 +522,12 @@ recurringPaymentRoutes.get('/buildings', wrap(async (req, res) => res.json({ bui
 recurringPaymentRoutes.post('/buildings', wrap(async (req, res) => res.json(await saveBuilding(req.user, null, req.body))));
 recurringPaymentRoutes.put('/buildings/:id', wrap(async (req, res) => send(res, await saveBuilding(req.user, req.params.id, req.body))));
 recurringPaymentRoutes.delete('/buildings/:id', wrap(async (req, res) => send(res, await deleteBuilding(req.user, req.params.id))));
+
+recurringPaymentRoutes.get('/heads', wrap(async (req, res) => res.json({ heads: await listHeads() })));
+recurringPaymentRoutes.post('/heads', wrap(async (req, res) => res.json(await saveHead(req.user, null, req.body))));
+recurringPaymentRoutes.put('/heads/:id', wrap(async (req, res) => send(res, await saveHead(req.user, req.params.id, req.body))));
+recurringPaymentRoutes.delete('/heads/:id', wrap(async (req, res) => send(res, await deleteHead(req.user, req.params.id))));
+recurringPaymentRoutes.get('/report', wrap(async (req, res) => res.json(await getReport(req.user, req.query))));
 
 recurringPaymentRoutes.get('/accounts', wrap(async (req, res) => res.json({ accounts: await listAccounts() })));
 recurringPaymentRoutes.post('/accounts', wrap(async (req, res) => res.json(await saveAccount(req.user, null, req.body))));

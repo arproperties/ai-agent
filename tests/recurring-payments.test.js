@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { reset, makeUser, closeDb, db } from './helpers/db.js';
 import {
   dueDate, createDuePayments, listEntries, listDues, saveEntry, setActive, deleteEntry, createNow, setPaid,
-  listBuildings, saveBuilding, deleteBuilding,
+  listBuildings, saveBuilding, deleteBuilding, listHeads, saveHead, deleteHead, getReport,
   listAccounts, saveAccount, deleteAccount, getAccount, getDue, listTransfers, addTransfer, deleteTransfer, setAttachment, attachmentPath,
 } from '../server/recurringPayments.js';
 
@@ -37,7 +37,7 @@ test('an entry is checked, and comes back as it was kept', async () => {
   const { jessa } = await setup();
   const e = await saveEntry(jessa, null, washer, '2026-10-01');
   assert.deepEqual(e, {
-    id: e.id, title: 'Washing machine rent', building: { id: 1, name: 'Ayla Residence' }, unit: 'Laundry room', amount: 150, day: 5,
+    id: e.id, title: 'Washing machine rent', building: { id: 1, name: 'Ayla Residence' }, unit: 'Laundry room', head: null, amount: 150, day: 5,
     auto_create: true, first_month: '2026-10', active: true, notes: null, payments: 0, has_this_month: false,
   });
   const ok = { ...washer };
@@ -120,7 +120,7 @@ test('a line is marked paid with who and when, and can go back to pending', asyn
   const e = await saveEntry(jessa, null, washer, '2026-10-05');
   const [due] = (await listDues(jessa, {}, '2026-10-05')).dues;
   assert.deepEqual({ ...due }, {
-    id: due.id, entry_id: e.id, month: '2026-10', title: 'Washing machine rent', building: { id: 1, name: 'Ayla Residence' }, unit: 'Laundry room',
+    id: due.id, entry_id: e.id, month: '2026-10', title: 'Washing machine rent', building: { id: 1, name: 'Ayla Residence' }, unit: 'Laundry room', head: null,
     due_date: '2026-10-05', amount: 150, status: 'pending', paid_at: null, paid_on: null, paid_by: null, account: null, attachment: false,
   });
   await assert.rejects(setPaid(jessa, due.id, true), /Pick the account/);
@@ -319,4 +319,88 @@ test('a paid line and a transfer can each keep a file, and a new one replaces it
   await deleteTransfer(jessa, t.id);
   assert.equal(existsSync(kept), false, 'a deleted transfer takes its file with it');
   (await import('node:fs')).rmSync(await attachmentPath('due', due.id), { force: true });
+});
+
+test('the income heads are the module\'s own: added, renamed, and deleted only when no entry is under them', async () => {
+  const { jessa } = await setup();
+  assert.deepEqual(await saveHead(jessa, null, { name: '  Washing  Machine ' }), { id: 1, name: 'Washing Machine', entries: 0 });
+  await assert.rejects(saveHead(jessa, null, { name: ' ' }), /Give the income head a name/);
+  await assert.rejects(saveHead(jessa, null, { name: 'washing MACHINE' }), /already in the list/);
+  assert.equal((await saveHead(jessa, null, { name: 'Shop' })).id, 2);
+  assert.equal((await saveHead(jessa, 2, { name: 'Shop rent' })).name, 'Shop rent');
+  await assert.rejects(saveHead(jessa, 2, { name: 'Washing Machine' }), /already in the list/);
+  assert.equal(await saveHead(jessa, 99, { name: 'Nowhere' }), null);
+
+  // An entry comes under a head: picked, or typed on the form (made there, or found).
+  const e = await saveEntry(jessa, null, { ...washer, head_id: 1 }, '2026-10-05');
+  assert.deepEqual(e.head, { id: 1, name: 'Washing Machine' });
+  assert.deepEqual((await listDues(jessa, {}, '2026-10-05')).dues[0].head, { id: 1, name: 'Washing Machine' });
+  assert.deepEqual((await saveEntry(jessa, null, { ...washer, title: 'DEWA', new_head: ' dewa ' }, '2026-10-01')).head, { id: 3, name: 'dewa' });
+  assert.deepEqual((await saveEntry(jessa, null, { ...washer, title: 'Shop 1', new_head: 'SHOP RENT' }, '2026-10-01')).head, { id: 2, name: 'Shop rent' });
+  await assert.rejects(saveEntry(jessa, null, { ...washer, head_id: 99 }, '2026-10-01'), /Pick the income head/);
+  assert.equal((await saveEntry(jessa, e.id, { ...washer, head_id: '' }, '2026-10-05')).head, null, 'a head can be taken off again');
+  await saveEntry(jessa, e.id, { ...washer, head_id: 1 }, '2026-10-05');
+
+  assert.deepEqual(await listHeads(), [{ id: 3, name: 'dewa', entries: 1 }, { id: 2, name: 'Shop rent', entries: 1 }, { id: 1, name: 'Washing Machine', entries: 1 }]);
+  assert.deepEqual((await listEntries(jessa, '2026-10-05')).heads, [{ id: 3, name: 'dewa' }, { id: 2, name: 'Shop rent' }, { id: 1, name: 'Washing Machine' }]);
+  await assert.rejects(deleteHead(jessa, 1), /has 1 entry/);
+  assert.deepEqual(await deleteHead(jessa, (await saveHead(jessa, null, { name: 'Parking' })).id), { ok: true });
+  assert.equal(await deleteHead(jessa, 99), null);
+});
+
+test('a month can be looked at by income head', async () => {
+  const { jessa } = await setup();
+  await saveEntry(jessa, null, { ...washer, new_head: 'Washing Machine' }, '2026-10-05');
+  await saveEntry(jessa, null, { ...washer, title: 'Shop 3 rent', building_id: 2, amount: 1000, new_head: 'Shop' }, '2026-10-05');
+  await saveEntry(jessa, null, { ...washer, title: 'Old one', amount: 20 }, '2026-10-05');
+  const all = await listDues(jessa, {}, '2026-10-05');
+  assert.deepEqual(all.heads, [{ id: 2, name: 'Shop' }, { id: 1, name: 'Washing Machine' }]);
+  const shop = await listDues(jessa, { head: '2' }, '2026-10-05');
+  assert.deepEqual(shop.dues.map((d) => d.title), ['Shop 3 rent']);
+  assert.deepEqual(shop.totals, { pending: 1000, paid: 0, pending_count: 1, paid_count: 0 });
+  assert.deepEqual((await listDues(jessa, { head: 'none' }, '2026-10-05')).dues.map((d) => d.title), ['Old one']);
+});
+
+test('the report: each building, what came from each income head over the months picked', async () => {
+  const { jessa } = await setup();
+  const head = async (name) => (await saveHead(jessa, null, { name })).id;
+  const [wash, shop, dewa] = [await head('Washing Machine'), await head('Shop'), await head('DEWA')];
+  const day1 = { day: 1, first_month: '2026-09' };
+  await saveEntry(jessa, null, { ...day1, title: 'Washer', building_id: 1, amount: 150, head_id: wash }, '2026-10-05');
+  await saveEntry(jessa, null, { ...day1, title: 'Shop 1', building_id: 1, amount: 3000, head_id: shop }, '2026-10-05');
+  await saveEntry(jessa, null, { ...day1, title: 'Shop 2', building_id: 1, amount: 2000.5, head_id: shop }, '2026-10-05');
+  await saveEntry(jessa, null, { ...day1, title: 'Old one', building_id: 1, amount: 20 }, '2026-10-05');
+  await saveEntry(jessa, null, { ...day1, title: 'Camp DEWA', building_id: 2, amount: 400, head_id: dewa, first_month: '2026-10' }, '2026-10-05');
+  // September: both shops paid. October: the washer paid.
+  for (const d of (await listDues(jessa, { month: '2026-09', head: String(shop) }, '2026-10-05')).dues) await setPaid(jessa, d.id, true, { account_id: 1 });
+  await setPaid(jessa, (await listDues(jessa, { head: String(wash) }, '2026-10-05')).dues[0].id, true, { account_id: 1 });
+
+  const r = await getReport(jessa, { from: '2026-09', to: '2026-10' }, '2026-10-05');
+  assert.deepEqual([r.from, r.to], ['2026-09', '2026-10']);
+  assert.deepEqual(r.buildings.map((b) => b.name), ['Ayla Residence', 'Gents Camp', 'Ladies Camp']);
+  assert.deepEqual(r.rows, [
+    {
+      building: { id: 1, name: 'Ayla Residence' },
+      heads: [
+        { head: { id: shop, name: 'Shop' }, paid: 5000.5, pending: 5000.5, total: 10001 },
+        { head: { id: wash, name: 'Washing Machine' }, paid: 150, pending: 150, total: 300 },
+        { head: null, paid: 0, pending: 40, total: 40 },
+      ],
+      paid: 5150.5, pending: 5190.5, total: 10341,
+    },
+    {
+      building: { id: 2, name: 'Gents Camp' },
+      heads: [{ head: { id: dewa, name: 'DEWA' }, paid: 0, pending: 400, total: 400 }],
+      paid: 0, pending: 400, total: 400,
+    },
+  ], 'a building with nothing in the months is left out; entries with no head come last');
+  assert.deepEqual(r.totals, { paid: 5150.5, pending: 5590.5, total: 10741 });
+
+  const oct = await getReport(jessa, { from: '2026-10', to: '2026-10', building: '1' }, '2026-10-05');
+  assert.deepEqual(oct.rows.map((b) => [b.building.name, b.paid, b.pending]), [['Ayla Residence', 150, 5020.5]]);
+  assert.deepEqual(oct.totals, { paid: 150, pending: 5020.5, total: 5170.5 });
+
+  // Nothing said = this month. The months the wrong way round are put right.
+  assert.deepEqual((({ from, to }) => [from, to])(await getReport(jessa, {}, '2026-10-05')), ['2026-10', '2026-10']);
+  assert.deepEqual((({ from, to }) => [from, to])(await getReport(jessa, { from: '2026-10', to: '2026-09' }, '2026-10-05')), ['2026-09', '2026-10']);
 });

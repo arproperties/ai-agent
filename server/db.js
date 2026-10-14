@@ -1426,6 +1426,24 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_recurring_transfers_to ON recurring_transfers(to_account_id);
 `);
 
+// Recurring payments, what the money is for: the module's own income heads ("Shop",
+// "DEWA", "Washing Machine"), one list for every building, typed by the accountants.
+//   recurring_heads: the list.
+//   recurring_payments.head_id: the head an entry comes under. Empty on entries made
+//     before the list was there, until somebody picks one.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_heads (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_heads_name ON recurring_heads(lower(name));
+
+  ALTER TABLE recurring_payments ADD COLUMN IF NOT EXISTS head_id INTEGER REFERENCES recurring_heads(id);
+  CREATE INDEX IF NOT EXISTS idx_recurring_payments_head ON recurring_payments(head_id);
+`);
+
 // Reem's own modules (server/modules.js): a screen a person gets only once the master
 // ticks it on their People profile. The master has them all and is never listed here.
 await db.exec(`
