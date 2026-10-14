@@ -69,6 +69,11 @@ test('once sent, it is a to-do on each person\'s own list, due now, saying who i
   assert.equal(t.team_reminder_id, r.id);
   assert.equal((await dueTodos(rona)).length, 1, 'counted on the badge and the first screen straight away');
   assert.equal((await listTodos(boss)).length, 0, 'not on the sender\'s own list');
+  assert.equal((await dueTodos(boss)).length, 0, 'not on the sender\'s chat screen');
+  const { tauqeer } = { tauqeer: (await findPeople(boss, ['Tauqeer']))[0].id };
+  assert.equal((await dueTodos(tauqeer)).length, 0, 'not on anyone else\'s chat screen');
+  assert.equal((await listTodos(tauqeer)).length, 0);
+  assert.equal(await updateTodo(tauqeer, t.id, { done: true }), null, 'nobody else can tick it');
 
   // The to-do timer must not buzz a second time for what has just been delivered.
   posted.length = 0;

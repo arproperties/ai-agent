@@ -118,7 +118,13 @@ export default function App() {
   }, [loadDue, loadTenantCare]);
 
   useEffect(() => {
-    if (!me) return;
+    // Signed out, however it happened: nothing of theirs may still be on screen when the
+    // next person signs in on the same phone and their own has not arrived yet.
+    if (!me) {
+      setDue({ todos: [], routines: [] }); setExpiring([]); setModules(null); setHasBuildings(false);
+      setTenantCare({ member: false, waiting: 0 }); setPanel(null);
+      return;
+    }
     api.get('/config').then(setConfig);
     loadAgents();
     loadConvs();
