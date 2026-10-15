@@ -127,16 +127,6 @@ export function replyText(missing) {
 // ---------- the inbox ----------
 
 export const inbox = () => db.prepare('SELECT * FROM tenant_inbox WHERE id = 1').get();
-
-// Other parts of Reem that write to tenants from this inbox (server/renewals.js) take the
-// answers to their own emails: a claimer is given each new email and returns true for one
-// it has kept, and Tenant care then leaves that email alone.
-const claimers = [];
-export const claimTenantMail = (fn) => { claimers.push(fn); };
-async function claimed(m, uidValidity) {
-  for (const fn of claimers) if (await fn(m, uidValidity)) return true;
-  return false;
-}
 const members = async () => (await db.prepare('SELECT user_id FROM tenant_inbox_members').all()).map((r) => r.user_id);
 
 async function mayUse(user) {
@@ -170,7 +160,6 @@ export async function look({ read = readNew, dir: given, send, file } = {}) {
     const from = String(m.from || '').toLowerCase();
     if (!from || from === mine || from.endsWith(`@${domain}`)) continue; // our own people
     if (isAutomatic(from, m.headers)) continue;
-    if (await claimed({ ...m, from }, uidValidity)) continue;
     const missing = whatsMissing({ from, subject: m.subject, text: m.text }, dir);
     if (!missing) continue;
     const recent = await db.prepare('SELECT 1 FROM tenant_asks WHERE from_addr = ? AND created_at > ? AND status <> ?')
@@ -223,7 +212,7 @@ async function readNew(acc) {
         const sender = (p.replyTo?.value?.[0]) || p.from?.value?.[0] || {};
         mail.push({
           uid: m.uid, headers: p.headers, from: sender.address, name: p.from?.value?.[0]?.name || '',
-          subject: p.subject || '', text: p.text || '', messageId: p.messageId || null, inReplyTo: p.inReplyTo || null,
+          subject: p.subject || '', text: p.text || '', messageId: p.messageId || null,
           refs: buildRefs(Array.isArray(p.references) ? p.references.join(' ') : p.references, p.messageId),
           at: Math.floor(new Date(p.date || m.internalDate || Date.now()).getTime() / 1000),
         });
