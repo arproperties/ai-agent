@@ -141,7 +141,8 @@ export const LEASING_TOOLS = [
     description: `Add a tenant (a person or a company that rents), with a contact number. Check leasing_list tenants first: an existing tenant is used, not added again. ${ASK}`,
     input_schema: {
       type: 'object',
-      properties: { full_name: str, phone: str, email: str, id_no: { ...str, description: 'An ID number (driver license, passport, national ID…).' }, nationality: str, is_company: { type: 'boolean' },
+      properties: { full_name: str, phone: str, email: str, id_no: { ...str, description: 'An ID number (driver license, passport, national ID…). When the US state that issued it is known, put its two-letter code first, a space, then the number: "TX 12345678".' }, ssn: { ...str, description: 'Social security number.' }, housing_authority: { ...str, description: 'Only for a housing tenant: the housing authority paying part of the rent.', enum: ['Beaumont', 'Port Arthur', 'Orange', 'Legacy', 'Louisiana'] },
+        housing_detail: { ...str, description: 'Only with Louisiana, and needed then: which Louisiana housing authority.' }, is_company: { type: 'boolean' },
         same_name_is_someone_else: { type: 'boolean', description: 'Only when a tenant of this name exists and the user has said this is a different person.' } },
       required: ['full_name', 'phone'],
     },
@@ -514,7 +515,7 @@ const writes = (user) => {
         throw new Error(`There is already a tenant named ${same.full_name}${same.phone ? ` (${same.phone})` : ''}. Use them for the lease, or ask the user whether this is a different person.`);
       }
       if (!String(input.phone || '').trim()) throw new Error("A tenant needs a contact number. Ask the user for it.");
-      const t = await addTenant({ full_name: input.full_name, phone: input.phone, email: input.email, emirates_id_no: input.id_no, nationality: input.nationality, kind: input.is_company ? 'company' : 'person' }, user.id);
+      const t = await addTenant({ full_name: input.full_name, phone: input.phone, email: input.email, emirates_id_no: input.id_no, ssn: input.ssn, housing: !!input.housing_authority, housing_authority: input.housing_authority, housing_detail: input.housing_detail, kind: input.is_company ? 'company' : 'person' }, user.id);
       return `Tenant added: ${[t.full_name, t.phone, t.email].filter(Boolean).join(' · ')}.`;
     },
     leasing_add_booking: async (input) => {

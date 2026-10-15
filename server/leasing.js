@@ -29,14 +29,27 @@ const DISCOUNTS = new Set(['percent', 'amount']);
 
 // ---------- tenants ----------
 
-const TENANT_COLS = `id, kind, full_name, nationality, emirates_id_no, passport_no, phone, email, notes, created_at,
+const TENANT_COLS = `id, kind, full_name, nationality, ssn, housing, housing_authority, housing_detail, emirates_id_no, passport_no, phone, email, notes, created_at,
   to_char(emirates_id_expiry, 'YYYY-MM-DD') AS emirates_id_expiry`;
+export const HOUSING_AUTHORITIES = ['Beaumont', 'Port Arthur', 'Orange', 'Legacy', 'Louisiana'];
 
 function tenantFields(body = {}, { partial = false } = {}) {
   const out = {};
-  for (const f of ['full_name', 'nationality', 'emirates_id_no', 'passport_no', 'phone', 'email', 'notes']) if (f in body) out[f] = text(body[f]);
+  for (const f of ['full_name', 'nationality', 'ssn', 'housing_authority', 'housing_detail', 'emirates_id_no', 'passport_no', 'phone', 'email', 'notes']) if (f in body) out[f] = text(body[f]);
   if (out.phone) out.phone = usPhone(out.phone);
   if ('kind' in body) out.kind = body.kind === 'company' ? 'company' : 'person';
+  // Not a housing tenant: no authority kept, so a tick taken off clears it too.
+  if ('housing' in body) out.housing = isTrue(body.housing);
+  if (out.housing === false) Object.assign(out, { housing_authority: null, housing_detail: null });
+  if (out.housing_authority) {
+    const known = HOUSING_AUTHORITIES.find((a) => a.toLowerCase() === out.housing_authority.toLowerCase());
+    if (!known) throw bad(`The housing authority is one of ${HOUSING_AUTHORITIES.join(', ')}.`);
+    out.housing_authority = known;
+    // Only Louisiana has a line typed under it, and must.
+    if (known !== 'Louisiana') out.housing_detail = null;
+    else if (!out.housing_detail) throw bad('Say which Louisiana housing authority.');
+  }
+  if (out.housing && !out.housing_authority && (!partial || 'housing_authority' in body)) throw bad('Choose the housing authority.');
   if ('emirates_id_expiry' in body) {
     const v = String(body.emirates_id_expiry ?? '').trim();
     if (v && !isDate(v)) throw bad('ID expiry is not a date.');
@@ -51,7 +64,7 @@ export function listTenants(q = '') {
   const like = `%${String(q).trim().toLowerCase()}%`;
   return db.prepare(`SELECT ${TENANT_COLS}, (SELECT count(*)::int FROM lease_bookings b WHERE b.tenant_id = t.id AND b.status <> 'cancelled') AS bookings
     FROM lease_tenants t
-    WHERE lower(concat_ws(' ', full_name, phone, email, emirates_id_no, passport_no)) LIKE ?
+    WHERE lower(concat_ws(' ', full_name, phone, email, emirates_id_no, passport_no, ssn, housing_authority, housing_detail)) LIKE ?
     ORDER BY id DESC LIMIT 200`).all(like);
 }
 

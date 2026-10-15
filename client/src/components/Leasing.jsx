@@ -9,6 +9,7 @@ import Select from './Select';
 import DateRange from './DateRange';
 import DateField from './DateField';
 import PhoneField from './PhoneField';
+import IdField from './IdField';
 import Pager, { usePaged } from './Pager';
 import BookingDocs, { REQUIRED } from './BookingDocs';
 import ServiceList, { REPEAT } from './ServiceList';
@@ -46,6 +47,33 @@ function Label({ text, need, children, wide }) {
       <span className="mb-1 block text-xs text-txt/80">{text}{need && <span className="text-p2"> *</span>}</span>
       {children}
     </label>
+  );
+}
+const AUTHORITIES = ['Beaumont', 'Port Arthur', 'Orange', 'Legacy', 'Louisiana']; // the housing authorities; Louisiana has a line of its own typed under it
+/** Whether a tenant's rent is paid in part by a housing authority, and which one. `t` is the tenant, `onChange` gets it back changed. */
+function Housing({ t, onChange }) {
+  return (
+    <div className="sm:col-span-2 grid gap-3 sm:grid-cols-2">
+      <label className="flex items-center gap-2 self-end py-2.5 text-sm">
+        <input type="checkbox" checked={!!t.housing} onChange={(e) => onChange({ ...t, housing: e.target.checked, ...(e.target.checked ? {} : { housing_authority: '', housing_detail: '' }) })} className="size-4 accent-p1" />
+        Housing tenant
+      </label>
+      {t.housing && (
+        // Louisiana's typed line sits beside the list, in the same row.
+        <div className={`grid gap-3 ${t.housing_authority === 'Louisiana' ? 'grid-cols-2' : ''}`}>
+          <Label text="Housing authority" need>
+            <Select value={t.housing_authority || ''} onChange={(e) => onChange({ ...t, housing_authority: e.target.value, housing_detail: e.target.value === 'Louisiana' ? t.housing_detail : '' })}
+              required className={SELECT} placeholder="Choose…" aria-label="Housing authority"
+              options={[...new Set([...AUTHORITIES, t.housing_authority].filter(Boolean))]} />
+          </Label>
+          {t.housing_authority === 'Louisiana' && (
+            <Label text="Which one" need>
+              <input value={t.housing_detail || ''} onChange={(e) => onChange({ ...t, housing_detail: e.target.value })} required className={FIELD} />
+            </Label>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 /** One step of the booking form; `extra` sits beside its title. */
@@ -139,7 +167,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [tenantMode,setTenantMode] = useState(start ? 'existing' : 'new');
   const [tenants, setTenants] = useState([]);
   const [tenantId, setTenantId] = useState(start?.tenant_id || '');
-  const [tenant, setTenant] = useState({ full_name: '', phone: '', email: '', emirates_id_no: '', nationality: '' });
+  const [tenant, setTenant] = useState({ full_name: '', phone: '', email: '', emirates_id_no: '', ssn: '', housing: false, housing_authority: '', housing_detail: '' });
   const [files, setFiles] = useState({}); // the documents a new booking must come with (REQUIRED), by field
   const [services, setServices] = useState([]); // the saved extra services the other charges are picked from
   const [listOpen, setListOpen] = useState(false);
@@ -321,8 +349,9 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             <Label text="Full name" need wide><input value={tenant.full_name} onChange={(e) => setTenant({ ...tenant, full_name: e.target.value })} required placeholder="As on the ID or passport" className={FIELD} /></Label>
             <Label text="Phone" need><PhoneField value={tenant.phone} onChange={(e) => setTenant({ ...tenant, phone: e.target.value })} required className={FIELD} /></Label>
             <Label text="Email"><input type="email" value={tenant.email} onChange={(e) => setTenant({ ...tenant, email: e.target.value })} className={FIELD} /></Label>
-            <Label text="ID no."><input value={tenant.emirates_id_no} onChange={(e) => setTenant({ ...tenant, emirates_id_no: e.target.value })} className={FIELD} /></Label>
-            <Label text="Nationality"><input value={tenant.nationality} onChange={(e) => setTenant({ ...tenant, nationality: e.target.value })} className={FIELD} /></Label>
+            <Label text="ID no."><IdField value={tenant.emirates_id_no} onChange={(e) => setTenant({ ...tenant, emirates_id_no: e.target.value })} className={FIELD} /></Label>
+            <Label text="Social security no."><input value={tenant.ssn} onChange={(e) => setTenant({ ...tenant, ssn: e.target.value })} className={FIELD} /></Label>
+            <Housing t={tenant} onChange={setTenant} />
           </>
         )}
         {!start && REQUIRED.map(([f, name]) => (
@@ -718,7 +747,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork }) {
 }
 
 function TenantForm({ start, onDone, onCancel }) {
-  const [v, setV] = useState({ full_name: '', phone: '', email: '', emirates_id_no: '', emirates_id_expiry: '', passport_no: '', nationality: '', notes: '', ...start });
+  const [v, setV] = useState({ full_name: '', phone: '', email: '', emirates_id_no: '', emirates_id_expiry: '', passport_no: '', ssn: '', housing: false, housing_authority: '', housing_detail: '', notes: '', ...start });
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
   const save = async (e) => {
@@ -732,10 +761,11 @@ function TenantForm({ start, onDone, onCancel }) {
         <Label text="Full name" need wide><input value={v.full_name || ''} onChange={set('full_name')} required className={FIELD} /></Label>
         <Label text="Phone" need><PhoneField value={v.phone || ''} onChange={set('phone')} required className={FIELD} /></Label>
         <Label text="Email"><input type="email" value={v.email || ''} onChange={set('email')} className={FIELD} /></Label>
-        <Label text="ID no."><input value={v.emirates_id_no || ''} onChange={set('emirates_id_no')} className={FIELD} /></Label>
+        <Label text="ID no."><IdField value={v.emirates_id_no || ''} onChange={set('emirates_id_no')} className={FIELD} /></Label>
         <Label text="ID expiry"><DateField value={v.emirates_id_expiry || ''} onChange={set('emirates_id_expiry')} className={FIELD} /></Label>
         <Label text="Passport no."><input value={v.passport_no || ''} onChange={set('passport_no')} className={FIELD} /></Label>
-        <Label text="Nationality"><input value={v.nationality || ''} onChange={set('nationality')} className={FIELD} /></Label>
+        <Label text="Social security no."><input value={v.ssn || ''} onChange={set('ssn')} className={FIELD} /></Label>
+        <Housing t={v} onChange={setV} />
         <Label text="Notes" wide><textarea value={v.notes || ''} onChange={set('notes')} rows={2} className={`${FIELD} resize-none`} /></Label>
       </div>
       {error && <p className="text-sm text-bad">{error}</p>}
@@ -804,7 +834,7 @@ function Tenants({ onHistory }) {
                   <tbody className="divide-y divide-stroke/60">
                     {paged.rows.map((t) => (
                       <tr key={t.id} className={t.id === editing ? 'bg-p1/10' : ''}>
-                        <td className="px-3 py-2.5"><p className="font-medium">{t.full_name}</p>{t.nationality && <p className="text-xs text-mute">{t.nationality}</p>}</td>
+                        <td className="px-3 py-2.5"><p className="font-medium">{t.full_name}</p>{t.housing && <p className="text-xs text-mute">Housing · {[t.housing_authority, t.housing_detail].filter(Boolean).join(' – ')}</p>}</td>
                         {[usPhone(t.phone), t.email, t.emirates_id_no].map((x, i) => <td key={i} className={`px-3 py-2.5 ${x ? '' : 'text-mute/50'}`}>{x || '—'}</td>)}
                         <td className="px-3 py-2.5">{t.bookings}</td>
                         <td className="px-3 py-2.5 text-mute">{fmt(added(t))}</td>
@@ -827,7 +857,7 @@ function Tenants({ onHistory }) {
                       <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-p1/15 text-sm font-semibold text-p1">{initials(t)}</div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-medium">{t.full_name}</p>
-                        <p className="truncate text-xs text-mute">{t.bookings} lease{t.bookings === 1 ? '' : 's'}{t.nationality && ` · ${t.nationality}`}</p>
+                        <p className="truncate text-xs text-mute">{t.bookings} lease{t.bookings === 1 ? '' : 's'}{t.housing && ` · Housing · ${[t.housing_authority, t.housing_detail].filter(Boolean).join(' – ')}`}</p>
                       </div>
                       <div className="-mr-1.5 flex shrink-0">{tools(t)}</div>
                     </div>

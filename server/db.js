@@ -1417,6 +1417,16 @@ await db.exec(`
 // account, the one whose number is kept on the unit. true: the tenant has opened an account
 // of their own, so the unit's number is not shown while they are in it.
 await db.exec('ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS tenant_energy_account BOOLEAN NOT NULL DEFAULT false');
+// A tenant's social security number, asked for in place of nationality (still kept for the
+// tenants who have one). housing: their rent is paid in part by a housing authority, named
+// in housing_authority (Beaumont, Port Arthur, Orange, Legacy or Louisiana); for Louisiana,
+// housing_detail is what staff type in about it.
+await db.exec(`
+  ALTER TABLE lease_tenants ADD COLUMN IF NOT EXISTS ssn TEXT;
+  ALTER TABLE lease_tenants ADD COLUMN IF NOT EXISTS housing BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE lease_tenants ADD COLUMN IF NOT EXISTS housing_authority TEXT;
+  ALTER TABLE lease_tenants ADD COLUMN IF NOT EXISTS housing_detail TEXT;
+`);
 
 // A tenant's record beyond the money: complaints made about them (noise, parking…) and
 // maintenance done for them, typed in by staff. Late rent is not here: it is worked out from

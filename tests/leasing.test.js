@@ -4,7 +4,7 @@ import { reset, closeDb, db } from './helpers/db.js';
 import { create, update } from '../server/properties.js';
 import { report } from '../server/leasingReports.js';
 import { listAlerts } from '../server/leasingAlerts.js';
-import { addTenant, removeTenant, listTenants, createBooking, createBookingWithDocs, updateBooking, confirmBooking, cancelBooking, removeBooking,
+import { addTenant, updateTenant, removeTenant, listTenants, createBooking, createBookingWithDocs, updateBooking, confirmBooking, cancelBooking, removeBooking,
   listBookings, availability, suggestType, bookingStage, bookingDocs, addBookingDoc, removeBookingDoc, overview, schedule, bookingPayments, recordPayment, removePayment } from '../server/leasing.js';
 
 test.after(() => closeDb());
@@ -88,6 +88,24 @@ test('blocked units, checks on input, tenants with bookings stay', async () => {
   await assert.rejects(removeTenant(t.id), /has leases/);
   await removeBooking(bk.id);
   await removeTenant(t.id);
+});
+
+test('a tenant keeps a social security no., and a housing tenant must name the authority', async () => {
+  await reset();
+  await assert.rejects(addTenant({ full_name: 'Lena', housing: true }), /housing authority/);
+  const t = await addTenant({ full_name: 'Lena', ssn: '123-45-6789', housing: true, housing_authority: 'Port Arthur' });
+  assert.deepEqual([t.ssn, t.housing, t.housing_authority], ['123-45-6789', true, 'Port Arthur']);
+  assert.equal((await listTenants('6789'))[0].id, t.id, 'found by the number');
+  await assert.rejects(updateTenant(t.id, { housing_authority: 'Jefferson County' }), /one of Beaumont/);
+  // Louisiana, and only Louisiana, comes with a line typed under it.
+  await assert.rejects(updateTenant(t.id, { housing_authority: 'louisiana' }), /which Louisiana/);
+  const la = await updateTenant(t.id, { housing_authority: 'louisiana', housing_detail: 'Lake Charles HA' });
+  assert.deepEqual([la.housing_authority, la.housing_detail], ['Louisiana', 'Lake Charles HA']);
+  assert.equal((await listTenants('lake charles'))[0].id, t.id);
+  assert.equal((await updateTenant(t.id, { notes: 'x' })).housing_detail, 'Lake Charles HA', 'an edit that leaves it out keeps it');
+  assert.equal((await updateTenant(t.id, { housing_authority: 'Orange', housing_detail: 'stale' })).housing_detail, null);
+  const off = await updateTenant(t.id, { housing: false, housing_authority: 'Orange' });
+  assert.deepEqual([off.housing, off.housing_authority], [false, null], 'no longer a housing tenant: no authority kept');
 });
 
 test('booking documents: named freely, counted on the booking, gone with a deleted draft', async () => {
