@@ -87,6 +87,57 @@ test('nobody finds or opens a file that is not theirs and not shared', async () 
   assert.match((await call(rona, 'read_file', { id: pub })).content, /Annual leave is 30 days\./);
 });
 
+test('the master finds and opens what a team member uploaded, private files too, and by who uploaded them', async () => {
+  const { master, rona } = await fixture();
+  const said = await db.prepare('SELECT * FROM users WHERE id = ?').get(await makeUser('Said'));
+  const tax = await doc(said.id, 'Tax Invoice 1363 – Black Sand Supply', { text: 'Black sand 20 tonnes, AED 4,200.' });
+  const memo = await doc(said.id, 'Cash memo – vehicle recovery 250 AED');
+  const other = await doc(rona.id, 'Tax Invoice – ABEL Hardware');
+  // An invoice that only mentions the name is not one he uploaded.
+  const mention = await doc(master.id, 'Invoice to customer Gul Said', { text: 'Bill to: Gul Said.' });
+
+  const all = await call(master, 'search_files', { uploaded_by: 'said' });
+  assert.match(all.content, /^2 saved files uploaded by Said/);
+  assert.match(all.content, new RegExp(`#${memo} Cash memo[^\\n]*uploaded by Said on \\d{4}-\\d{2}-\\d{2}`));
+  assert.match(all.content, new RegExp(`#${tax} `));
+  for (const id of [other, mention]) assert.doesNotMatch(all.content, new RegExp(`#${id} `));
+
+  const byEmail = await call(master, 'search_files', { query: 'black sand', uploaded_by: said.email });
+  assert.match(byEmail.content, new RegExp(`#${tax} `));
+  assert.doesNotMatch(byEmail.content, new RegExp(`#${memo} `));
+
+  assert.match((await call(master, 'search_files', { query: 'ABEL hardware' })).content, new RegExp(`#${other} [^\\n]*uploaded by Rona`), 'private files of anyone, for the master');
+  assert.match((await call(master, 'read_file', { id: tax })).content, /AED 4,200/);
+  assert.match((await call(master, 'search_files', { uploaded_by: 'Nobodyhere' })).content, /Nobody called "Nobodyhere"/);
+
+  // Nobody else gets the same view.
+  assert.match((await call(rona, 'search_files', { uploaded_by: 'Said' })).content, /No saved file uploaded by Said/);
+  assert.equal((await call(rona, 'read_file', { id: tax })).is_error, true);
+});
+
+test('show_files hangs the files themselves on the reply, and only ones the person may open', async () => {
+  const { master, rona } = await fixture();
+  const said = await makeUser('Said');
+  const bill = await doc(said, 'Tax Invoice 1363 – Black Sand Supply', { name: 'bill.jpg', kind: 'image' });
+  const mine = await doc(rona.id, 'Rona receipt');
+
+  const shown = [];
+  const res = await shelfKit(master, { onShow: (f) => shown.push(...f) }).run({ id: 't', name: 'show_files', input: { ids: [bill, mine, 999999] } });
+  assert.deepEqual(shown.map((f) => f.docId), [bill, mine], 'the master gets anyone\'s, in the order asked');
+  assert.equal(shown[0].name, 'bill.jpg');
+  assert.equal(shown[0].kind, 'image');
+  assert.match(res.content, /Shown under your reply: #\d+ Tax Invoice 1363/);
+  assert.match(res.content, /No saved file has the number #999999/);
+
+  const hers = [];
+  await shelfKit(rona, { onShow: (f) => hers.push(...f) }).run({ id: 't', name: 'show_files', input: { ids: [bill, mine] } });
+  assert.deepEqual(hers.map((f) => f.docId), [mine], 'nobody else is shown a file that is not theirs');
+
+  const { readableDocument } = await import('../server/files.js');
+  assert.ok(await readableDocument(master, bill), 'so the master can open it from the chat');
+  assert.equal(await readableDocument(rona, bill), undefined);
+});
+
 test('read_file gives the words of the file, and only the matching part when asked', async () => {
   const { master } = await fixture();
   const id = await doc(master.id, 'MEP Works Sub-Contract', {

@@ -219,8 +219,9 @@ app.get('/api/documents', wrap(async (req, res) => {
   if (req.query.ids) {
     const ids = String(req.query.ids).split(',').map(Number).filter(Boolean).slice(0, 200);
     if (!ids.length) return res.json([]);
-    const rows = await db.prepare(`${DOC_SELECT} WHERE d.user_id = ? AND d.id IN (${ids.map(() => '?').join(',')}) ORDER BY d.id DESC`)
-      .all(req.user.id, ...ids);
+    // The master's chats can hold files Reem showed from someone else's Shelf.
+    const rows = await db.prepare(`${DOC_SELECT} WHERE (d.user_id = ? OR ?) AND d.id IN (${ids.map(() => '?').join(',')}) ORDER BY d.id DESC`)
+      .all(req.user.id, isMaster(req.user), ...ids);
     return res.json(rows.map((d) => docOut(d, req.user.id)));
   }
   // The list itself is the Shelf screen's. A chat's own files, above, are anybody's to see.

@@ -208,9 +208,9 @@ const voiceNote = (name, text) => `<voice_note name="${name}">\n${text || '(no s
 
 const toClaude = (rows) => rows.map((r) => {
   const files = JSON.parse(r.files);
-  const names = files.map((f) => f.name);
+  const names = files.map((f) => (r.role === 'assistant' && f.docId ? `#${f.docId} ${f.title || f.name}` : f.name));
   const notes = files.filter((f) => f.kind === 'audio').map((f) => voiceNote(f.name, f.transcript));
-  const content = [r.content, names.length && `[Attached: ${names.join(', ')}]`, ...notes].filter(Boolean).join('\n\n');
+  const content = [r.content, names.length && `[${r.role === 'assistant' ? 'Shown under this reply' : 'Attached'}: ${names.join(', ')}]`, ...notes].filter(Boolean).join('\n\n');
   return { role: r.role, content };
 });
 
@@ -374,7 +374,16 @@ export async function chat(req, res) {
   const saifsys = await saifsysKit(user);
   // Doing things in saifsys (today: creating an ARS booking) — proposed here, done only from the card.
   const saifsysAct = await saifsysActionKit(user, { conversationId: convId, onCard: (b) => send('arsBooking', b) });
-  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), shelfKit(user),
+  // What the reply carries: pictures drawn for it, and saved files the agent showed.
+  // Both go out on the 'picture' event, which sets the reply's files on screen.
+  const pictures = [];
+  const shelf = shelfKit(user, {
+    onShow: (docs) => {
+      for (const d of docs) if (!pictures.some((p) => p.docId === d.docId)) pictures.push(d);
+      send('picture', pictures);
+    },
+  });
+  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), shelf,
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
     await buildingKit(user),
     await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),
@@ -382,7 +391,6 @@ export async function chat(req, res) {
     ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
   // A picture asked for in their own words. It is hung on this reply; its own words are
   // what the reply says if the agent adds none.
-  const pictures = [];
   let caption = '';
   if (canPicture) {
     kits.push(pictureKit(user, {

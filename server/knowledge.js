@@ -274,9 +274,9 @@ async function rank(table, scope, query, qvec, k) {
  * The same search recall() runs, but saying which file each piece came from - for the
  * agent's own look through the Shelf (server/shelf.js), which answers in files, not pieces.
  */
-export async function findChunks(user, query, k = 20) {
+export async function findChunks(user, query, k = 20, scope = retrievalScope(user.id)) {
   const [qvec] = await embed([query]);
-  const ids = await rank('chunks', retrievalScope(user.id), query, qvec, k);
+  const ids = await rank('chunks', scope, query, qvec, k);
   if (!ids.length) return [];
   const rows = await db.prepare(`SELECT id, document_id, text FROM chunks WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
   return ids.map((id) => rows.find((r) => r.id === id));

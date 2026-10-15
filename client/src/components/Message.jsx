@@ -30,11 +30,12 @@ function VoiceNote({ f }) {
   );
 }
 
-function Attachments({ files, onOpenFile }) {
+// The files sent with a message, or - under a reply - the saved files Reem showed.
+function Attachments({ files, onOpenFile, reply = false }) {
   if (!files?.length) return null;
   const open = (f) => f.docId && onOpenFile(f.docId);
   return (
-    <div className="mb-1.5 flex flex-wrap justify-end gap-1.5">
+    <div className={`flex flex-wrap gap-1.5 ${reply ? 'mt-3' : 'mb-1.5 justify-end'}`}>
       {files.map((f, i) => (isAud(f) && !f.docId ? <VoiceNote key={i} f={f} /> : isImg(f) && (f.preview || f.docId) ? (
         <button key={i} onClick={() => open(f)} aria-label={`View ${f.name}`}
           className="overflow-hidden rounded-2xl border border-stroke transition hover:border-white/30 active:scale-[0.98]">
@@ -45,7 +46,7 @@ function Attachments({ files, onOpenFile }) {
           className="glass flex max-w-[260px] items-center gap-2.5 rounded-2xl py-2 pl-2 pr-3.5 text-left transition hover:bg-white/10">
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-p1/20 text-p1"><Icon name={isImg(f) ? 'image' : isVid(f) ? 'play' : 'file'} size={17} /></span>
           <span className="min-w-0">
-            <span className="block truncate text-[13px]">{f.name}</span>
+            <span className="block truncate text-[13px]">{(reply && f.title) || f.name}</span>
             <span className="text-[11px] text-mute">{f.docId ? 'Tap to view' : 'Uploading…'}</span>
           </span>
         </button>
@@ -174,6 +175,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
           <span key={i} className="size-2 animate-bounce rounded-full bg-p1" style={{ animationDelay: `${i * 0.15}s` }} />
         ))}</div>
       )}
+      <Attachments files={(msg.files || []).filter((f) => f.docId)} onOpenFile={onOpenFile} reply />
       {!msg.streaming && exportAsked(msg.content) && drawingFrom && (
         <DrawingFile format={exportAsked(msg.content)} drawing={drawingFrom.drawing} messageId={drawingFrom.messageId} />
       )}

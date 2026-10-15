@@ -348,8 +348,11 @@ export async function readableDocuments(user, agentId = null) {
     ORDER BY COALESCE(d.doc_date, to_char(to_timestamp(d.created_at), 'YYYY-MM-DD')) DESC, d.id DESC`).all(...scope.params, shelf, shelf);
 }
 
-/** One file, if this user owns it or it was shared with them. For opening, never for changing. */
+/**
+ * One file, if this user owns it or it was shared with them - or any file at all for the
+ * master, who is shown what the team uploaded. For opening, never for changing.
+ */
 export async function readableDocument(user, docId) {
-  const scope = retrievalScope(user.id, 'd');
+  const scope = isMaster(user) ? { sql: 'TRUE', params: [] } : retrievalScope(user.id, 'd');
   return db.prepare(`${DOC_SELECT} WHERE d.id = ? AND ${scope.sql}`).get(Number(docId) || 0, ...scope.params);
 }
