@@ -2,7 +2,7 @@ import { ChevronLeft } from 'lucide-react';
 
 // The full-screen frame the sidebar's places open in (same look as Transcribe, Meetings…),
 // for pages that are just a title and some content.
-export default function Page({ title, onBack, children }) {
+export default function Page({ title, onBack, action, children }) {
   return (
     <div className="sky absolute inset-0 z-20 flex flex-col">
       <header className="px-4 pb-3 pt-safe md:px-8">
@@ -11,6 +11,7 @@ export default function Page({ title, onBack, children }) {
             <ChevronLeft size={22} />
           </button>
           <h1 className="flex-1 text-lg font-light">{title}</h1>
+          {action}
         </div>
       </header>
       <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">

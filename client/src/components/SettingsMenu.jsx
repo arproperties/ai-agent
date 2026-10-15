@@ -19,7 +19,7 @@ import { THEMES, currentTheme, setTheme } from '../lib/theme';
  * and choosing one leaves the menu open, so you can try each against the app behind it
  * before settling.
  */
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, renewalsOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, modules = [], onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onRenewals, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, modules = [], renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);

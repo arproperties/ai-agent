@@ -128,15 +128,16 @@ export function replyText(missing) {
 
 export const inbox = () => db.prepare('SELECT * FROM tenant_inbox WHERE id = 1').get();
 
-// Other parts of Reem that write to tenants from this inbox (server/renewals.js) take the
-// answers to their own emails: a claimer is given each new email and returns true for one
-// it has kept, and Tenant care then leaves that email alone.
+// Other parts of Reem that write to tenants from this inbox (server/leaseRenewals.js) take
+// the answers to their own emails: a claimer is given each new email and returns true for
+// one it has kept, and Tenant care then leaves that email alone.
 const claimers = [];
 export const claimTenantMail = (fn) => { claimers.push(fn); };
 async function claimed(m, uidValidity) {
   for (const fn of claimers) if (await fn(m, uidValidity)) return true;
   return false;
 }
+
 const members = async () => (await db.prepare('SELECT user_id FROM tenant_inbox_members').all()).map((r) => r.user_id);
 
 async function mayUse(user) {

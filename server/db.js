@@ -1626,79 +1626,96 @@ await db.exec(`
   ALTER TABLE mail_log ADD CONSTRAINT mail_log_status_check CHECK (status IN ('would', 'forwarded', 'failed', 'none', 'sent', 'direct', 'replied'));
 `);
 
-// Lease renewals (server/renewals.js): Reem runs each renewal with the tenant by email, from
-// the notice to the signed agreement and the cheques, and tells saifsys only at the end.
-//   renewal_settings: the boss's rules, one row. Nothing is emailed while enabled is false.
-//   renewal_cases: one per lease and end date. lease is saifsys's row when it was opened;
-//     dld what Reem read off the DLD screenshot; quote saifsys's cheques for the rent on
-//     offer; received what the tenant has sent back so far (agreement, cheques).
-//   renewal_messages: every email of a case, both ways. An outgoing one keeps its exact
-//     bytes (raw) so a retry sends the same Message-ID; an incoming one is 'new' until Reem
-//     has read it, and its attachments are files under data/renewals.
-//   renewal_files: those attachments, and the DLD screenshots.
+// The automatic Lease renewals (Reem emailing tenants) was taken out on 2026-10-15; its
+// tables go with it. It was never switched on, so they hold nothing.
 await db.exec(`
-  CREATE TABLE IF NOT EXISTS renewal_settings (
+  DROP TABLE IF EXISTS renewal_files, renewal_messages, renewal_cases, renewal_settings;
+`);
+
+// Lease renewals (server/leaseRenewals.js): a person renews a lease with its tenant by email
+// from Reem, step by step, on saifsys's own renewal workflow (workflow_id).
+//   lease_renewal_settings: one row. payee is who the cheques are made out to; actor_id is
+//     whose company email saifsys records the steps under; reminders: Reem chases a silent
+//     tenant by itself. auto is for later: the steps Reem takes alone, e.g. {"rent": "dld_api"}.
+//     advisors: the master's agents (ids) who advise on each renewal.
+//   lease_renewals: one per lease and end date. lease is saifsys's row when it started;
+//     status where it is; waiting what it needs from a person now (null: nothing). rent_source
+//     is where the rent on offer came from: {"kind": "manual" | "rera_index" | "dld_api", ...}.
+//     quote is saifsys's cheques for the rent on offer; received and papers what the tenant
+//     sent back and Reem's check of it.
+//   lease_renewal_events: the timeline. kind 'out' / 'in' is an email (an outgoing one keeps
+//     its exact bytes, so a retry sends the same Message-ID; an incoming one is 'new' until
+//     Reem has read it); 'step' a step a person took; 'papers' Reem's check of the papers;
+//     'advice' one advisor's view (body) and the reply it suggests (data.reply), never sent by itself.
+//   lease_renewal_files: what came with the emails, both ways (letters, agreements, cheques).
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lease_renewal_settings (
     id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    enabled BOOLEAN NOT NULL DEFAULT false,
-    floor_pct NUMERIC NOT NULL DEFAULT 0,
-    building_floors JSONB NOT NULL DEFAULT '{}',
-    max_rounds INTEGER NOT NULL DEFAULT 2,
     payee TEXT,
     actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    reminders BOOLEAN NOT NULL DEFAULT true,
+    auto JSONB NOT NULL DEFAULT '{}',
     updated_at BIGINT DEFAULT ${NOW}
   );
-  CREATE TABLE IF NOT EXISTS renewal_cases (
+  CREATE TABLE IF NOT EXISTS lease_renewals (
     id SERIAL PRIMARY KEY,
     lease_id INTEGER NOT NULL,
     end_date TEXT NOT NULL,
     lease JSONB NOT NULL,
-    status TEXT NOT NULL DEFAULT 'dld_needed' CHECK (status IN ('dld_needed', 'dld_read', 'notice_sent', 'negotiating', 'agreed',
-      'converting', 'renewed', 'boss', 'not_renewing', 'no_reply', 'closed')),
-    dld JSONB,
-    quote JSONB,
+    workflow_id INTEGER,
+    status TEXT NOT NULL CHECK (status IN ('offer_sent', 'negotiating', 'agreed', 'papers_ok', 'converted', 'not_renewing', 'closed')),
+    waiting TEXT CHECK (waiting IN ('reply', 'papers', 'no_answer', 'error')),
     offer NUMERIC,
-    floor NUMERIC,
+    cheques INTEGER,
+    rent_source JSONB,
     agreed NUMERIC,
-    rounds INTEGER NOT NULL DEFAULT 0,
     tenant_offer NUMERIC,
-    needs TEXT,
+    quote JSONB,
     received JSONB NOT NULL DEFAULT '{}',
+    papers JSONB,
+    dispute TEXT,
     reminders INTEGER NOT NULL DEFAULT 0,
     last_out_at BIGINT,
     last_in_at BIGINT,
-    saifsys JSONB,
     error TEXT,
+    started_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at BIGINT DEFAULT ${NOW},
     updated_at BIGINT DEFAULT ${NOW},
     UNIQUE (lease_id, end_date)
   );
-  CREATE INDEX IF NOT EXISTS idx_renewal_cases_status ON renewal_cases(status);
-  CREATE TABLE IF NOT EXISTS renewal_messages (
+  CREATE INDEX IF NOT EXISTS idx_lease_renewals_status ON lease_renewals(status);
+  CREATE TABLE IF NOT EXISTS lease_renewal_events (
     id SERIAL PRIMARY KEY,
-    case_id INTEGER NOT NULL REFERENCES renewal_cases(id) ON DELETE CASCADE,
-    direction TEXT NOT NULL CHECK (direction IN ('out', 'in')),
-    kind TEXT,
-    subject TEXT,
+    renewal_id INTEGER NOT NULL REFERENCES lease_renewals(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('out', 'in', 'step', 'papers', 'advice')),
+    title TEXT NOT NULL,
     body TEXT,
+    subject TEXT,
     message_id TEXT,
     ref TEXT,
     raw BYTEA,
-    status TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'new', 'read', 'error')),
-    reading JSONB,
+    status TEXT CHECK (status IN ('sent', 'failed', 'new', 'read', 'error')),
     error TEXT,
+    reading JSONB,
+    data JSONB,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     at BIGINT DEFAULT ${NOW}
   );
-  CREATE INDEX IF NOT EXISTS idx_renewal_messages_case ON renewal_messages(case_id, id);
-  CREATE INDEX IF NOT EXISTS idx_renewal_messages_mid ON renewal_messages(message_id);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_renewal_messages_ref ON renewal_messages(ref) WHERE ref IS NOT NULL;
-  CREATE TABLE IF NOT EXISTS renewal_files (
+  CREATE INDEX IF NOT EXISTS idx_lease_renewal_events ON lease_renewal_events(renewal_id, id);
+  CREATE INDEX IF NOT EXISTS idx_lease_renewal_events_mid ON lease_renewal_events(message_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_renewal_events_ref ON lease_renewal_events(ref) WHERE ref IS NOT NULL;
+  -- Advisors (2026-10-15): the master's picks, and their views on the timeline.
+  ALTER TABLE lease_renewal_settings ADD COLUMN IF NOT EXISTS advisors JSONB NOT NULL DEFAULT '[]';
+  ALTER TABLE lease_renewal_events DROP CONSTRAINT IF EXISTS lease_renewal_events_kind_check;
+  ALTER TABLE lease_renewal_events ADD CONSTRAINT lease_renewal_events_kind_check CHECK (kind IN ('out', 'in', 'step', 'papers', 'advice'));
+  CREATE TABLE IF NOT EXISTS lease_renewal_files (
     id SERIAL PRIMARY KEY,
-    case_id INTEGER NOT NULL REFERENCES renewal_cases(id) ON DELETE CASCADE,
-    message_id INTEGER REFERENCES renewal_messages(id) ON DELETE CASCADE,
+    renewal_id INTEGER NOT NULL REFERENCES lease_renewals(id) ON DELETE CASCADE,
+    event_id INTEGER REFERENCES lease_renewal_events(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     mime TEXT NOT NULL,
     path TEXT NOT NULL,
     created_at BIGINT DEFAULT ${NOW}
   );
-  CREATE INDEX IF NOT EXISTS idx_renewal_files_case ON renewal_files(case_id);
+  CREATE INDEX IF NOT EXISTS idx_lease_renewal_files ON lease_renewal_files(renewal_id);
 `);

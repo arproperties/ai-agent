@@ -9,8 +9,11 @@ import { Check, ChevronDown, Search } from 'lucide-react';
  * options: [{ value, label, hint?, group? }]. Options that share a `group` and follow one
  * another sit under that word as a heading. `none` is the label of the "nothing chosen" row
  * (value ''), left out when a choice is required. `icon` sits before the chosen label.
+ *
+ * `multi`: several can be chosen. value is then a list, each tap ticks or unticks a row,
+ * and the list stays open until a tap outside it.
  */
-export default function Picker({ value, onChange, options, none, icon, placeholder = 'Choose', searchPlaceholder = 'Search', className = '' }) {
+export default function Picker({ value, onChange, options, none, icon, multi = false, placeholder = 'Choose', searchPlaceholder = 'Search', className = '' }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [at, setAt] = useState(0); // the row the arrow keys are on
@@ -22,12 +25,15 @@ export default function Picker({ value, onChange, options, none, icon, placehold
     const want = q.trim().toLowerCase();
     return want ? all.filter((o) => `${o.label} ${o.hint || ''} ${o.group || ''}`.toLowerCase().includes(want)) : all;
   }, [all, q]);
-  const current = all.find((o) => o.value === value);
+  const chosen = (o) => (multi ? (value || []).includes(o.value) : o.value === value);
+  const current = multi
+    ? (() => { const on = all.filter(chosen); return on.length ? { label: on.map((o) => o.label).join(', ') } : null; })()
+    : all.find((o) => o.value === value);
 
   useEffect(() => {
     if (!open) return undefined;
     setQ('');
-    setAt(Math.max(0, all.findIndex((o) => o.value === value)));
+    setAt(Math.max(0, all.findIndex(chosen)));
     input.current?.focus();
     const away = (e) => { if (!wrap.current?.contains(e.target)) setOpen(false); };
     document.addEventListener('pointerdown', away);
@@ -36,7 +42,11 @@ export default function Picker({ value, onChange, options, none, icon, placehold
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const pick = (o) => { onChange(o.value); setOpen(false); };
+  const pick = (o) => {
+    if (!multi) { onChange(o.value); setOpen(false); return; }
+    const list = value || [];
+    onChange(list.includes(o.value) ? list.filter((v) => v !== o.value) : [...list, o.value]);
+  };
   const key = (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
     if (e.key === 'ArrowDown') { e.preventDefault(); setAt((n) => Math.min(shown.length - 1, n + 1)); }
@@ -60,20 +70,20 @@ export default function Picker({ value, onChange, options, none, icon, placehold
             <input ref={input} value={q} onChange={(e) => { setQ(e.target.value); setAt(0); }} onKeyDown={key} placeholder={searchPlaceholder}
               className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-mute/70" />
           </div>
-          <ul role="listbox" className="max-h-60 overflow-y-auto p-1.5">
+          <ul role="listbox" aria-multiselectable={multi || undefined} className="max-h-60 overflow-y-auto p-1.5">
             {shown.map((o, n) => (
               <Fragment key={o.value}>
                 {o.group && o.group !== shown[n - 1]?.group && (
                   <li role="presentation" className="px-2.5 pb-1 pt-2 text-[11px] font-medium tracking-[0.14em] text-mute">{o.group.toUpperCase()}</li>
                 )}
-                <li role="option" aria-selected={o.value === value}>
+                <li role="option" aria-selected={chosen(o)}>
                   <button type="button" onClick={() => pick(o)} onPointerMove={() => setAt(n)}
                     className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition ${n === at ? 'bg-white/10' : ''}`}>
                     <span className="min-w-0 flex-1">
                       <span className={`block truncate ${o.quiet ? 'text-mute' : ''}`}>{o.label}</span>
                       {o.hint && <span className="block truncate text-xs text-mute">{o.hint}</span>}
                     </span>
-                    {o.value === value && <Check size={15} className="shrink-0 text-p1" />}
+                    {chosen(o) && <Check size={15} className="shrink-0 text-p1" />}
                   </button>
                 </li>
               </Fragment>
