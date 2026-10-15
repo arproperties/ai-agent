@@ -13,7 +13,7 @@ import { sendPush } from './push.js';
 import { createTodo } from './todos.js';
 import { renderPdf } from './replyDoc.js';
 import { needsModule } from './modules.js';
-import { inbox, fileInSent, ownWords, claimTenantMail } from './tenantCare.js';
+import { inbox, fileInSent, ownWords, claimTenantMail, checkTenantMail } from './tenantCare.js';
 import { askSaifsys, actSaifsys, saifsysConfigured, saifsysActionsConfigured, dubaiDate } from './saifsys/client.js';
 import { readReply, readDocs, advise, caseSummary } from './leaseRenewalAi.js';
 
@@ -77,7 +77,7 @@ async function indexRent() { return null; }
 
 // Everything that reaches outside, swappable for the tests.
 const D = {
-  ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, caseSummary,
+  ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, caseSummary, checkMail: checkTenantMail,
   send: sendRaw, file: fileInSent, fetch: fetchMessage, push: sendPush, todo: createTodo, actor: async () => (await inbox())?.email,
   mirror: (action, body) => saifsys(action, body),
   now: () => Date.now(),
@@ -565,11 +565,25 @@ export async function claim(m, uidValidity) {
   if (!r) return false;
   await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, subject, message_id, ref, status, data, at)
     VALUES (?, 'in', 'Tenant replied', ?, ?, ?, ?, 'new', ?, ?) ON CONFLICT (ref) WHERE ref IS NOT NULL DO NOTHING`)
-    .run(r.id, ownWords(m.text).trim().slice(0, 20000), String(m.subject || '').slice(0, 300), m.messageId || null,
+    .run(r.id, tenantWords(m.text).slice(0, 20000), String(m.subject || '').slice(0, 300), m.messageId || null,
       `${uidValidity}:${m.uid}`, JSON.stringify({ via }), m.at || secs());
   return true;
 }
 claimTenantMail(claim);
+
+/**
+ * What the tenant wrote: their own words above the quoted thread. When there are none, they
+ * typed inside the quote (Gmail shows it behind a bar), so it is the quote's start, up to our
+ * own email ("Dear ...").
+ */
+export function tenantWords(text) {
+  const own = ownWords(text).replace(/^\s*On .{0,200}wrote:\s*$/gim, '').trim();
+  if (own) return own;
+  const plain = String(text || '').split('\n').map((l) => l.replace(/^\s*(>\s?)+/, '')).join('\n');
+  const parts = plain.split(/^\s*On .{0,200}wrote:\s*$/im);
+  const quoted = parts.length > 1 ? parts.slice(1).join('\n') : plain;
+  return quoted.split(/^\s*(?:Dear |On .{0,200}wrote:)/im)[0].trim();
+}
 
 /** The whole email again, for its attachments: Tenant care only read the first part of it. */
 async function fetchMessage(ref) {
@@ -623,7 +637,12 @@ const SAYS = {
 };
 
 /** Every new email from a tenant, read: what it says on the timeline, and the renewal waits for a person. */
-export async function readInbound() {
+let reading = null;
+export function readInbound() {
+  reading ||= readNew().finally(() => { reading = null; });
+  return reading;
+}
+async function readNew() {
   const rows = await db.prepare(`SELECT * FROM lease_renewal_events WHERE kind = 'in' AND status = 'new' ORDER BY id LIMIT 20`).all();
   for (const e of rows) {
     const r = await getRenewal(e.renewal_id);
@@ -642,6 +661,10 @@ export async function readInbound() {
 async function handle(r, e) {
   const s = await settings();
   const files = await attachmentsOf(e);
+  if (!e.body && e.ref) { // kept before tenantWords knew to look inside the quote
+    e.body = tenantWords((await D.fetch(e.ref))?.text).slice(0, 20000);
+    if (e.body) await db.prepare('UPDATE lease_renewal_events SET body = ? WHERE id = ?').run(e.body, e.id);
+  }
   const set = (title, reading) => db.prepare(`UPDATE lease_renewal_events SET status = 'read', title = ?, reading = ? WHERE id = ?`).run(title, JSON.stringify(reading), e.id);
   await update(r.id, { last_in_at: Number(e.at) || secs() });
 
@@ -867,6 +890,12 @@ leaseRenewalRoutes.get('/:id/files/:file', wrap(async (req, res) => {
 
 leaseRenewalRoutes.post('/draft', wrap(async (req, res) => { res.json(await draft(req.user, req.body || {})); }));
 leaseRenewalRoutes.post('/send', wrap(async (req, res) => { res.json(out(await send(req.user, req.body || {}))); }));
+// "Check for replies": the Tenant care inbox now, then any new email read, instead of waiting for the clock.
+leaseRenewalRoutes.post('/check', wrap(async (req, res) => {
+  await D.checkMail();
+  res.json({ read: await readInbound() });
+}));
+
 leaseRenewalRoutes.post('/:id/advise', wrap(async (req, res) => {
   const r = await getRenewal(req.params.id);
   if (!r) return res.status(404).json({ error: 'Not found' });

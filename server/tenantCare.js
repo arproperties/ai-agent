@@ -235,19 +235,22 @@ async function readNew(acc) {
 }
 
 let timer = null;
-let busy = false;
+let running = null;
+/**
+ * One look at the inbox now. The clock and a person asking (Lease renewals' "Check for
+ * replies") share it: while one is reading, the other waits for that same read.
+ */
+export function checkTenantMail() {
+  running ||= look().catch(async (e) => {
+    console.warn('[tenant-care]', e.message);
+    await db.prepare(`UPDATE tenant_inbox SET checked_at = ${NOW}, error = ? WHERE id = 1`).run(String(e.message).slice(0, 300)).catch(() => {});
+  }).finally(() => { running = null; });
+  return running;
+}
 export function startTenantCare() {
   if (timer) return;
-  const tick = async () => {
-    if (busy) return;
-    busy = true;
-    try { await look(); } catch (e) {
-      console.warn('[tenant-care]', e.message);
-      await db.prepare(`UPDATE tenant_inbox SET checked_at = ${NOW}, error = ? WHERE id = 1`).run(String(e.message).slice(0, 300)).catch(() => {});
-    } finally { busy = false; }
-  };
-  timer = setInterval(tick, EVERY);
-  setTimeout(tick, 20_000);
+  timer = setInterval(checkTenantMail, EVERY);
+  setTimeout(checkTenantMail, 20_000);
 }
 
 // ---------- sending ----------

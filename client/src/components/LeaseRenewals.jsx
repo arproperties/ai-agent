@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -285,6 +285,18 @@ function Renewal({ id, onBack }) {
   const [sheet, setSheet] = useState(null); // { figure: action } | { compose: ask }
   const [busy, setBusy] = useState('');
   const load = useCallback(() => api.get(`/lease-renewals/${id}`).then(setR).catch((e) => setError(e.message)), [id]);
+  const [checked, setChecked] = useState('');
+  const checkNow = async () => {
+    setBusy('check'); setError(''); setChecked('');
+    try {
+      const before = r?.events?.length || 0;
+      await api.post('/lease-renewals/check');
+      const fresh = await api.get(`/lease-renewals/${id}`);
+      setR(fresh);
+      setChecked(fresh.events.length > before ? '' : 'Nothing new yet.');
+    } catch (e) { setError(e.message); }
+    setBusy('');
+  };
   const askAdvisors = async () => {
     setBusy('advise'); setError('');
     try { await api.post(`/lease-renewals/${id}/advise`); await load(); } catch (e) { setError(e.message); }
@@ -310,7 +322,7 @@ function Renewal({ id, onBack }) {
   const rn = r.renewal;
   const s = rn.status;
   const act = {
-    accept: { label: `Agree${rn.tenantOffer ? ` ${aed(rn.tenantOffer)}` : ''}`, icon: Check, run: () => setSheet({ figure: 'accept' }) },
+    accept: { label: `Agree ${aed(rn.tenantOffer ?? rn.offer)}`, icon: Check, run: () => setSheet({ figure: 'accept' }) },
     counter: { label: 'Counter', icon: HandCoins, run: () => setSheet({ figure: 'counter' }) },
     index: { label: 'RERA index rent', icon: Scale, run: () => setSheet({ figure: 'index' }) },
     reply: { label: 'Reply', icon: Reply, run: () => setSheet({ compose: { id, action: 'reply' } }) },
@@ -374,7 +386,16 @@ function Renewal({ id, onBack }) {
             </div>
 
             <div>
-              <p className="mb-3 px-1 text-xs font-medium tracking-[0.14em] text-mute">TIMELINE</p>
+              <div className="mb-3 flex items-center gap-3 px-1">
+                <p className="flex-1 text-xs font-medium tracking-[0.14em] text-mute">TIMELINE</p>
+                {checked && <span className="text-xs text-mute">{checked}</span>}
+                {!DONE.includes(s) && (
+                  <button onClick={checkNow} disabled={busy === 'check'}
+                    className="flex items-center gap-1.5 rounded-full border border-stroke px-3 py-1.5 text-xs text-mute transition hover:text-txt disabled:opacity-60">
+                    <RefreshCw size={13} className={busy === 'check' ? 'animate-spin' : ''} /> {busy === 'check' ? 'Checking…' : 'Check for replies'}
+                  </button>
+                )}
+              </div>
               <Timeline r={r} onReply={!DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
             </div>
           </div>

@@ -438,3 +438,9 @@ test('a cheque re-sent for the same date replaces the wrong one, so the papers c
   assert.deepEqual(check, { missing: [], wrong: [], complete: true });
   assert.equal(got.cheques.length, 4);
 });
+
+test('words typed inside the quoted email are still the tenant\'s', () => {
+  assert.equal(R.tenantWords('I can pay 51,000\n\nOn Thu, 15 Oct 2026 at 15:40, Tenant Care <care@company.com> wrote:\n> Dear Test,\n> Our offer'), 'I can pay 51,000');
+  assert.equal(R.tenantWords('On Thu, 15 Oct 2026 at 15:53, Tenant Care <care@company.com> wrote:\n> OK, I accept 53,000\n>\n> Dear Test Two Counter,\n> Thank you for your reply.'), 'OK, I accept 53,000');
+  assert.equal(R.tenantWords('> OK, I accept\n> Dear Test,\n> offer'), 'OK, I accept');
+});
