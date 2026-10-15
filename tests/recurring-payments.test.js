@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { reset, makeUser, closeDb, db } from './helpers/db.js';
 import {
-  dueDate, createDuePayments, listEntries, listDues, saveEntry, setActive, deleteEntry, createNow, setPaid,
+  dueDate, createDuePayments, listEntries, listDues, saveEntry, setActive, deleteEntry, createNow, setPaid, addReceipt, deleteReceipt,
   listBuildings, saveBuilding, deleteBuilding, listHeads, saveHead, deleteHead, getReport,
   listAccounts, saveAccount, deleteAccount, getAccount, getDue, listTransfers, addTransfer, deleteTransfer, setAttachment, attachmentPath,
 } from '../server/recurringPayments.js';
@@ -122,6 +122,7 @@ test('a line is marked paid with who and when, and can go back to pending', asyn
   assert.deepEqual({ ...due }, {
     id: due.id, entry_id: e.id, month: '2026-10', title: 'Washing machine rent', building: { id: 1, name: 'Ayla Residence' }, unit: 'Laundry room', head: null,
     due_date: '2026-10-05', amount: 150, status: 'pending', paid_at: null, paid_on: null, paid_by: null, account: null, attachment: false,
+    received: 0, left: 150, receipt_files: false,
   });
   await assert.rejects(setPaid(jessa, due.id, true), /Pick the account/);
   await assert.rejects(setPaid(jessa, due.id, true, { account_id: 99 }), /Pick the account/);
@@ -149,12 +150,12 @@ test('a month is listed with its totals, by building and by status', async () =>
   assert.equal(all.month, '2026-10');
   assert.deepEqual(all.buildings.map((b) => b.name), ['Ayla Residence', 'Gents Camp', 'Ladies Camp']);
   assert.deepEqual(all.dues.map((d) => d.title), ['Shop 3 rent', 'Shop 4 rent', 'Washing machine rent'], 'in the order they fall due');
-  assert.deepEqual(all.totals, { pending: 3650.5, paid: 0, pending_count: 3, paid_count: 0 });
+  assert.deepEqual(all.totals, { pending: 3650.5, paid: 0, pending_count: 3, paid_count: 0, partly_count: 0 });
 
   await setPaid(master, all.dues[0].id, true, { account_id: 1 });
   const camp = await listDues(master, { building: '2', status: 'pending' }, '2026-10-05');
   assert.deepEqual(camp.dues.map((d) => d.title), ['Shop 4 rent']);
-  assert.deepEqual(camp.totals, { pending: 1000, paid: 2500.5, pending_count: 1, paid_count: 1 }, 'the totals are the building\'s, whatever status is looked at');
+  assert.deepEqual(camp.totals, { pending: 1000, paid: 2500.5, pending_count: 1, paid_count: 1, partly_count: 0 }, 'the totals are the building\'s, whatever status is looked at');
   assert.deepEqual((await listDues(master, { month: '2026-09' }, '2026-10-05')).dues.map((d) => d.title), ['Shop 3 rent']);
 
   // By shop or unit: the ones typed on the entries, narrowed to the building picked.
@@ -162,7 +163,7 @@ test('a month is listed with its totals, by building and by status', async () =>
   assert.deepEqual(camp.units, ['Shop 3', 'Shop 4']);
   const shop3 = await listDues(master, { unit: ' shop 3 ' }, '2026-10-05');
   assert.deepEqual(shop3.dues.map((d) => d.title), ['Shop 3 rent']);
-  assert.deepEqual(shop3.totals, { pending: 0, paid: 2500.5, pending_count: 0, paid_count: 1 });
+  assert.deepEqual(shop3.totals, { pending: 0, paid: 2500.5, pending_count: 0, paid_count: 1, partly_count: 0 });
   assert.deepEqual((await listDues(master, { unit: 'Shop 9' }, '2026-10-05')).dues, []);
   assert.equal((await listDues(master, { month: 'nonsense' }, '2026-10-05')).month, '2026-10');
 });
@@ -268,7 +269,7 @@ test('money is where it was paid in, until it is transferred', async () => {
   const tauqeer = await getAccount(jessa, 2);
   assert.equal(tauqeer.account.balance, 500.5);
   assert.deepEqual(tauqeer.movements.map((m) => [m.kind, m.amount, m.text]).sort(), [
-    ['payment', 2500.5, 'Shop 3 rent · Gents Camp · Shop 3 · 2026-10'],
+    ['receipt', 2500.5, 'Shop 3 rent · Gents Camp · Shop 3 · 2026-10'],
     ['transfer', -2000, 'Transfer to Cash to Mr Amran · Handed over at the office'],
   ]);
   assert.deepEqual((await getAccount(jessa, 1)).movements.map((m) => [m.amount, m.text]), [[2000, 'Transfer from Cash to Mr Tauqeer · Handed over at the office']]);
@@ -357,7 +358,7 @@ test('a month can be looked at by income head', async () => {
   assert.deepEqual(all.heads, [{ id: 2, name: 'Shop' }, { id: 1, name: 'Washing Machine' }]);
   const shop = await listDues(jessa, { head: '2' }, '2026-10-05');
   assert.deepEqual(shop.dues.map((d) => d.title), ['Shop 3 rent']);
-  assert.deepEqual(shop.totals, { pending: 1000, paid: 0, pending_count: 1, paid_count: 0 });
+  assert.deepEqual(shop.totals, { pending: 1000, paid: 0, pending_count: 1, paid_count: 0, partly_count: 0 });
   assert.deepEqual((await listDues(jessa, { head: 'none' }, '2026-10-05')).dues.map((d) => d.title), ['Old one']);
 });
 
@@ -403,4 +404,57 @@ test('the report: each building, what came from each income head over the months
   // Nothing said = this month. The months the wrong way round are put right.
   assert.deepEqual((({ from, to }) => [from, to])(await getReport(jessa, {}, '2026-10-05')), ['2026-10', '2026-10']);
   assert.deepEqual((({ from, to }) => [from, to])(await getReport(jessa, { from: '2026-10', to: '2026-09' }, '2026-10-05')), ['2026-09', '2026-10']);
+});
+
+test('money can come in parts, and the line is paid once they add up', async () => {
+  const { jessa, sabha } = await setup();
+  await saveEntry(jessa, null, { ...washer, title: 'Shop 3 rent', building_id: 2, unit: 'Shop 3', amount: 5000, day: 1 }, '2026-10-05');
+  const [due] = (await listDues(jessa, {}, '2026-10-05')).dues;
+
+  await assert.rejects(addReceipt(jessa, due.id, { account_id: 2, amount: 0 }), /more than 0/);
+  await assert.rejects(addReceipt(jessa, due.id, { account_id: 2, amount: 'abc' }), /more than 0/);
+  await assert.rejects(addReceipt(jessa, due.id, { amount: 100 }), /Pick the account/);
+  await assert.rejects(addReceipt(jessa, due.id, { account_id: 2, amount: 6000 }), /Only 5000\.00 is left/);
+  assert.equal(await addReceipt(jessa, 999, { account_id: 2 }), null);
+
+  const first = await addReceipt(jessa, due.id, { account_id: 2, amount: '2,000', paid_on: '2026-10-02' }, '2026-10-05');
+  assert.deepEqual([first.status, first.received, first.left, first.paid_on, first.account.name], ['pending', 2000, 3000, '2026-10-02', 'Cash to Mr Tauqeer']);
+  assert.ok(first.receipt_id > 0);
+  const month = await listDues(jessa, {}, '2026-10-05');
+  assert.deepEqual(month.totals, { pending: 3000, paid: 2000, pending_count: 1, paid_count: 0, partly_count: 1 });
+  assert.deepEqual((await listDues(jessa, { status: 'pending' }, '2026-10-05')).dues.map((d) => d.id), [due.id], 'a part paid line is still to chase');
+  await assert.rejects(addReceipt(jessa, due.id, { account_id: 1, amount: 3000.01 }), /Only 3000\.00 is left/);
+
+  // No amount said = all that is left. Into another account, on another day.
+  const second = await addReceipt(sabha, due.id, { account_id: 1, paid_on: '2026-10-09' }, '2026-10-09');
+  assert.deepEqual([second.status, second.received, second.left, second.paid_on, second.paid_by, second.account.name], ['paid', 5000, 0, '2026-10-09', 'Sabha', 'Cash to Mr Amran']);
+  await assert.rejects(addReceipt(jessa, due.id, { account_id: 1 }), /already paid in full/);
+  assert.deepEqual(await balances(), { 'Cash to Mr Amran': 3000, 'Cash to Mr Tauqeer': 2000 });
+  assert.deepEqual((await getAccount(jessa, 2)).movements.map((m) => [m.kind, m.amount, m.date, m.text]), [
+    ['receipt', 2000, '2026-10-02', 'Shop 3 rent · Gents Camp · Shop 3 · 2026-10 · part of 5000.00'],
+  ]);
+  const r = await getReport(jessa, {}, '2026-10-05');
+  assert.deepEqual(r.totals, { paid: 5000, pending: 0, total: 5000 });
+
+  const got = await getDue(jessa, due.id);
+  assert.deepEqual(got.receipts.map((x) => [x.amount, x.paid_on, x.account.name, x.by]), [[2000, '2026-10-02', 'Cash to Mr Tauqeer', 'Jessa'], [3000, '2026-10-09', 'Cash to Mr Amran', 'Sabha']]);
+
+  // A part paid by mistake goes, with its file; the line is pending again, by the part still there.
+  const pdf = { mimetype: 'application/pdf', buffer: Buffer.from('%PDF-1.4') };
+  await setAttachment(jessa, 'receipt', second.receipt_id, pdf);
+  const kept = await attachmentPath('receipt', second.receipt_id);
+  assert.equal((await getDue(jessa, due.id)).due.receipt_files, true);
+  const after = await deleteReceipt(jessa, second.receipt_id);
+  assert.deepEqual([after.status, after.received, after.left, after.paid_on, after.account.name], ['pending', 2000, 3000, '2026-10-02', 'Cash to Mr Tauqeer']);
+  assert.equal(existsSync(kept), false);
+  assert.equal(await deleteReceipt(jessa, second.receipt_id), null);
+  assert.deepEqual(await balances(), { 'Cash to Mr Amran': 0, 'Cash to Mr Tauqeer': 2000 });
+  assert.deepEqual((await getReport(jessa, {}, '2026-10-05')).totals, { paid: 2000, pending: 3000, total: 5000 });
+
+  // Paid in one go is for a line with one part at most; set pending takes every part away.
+  await addReceipt(jessa, due.id, { account_id: 1, amount: 1000 });
+  await assert.rejects(setPaid(jessa, due.id, true, { account_id: 1 }), /came in parts/);
+  const back = await setPaid(jessa, due.id, false);
+  assert.deepEqual([back.status, back.received, back.left, back.account], ['pending', 0, 5000, null]);
+  assert.deepEqual(await balances(), { 'Cash to Mr Amran': 0, 'Cash to Mr Tauqeer': 0 });
 });

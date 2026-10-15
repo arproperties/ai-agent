@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { mkdirSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { db } from './db.js';
+import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
 
 // Recurring payments: money that should come in every month from something in a building -
@@ -10,12 +10,13 @@ import { DATA_DIR } from './config.js';
 //
 // An entry is made once: a title, the building, the shop or unit or whatever it is (typed,
 // not picked), the amount, and the day of the month. From then on a line for that month is
-// created on that day, pending, and somebody marks it paid when the money is in. It is a
-// list to chase: no invoice, nothing posted to the company's accounts.
+// created on that day, pending, and somebody marks it paid when the money is in - all at
+// once, or in parts (a receipt each time some came in) until it adds up to the amount. It
+// is a list to chase: no invoice, nothing posted to the company's accounts.
 //
 // Where the money is, is the module's own too: a free list of accounts ("Cash to Mr
-// Tauqeer", "Bank"). Marking a line paid says which account the money went into; a
-// transfer hands money from one account to another; both can carry a file (a receipt).
+// Tauqeer", "Bank"). Each receipt says which account its money went into; a transfer
+// hands money from one account to another; both can carry a file (a receipt).
 //
 // What the money is for is the module's own as well: a free list of income heads ("Shop",
 // "DEWA", "Washing Machine"), one list for every building. An entry comes under one, and
@@ -152,7 +153,9 @@ const picks = async () => (await listBuildings()).map((b) => ({ id: b.id, name: 
 const ENTRY = `SELECT p.*, b.name AS building_name, h.name AS head_name, (SELECT count(*)::int FROM recurring_payment_dues d WHERE d.payment_id = p.id) AS payments,
     EXISTS (SELECT 1 FROM recurring_payment_dues d WHERE d.payment_id = p.id AND d.month = ?) AS has_this_month
   FROM recurring_payments p JOIN recurring_buildings b ON b.id = p.building_id LEFT JOIN recurring_heads h ON h.id = p.head_id`;
-const DUE = `SELECT d.id, d.payment_id, d.month, d.due_date, d.amount, d.status, d.paid_at, d.paid_on, u.name AS paid_by,
+const RECEIVED = 'COALESCE((SELECT sum(r.amount) FROM recurring_payment_receipts r WHERE r.due_id = d.id), 0)::float8';
+const DUE = `SELECT d.id, d.payment_id, d.month, d.due_date, d.amount, d.status, d.paid_at, d.paid_on, u.name AS paid_by, ${RECEIVED} AS received,
+    EXISTS (SELECT 1 FROM recurring_payment_receipts r WHERE r.due_id = d.id AND r.attachment IS NOT NULL) AS receipt_files,
     d.account_id, a.name AS account_name, d.attachment, p.title, p.unit, p.building_id, b.name AS building_name,
     p.head_id, h.name AS head_name
   FROM recurring_payment_dues d JOIN recurring_payments p ON p.id = d.payment_id JOIN recurring_buildings b ON b.id = p.building_id
@@ -165,10 +168,13 @@ const shapeEntry = (p) => ({
   auto_create: p.auto_create, first_month: p.first_month, active: p.active, notes: p.notes,
   payments: p.payments, has_this_month: p.has_this_month,
 });
+// received: what came in so far, over all its receipts; left: what is still to come.
+// attachment: the line's own file, from before receipts had their own; receipt_files: any receipt has one.
 const shapeDue = (d) => ({
   id: d.id, entry_id: d.payment_id, month: d.month, title: d.title, building: { id: d.building_id, name: d.building_name }, unit: d.unit, head: shapeHead(d),
   due_date: d.due_date, amount: d.amount, status: d.status, paid_at: d.paid_at, paid_on: d.paid_on, paid_by: d.paid_by,
   account: d.account_id ? { id: d.account_id, name: d.account_name } : null, attachment: !!d.attachment,
+  received: money(d.received), left: money(Math.max(0, d.amount - d.received)), receipt_files: !!d.receipt_files,
 });
 
 const entryOf = async (user, id, now = today()) => (await db.prepare(`${ENTRY} WHERE p.id = ?`).get(now.slice(0, 7), Number(id) || 0)) || null;
@@ -199,20 +205,26 @@ export async function listDues(user, query = {}, now = today()) {
     .map(shapeDue).filter((d) => !unit || (d.unit || '').toLowerCase() === unit)
     .filter((d) => (query.head === 'none' ? !d.head : !head || d.head?.id === head));
   const of = (status) => rows.filter((d) => d.status === status);
-  const sum = (list) => Math.round(list.reduce((t, d) => t + d.amount, 0) * 100) / 100;
+  const sum = (list, key) => money(list.reduce((t, d) => t + d[key], 0));
   return {
     month,
     buildings,
     units,
     heads: await headPicks(),
     dues: ['pending', 'paid'].includes(query.status) ? of(query.status) : rows,
-    totals: { pending: sum(of('pending')), paid: sum(of('paid')), pending_count: of('pending').length, paid_count: of('paid').length },
+    // The money: what is still to come, and what came in (a part paid line's part too). The
+    // counts: lines still pending (partly paid among them), and lines paid in full.
+    totals: {
+      pending: sum(rows, 'left'), paid: sum(rows, 'received'), pending_count: of('pending').length, paid_count: of('paid').length,
+      partly_count: of('pending').filter((d) => d.received > 0).length,
+    },
   };
 }
 
 /**
  * What each building brought in from each income head, over the months from..to (both
- * counted; none said = this month): paid, still pending, and the two together. A building
+ * counted; none said = this month): what came in, what is still to come, and the two
+ * together (a part paid line is in both, by its parts). A building
  * with no line in those months is left out; its entries with no head are its last row.
  */
 export async function getReport(user, query = {}, now = today()) {
@@ -220,10 +232,11 @@ export async function getReport(user, query = {}, now = today()) {
   const [from, to] = [month(query.from), month(query.to)].sort();
   const one = Number(query.building) || null;
   const found = await db.prepare(`SELECT p.building_id, b.name AS building_name, p.head_id, h.name AS head_name,
-      COALESCE(sum(d.amount) FILTER (WHERE d.status = 'paid'), 0)::float8 AS paid,
-      COALESCE(sum(d.amount) FILTER (WHERE d.status <> 'paid'), 0)::float8 AS pending
+      COALESCE(sum(LEAST(COALESCE(r.got, 0), d.amount)), 0)::float8 AS paid,
+      COALESCE(sum(GREATEST(d.amount - COALESCE(r.got, 0), 0)), 0)::float8 AS pending
     FROM recurring_payment_dues d JOIN recurring_payments p ON p.id = d.payment_id JOIN recurring_buildings b ON b.id = p.building_id
     LEFT JOIN recurring_heads h ON h.id = p.head_id
+    LEFT JOIN (SELECT due_id, sum(amount) AS got FROM recurring_payment_receipts GROUP BY due_id) r ON r.due_id = d.id
     WHERE d.month >= ? AND d.month <= ? AND (?::int IS NULL OR p.building_id = ?::int)
     GROUP BY p.building_id, b.name, p.head_id, h.name
     ORDER BY lower(b.name), p.building_id, (p.head_id IS NULL), lower(h.name), p.head_id`).all(from, to, one, one);
@@ -332,35 +345,121 @@ export async function createNow(user, id, now = today(), date = null) {
 
 const dueOf = async (id) => (await db.prepare(`${DUE} WHERE d.id = ?`).get(Number(id) || 0)) || null;
 
-/** One line, and the accounts to pick from when it is marked paid. */
+const RECEIPT = `SELECT r.id, r.due_id, r.account_id, a.name AS account_name, r.amount, r.paid_on, r.attachment, r.created_at, u.name AS by
+  FROM recurring_payment_receipts r LEFT JOIN recurring_accounts a ON a.id = r.account_id LEFT JOIN users u ON u.id = r.created_by`;
+const shapeReceipt = (r) => ({
+  id: r.id, amount: r.amount, paid_on: r.paid_on, account: r.account_id ? { id: r.account_id, name: r.account_name } : null,
+  by: r.by, at: Number(r.created_at), attachment: !!r.attachment,
+});
+const receiptsOf = async (dueId) => (await db.prepare(`${RECEIPT} WHERE r.due_id = ? ORDER BY r.paid_on, r.id`).all(dueId)).map(shapeReceipt);
+
+/**
+ * Put a line in step with its receipts: paid once they add up to its amount, pending till
+ * then; its paid_on, paid_by, paid_at and account are the last receipt's (none: empty).
+ */
+const syncDue = (dueId) => db.prepare(`UPDATE recurring_payment_dues d SET
+    status = CASE WHEN s.got >= d.amount THEN 'paid' ELSE 'pending' END,
+    paid_on = l.paid_on, paid_by = l.created_by, paid_at = l.created_at, account_id = l.account_id
+  FROM (SELECT COALESCE(sum(amount), 0) AS got FROM recurring_payment_receipts WHERE due_id = ?) s
+  LEFT JOIN LATERAL (SELECT paid_on, created_by, created_at, account_id FROM recurring_payment_receipts
+    WHERE due_id = ? ORDER BY paid_on DESC, id DESC LIMIT 1) l ON true
+  WHERE d.id = ?`).run(dueId, dueId, dueId);
+
+/** One line with its receipts, and the accounts to pick from when money comes in for it. */
 export async function getDue(user, dueId) {
   const d = await dueOf(dueId);
-  return d && { today: today(), due: shapeDue(d), accounts: await accountPicks() };
+  return d && { today: today(), due: shapeDue(d), receipts: await receiptsOf(d.id), accounts: await accountPicks() };
+}
+
+/** The account and the day of a receipt, checked. */
+async function readReceipt(input, now) {
+  const account = await accountOf(input?.account_id);
+  if (!account) throw bad('Pick the account the money went into');
+  const on = String(input?.paid_on ?? '').trim() || now;
+  if (!DATE.test(on)) throw bad('Pick the date the money was received');
+  return { account, on };
 }
 
 /**
- * Mark a line paid - who, the account the money went into, and the day it was received
- * (paid_on; none said = today) - or put it back to pending, which takes the money out of
- * that account again. Its file stays either way.
+ * Money that came in for a line - all of what is left, or a part: how much (none said =
+ * all that is left), the account it went into and the day it was received (none said =
+ * today). Never more than is left. The line is paid once its receipts add up to its
+ * amount. Returns the line, with receipt_id: the new receipt's, to keep a file with.
+ */
+export async function addReceipt(user, dueId, input = {}, now = today()) {
+  const d = await dueOf(dueId);
+  if (!d) return null;
+  const { account, on } = await readReceipt(input, now);
+  const typed = String(input?.amount ?? '').trim();
+  const id = await tx(async () => {
+    // One at a time per line, so two taps cannot both take what is left.
+    const due = await db.prepare(`SELECT amount::float8 AS amount, ${RECEIVED} AS received FROM recurring_payment_dues d WHERE d.id = ? FOR UPDATE`).get(d.id);
+    const left = money(due.amount - due.received);
+    if (left <= 0) throw bad('This payment is already paid in full', 409);
+    const amount = typed === '' ? left : money(typed.replace(/,/g, ''));
+    if (!Number.isFinite(amount) || amount <= 0) throw bad('The amount received must be a number more than 0');
+    if (amount > left) throw bad(`Only ${left.toFixed(2)} is left to pay on this one`);
+    const { id: receiptId } = await db.prepare(`INSERT INTO recurring_payment_receipts (due_id, account_id, amount, paid_on, created_by)
+      VALUES (?, ?, ?, ?, ?) RETURNING id`).run(d.id, account.id, amount, on, user.id);
+    await syncDue(d.id);
+    return receiptId;
+  });
+  return { ...shapeDue(await dueOf(d.id)), receipt_id: id };
+}
+
+/** A receipt written by mistake: gone, with its file; the line is pending again if it is no longer paid in full. */
+export async function deleteReceipt(user, id) {
+  const r = await db.prepare('SELECT id, due_id, attachment FROM recurring_payment_receipts WHERE id = ?').get(Number(id) || 0);
+  if (!r) return null;
+  await tx(async () => {
+    await db.prepare('DELETE FROM recurring_payment_receipts WHERE id = ?').run(r.id);
+    await syncDue(r.due_id);
+  });
+  dropFile(r.attachment);
+  return shapeDue(await dueOf(r.due_id));
+}
+
+/**
+ * The whole line paid in one go, or put back to pending. Paid: one receipt of its whole
+ * amount; one already there is changed to that (its file stays), and a line paid in
+ * several parts is changed part by part instead. Pending: every receipt goes, with its
+ * file, and the money is out of those accounts again.
  */
 export async function setPaid(user, dueId, paid, input = {}, now = today()) {
   const d = await dueOf(dueId);
   if (!d) return null;
-  const account = paid ? await accountOf(input?.account_id) : null;
-  if (paid && !account) throw bad('Pick the account the money went into');
-  const on = paid ? String(input?.paid_on ?? '').trim() || now : null;
-  if (paid && !DATE.test(on)) throw bad('Pick the date the money was received');
-  await db.prepare(`UPDATE recurring_payment_dues SET status = ?, paid_at = ${paid ? NOW : 'NULL'}, paid_on = ?, paid_by = ?, account_id = ? WHERE id = ?`)
-    .run(paid ? 'paid' : 'pending', on, paid ? user.id : null, account?.id ?? null, d.id);
+  if (!paid) {
+    const files = await db.prepare('SELECT attachment FROM recurring_payment_receipts WHERE due_id = ? AND attachment IS NOT NULL').all(d.id);
+    await tx(async () => {
+      await db.prepare('DELETE FROM recurring_payment_receipts WHERE due_id = ?').run(d.id);
+      await syncDue(d.id);
+    });
+    files.forEach((f) => dropFile(f.attachment));
+    return shapeDue(await dueOf(d.id));
+  }
+  const { account, on } = await readReceipt(input, now);
+  await tx(async () => {
+    const had = await db.prepare('SELECT id FROM recurring_payment_receipts WHERE due_id = ? FOR UPDATE').all(d.id);
+    if (had.length > 1) throw bad('This payment came in parts. Change or delete its parts instead.', 409);
+    if (had.length) {
+      await db.prepare('UPDATE recurring_payment_receipts SET account_id = ?, amount = ?, paid_on = ?, created_by = ? WHERE id = ?')
+        .run(account.id, d.amount, on, user.id, had[0].id);
+    } else {
+      await db.prepare('INSERT INTO recurring_payment_receipts (due_id, account_id, amount, paid_on, created_by) VALUES (?, ?, ?, ?, ?)')
+        .run(d.id, account.id, d.amount, on, user.id);
+    }
+    await syncDue(d.id);
+  });
   return shapeDue(await dueOf(d.id));
 }
 
 // ---------- the accounts ----------
 
-const BALANCE = `(COALESCE((SELECT sum(d.amount) FROM recurring_payment_dues d WHERE d.account_id = a.id AND d.status = 'paid'), 0)
+const BALANCE = `(COALESCE((SELECT sum(r.amount) FROM recurring_payment_receipts r WHERE r.account_id = a.id), 0)
     + COALESCE((SELECT sum(t.amount) FROM recurring_transfers t WHERE t.to_account_id = a.id), 0)
     - COALESCE((SELECT sum(t.amount) FROM recurring_transfers t WHERE t.from_account_id = a.id), 0))::float8`;
-const USED = `(EXISTS (SELECT 1 FROM recurring_payment_dues d WHERE d.account_id = a.id)
+const USED = `(EXISTS (SELECT 1 FROM recurring_payment_receipts r WHERE r.account_id = a.id)
+    OR EXISTS (SELECT 1 FROM recurring_payment_dues d WHERE d.account_id = a.id)
     OR EXISTS (SELECT 1 FROM recurring_transfers t WHERE a.id IN (t.from_account_id, t.to_account_id)))`;
 
 /** The module's own accounts, by name, each with what it holds and whether anything was ever put through it. */
@@ -393,15 +492,21 @@ export async function deleteAccount(user, id) {
 }
 
 /**
- * One account and everything that went through it, newest first: payments received and
+ * One account and everything that went through it, newest first: receipts of payments and
  * transfers in (amount above 0), transfers out (below 0).
  */
 export async function getAccount(user, id) {
   const account = (await listAccounts()).find((a) => a.id === Number(id));
   if (!account) return null;
-  const paid = (await db.prepare(`${DUE} WHERE d.account_id = ? AND d.status = 'paid'`).all(account.id)).map((d) => ({
-    kind: 'payment', id: d.id, at: Number(d.paid_at), date: d.paid_on,
-    text: [d.title, d.building_name, d.unit, d.month].filter(Boolean).join(' · '), amount: d.amount, by: d.paid_by, attachment: !!d.attachment,
+  // A part of a line says so: "part of 5,000.00".
+  const paid = (await db.prepare(`SELECT r.id, r.amount, r.paid_on, r.created_at, r.attachment, u.name AS by, d.amount AS due_amount, d.month,
+      p.title, p.unit, b.name AS building_name
+    FROM recurring_payment_receipts r JOIN recurring_payment_dues d ON d.id = r.due_id JOIN recurring_payments p ON p.id = d.payment_id
+    JOIN recurring_buildings b ON b.id = p.building_id LEFT JOIN users u ON u.id = r.created_by
+    WHERE r.account_id = ?`).all(account.id)).map((r) => ({
+    kind: 'receipt', id: r.id, at: Number(r.created_at), date: r.paid_on,
+    text: [r.title, r.building_name, r.unit, r.month, r.amount < r.due_amount ? `part of ${r.due_amount.toFixed(2)}` : null].filter(Boolean).join(' · '),
+    amount: r.amount, by: r.by, attachment: !!r.attachment,
   }));
   const moved = (await db.prepare(`${TRANSFER} WHERE ? IN (t.from_account_id, t.to_account_id)`).all(account.id)).map((t) => {
     const out = t.from_account_id === account.id;
@@ -464,10 +569,10 @@ export async function deleteTransfer(user, id) {
 // ---------- the files ----------
 
 const FILE_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
-const FILE_OF = { due: 'recurring_payment_dues', transfer: 'recurring_transfers' };
+const FILE_OF = { due: 'recurring_payment_dues', receipt: 'recurring_payment_receipts', transfer: 'recurring_transfers' };
 const dropFile = (path) => { if (path) rmSync(path, { force: true }); };
 
-/** Keep a file with a paid line (kind 'due') or a transfer; a new one replaces the old. null: no such line. */
+/** Keep a file with a receipt, a line (kind 'due', from before receipts) or a transfer; a new one replaces the old. null: no such line. */
 export async function setAttachment(user, kind, id, file) {
   const row = await db.prepare(`SELECT id, attachment FROM ${FILE_OF[kind]} WHERE id = ?`).get(Number(id) || 0);
   if (!row) return null;
@@ -518,6 +623,8 @@ recurringPaymentRoutes.post('/entries/:id/dues', wrap(async (req, res) => send(r
 recurringPaymentRoutes.get('/dues/:id', wrap(async (req, res) => send(res, await getDue(req.user, req.params.id))));
 recurringPaymentRoutes.post('/dues/:id/paid', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, true, req.body))));
 recurringPaymentRoutes.post('/dues/:id/pending', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, false))));
+recurringPaymentRoutes.post('/dues/:id/receipts', wrap(async (req, res) => send(res, await addReceipt(req.user, req.params.id, req.body))));
+recurringPaymentRoutes.delete('/receipts/:id', wrap(async (req, res) => send(res, await deleteReceipt(req.user, req.params.id))));
 recurringPaymentRoutes.get('/buildings', wrap(async (req, res) => res.json({ buildings: await listBuildings() })));
 recurringPaymentRoutes.post('/buildings', wrap(async (req, res) => res.json(await saveBuilding(req.user, null, req.body))));
 recurringPaymentRoutes.put('/buildings/:id', wrap(async (req, res) => send(res, await saveBuilding(req.user, req.params.id, req.body))));
@@ -539,10 +646,10 @@ recurringPaymentRoutes.get('/transfers', wrap(async (req, res) => res.json(await
 recurringPaymentRoutes.post('/transfers', wrap(async (req, res) => res.json(await addTransfer(req.user, req.body))));
 recurringPaymentRoutes.delete('/transfers/:id', wrap(async (req, res) => send(res, await deleteTransfer(req.user, req.params.id))));
 
-// The file of a paid line or of a transfer. The upload is called "photo" because that is
+// The file of a receipt, of a line (from before receipts) or of a transfer. The upload is called "photo" because that is
 // the name saifsys's line to Reem sends every file under (see binv_reem there).
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
-for (const [kind, at] of [['due', '/dues/:id/attachment'], ['transfer', '/transfers/:id/attachment']]) {
+for (const [kind, at] of [['due', '/dues/:id/attachment'], ['receipt', '/receipts/:id/attachment'], ['transfer', '/transfers/:id/attachment']]) {
   recurringPaymentRoutes.post(at, upload.single('photo'), wrap(async (req, res) => {
     if (!req.file) throw bad('No file came through');
     send(res, await setAttachment(req.user, kind, req.params.id, req.file));

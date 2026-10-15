@@ -1438,6 +1438,38 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_recurring_transfers_to ON recurring_transfers(to_account_id);
 `);
 
+// Recurring payments, paid in parts: a line's money can come in more than once.
+//   recurring_payment_receipts: each time money came in for a line - how much, the account
+//     it went into, the day it was received, and its own file. A line is paid once its
+//     receipts add up to its amount; till then it is pending, partly paid when any came in.
+//     The line's own paid_on, paid_by, paid_at and account_id are the last receipt's, kept
+//     in step by server/recurringPayments.js; an account holds its receipts, not its lines.
+// A line paid before parts existed becomes one receipt of its whole amount, once, and its
+// file moves with it. account_id is empty only on those, from before accounts were there.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_payment_receipts (
+    id SERIAL PRIMARY KEY,
+    due_id INTEGER NOT NULL REFERENCES recurring_payment_dues(id) ON DELETE CASCADE,
+    account_id INTEGER REFERENCES recurring_accounts(id),
+    amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    paid_on TEXT NOT NULL,
+    attachment TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_recurring_payment_receipts_due ON recurring_payment_receipts(due_id);
+  CREATE INDEX IF NOT EXISTS idx_recurring_payment_receipts_account ON recurring_payment_receipts(account_id);
+
+  INSERT INTO recurring_payment_receipts (due_id, account_id, amount, paid_on, attachment, created_by, created_at)
+    SELECT d.id, d.account_id, d.amount,
+      COALESCE(d.paid_on, to_char(to_timestamp(COALESCE(d.paid_at, d.created_at) + 4 * 3600) AT TIME ZONE 'UTC', 'YYYY-MM-DD')),
+      d.attachment, d.paid_by, COALESCE(d.paid_at, d.created_at)
+    FROM recurring_payment_dues d
+    WHERE d.status = 'paid' AND NOT EXISTS (SELECT 1 FROM recurring_payment_receipts r WHERE r.due_id = d.id);
+  UPDATE recurring_payment_dues d SET attachment = NULL
+    WHERE d.attachment IS NOT NULL AND EXISTS (SELECT 1 FROM recurring_payment_receipts r WHERE r.due_id = d.id AND r.attachment = d.attachment);
+`);
+
 // Recurring payments, what the money is for: the module's own income heads ("Shop",
 // "DEWA", "Washing Machine"), one list for every building, typed by the accountants.
 //   recurring_heads: the list.
