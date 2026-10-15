@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -111,7 +111,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
               {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.saifsys_renewal ? null : setStarting(l))} />)}
             </ul>
           )}
-          {data.master && <Settings s={data.settings} agents={data.agents} onSaved={load} />}
+          {data.master && <Settings s={data.settings} agents={data.agents} inbox={data.inbox} onSaved={load} />}
         </div>
       )}
       {starting && <StartSheet lease={starting} onClose={() => setStarting(null)} onDone={(r) => { setStarting(null); load(); if (r?.id) setOpen(r.id); }} />}
@@ -309,73 +309,115 @@ function Renewal({ id, onBack }) {
   }
   const rn = r.renewal;
   const s = rn.status;
-  const can = (...st) => st.includes(s);
+  const act = {
+    accept: { label: `Agree${rn.tenantOffer ? ` ${aed(rn.tenantOffer)}` : ''}`, icon: Check, run: () => setSheet({ figure: 'accept' }) },
+    counter: { label: 'Counter', icon: HandCoins, run: () => setSheet({ figure: 'counter' }) },
+    index: { label: 'RERA index rent', icon: Scale, run: () => setSheet({ figure: 'index' }) },
+    reply: { label: 'Reply', icon: Reply, run: () => setSheet({ compose: { id, action: 'reply' } }) },
+    seen: { label: 'No reply needed', icon: Check, run: () => mark('seen'), busy: busy === 'seen' },
+    fix: { label: 'Ask to fix', icon: Repeat, run: () => setSheet({ compose: { id, action: 'fix' } }) },
+    papers_ok: { label: 'Papers OK', icon: ShieldCheck, run: () => mark('papers_ok'), busy: busy === 'papers_ok' },
+    convert: { label: 'Renew in saifsys', icon: FileText, run: () => setSheet({ compose: { id, action: 'convert' } }) },
+    not_renewing: { label: 'Not renewing', icon: Ban, run: () => setSheet({ compose: { id, action: 'not_renewing' } }) },
+    close: { label: 'Handle outside Reem', icon: X, run: () => mark('close'), busy: busy === 'close' },
+  };
+  const step = nextStep(r);
+  const rise = rn.offer && r.annual_rent ? ((Number(rn.agreed ?? rn.offer) - r.annual_rent) / r.annual_rent) * 100 : null;
 
   return (
     <Page title={`${r.building} · ${r.unit}`} onBack={onBack}>
-      <div className="mx-auto max-w-3xl space-y-4 pb-10">
-        {/* Where it stands */}
-        <div className="rounded-3xl border border-stroke bg-white/[0.04] p-4">
-          <div className="flex items-start gap-2">
-            <div className="min-w-0 flex-1">
-              <p className="font-medium">{r.tenant}</p>
-              <p className="truncate text-sm text-mute">{r.email} · ends {day(r.end_date)} · {r.days_left} days left</p>
+      <div className="space-y-5 pb-10">
+        {/* Who, the rent, and the time left: one band across the top */}
+        <div className="rounded-3xl border border-stroke bg-white/[0.04] px-5 py-4">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-4">
+            <div className="min-w-0 flex-1 basis-60">
+              <div className="flex items-center gap-2">
+                <p className="truncate text-lg font-medium">{r.tenant}</p>
+                <Chip c={chipOf(r)} />
+              </div>
+              <p className="truncate text-sm text-mute">{r.building} · Unit {r.unit} · {r.email}</p>
             </div>
-            <Chip c={chipOf(r)} />
+            <Stat label="Current" value={aed(r.annual_rent)} muted />
+            <ArrowRight size={16} className="hidden shrink-0 text-mute sm:block" />
+            <Stat label={`${rn.agreed ? 'Agreed' : 'Our offer'}${rn.rentSource?.kind === 'rera_index' ? ' · RERA index' : rn.rentSource?.kind === 'dld_api' ? ' · DLD API' : ''}`}
+              value={aed(rn.agreed ?? rn.offer)} strong
+              extra={rise !== null && Math.abs(rise) >= 0.05 ? <span className={rise > 0 ? 'text-ok' : 'text-warn'}>{rise > 0 ? '+' : ''}{rise.toFixed(1)}%</span> : null} />
+            {rn.tenantOffer && !rn.agreed && <Stat label="Tenant asks" value={aed(rn.tenantOffer)} />}
+            {s === 'converted' && rn.start
+              ? <Stat label="New term" value={`${day(rn.start)} – ${day(rn.end)}`} />
+              : DONE.includes(s)
+                ? <Stat label="Lease ends" value={day(r.end_date)} />
+                : <Stat label="Lease ends" value={day(r.end_date)} extra={<span className={r.days_left <= 30 ? 'text-bad' : 'text-mute'}>{r.days_left} days</span>} />}
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-            <Figure label="Current" value={aed(r.annual_rent)} />
-            <Figure label={rn.agreed ? 'Agreed' : 'Our offer'} value={aed(rn.agreed ?? rn.offer)} strong
-              sub={rn.rentSource?.kind === 'rera_index' ? 'RERA index' : rn.rentSource?.kind === 'dld_api' ? 'DLD API' : null} />
-            <Figure label="Tenant asks" value={rn.tenantOffer ? aed(rn.tenantOffer) : '—'} />
-          </div>
-          {rn.dispute && !DONE.includes(s) && (
-            <div className="mt-3 flex items-start gap-2 rounded-2xl border border-bad/40 bg-bad/10 p-3 text-sm">
-              <Scale size={16} className="mt-0.5 shrink-0 text-bad" />
-              <div><p className="font-medium text-bad">The tenant disputes this renewal</p><p className="text-mute">{rn.dispute}</p>
-                {can('offer_sent', 'negotiating') && <p className="mt-1 text-mute">You can stay with your offer, or offer the RERA index rent.</p>}</div>
-            </div>
-          )}
-          {error && <div className="mt-3"><Problem text={error} /></div>}
-
-          {/* What can be done now */}
-          {!DONE.includes(s) && (
-            <div className="mt-4 flex flex-wrap gap-2 border-t border-stroke pt-4">
-              {can('offer_sent', 'negotiating') && <>
-                <Btn primary onClick={() => setSheet({ figure: 'accept' })}><Check size={14} /> Agree{rn.tenantOffer ? ` ${aed(rn.tenantOffer)}` : ''}</Btn>
-                <Btn onClick={() => setSheet({ figure: 'counter' })}><HandCoins size={14} /> Counter</Btn>
-                <Btn onClick={() => setSheet({ figure: 'index' })} className={rn.dispute ? 'border-bad/50 text-txt' : ''}><Scale size={14} /> RERA index rent</Btn>
-              </>}
-              {can('agreed') && rn.papers && !rn.papers.complete && <Btn primary onClick={() => setSheet({ compose: { id, action: 'fix' } })}><Repeat size={14} /> Ask to fix</Btn>}
-              {can('agreed') && <Btn primary={!!rn.papers?.complete} busy={busy === 'papers_ok'} onClick={() => mark('papers_ok')}><ShieldCheck size={14} /> Papers OK</Btn>}
-              {can('papers_ok', 'agreed') && <Btn primary={s === 'papers_ok'} disabled={s !== 'papers_ok'} title={s !== 'papers_ok' ? 'Mark the papers OK first' : ''}
-                onClick={() => setSheet({ compose: { id, action: 'convert' } })}><FileText size={14} /> Renew in saifsys</Btn>}
-              <Btn onClick={() => setSheet({ compose: { id, action: 'reply' } })}><Reply size={14} /> Reply</Btn>
-              {rn.waiting === 'reply' && <Btn busy={busy === 'seen'} onClick={() => mark('seen')}><Check size={14} /> No reply needed</Btn>}
-              <Btn onClick={() => setSheet({ compose: { id, action: 'not_renewing' } })}><Ban size={14} /> Not renewing</Btn>
-              <Btn busy={busy === 'close'} onClick={() => mark('close')}><X size={14} /> Handle outside Reem</Btn>
-            </div>
-          )}
         </div>
 
-        {rn.schedule && (
-          <p className="px-1 text-xs text-mute">
-            {day(rn.start)} – {day(rn.end)} · {rn.schedule.length} cheques: {rn.schedule.map((c) => `${day(c.date)} ${aed(c.amount)}`).join(' · ')}
-            {rn.workflowId ? ` · saifsys renewal #${rn.workflowId}` : ''}
-          </p>
-        )}
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_24rem] lg:items-start">
+          {/* What now, then the story */}
+          <div className="min-w-0 space-y-5">
+            <div className={`rounded-3xl border p-5 ${NEXT_TONE[step.tone]}`}>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+                <div className="min-w-0 flex-1 basis-64">
+                  <p className="flex items-center gap-2 font-medium"><step.icon size={17} className="shrink-0" /> {step.title}</p>
+                  {step.sub && <p className="mt-1 text-sm text-mute">{step.sub}</p>}
+                </div>
+                {(step.main.length > 0 || step.more.length > 0) && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {step.main.map((k, i) => { const a = act[k]; const I = a.icon; return <Btn key={k} primary={i === 0} busy={a.busy} onClick={a.run}><I size={14} /> {a.label}</Btn>; })}
+                    {step.more.length > 0 && <More items={step.more.map((k) => ({ key: k, ...act[k] }))} />}
+                  </div>
+                )}
+              </div>
+              {rn.dispute && !DONE.includes(s) && (
+                <p className="mt-3 flex items-start gap-2 border-t border-bad/30 pt-3 text-sm"><Scale size={15} className="mt-0.5 shrink-0 text-bad" /><span><b className="text-bad">The tenant disputes it:</b> <span className="text-mute">{rn.dispute}</span></span></p>
+              )}
+              {error && <div className="mt-3"><Problem text={error} /></div>}
+            </div>
 
-        <div className="flex flex-wrap gap-2 px-1">
-          <Btn busy={busy === 'advise'} disabled={!r.advisors} title={r.advisors ? '' : 'The master picks the advisors in the settings'} onClick={askAdvisors}>
-            <Users size={14} /> {busy === 'advise' ? 'Asking the advisors…' : 'Ask advisors'}
-          </Btn>
-          <a href={`/api/lease-renewals/${id}/case-pack`} download
-            className="flex items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt">
-            <FolderDown size={14} /> RDC case pack
-          </a>
+            <div>
+              <p className="mb-3 px-1 text-xs font-medium tracking-[0.14em] text-mute">TIMELINE</p>
+              <Timeline r={r} onReply={!DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
+            </div>
+          </div>
+
+          {/* The cheques and the advisors, to the side */}
+          <aside className="divide-y divide-stroke rounded-3xl border border-stroke bg-white/[0.04] lg:sticky lg:top-4">
+            {rn.schedule && (
+              <section className="p-5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="font-medium">Cheques</p>
+                  <p className="text-xs text-mute">{day(rn.start)} – {day(rn.end)}</p>
+                </div>
+                <table className="mt-2 w-full text-sm">
+                  <tbody>
+                    {rn.schedule.map((c, i) => (
+                      <tr key={`${c.date}-${i}`}>
+                        <td className="py-1 text-mute">{day(c.date)}</td>
+                        <td className="py-1 text-right tabular-nums">{aed(c.amount)}</td>
+                      </tr>
+                    ))}
+                    {rn.total !== null && (
+                      <tr className="border-t border-stroke/70"><td className="pt-2 text-mute">Total</td><td className="pt-2 text-right font-medium tabular-nums">{aed(rn.total)}</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                {rn.workflowId && <p className="mt-2 text-xs text-mute">saifsys renewal #{rn.workflowId}</p>}
+              </section>
+            )}
+            <section className="p-5">
+              <p className="font-medium">Advisors</p>
+              <p className="mt-1 text-xs text-mute">{r.advisors
+                ? 'Their view and a reply you can send. They answer by themselves on a dispute.'
+                : 'None picked yet: the master picks them in the settings.'}</p>
+              <div className="mt-3 grid gap-2">
+                <Btn busy={busy === 'advise'} disabled={!r.advisors} onClick={askAdvisors} className="justify-center"><Users size={14} /> {busy === 'advise' ? 'Asking…' : 'Ask advisors'}</Btn>
+                <a href={`/api/lease-renewals/${id}/case-pack`} download
+                  className="flex items-center justify-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt">
+                  <FolderDown size={14} /> RDC case pack
+                </a>
+              </div>
+            </section>
+          </aside>
         </div>
-
-        <Timeline r={r} onReply={!DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
       </div>
       {sheet?.figure && <AskFigure r={r} action={sheet.figure} onClose={() => setSheet(null)} onNext={(ask) => setSheet({ compose: ask })} />}
       {sheet?.compose && <Compose ask={sheet.compose} onClose={() => setSheet(null)} onSent={done} />}
@@ -383,13 +425,82 @@ function Renewal({ id, onBack }) {
   );
 }
 
-const Figure = ({ label, value, strong, sub }) => (
-  <div className="rounded-2xl bg-white/5 px-2 py-2.5">
+/** One figure in the top band. */
+const Stat = ({ label, value, strong, muted, extra }) => (
+  <div className="shrink-0">
     <p className="text-xs text-mute">{label}</p>
-    <p className={`truncate ${strong ? 'text-base font-medium' : 'text-sm'}`}>{value}</p>
-    {sub && <p className="text-[11px] text-p1">{sub}</p>}
+    <p className={`whitespace-nowrap ${strong ? 'text-xl font-semibold' : muted ? 'text-base text-mute' : 'text-base'}`}>
+      {value}{extra && <span className="ml-1.5 text-xs font-normal">{extra}</span>}
+    </p>
   </div>
 );
+
+const NEXT_TONE = {
+  you: 'border-warn/40 bg-warn/[0.07]', bad: 'border-bad/40 bg-bad/[0.07]', go: 'border-p1/40 bg-p1/[0.08]',
+  wait: 'border-stroke bg-white/[0.04]', done: 'border-ok/30 bg-ok/[0.06]',
+};
+
+/** Where the renewal stands, in one line, and the one or two steps that fit; the rest under More. */
+function nextStep(r) {
+  const rn = r.renewal;
+  const s = rn.status;
+  const end = ['not_renewing', 'close'];
+  if (s === 'converted') return { tone: 'done', icon: Check, title: 'Renewed', sub: 'saifsys has the new lease, and the tenant was told.', main: [], more: [] };
+  if (s === 'not_renewing') return { tone: 'done', icon: Ban, title: 'Not renewing', sub: 'The tenant was told what happens next.', main: [], more: [] };
+  if (s === 'closed') return { tone: 'done', icon: X, title: 'Handled outside Reem', sub: 'No more emails or reminders go to the tenant.', main: [], more: [] };
+  if (s === 'papers_ok') return { tone: 'go', icon: FileText, title: 'Ready to renew in saifsys', sub: 'saifsys makes the new lease and its cheques, then the tenant is told.', main: ['convert'], more: ['reply', ...end] };
+  if (s === 'agreed') {
+    const p = rn.papers;
+    if (p && !p.complete) return { tone: 'you', icon: ShieldAlert, title: `Papers: ${p.missing.length + p.wrong.length} to fix`, sub: 'See what is wrong on the timeline, and ask the tenant to fix it.', main: ['fix', 'papers_ok'], more: ['reply', ...end] };
+    if (p?.complete) return { tone: 'go', icon: ShieldCheck, title: 'The papers match', sub: 'The signed agreement and every cheque match saifsys. Have a look, then confirm.', main: ['papers_ok'], more: ['fix', 'reply', ...end] };
+    return { tone: 'wait', icon: Clock, title: 'Waiting for the papers', sub: 'The signed agreement and the cheque photos. Reem checks them when they arrive.', main: ['reply'], more: ['papers_ok', ...end] };
+  }
+  // offer_sent / negotiating
+  const all = ['accept', 'counter', 'index', 'reply', 'not_renewing', 'close'];
+  const rest = (main) => all.filter((k) => !main.includes(k));
+  if (rn.dispute && rn.waiting === 'reply') {
+    const main = ['index', 'reply'];
+    return { tone: 'bad', icon: Scale, title: 'The tenant disputes it: answer them', sub: 'Stay with your offer, or offer the rent the RERA index allows. The advisors can help.', main, more: [...rest(main), 'seen'] };
+  }
+  if (rn.waiting === 'reply') {
+    const main = rn.tenantOffer ? ['accept', 'counter'] : ['accept', 'reply'];
+    return { tone: 'you', icon: Inbox, title: rn.tenantOffer ? `The tenant asks for ${aed(rn.tenantOffer)}` : 'The tenant replied: answer them', sub: 'Read their email on the timeline.', main, more: [...rest(main), 'seen'] };
+  }
+  if (rn.waiting === 'no_answer') {
+    const main = ['reply'];
+    return { tone: 'bad', icon: Clock, title: 'No answer from the tenant', sub: `Reem reminded them ${rn.reminders} times. Write to them, or handle it yourself.`, main, more: rest(main) };
+  }
+  const main = ['reply'];
+  return { tone: 'wait', icon: Clock, title: "Waiting for the tenant's reply",
+    sub: rn.lastOutAt ? `Last email ${when(rn.lastOutAt)}. Reem reminds them after a week of silence.` : 'Reem reminds them after a week of silence.', main, more: rest(main) };
+}
+
+/** The steps that do not fit the moment, one tap away. */
+function More({ items }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (!wrap.current?.contains(e.target)) setOpen(false); };
+    document.addEventListener('pointerdown', away);
+    return () => document.removeEventListener('pointerdown', away);
+  }, [open]);
+  return (
+    <div ref={wrap} className="relative">
+      <Btn onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open}><MoreHorizontal size={14} /> More</Btn>
+      {open && (
+        <div role="menu" style={{ background: 'var(--color-surface-2)' }} className="menu-glass absolute right-0 top-full z-50 mt-1.5 min-w-52 overflow-hidden rounded-xl p-1.5 shadow-2xl shadow-black/50">
+          {items.map((a) => { const I = a.icon; return (
+            <button key={a.key} role="menuitem" onClick={() => { setOpen(false); a.run(); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition hover:bg-white/10">
+              <I size={14} className="shrink-0 text-mute" /> {a.label}
+            </button>
+          ); })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ---------- the timeline: newest first ----------
 
@@ -508,7 +619,7 @@ function Event({ e, r, newest }) {
 
 // ---------- the master's settings ----------
 
-function Settings({ s, agents, onSaved }) {
+function Settings({ s, agents, inbox, onSaved }) {
   const [payee, setPayee] = useState(s.payee);
   const [reminders, setReminders] = useState(s.reminders);
   const [advisors, setAdvisors] = useState(s.advisors || []);
@@ -543,7 +654,7 @@ function Settings({ s, agents, onSaved }) {
           options={agents.map((a) => ({ value: a.id, label: a.name }))} />
         <p className="text-xs text-mute">They read each dispute and give their view and a reply you can send. They never file a case or say whether an increase is legal.</p>
       </div>
-      <p className="text-xs text-mute">saifsys records the renewals as {s.actor ? s.actor.name : 'whoever saves these settings'}: their company email must be connected under Email.</p>
+      <p className="text-xs text-mute">saifsys records the renewals as its user with the Tenant care email{inbox ? ` (${inbox})` : ''}.</p>
       <Problem text={error} />
       <div className="flex justify-end"><Btn primary busy={busy} onClick={save}>Save</Btn></div>
     </div>

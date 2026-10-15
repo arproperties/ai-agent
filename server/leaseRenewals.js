@@ -15,7 +15,6 @@ import { renderPdf } from './replyDoc.js';
 import { needsModule } from './modules.js';
 import { inbox, fileInSent, ownWords, claimTenantMail } from './tenantCare.js';
 import { askSaifsys, actSaifsys, saifsysConfigured, saifsysActionsConfigured, dubaiDate } from './saifsys/client.js';
-import { verifiedEmail } from './saifsys/booking.js';
 import { readReply, readDocs, advise, caseSummary } from './leaseRenewalAi.js';
 
 // Lease renewals: whoever has the module renews each lease with its tenant by email, from
@@ -79,7 +78,7 @@ async function indexRent() { return null; }
 // Everything that reaches outside, swappable for the tests.
 const D = {
   ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, caseSummary,
-  send: sendRaw, file: fileInSent, fetch: fetchMessage, push: sendPush, todo: createTodo, actor: verifiedEmail,
+  send: sendRaw, file: fileInSent, fetch: fetchMessage, push: sendPush, todo: createTodo, actor: async () => (await inbox())?.email,
   mirror: (action, body) => saifsys(action, body),
   now: () => Date.now(),
 };
@@ -138,14 +137,15 @@ const samePayee = (a, b) => { const x = letters(a); const y = letters(b); return
 
 /**
  * Papers from one email added to what came before: a signed agreement stays signed, and a
- * cheque for the same amount and date as one sent before replaces it.
+ * cheque dated the same day as one sent before replaces it (a corrected cheque), whatever
+ * its amount. A cheque with no readable date replaces one of the same amount and no date.
  */
 export function addPapers(before, read) {
   const agreement = before.agreement === 'signed' || read.agreement === 'signed' ? 'signed'
     : before.agreement === 'unsigned' || read.agreement === 'unsigned' ? 'unsigned' : 'none';
   const cheques = [...(before.cheques || [])];
   for (const ch of read.cheques || []) {
-    const i = cheques.findIndex((k) => k.amount === ch.amount && k.date === ch.date);
+    const i = cheques.findIndex((k) => (ch.date ? k.date === ch.date : !k.date && k.amount === ch.amount));
     if (i >= 0) cheques[i] = ch; else cheques.push(ch);
   }
   return { agreement, cheques };
@@ -240,9 +240,9 @@ const agreedText = (r, q, rent, payee) => [dear(r), '',
   ...SIGN.slice(1)].join('\n');
 
 const fixText = (r, check) => [dear(r), '',
-  'Thank you for sending these. To complete your renewal we still need:', '',
-  ...check.wrong.map((w) => `- ${w}`),
-  ...check.missing.map((m) => `- ${m[0].toUpperCase()}${m.slice(1)}`), '',
+  'Thank you for sending these. To complete your renewal:', '',
+  ...(check.wrong.length ? ['Please correct:', ...check.wrong.map((w) => `- ${w}`), ''] : []),
+  ...(check.missing.length ? ['Still missing:', ...check.missing.map((m) => `- ${m[0].toUpperCase()}${m.slice(1)}`), ''] : []),
   'Please reply to this email with them.', ...SIGN].join('\n');
 
 const doneText = (r) => [dear(r), '',
@@ -343,13 +343,18 @@ async function resend() {
 
 // ---------- saifsys ----------
 
-async function actingEmail(s) {
-  const email = s.actor_id ? await D.actor(s.actor_id) : null;
-  if (!email) throw bad('Nobody is set to act in saifsys: the master saves the Lease renewals settings, with their company email connected under Email.', 409);
+/**
+ * saifsys records each step under one of its users, found by email. Renewals are Tenant
+ * care's, so they are recorded as the saifsys user with the Tenant care inbox's email,
+ * never as the person who tapped.
+ */
+async function actingEmail() {
+  const email = String((await D.actor()) || '').trim().toLowerCase();
+  if (!email) throw bad('The Tenant care inbox is not connected, so saifsys cannot record the renewal. Connect it under Tenant care.', 409);
   return email;
 }
 
-const saifsys = async (action, body) => D.act('realestate_renewal', action, { email: await actingEmail(await settings()), ...body });
+const saifsys = async (action, body) => D.act('realestate_renewal', action, { email: await actingEmail(), ...body });
 
 /**
  * The story kept in saifsys too, so anyone opening the renewal there sees it: a line on its
@@ -831,7 +836,7 @@ leaseRenewalRoutes.get('/', wrap(async (req, res) => {
   res.json({
     days: DAYS_AHEAD, leases: list.sort((a, b) => a.end_date.localeCompare(b.end_date) || String(a.building).localeCompare(String(b.building))),
     settings: {
-      payee: s.payee || '', reminders: !!s.reminders, actor: s.actor_id ? await db.prepare('SELECT id, name FROM users WHERE id = ?').get(s.actor_id) : null,
+      payee: s.payee || '', reminders: !!s.reminders,
       advisors: (await advisors(s)).map((a) => a.id),
     },
     // The team the master picks advisors from: their own agents.

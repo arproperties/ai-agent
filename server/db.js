@@ -1635,7 +1635,7 @@ await db.exec(`
 // Lease renewals (server/leaseRenewals.js): a person renews a lease with its tenant by email
 // from Reem, step by step, on saifsys's own renewal workflow (workflow_id).
 //   lease_renewal_settings: one row. payee is who the cheques are made out to; actor_id is
-//     whose company email saifsys records the steps under; reminders: Reem chases a silent
+//     who last saved them (saifsys records the steps as its Tenant care user); reminders: Reem chases a silent
 //     tenant by itself. auto is for later: the steps Reem takes alone, e.g. {"rent": "dld_api"}.
 //     advisors: the master's agents (ids) who advise on each renewal.
 //   lease_renewals: one per lease and end date. lease is saifsys's row when it started;

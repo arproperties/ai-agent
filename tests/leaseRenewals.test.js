@@ -40,7 +40,6 @@ function stub({ leases = [LEASE], replies = [], docs = [], files = {} } = {}) {
       if (action === 'convert') return { renewal: { workflow_id: 117, new_lease_id: 525, activate_now: false } };
       return { renewal: { workflow_id: body.workflow_id } };
     },
-    actor: async () => 'boss@company.com',
     readReply: async () => world.replies.shift() ?? { intent: 'unclear', summary: '?', dispute: false },
     readDocs: async () => world.docs.shift(),
     indexRent: async () => null,
@@ -109,7 +108,7 @@ test('Send: saifsys makes its renewal, the offer goes with its letter, and the t
   const r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000, text: 'Dear Mohamed,\n\nOur offer, as we discussed.' });
   assert.deepEqual([r.status, r.offer, r.workflow_id, r.rent_source.kind], ['offer_sent', 45000, 117, 'manual']);
   assert.deepEqual(world.acts.map((a) => a.action), ['quote', 'start']);
-  assert.equal(world.acts[1].email, 'boss@company.com');
+  assert.equal(world.acts[1].email, 'care@company.com');
   assert.match(lastMail(), /Subject: Lease renewal: PARK PLACE, Unit 610/);
   assert.match(lastMail(), /Our offer, as we discussed/, 'the words the person approved, not the draft');
   assert.match(lastMail(), /application\/pdf/);
@@ -204,7 +203,7 @@ test('negotiation: a counter, a dispute, the RERA index rent, agreement, papers,
   await R.mark(boss, r.id, 'papers_ok');
   r = await R.send(boss, { id: r.id, action: 'convert' });
   assert.equal(r.status, 'converted');
-  assert.deepEqual(world.acts.at(-1), { action: 'convert', email: 'boss@company.com', workflow_id: 117, expected_total: 37800 });
+  assert.deepEqual(world.acts.at(-1), { action: 'convert', email: 'care@company.com', workflow_id: 117, expected_total: 37800 });
   assert.match(lastMail(), /Your renewal of PARK PLACE, Unit 610 is complete/);
   assert.deepEqual(world.todos.map((t) => [t.userId, t.text]), [[boss.id, 'Collect the original cheques and register the Ejari for PARK PLACE 610']]);
   assert.deepEqual(await timeline(r.id), [
@@ -411,4 +410,31 @@ test('the RDC case pack: a PDF of the story and its papers, without the advisors
   // A summary that cannot be written still leaves the timeline and the list of papers.
   R.useForTests({ caseSummary: async () => { throw new Error('down'); } });
   assert.match(Buffer.from(await R.casePack(await R.getRenewal(r.id))).toString('latin1'), /^%PDF-/);
+});
+
+test('saifsys records every step as its Tenant care user, never as the person who tapped', async () => {
+  const boss = await setup();
+  stub();
+  await start(boss, 42000);
+  assert.ok(world.acts.length >= 2);
+  assert.deepEqual([...new Set(world.acts.map((a) => a.email))], ['care@company.com']);
+
+  const again = await setup();
+  stub();
+  await db.prepare('DELETE FROM tenant_inbox').run();
+  await assert.rejects(R.draft(again, { action: 'start', lease_id: LEASE.lease_id, rent: 40000 }), /Tenant care inbox is not connected/);
+});
+
+test('a cheque re-sent for the same date replaces the wrong one, so the papers can complete', () => {
+  const r = { lease: { payment_method: 'cheque' }, quote: quoteOf(42000) };
+  const sched = quoteOf(42000).cheques;
+  const ok = (ch) => ({ amount: ch.amount, date: ch.date, payee: 'Saif Holding LLC', signed: true });
+  let got = R.addPapers({}, { agreement: 'signed', cheques: [ok(sched[0]), ok(sched[1]), ok(sched[2]), { ...ok(sched[3]), amount: 10000 }] });
+  let check = R.checkPapers(r, got, 'Saif Holding LLC');
+  assert.equal(check.complete, false);
+  assert.equal(check.wrong.length, 1);
+  got = R.addPapers(got, { agreement: 'none', cheques: [ok(sched[3])] });
+  check = R.checkPapers(r, got, 'Saif Holding LLC');
+  assert.deepEqual(check, { missing: [], wrong: [], complete: true });
+  assert.equal(got.cheques.length, 4);
 });
