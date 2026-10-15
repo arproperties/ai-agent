@@ -26,6 +26,7 @@ export const MODULES = [
   { key: 'translate', label: 'Live Translator', about: 'Two people, two languages, one phone.', everyone: true },
   { key: 'meetings', label: 'Meetings', about: 'Record a meeting and get who said what, with a summary.', everyone: true },
   { key: 'transcribe', label: 'Transcribe', about: 'Turn a recording or an audio file into text.', everyone: true },
+  { key: 'renewals', label: 'Lease renewals', about: 'See the leases ending in the next 120 days, live from saifsys, with a link to the DLD Rental Index.' },
   { key: 'notices', label: 'Tenant notices', about: 'Report something at a unit in a chat with Reem, with a photo. Reem writes the notice; it is emailed to the tenant when they tap Send.' },
   { key: 'duties', label: 'My responsibilities', about: 'See what they look after, as you have written it.', everyone: true },
   { key: 'checklists', label: 'Checklists', about: 'The points of a job, ticked each time it is done.', everyone: true },

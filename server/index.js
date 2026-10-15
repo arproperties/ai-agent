@@ -44,6 +44,7 @@ import { mailRoutingRoutes, startMailRouting } from './mailRouting.js';
 import { moduleRoutes, needsModule, needsModuleUnless, userModules, giveToEveryoneOnce } from './modules.js';
 import { noticeRoutes } from './notices.js';
 import { pictureRoutes } from './pictures.js';
+import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -82,6 +83,7 @@ app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks 
 app.use('/api/mail-routing', requireMaster, mailRoutingRoutes); // the shared mailbox: who each email is passed on to, and who sent what (master only)
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
+app.use('/api/lease-renewals', leaseRenewalRoutes); // leases ending within 120 days, renewed with the tenant by email step by step (module renewals)
 app.use('/api/pictures', pictureRoutes); // the pictures a chat drew for /explain, /breakdown and /explore
 app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
@@ -408,6 +410,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // unchanged and keep working on their own if this timer ever stops.
   startReminders();
   startTenantCare(); // does nothing until the Tenant care inbox is connected
+  startLeaseRenewals(); // reads tenants' replies to renewals and sends the reminders
   startMailRouting(); // does nothing until the shared mailbox is connected
   startBuildings(); // buzzes a building's administrator when a staff job needs them
   startRecurringPayments(); // creates each recurring payment's line on its day of the month
