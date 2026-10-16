@@ -122,7 +122,7 @@ const TAGS = [
 const HOUSING = [['LEGACY', 'Legacy']];
 const housingOf = (tags) => HOUSING.find(([tag]) => tags.some((t) => t.length >= 4 && tag.startsWith(t)))?.[1] ?? null;
 
-const ORDINAL =/\(\s*(primary|first|second|third|fourth|fifth)\s*\)/gi; // BRET (THIRD) NAZWORTH: one person on several accounts
+const ORDINAL = /\(\s*(primary|first|second|third|fourth|fifth)\s*\)/gi; // BRET (THIRD) NAZWORTH: one person on several accounts
 const SUFFIX = new Set(['JR', 'SR', 'II', 'III', 'IV']);
 
 const squash = (s) => s.replace(/\s+/g, ' ').trim();
@@ -174,25 +174,20 @@ export function cleanRow(r) {
   const own = words(name);
   const others = [];
   let mine = false;
-  let first = null;
   let stillCut = t.cut;
   for (const part of String(r.contacts || '').split(',')) {
     const u = untag(squash(part));
     const c = u.name;
     if (!c) continue;
     const cw = words(c);
-    first ??= c;
     if (finishes(own, cw) || cutShort(raw, own, cw)) {
       mine = true;
       if (c.length > name.length) { name = c; stillCut = u.cut; }
     } else if (finishes(cw, own)) mine = true;
     else others.push(tidy(c));
   }
-  // The two columns name the same first name with another surname, or the reverse: one of them is wrong.
-  if (!mine && first) {
-    const fw = words(first);
-    if ((fw[0] === own[0]) !== (fw.at(-1) === own.at(-1))) reasons.push(`Contacts says "${tidy(first)}"`);
-  }
+  // The Tenant column is the account holder; a different name in Contacts (JOHN CAIN / jodi cain) is a
+  // second person or a slip there, kept in the notes as "Also on the account", never a reason to stop.
   const company = !!r.company;
   // An employee's or Airbnb's account, or a tag with no name left, is not a person: ARTURO EMP, FF, AIRBNB 1.
   // One name and other tags (GUSTAVO FF ABP/75) is a person whose surname is missing: looked at, not skipped.

@@ -28,7 +28,7 @@ test('a name cut off in the list is finished from Contacts, even where the last 
   assert.equal(cleanRow(row('ANGELIQUE WAHLBE...', 'ANGELIQUE WAHLBERG, J...')).name, 'ANGELIQUE WAHLBERG');
   assert.equal(cleanRow(row('ANDREW M2M BEESI', 'ANDREW BEESLEY')).name, 'ANDREW BEESLEY', 'the column is full, so BEESI is BEESL cut off');
   assert.equal(one(row('ANDREW M2M BEESI', 'ANDREW BEESLEY')).status, 'new');
-  assert.equal(one(row('JAMES HENDRIX', 'JAMES HENDRICKS')).status, 'check', 'a short name was not cut off, so a different spelling is a question');
+  assert.equal(one(row('JAMES HENDRIX', 'JAMES HENDRICKS')).name, 'JAMES HENDRIX', 'the Tenant column wins over Contacts');
   assert.equal(one(row('Hannah Jurek', 'Cody Sammy Jurek, Hannah...')).status, 'new', 'she is the second contact');
   const co = one(row('DIRECTIONAL SERVI...', 'DIRECTIONAL SERVICE SO...', '5172', { company: true }));
   assert.deepEqual([co.name, co.status], ['DIRECTIONAL SERVICE SO', 'check'], 'both columns cut off');
@@ -50,15 +50,17 @@ test('rows that are not a person are skipped, unclear ones are checked', () => {
   for (const n of ['AIRBNB 1', 'AIRBNB NIGHTLY', 'FF', 'ARTURO EMP', 'FRANK EMPLOYEE', 'NOAH AIRBNB', 'JEREMY - MAINTAINCE']) {
     assert.equal(one(row(n, n)).status, 'skip', n);
   }
-  assert.equal(one(row('Latricia West', 'Latricia Gail')).status, 'check', 'the two columns disagree');
-  assert.equal(one(row('JAMES HENDRIX', 'JAMES HENDRICKS')).status, 'check');
+  const cain = one(row('JOHN CAIN', 'jodi cain'));
+  assert.deepEqual([cain.status, cain.name], ['new', 'JOHN CAIN'], 'the Tenant column is the account holder; Contacts is secondary');
+  assert.match(cain.notes, /Also on the account: jodi cain/);
+  assert.equal(one(row('JAMES HENDRIX', 'JAMES HENDRICKS')).status, 'new');
   assert.equal(one(row('Lennord *SEE NOTE*', 'Nathan Randal')).status, 'check');
   assert.equal(one(row('Alexis Boyett - Balance', 'Alexis Boyett - Balance')).status, 'check');
   assert.equal(one(row('BRANDON KORENEK', '', '7023', { cut: true })).status, 'check', 'the reader saw it cut off');
   const ok = one(row('CHRIS ROBSON', 'CHRIS ROBSON', '4033'));
   assert.deepEqual([ok.status, ok.pick, ok.name, ok.accounts], ['new', true, 'CHRIS ROBSON', ['4033']]);
   assert.equal(one(row('Seth Wells')).pick, true);
-  assert.equal(one(row('Latricia West', 'Latricia Gail')).pick, false, 'only clear new rows start ticked');
+  assert.equal(one(row('Lennord *SEE NOTE*', 'Nathan Randal')).pick, false, 'only clear new rows start ticked');
 });
 
 test('the same person on several accounts is one tenant; companies are companies', () => {
