@@ -27,7 +27,7 @@ async function tower() {
 
 test('one payment can cover several months: it goes against what is owed, oldest first', async () => {
   const { staff, bk } = await tower();
-  await assert.rejects(payBooking(bk.id, { amount: 20000, method: 'cash' }, staff, AT), /Only AED 14,000 is still owed on this lease/);
+  await assert.rejects(payBooking(bk.id, { amount: 20000, method: 'cash' }, staff, AT), /Only USD 14,000 is still owed on this lease/);
   await assert.rejects(payBooking(bk.id, { amount: 0, method: 'cash' }, staff, AT), /Enter the amount received/);
 
   const made = await payBooking(bk.id, { amount: 12000, method: 'transfer', received_on: '2026-10-08', reference: 'TT-7' }, staff, AT);
@@ -72,7 +72,7 @@ test('a deposit given back is in the collections, the daily report and the tenan
   const paid = await recordPayment(deposit.id, { amount: 5000, method: 'cash', received_on: '2026-09-15' }, staff, AT);
   await settleDeposit(bk.id, { refunded: 4000, note: 'Repainting' }, staff, AT);
   // The payment that brought the deposit in cannot be deleted from under what was given back.
-  await assert.rejects(removePayment(paid.id, staff), /AED 4,000 of this deposit has already been given back/);
+  await assert.rejects(removePayment(paid.id, staff), /USD 4,000 of this deposit has already been given back/);
   assert.equal((await depositState(bk.id)).held, 5000);
 
   const got = await report('collections', { from: '2026-09-01', to: AT }, AT);
@@ -83,7 +83,7 @@ test('a deposit given back is in the collections, the daily report and the tenan
   const day = await report('daily', {}, AT);
   assert.deepEqual(day.rows.filter((r) => r.what === 'Deposit returned').map((r) => [r.tenant, r.detail, r.amount]), [['Sara', 'Repainting', -4000]]);
   const st = await report('statement', { tenant_id: bk.tenant_id }, AT);
-  assert.ok(st.rows.some((r) => r.description === 'Security deposit returned · AED 4,000 · Repainting · Unit 101, Tower' && r.balance === 4500), 'a line of its own that changes no balance');
+  assert.ok(st.rows.some((r) => r.description === 'Security deposit returned · USD 4,000 · Repainting · Unit 101, Tower' && r.balance === 4500), 'a line of its own that changes no balance');
 });
 
 test('the people who look after a building get its alerts, and the tenant can be emailed automatically', async () => {
@@ -109,7 +109,7 @@ test('the people who look after a building get its alerts, and the tenant can be
   assert.equal(mails.length, 1, 'three days late is a day to chase, and it goes once');
   assert.equal(mails[0][0], 'sara@example.com');
   assert.match(mails[0][1], /^Overdue: rent for unit 101, Tower/);
-  assert.match(mails[0][2], /^Dear Sara, rent of AED 4,500 .* is now 3 days late/);
+  assert.match(mails[0][2], /^Dear Sara, rent of USD 4,500 .* is now 3 days late/);
   await runAlerts('2026-09-19', 9, { mail });
   assert.equal(mails.length, 1, 'four days late is not one of the days');
   assert.equal((await bookingHistory(bk.id))[0].detail, 'Emailed to the tenant automatically');
@@ -130,7 +130,7 @@ test('the people who look after a building get its alerts, and the tenant can be
   await runAlerts('2026-10-12', 10, { mail });
   assert.equal(mails.length, 3);
   assert.match(mails[2][1], /^Reminder: rent for unit 101, Tower/);
-  assert.match(mails[2][2], /^Dear Sara, a kind reminder that rent of AED 4,500 .* is due on /);
+  assert.match(mails[2][2], /^Dear Sara, a kind reminder that rent of USD 4,500 .* is due on /);
 
   // Two bookings of one tenant are one tenant behind.
   const u2 = await create('unit', { unit_no: '102' }, b.id);
@@ -157,7 +157,7 @@ test('a stay is extended, or cut short when it was booked for too long, with pay
   const one = await changeEnd(bk.id, '2026-10-14', staff);
   assert.equal(one.overpaid, 4500);
   assert.deepEqual((await bookingPayments(bk.id, AT)).filter((r) => r.kind === 'rent').map((r) => [r.due_date, r.amount, r.left]), [['2026-09-15', 4500, 0], ['2026-10-15', 4500, 0]]);
-  assert.match((await bookingHistory(bk.id))[0].detail, /^Stay ended early: end date 2026-12-14 to 2026-10-14 · AED 4,500 of rent was paid for time taken off$/);
+  assert.match((await bookingHistory(bk.id))[0].detail, /^Stay ended early: end date 2026-12-14 to 2026-10-14 · USD 4,500 of rent was paid for time taken off$/);
 
   // Longer again needs the unit free for the extra days.
   const u1 = (await getBooking(bk.id)).unit_id;

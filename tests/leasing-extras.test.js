@@ -22,7 +22,7 @@ async function tower() {
   return { staff, c, b, u1 };
 }
 const sara = (unit_id, extra = {}) => ({ unit_id, start_date: '2026-09-15', end_date: '2026-11-14', rent_amount: 4500, status: 'confirmed',
-  tenant: { full_name: 'Sara', phone: '050 123 4567', email: 'sara@example.com' }, ...extra });
+  tenant: { full_name: 'Sara', phone: '(409) 555-0123', email: 'sara@example.com' }, ...extra });
 
 test('deposit and other charges are on the schedule; the deposit is settled at check-out', async () => {
   const { staff, u1 } = await tower();
@@ -41,7 +41,7 @@ test('deposit and other charges are on the schedule; the deposit is settled at c
   await recordPayment(rows[0].id, { amount: 5000, method: 'cash', received_on: '2026-09-15' }, staff, AT);
   assert.deepEqual(await depositState(bk.id), { amount: 5000, held: 5000, refunded: null, note: null, settled_on: null, status: 'held' });
   await assert.rejects(settleDeposit(bk.id, { refunded: 4000 }, staff, AT), /Say what was deducted/);
-  await assert.rejects(settleDeposit(bk.id, { refunded: 6000, note: 'x' }, staff, AT), /between 0 and AED 5,000/);
+  await assert.rejects(settleDeposit(bk.id, { refunded: 6000, note: 'x' }, staff, AT), /between 0 and USD 5,000/);
   const d = await settleDeposit(bk.id, { refunded: 4000, note: 'Repainting' }, staff, AT);
   assert.deepEqual([d.status, d.refunded, d.note, d.settled_on], ['partly_refunded', 4000, 'Repainting', AT]);
 
@@ -66,8 +66,8 @@ test('at a renewal the deposit is passed on to the new booking, which gives it b
   assert.deepEqual([was.status, was.held, was.passed_to], ['passed_on', 5000, { id: b.id, ref: b.ref, on: AT }]);
   const now = await depositState(b.id);
   assert.deepEqual([now.status, now.held, now.from, now.waiting], ['held', 5000, [{ id: a.id, ref: a.ref, on: AT, amount: 5000 }], undefined]);
-  assert.equal((await bookingHistory(a.id))[0].detail, `AED 5,000 passed on to ${b.ref}`);
-  assert.equal((await bookingHistory(b.id))[0].detail, `AED 5,000 carried over from ${a.ref}`);
+  assert.equal((await bookingHistory(a.id))[0].detail, `USD 5,000 passed on to ${b.ref}`);
+  assert.equal((await bookingHistory(b.id))[0].detail, `USD 5,000 carried over from ${a.ref}`);
   assert.deepEqual((await bookingPayments(a.id, AT)).map((r) => [r.name, r.paid, r.status]).slice(0, 1), [['Security deposit', 5000, 'paid']], 'no money moved: the payment stays where it was received');
   await assert.rejects(passDeposit(a.id, staff, AT), /already passed on/);
   await assert.rejects(settleDeposit(a.id, { refunded: 5000 }, staff, AT), new RegExp(`passed on to ${b.ref}. Give it back from that lease`));
@@ -79,7 +79,7 @@ test('at a renewal the deposit is passed on to the new booking, which gives it b
   const end = await settleDeposit(b.id, { refunded: 4000, note: 'Repainting' }, staff, AT);
   assert.deepEqual([end.status, end.held, end.refunded], ['partly_refunded', 5000, 4000]);
   await assert.rejects(takeBackDeposit(a.id, staff), new RegExp(`already been given back from ${b.ref}`));
-  await assert.rejects(removePayment(paid.id, staff), /AED 4,000 of this deposit has already been given back/);
+  await assert.rejects(removePayment(paid.id, staff), /USD 4,000 of this deposit has already been given back/);
   assert.equal((await depositState(a.id)).status, 'passed_on', 'the first booking still says where its deposit went');
 });
 
@@ -187,14 +187,14 @@ test('renewal, history, the receipt and the reminder to the tenant', async () =>
   const [sep] = await bookingPayments(bk.id, AT);
 
   const r = await tenantReminder(sep.id, AT);
-  assert.match(r.message, /^Dear Sara, rent of AED 4,500 for unit 101, Tower was due on 09\/15\/2026 and is now 25 days late\./);
-  assert.ok(r.whatsapp.startsWith('https://wa.me/971501234567?text=Dear%20Sara'));
+  assert.match(r.message, /^Dear Sara, rent of USD 4,500 for unit 101, Tower was due on 09\/15\/2026 and is now 25 days late\./);
+  assert.ok(r.whatsapp.startsWith('https://wa.me/14095550123?text=Dear%20Sara'));
   assert.ok(r.mailto.startsWith('mailto:sara@example.com?subject=Overdue'));
   await saveWording({ overdue: 'Hello {tenant}, {amount} is late for {unit}. {nonsense}' });
-  assert.equal((await tenantReminder(sep.id, AT)).message, 'Hello Sara, AED 4,500 is late for 101. {nonsense}');
+  assert.equal((await tenantReminder(sep.id, AT)).message, 'Hello Sara, USD 4,500 is late for 101. {nonsense}');
   await assert.rejects(saveWording({ due: 'short' }), /between 20 and 1,000/);
-  assert.deepEqual([whatsappNumber('+971 50 123 4567'), whatsappNumber('00971501234567'), whatsappNumber('501234567'), whatsappNumber('12')],
-    ['971501234567', '971501234567', '971501234567', null]);
+  assert.deepEqual([whatsappNumber('+971 50 123 4567'), whatsappNumber('00971501234567'), whatsappNumber('409 555 0123'), whatsappNumber('12')],
+    ['971501234567', '971501234567', '14095550123', null]);
   await noteReminder(sep.id, 'whatsapp', staff);
 
   const pay = await recordPayment(sep.id, { amount: 4000.5, method: 'transfer', received_on: '2026-10-05', reference: 'TT-9' }, staff, AT);
@@ -210,7 +210,7 @@ test('renewal, history, the receipt and the reminder to the tenant', async () =>
     assert.equal(pdf.bytes.subarray(0, 5).toString(), '%PDF-', 'a name the PDF font cannot write does not stop the receipt');
   }
   assert.deepEqual([inWords(4000.5), inWords(15000), inWords(1234567), inWords(0)],
-    ['Four Thousand Dirhams and 50 Fils Only', 'Fifteen Thousand Dirhams Only', 'One Million Two Hundred Thirty-Four Thousand Five Hundred Sixty-Seven Dirhams Only', 'Zero Dirhams Only']);
+    ['Four Thousand Dollars and 50 Cents Only', 'Fifteen Thousand Dollars Only', 'One Million Two Hundred Thirty-Four Thousand Five Hundred Sixty-Seven Dollars Only', 'Zero Dollars Only']);
 
   // The slip: attached when the payment is recorded or afterwards, replaced, and gone with the payment.
   const slip1 = { buffer: Buffer.from('one'), originalname: 'transfer.pdf', mimetype: 'application/pdf' };
@@ -271,7 +271,7 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   assert.match(await says('leasing_add_building', { company: 'ace', name: 'Marina Tower', area: 'Marina' }), /^Building added: Marina Tower, under ACE Properties/);
   assert.match(await says('leasing_add_units', { building: 'marina', units: [{ unit_no: '101', type: '1BR' }, { unit_no: '102' }, { unit_no: '101' }] }),
     /^2 units added to Marina Tower: 101, 102\.\nNot added: 101: That unit number already exists/);
-  assert.match(await says('leasing_add_service', { building: 'Marina Tower', name: 'Parking', amount: 300, repeats: true }), /Parking, AED 300, charged with every rent payment/);
+  assert.match(await says('leasing_add_service', { building: 'Marina Tower', name: 'Parking', amount: 300, repeats: true }), /Parking, USD 300, charged with every rent payment/);
   assert.equal(await says('leasing_add_tenant', { full_name: 'Sara Khan', phone: '0501234567' }), 'Tenant added: Sara Khan · 050-123-4567.');
   const twice = await ask('leasing_add_tenant', { full_name: 'sara khan' });
   assert.deepEqual([twice.is_error, /already a tenant named Sara Khan \(050-123-4567\)/.test(twice.content)], [true, true]);
@@ -280,30 +280,30 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   const booking = { building: 'Marina', unit_no: '101', tenant: 'Sara', start_date: '2026-11-01', end_date: '2027-10-31', rent_amount: 60000, rent_period: 'year',
     security_deposit: 5000, tax_percent: 0, charges: [{ name: 'Parking', amount: 300, repeats: true }, { name: 'Pet fee', amount: 800 }] };
   const draft = await says('leasing_add_booking', booking);
-  assert.match(draft, /^Lease LS-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, AED 60,000 per year, paid monthly, no VAT\.\nAdded to Marina Tower's services: Pet fee\.\nStill to do: the move-in inspection, after which the lease is confirmed; and, on the screens, attach the tenant's Driver License and Proof of Employment .*$/);
-  assert.match(await says('leasing_list', { what: 'services', building: 'Marina' }), /- Parking: AED 300, with every rent payment\n- Pet fee: AED 800, once/);
+  assert.match(draft, /^Lease LS-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, USD 60,000 per year, paid monthly, no Sales tax\.\nAdded to Marina Tower's services: Pet fee\.\nStill to do: the move-in inspection, after which the lease is confirmed; and, on the screens, attach the tenant's Driver License and Proof of Employment .*$/);
+  assert.match(await says('leasing_list', { what: 'services', building: 'Marina' }), /- Parking: USD 300, with every rent payment\n- Pet fee: USD 800, once/);
   // Asked for again, the same stay is not made twice: the draft is changed, and keeps the charges it had.
   const again = await ask('leasing_add_booking', { ...booking, charges: [{ name: 'Laundry', amount: 20, repeats: true }] });
   assert.deepEqual([again.is_error, /already a draft for this tenant and unit: LS-2026-0001 .*leasing_change_booking/.test(again.content)], [true, true]);
   assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0001', set_charges: [{ name: 'Laundry', amount: 20, repeats: true }] }),
-    /^Lease changed, still a DRAFT .*charges: Parking AED 300 with every rent payment, Pet fee AED 800 once, Laundry AED 20 with every rent payment\.\nAdded to Marina Tower's services: Laundry\.$/);
-  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0001', remove_charges: ['laundry'] }), /charges: Parking AED 300 with every rent payment, Pet fee AED 800 once\.$/);
+    /^Lease changed, still a DRAFT .*charges: Parking USD 300 with every rent payment, Pet fee USD 800 once, Laundry USD 20 with every rent payment\.\nAdded to Marina Tower's services: Laundry\.$/);
+  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0001', remove_charges: ['laundry'] }), /charges: Parking USD 300 with every rent payment, Pet fee USD 800 once\.$/);
   assert.match(await says('leasing_list', { what: 'bookings', search: 'sara' }), /^- LS-2026-0001 \(draft, move-in inspection not done\): Sara Khan, unit 101, Marina Tower/);
   // As on the screens, it is not confirmed before the tenant is inspected in: she writes that down as she is told it.
   const tooSoon = await ask('leasing_confirm_booking', { booking: 'LS-2026-0001' });
   assert.deepEqual([tooSoon.is_error, /^Do the move-in inspection first, then confirm the lease\. Ask the user how they found the unit and write it down with leasing_record_inspection/.test(tooSoon.content)], [true, true]);
   assert.match(await says('leasing_record_inspection', { building: 'Marina', unit_no: '101', kind: 'move_in', everything_else: 'good' }), /^Move-in inspection of unit 101, Marina Tower for LS-2026-0001 \(Sara Khan\), dated .*: finished\./);
   assert.match(await says('leasing_list', { what: 'bookings', search: 'sara' }), /^- LS-2026-0001 \(draft, move-in inspection done\)/);
-  assert.match(await says('leasing_confirm_booking', { booking: 'LS-2026-0001' }), /is confirmed: Sara Khan, unit 101.*\nPayment schedule: 26 payments, AED 69,400 in all; AED 11,100 is due on the first day\./s);
+  assert.match(await says('leasing_confirm_booking', { booking: 'LS-2026-0001' }), /is confirmed: Sara Khan, unit 101.*\nPayment schedule: 26 payments, USD 69,400 in all; USD 11,100 is due on the first day\./s);
   assert.match((await ask('leasing_add_booking', { ...booking, unit_no: '999' })).content, /has no unit "999"/);
   assert.equal(changed, 10, 'each thing added is told to the screen behind; what failed is not');
 
-  // Like the form, a new booking starts with the region's usual tax; where the tenant came from is kept, and a new source joins the list.
+  // Like the form, a new booking starts with the region's usual tax (none by default); where the tenant came from is kept, and a new source joins the list.
   const { tax_percent, ...untaxed } = booking;
-  assert.match(await says('leasing_add_booking', { ...untaxed, unit_no: '102', charges: [], source: 'Airbnb' }), /paid monthly, VAT 5%, source Airbnb\.\nAdded to the sources list: Airbnb\.\nStill to do: the move-in inspection/);
+  assert.match(await says('leasing_add_booking', { ...untaxed, unit_no: '102', charges: [], source: 'Airbnb' }), /paid monthly, no Sales tax, source Airbnb\.\nAdded to the sources list: Airbnb\.\nStill to do: the move-in inspection/);
   assert.equal(await says('leasing_list', { what: 'sources' }), 'Sources:\n- Airbnb');
-  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: 'airbnb', notes: 'Called' }), /VAT 5%; source: Airbnb\.$/, 'a source is taken as the list has it, and not added twice');
-  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: '' }), /VAT 5%\.$/);
+  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: 'airbnb', notes: 'Called' }), /charges: none; source: Airbnb\.$/, 'a source is taken as the list has it, and not added twice');
+  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: '' }), /charges: none\.$/);
 
   // Somebody who is not the master can book and add a tenant, not add property.
   const staff = leasingKit({ id: staffId, role: 'user' });
@@ -368,12 +368,12 @@ test('Riley follows a unit round its inspections: what is next, who still has it
 
 test('currency, time zone and phone code follow the region the master sets', async () => {
   const { staff, u1 } = await tower();
-  const noon = new Date('2026-10-10T01:30:00Z'); // 05:30 on the 10th in Dubai, 21:30 on the 9th in New York
-  assert.deepEqual([region().currency, todayHere(noon), hourHere(noon), cash(4500), whatsappNumber('050 123 4567')], ['AED', '2026-10-10', 5, 'AED 4,500', '971501234567']);
+  const noon = new Date('2026-10-10T01:30:00Z'); // 20:30 on the 9th in Chicago, 21:30 on the 9th in New York
+  assert.deepEqual([region().currency, todayHere(noon), hourHere(noon), cash(4500), whatsappNumber('(409) 555-0123')], ['USD', '2026-10-09', 20, 'USD 4,500', '14095550123']);
   try {
     await assert.rejects(saveRegion({ timezone: 'Mars/Olympus' }), /time zone is not known/);
     await assert.rejects(saveRegion({ currency: 'dollars' }), /three-letter code/);
-    assert.deepEqual(await saveRegion({ currency: 'usd', timezone: 'America/New_York', phone_code: '+1' }), { currency: 'USD', timezone: 'America/New_York', phone_code: '1', tax_percent: 5, tax_name: 'VAT' });
+    assert.deepEqual(await saveRegion({ currency: 'usd', timezone: 'America/New_York', phone_code: '+1' }), { currency: 'USD', timezone: 'America/New_York', phone_code: '1', tax_percent: 0, tax_name: 'Sales tax' });
     assert.deepEqual([todayHere(noon), hourHere(noon), cash(4500.5), cash(4500, { exact: true })], ['2026-10-09', 21, 'USD 4,500.50', 'USD 4,500.00']);
     assert.deepEqual([whatsappNumber('(415) 555-1234'), whatsappNumber('+971 50 123 4567'), inWords(4000.5)], ['14155551234', '971501234567', 'Four Thousand Dollars and 50 Cents Only']);
 
@@ -384,6 +384,6 @@ test('currency, time zone and phone code follow the region the master sets', asy
     const kit = await leasingKit().run({ id: 't', name: 'leasing_report', input: { report: 'rent_roll' } });
     assert.match(kit.content, /amounts in USD\)/);
   } finally {
-    await saveRegion({ currency: 'AED', timezone: 'Asia/Dubai', phone_code: '971' }); // the setting is kept in memory: put it back for the tests that follow
+    await saveRegion({ currency: 'USD', timezone: 'America/Chicago', phone_code: '1', tax_percent: 0, tax_name: 'Sales tax' }); // the setting is kept in memory: put it back for the tests that follow
   }
 });

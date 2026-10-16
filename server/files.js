@@ -147,7 +147,7 @@ Judge the file by its type and purpose, not by words that merely appear in it (a
     system: `You file documents for a UAE-based user. Reply with ONLY JSON:
 {"title": "<clear human title, max 8 words, e.g. \\"Tenancy contract – Marina Heights 1402\\">",
  "folder": "<exactly one of: ${FOLDERS.join(' | ')}>",
- "summary": "<1-2 sentences with the key facts: parties, amounts (AED), dates, deadlines>",
+ "summary": "<1-2 sentences with the key facts: parties, amounts (in the document's own currency), dates, deadlines>",
  "tags": ["<up to 5 short lowercase tags>"],
  "company": "<${COMPANY_RULE}>",
  "date": "<the document's own date as YYYY-MM-DD, or null>",

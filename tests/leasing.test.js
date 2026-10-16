@@ -169,7 +169,7 @@ test('overview: occupancy, rent due and collected, overdue and leases ending com
   const [sep, oct] = await bookingPayments(bk.id, at);
   assert.deepEqual([sep.due_date, sep.status, oct.due_date, oct.status], ['2026-09-15', 'overdue', '2026-10-15', 'upcoming']);
   await recordPayment(sep.id, { amount: 2000, method: 'transfer', received_on: '2026-10-05', reference: 'TT-1' }, null, at);
-  await assert.rejects(recordPayment(sep.id, { amount: 2600, method: 'cash' }, null, at), /Only AED 2,500 is still owed/);
+  await assert.rejects(recordPayment(sep.id, { amount: 2600, method: 'cash' }, null, at), /Only USD 2,500 is still owed/);
   await assert.rejects(recordPayment(sep.id, { amount: 100, method: 'cheque' }, null, at), /bank transfer, cash or card/);
   await assert.rejects(recordPayment(sep.id, { amount: 100, method: 'cash', received_on: '2026-10-11' }, null, at), /in the future/);
   o = await overview({ months: 3 }, at);

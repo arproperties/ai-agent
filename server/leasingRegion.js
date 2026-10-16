@@ -3,7 +3,7 @@ import { db } from './db.js';
 import { requireMaster } from './auth.js';
 
 // Where the business is: its currency, its time zone, its phone country code and its tax. It began
-// in the UAE, which is still the default; the master changes it here and everything in
+// in the UAE, which is still the default apart from the currency, now US dollars; the master changes it here and everything in
 // properties and leasing follows — what "today" is, when the quiet hours fall, the currency
 // on screens, receipts and reminders, how a local phone number is dialled for WhatsApp, and
 // the tax a new booking starts with (each booking can still have another rate, or none).
@@ -11,7 +11,7 @@ import { requireMaster } from './auth.js';
 // It is one setting for the whole app (lease_settings, key 'region'), kept in memory so
 // that "what is today's date" can be answered without a query each time.
 
-const DEFAULT = { currency: 'AED', timezone: 'Asia/Dubai', phone_code: '971', tax_percent: 5, tax_name: 'VAT' };
+const DEFAULT = { currency: 'USD', timezone: 'America/Chicago', phone_code: '1', tax_percent: 0, tax_name: 'Sales tax' };
 // What a currency's whole and hundredth are called, for the amount in words on a receipt.
 const WORDS = {
   AED: ['Dirhams', 'Fils'], USD: ['Dollars', 'Cents'], CAD: ['Dollars', 'Cents'], EUR: ['Euros', 'Cents'], GBP: ['Pounds', 'Pence'],
@@ -64,7 +64,7 @@ export const hourHere = (date = new Date()) => Number(parts(date, { hour: '2-dig
 /** The date there of a moment stored as unix seconds. */
 export const dayOf = (secs) => todayHere(new Date(Number(secs) * 1000));
 
-/** An amount as it is written: "AED 4,500", with fils or cents only when there are any ("AED 4,500.50"), or always, with `exact`. */
+/** An amount as it is written: "USD 4,500", with cents only when there are any ("USD 4,500.50"), or always, with `exact`. */
 export const cash = (n, { exact = false } = {}) => {
   const digits = exact || Math.round(Number(n) * 100) % 100 ? 2 : 0;
   return `${now.currency} ${Number(n).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;

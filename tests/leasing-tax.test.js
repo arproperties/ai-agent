@@ -89,7 +89,7 @@ test('once money is in, the discount and the tax stay; the receipt and the colle
 
   const got = await report('collections', { from: '2026-10-01', to: AT }, AT);
   assert.deepEqual([got.rows[0].amount, got.rows[0].tax], [2126.25, 101.25], 'half of the payment due is half of its tax');
-  assert.equal(got.summary.find((s) => s.label === 'VAT collected').value, 101.25);
+  assert.equal(got.summary.find((s) => s.label === 'Sales tax collected').value, 101.25);
   assert.ok(got.columns.some((c) => c.key === 'tax'));
 
   const next = await renewBooking(bk.id, staff);
@@ -107,15 +107,15 @@ test('collections without any tax say nothing about it', async () => {
 
 test('the usual tax and what it is called are part of the region', async () => {
   await reset();
-  assert.deepEqual([region().tax_percent, region().tax_name], [5, 'VAT']);
+  assert.deepEqual([region().tax_percent, region().tax_name], [0, 'Sales tax']);
   try {
     await assert.rejects(saveRegion({ tax_percent: 150 }), /from 0 to 100/);
     await assert.rejects(saveRegion({ tax_name: ' ' }), /what the tax is called/);
-    const r = await saveRegion({ tax_percent: '8.25', tax_name: 'Sales tax' });
-    assert.deepEqual([r.tax_percent, r.tax_name], [8.25, 'Sales tax']);
+    const r = await saveRegion({ tax_percent: '8.25', tax_name: 'VAT' });
+    assert.deepEqual([r.tax_percent, r.tax_name], [8.25, 'VAT']);
     assert.equal((await saveRegion({ tax_percent: '' })).tax_percent, 0, 'left empty: bookings start with no tax');
   } finally {
-    await saveRegion({ tax_percent: 5, tax_name: 'VAT' }); // the setting is kept in memory: put it back for the tests that follow
+    await saveRegion({ tax_percent: 0, tax_name: 'Sales tax' }); // the setting is kept in memory: put it back for the tests that follow
   }
 });
 
@@ -128,13 +128,13 @@ test('Riley can set a discount and the tax', async () => {
   const made = await ask('leasing_add_booking', { building: 'Tower', unit_no: '101', tenant: 'Omar', start_date: '2026-11-01', end_date: '2026-12-31', rent_amount: 4500,
     discount_percent: 10, discount_note: 'Second unit', tax_percent: 5 });
   assert.ok(!made.is_error, made.content);
-  assert.match(made.content, /AED 4,500 per month, paid monthly, discount 10% \(Second unit\), VAT 5%\./);
+  assert.match(made.content, /USD 4,500 per month, paid monthly, discount 10% \(Second unit\), Sales tax 5%\./);
   // Confirmed once the tenant is inspected in, as on the screens.
   const ref = made.content.match(/LS-\d+-\d+/)[0];
   const lease = (await listBookings())[0];
   await addInspection(lease.unit_id, { kind: 'move_in', booking_id: lease.id, items: [{ area: 'Kitchen', condition: 'good' }] }, staff);
-  assert.match((await ask('leasing_confirm_booking', { booking: ref })).content, /is confirmed.*\nPayment schedule: 2 payments, AED 8,505 in all/s);
+  assert.match((await ask('leasing_confirm_booking', { booking: ref })).content, /is confirmed.*\nPayment schedule: 2 payments, USD 8,505 in all/s);
   const changed = await ask('leasing_change_booking', { booking: ref, discount_amount: 500, tax_percent: 0 });
   assert.ok(!changed.is_error, changed.content);
-  assert.match(changed.content, /discount AED 500 \(Second unit\); VAT none\.\nPayment schedule: 2 payments, AED 8,000 in all/);
+  assert.match(changed.content, /discount USD 500 \(Second unit\); Sales tax none\.\nPayment schedule: 2 payments, USD 8,000 in all/);
 });

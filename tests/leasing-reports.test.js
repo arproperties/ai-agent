@@ -82,14 +82,14 @@ test('alerts: what is open, who is buzzed, and never twice', async () => {
   const open = await listAlerts({}, AT);
   assert.deepEqual(open.map((a) => [a.rule, a.tenant, a.level, a.fires]),
     [['overdue', 'Sara', 'bad', false], ['due', 'Omar', 'warn', true], ['contract', 'Sara', 'warn', true], ['eid', 'Omar', 'warn', false]]);
-  assert.equal(open[0].title, 'Sara owes AED 2,500');
-  assert.equal(open[1].title, 'Omar: AED 15,000 is due today');
+  assert.equal(open[0].title, 'Sara owes USD 2,500');
+  assert.equal(open[1].title, 'Omar: USD 15,000 is due today');
 
   assert.deepEqual(await runAlerts(AT, 23), [], 'nothing goes out in the quiet hours');
   const sent = await runAlerts(AT, 9);
   // Sara is 25 days late, which is not one of the rule's days, but nobody has been told yet: it goes.
-  assert.deepEqual(sent.find((n) => n.user_id === staff), { user_id: staff, title: 'Sara owes AED 2,500', body: 'Unit 101, Tower · 25 days late — and 2 more' });
-  assert.deepEqual(sent.find((n) => n.user_id === master), { user_id: master, title: 'Leasing today', body: 'Today: 1 due (AED 15,000), 1 overdue (AED 2,500)' });
+  assert.deepEqual(sent.find((n) => n.user_id === staff), { user_id: staff, title: 'Sara owes USD 2,500', body: 'Unit 101, Tower · 25 days late — and 2 more' });
+  assert.deepEqual(sent.find((n) => n.user_id === master), { user_id: master, title: 'Leasing today', body: 'Today: 1 due (USD 15,000), 1 overdue (USD 2,500)' });
   assert.deepEqual(await runAlerts(AT, 10), [], 'the same day again sends nothing');
 
   // The master changes the rules: day 25 is now a day to chase, and due-today is off.
@@ -99,10 +99,10 @@ test('alerts: what is open, who is buzzed, and never twice', async () => {
   assert.deepEqual((await listAlerts({}, AT)).map((a) => [a.rule, a.fires]), [['overdue', true], ['contract', true], ['eid', false]]);
   // The next day Omar is a day late, which is a day to chase. Sara, already told, waits for her next day.
   const next = await runAlerts('2026-10-11', 23);
-  assert.deepEqual(next.find((n) => n.user_id === staff), { user_id: staff, title: 'Omar owes AED 15,000', body: 'Unit 102, Tower · 1 day late' });
-  assert.deepEqual(next.find((n) => n.user_id === master), { user_id: master, title: 'Leasing today', body: 'Today: 0 due (AED 0), 2 overdue (AED 17,500)' });
+  assert.deepEqual(next.find((n) => n.user_id === staff), { user_id: staff, title: 'Omar owes USD 15,000', body: 'Unit 102, Tower · 1 day late' });
+  assert.deepEqual(next.find((n) => n.user_id === master), { user_id: master, title: 'Leasing today', body: 'Today: 0 due (USD 0), 2 overdue (USD 17,500)' });
   // The day after, nothing new is late: staff hear only that Sara's October rent is three days off, the master gets the morning total.
-  assert.deepEqual((await runAlerts('2026-10-12', 23)).map((n) => [n.user_id, n.title]).sort(), [[master, 'Leasing today'], [staff, 'Sara: AED 4,500 is due in 3 days']]);
+  assert.deepEqual((await runAlerts('2026-10-12', 23)).map((n) => [n.user_id, n.title]).sort(), [[master, 'Leasing today'], [staff, 'Sara: USD 4,500 is due in 3 days']]);
   await assert.rejects(saveSettings({ upcoming: { days: 99 } }), /whole number from 0 to 60/);
   await assert.rejects(saveSettings({ ending: { lease: '' } }), /between one and eight/);
 
