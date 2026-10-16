@@ -248,6 +248,16 @@ const followsOn = async (unitId, tenantId, start, exceptId = 0) => (await db.pre
     AND NOT EXISTS (SELECT 1 FROM lease_bookings r WHERE r.renewed_from = b.id AND r.status <> 'cancelled' AND r.id <> ?)
   ORDER BY b.id DESC LIMIT 1`).get(Number(unitId), Number(tenantId), iso(dayNo(start) - 1), Number(exceptId), Number(exceptId)))?.id ?? null;
 
+/**
+ * Both bookings say in their history why neither has the inspection a change of tenant would
+ * need, so it can be answered months later. Gives back what the new one's own entry says.
+ */
+async function logFollowOn(priorId, next, by) {
+  const prior = await getBooking(priorId);
+  await logEvent(prior.id, 'renewed', `${prior.tenant} stays on as ${next.ref} from ${next.start_date}: no move-out inspection, the tenant did not leave`, by);
+  return `Follows on from ${prior.ref}, ${prior.tenant}'s stay in this unit that ended ${prior.end_date}: no move-in inspection, the tenant was already in`;
+}
+
 /** Fails unless the unit can be confirmed for these dates. Call inside tx(): it locks the unit. `followsId`: the booking it follows on from, which does not hold the unit against it. */
 async function mustBeFree(unitId, start, end, exceptId, followsId) {
   const unit = await db.prepare('SELECT id, blocked FROM prop_units WHERE id = ? FOR UPDATE').get(Number(unitId));
@@ -302,7 +312,8 @@ async function makeBooking(body = {}, by, extra = {}, made_as = null) {
   const made = await getBooking(id);
   if (confirm) await writeSchedule(made);
   await learnPrices(made.fees, made.building_id);
-  await logEvent(id, 'created', made_as || (confirm ? 'Confirmed straight away' : 'Saved as a draft'), by);
+  const how = made_as || (confirm ? 'Confirmed straight away' : 'Saved as a draft');
+  await logEvent(id, 'created', follows ? `${how} · ${await logFollowOn(follows, made, by)}` : how, by);
   return made;
 }
 
@@ -337,8 +348,9 @@ export async function updateBooking(id, body = {}, by) {
     if (now.status === 'confirmed') await writeSchedule(now);
     if ('fees' in row) await learnPrices(now.fees, now.building_id);
     const same = (c) => (c === 'fees' ? row.fees === JSON.stringify(old.fees) : String(row[c] ?? '') === String(old[c] ?? '') || (row[c] != null && Number(row[c]) === Number(old[c])));
-    const changed = cols.filter((c) => !same(c)).map((c) => c.replace(/_id$/, '').replace(/_/g, ' '));
+    const changed = cols.filter((c) => c !== 'renewed_from' && !same(c)).map((c) => c.replace(/_id$/, '').replace(/_/g, ' '));
     if (changed.length) await logEvent(old.id, 'changed', changed.join(', '), by);
+    if (row.renewed_from) await logEvent(old.id, 'changed', await logFollowOn(row.renewed_from, now, by), by);
     return now;
   });
 }
@@ -369,14 +381,16 @@ export async function changeEnd(id, endDate, by) {
     }
     await db.prepare('UPDATE lease_bookings SET end_date = ? WHERE id = ?').run(end, old.id);
     // The tenant's own next lease of the unit, made before this stay was ended, starts the day after now: it follows on from it.
+    let follower = null;
     if (!(await db.prepare("SELECT 1 FROM lease_bookings WHERE renewed_from = ? AND status <> 'cancelled'").get(old.id))) {
-      await db.prepare(`UPDATE lease_bookings SET renewed_from = ? WHERE id = (SELECT id FROM lease_bookings WHERE unit_id = ? AND tenant_id = ? AND start_date = ?
-        AND status <> 'cancelled' AND renewed_from IS NULL AND import_batch IS NULL ORDER BY id DESC LIMIT 1)`).run(old.id, old.unit_id, old.tenant_id, iso(dayNo(end) + 1));
+      follower = (await db.prepare(`UPDATE lease_bookings SET renewed_from = ? WHERE id = (SELECT id FROM lease_bookings WHERE unit_id = ? AND tenant_id = ? AND start_date = ?
+        AND status <> 'cancelled' AND renewed_from IS NULL AND import_batch IS NULL ORDER BY id DESC LIMIT 1) RETURNING id`).run(old.id, old.unit_id, old.tenant_id, iso(dayNo(end) + 1))).id;
     }
     const now = await getBooking(id);
     await writeSchedule(now);
     const overpaid = money(Math.max(0, paidRent - total(schedule(now))));
     await logEvent(old.id, 'changed', `${end > old.end_date ? 'Stay extended' : 'Stay ended early'}: end date ${old.end_date} to ${end}${overpaid > 0 ? ` · ${cash(overpaid)} of rent was paid for time taken off` : ''}`, by);
+    if (follower) await logEvent(follower, 'changed', await logFollowOn(old.id, await getBooking(follower), by), by);
     return { ...now, overpaid };
   });
 }

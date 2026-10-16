@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { reset, closeDb, makeUser } from './helpers/db.js';
 import { create, remove, listUnits } from '../server/properties.js';
-import { createBooking, getBooking, renewBooking, changeEnd, updateBooking } from '../server/leasing.js';
+import { createBooking, getBooking, renewBooking, changeEnd, updateBooking, bookingHistory } from '../server/leasing.js';
 import { addInspection, updateInspection, removeInspection, unitInspections, addInspectionPhotos, getInspectionPhoto, removeInspectionPhoto, confirmInspected } from '../server/inspections.js';
 
 test.after(() => closeDb());
@@ -68,6 +68,9 @@ test('a lease made for the same tenant and unit the day after their stay ends fo
   assert.deepEqual([on.status, on.renewed_from], ['confirmed', stay.id]);
   assert.deepEqual((await unitInspections(u1.id, on.id, '2026-11-16')).next, { kind: 'move_out', late: false });
   await assert.rejects(renewBooking(stay.id, staff), /already has a renewal/);
+  // Months later, both histories say why neither has the inspection.
+  assert.match((await bookingHistory(on.id))[0].detail, new RegExp(`^Confirmed straight away · Follows on from ${stay.ref}, Sara's stay in this unit that ended 2026-11-15: no move-in inspection, the tenant was already in$`));
+  assert.equal((await bookingHistory(stay.id))[0].detail, `Sara stays on as ${on.ref} from 2026-11-16: no move-out inspection, the tenant did not leave`);
 });
 
 test('the link is made too when the stay is ended early after the lease draft, or the draft is moved to the next day', async () => {
@@ -81,6 +84,8 @@ test('the link is made too when the stay is ended early after the lease draft, o
   assert.equal(a.renewed_from, null);
   await changeEnd(stay.id, '2026-11-30', staff);
   assert.equal((await getBooking(a.id)).renewed_from, stay.id);
+  assert.match((await bookingHistory(a.id))[0].detail, new RegExp(`^Follows on from ${stay.ref}, Sara's stay in this unit that ended 2026-11-30`));
+  assert.match((await bookingHistory(stay.id)).map((e) => e.detail).join('\n'), new RegExp(`Sara stays on as ${a.ref} from 2026-12-01`));
   assert.deepEqual((await unitInspections(u1.id, a.id, AT)).next, { kind: 'confirm' });
   assert.equal((await confirmInspected(a.id, staff)).status, 'confirmed');
 
@@ -91,6 +96,7 @@ test('the link is made too when the stay is ended early after the lease draft, o
   const b = await createBooking({ ...base, unit_id: u.id, tenant_id: s.tenant_id, start_date: '2027-11-02' }, by);
   assert.equal(b.renewed_from, null);
   assert.equal((await updateBooking(b.id, { start_date: '2027-11-01' }, by)).renewed_from, s.id);
+  assert.deepEqual((await bookingHistory(b.id)).slice(0, 2).map((e) => e.detail.split(',')[0]), [`Follows on from ${s.ref}`, 'start date']);
 });
 
 test('what is written down is checked: a kind, a date not ahead, every area named once and rated', async () => {
