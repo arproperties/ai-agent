@@ -838,7 +838,7 @@ function Tenants({ onHistory }) {
                   <tbody className="divide-y divide-stroke/60">
                     {paged.rows.map((t) => (
                       <tr key={t.id} className={t.id === editing ? 'bg-p1/10' : ''}>
-                        <td className="px-3 py-2.5"><p className="font-medium">{t.full_name}</p>{t.housing && <p className="text-xs text-mute">Housing · {[t.housing_authority, t.housing_detail].filter(Boolean).join(' – ')}</p>}{t.old_account && <p className="text-xs text-mute">Rent Manager #{t.old_account}</p>}</td>
+                        <td className="px-3 py-2.5"><p className="font-medium">{t.full_name}</p>{t.housing && <p className="text-xs text-mute">Housing · {[t.housing_authority, t.housing_detail].filter(Boolean).join(' – ')}</p>}{t.old_account && <p className="text-xs text-mute">Rent Manager #{t.old_account}</p>}{t.notes && <p className="max-w-xs truncate text-xs text-mute" title={t.notes}>{t.notes}</p>}</td>
                         {[usPhone(t.phone), t.email, t.emirates_id_no].map((x, i) => <td key={i} className={`px-3 py-2.5 ${x ? '' : 'text-mute/50'}`}>{x || '—'}</td>)}
                         <td className="px-3 py-2.5">{t.bookings}</td>
                         <td className="px-3 py-2.5 text-mute">{fmt(added(t))}</td>
@@ -869,6 +869,8 @@ function Tenants({ onHistory }) {
                       {[['Phone', usPhone(t.phone)], ['Email', t.email], ['ID', t.emirates_id_no], ...(t.old_account ? [['Rent Manager #', t.old_account]] : []), ['Added', fmt(added(t))]].map(([l, x]) => (
                         <div key={l} className="flex gap-4 py-2"><dt className="shrink-0 text-mute">{l}</dt><dd className={`min-w-0 flex-1 truncate text-right ${x ? '' : 'text-mute/50'}`}>{x || '—'}</dd></div>
                       ))}
+                      {/* Notes only when there are some: two lines at most, the whole of it on hover. */}
+                      {t.notes && <div className="py-2"><dt className="text-mute">Notes</dt><dd className="mt-0.5 line-clamp-2 text-xs text-txt/80" title={t.notes}>{t.notes}</dd></div>}
                     </dl>
                   </div>
                 )))}
