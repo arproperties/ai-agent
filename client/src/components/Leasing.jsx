@@ -214,6 +214,9 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     // A new lease prorates its first month and is then billed on the 1st; one being edited keeps what it has.
     prorate: start?.prorate ?? (start?.id ? null : 'first'),
   });
+  // Whether this lease is billed on the 1st: every new one is. A lease made before that (prorate empty)
+  // keeps rent on its move-in day, and the form does not offer to change it.
+  const onTheFirst = !start?.id || !!start?.prorate;
   const taxName = region().tax_name;
   const [units, setUnits] = useState(null);
   const [unitQ, setUnitQ] = useState(''); // what is typed in the search box over the units
@@ -428,16 +431,16 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             <Label text={`Amount (${currency()})`} need><input type="number" min="0" step="any" value={v.rent_amount} onChange={set('rent_amount')} required className={FIELD} /></Label>
             <Label text="Paid">
               {/* Only a lease paid monthly can prorate its first month. */}
-              <Select value={v.payment_frequency} onChange={(e) => setV({ ...v, payment_frequency: e.target.value, ...(e.target.value !== 'monthly' ? { prorate: null } : {}) })} className={SELECT} options={FREQ} />
+              <Select value={v.payment_frequency} onChange={(e) => setV({ ...v, payment_frequency: e.target.value, prorate: e.target.value === 'monthly' && onTheFirst ? v.prorate || start?.prorate || 'first' : null })} className={SELECT} options={FREQ} />
             </Label>
             <Label text={`Security deposit (${currency()})`}><input type="number" min="0" step="any" value={v.security_deposit} onChange={set('security_deposit')} placeholder="None" className={FIELD} /></Label>
           </div>
         </Group>
         {/* A lease that starts after the 1st can charge its part month by the day, then rent on the 1st. */}
-        {v.payment_frequency === 'monthly' && v.start_date && !v.start_date.endsWith('-01') && (
+        {onTheFirst && v.payment_frequency === 'monthly' && v.start_date && !v.start_date.endsWith('-01') && (
           <Group title="First month">
-            <Pick value={v.prorate ?? ''} onPick={(k) => setV({ ...v, prorate: k || null })}
-              options={[['', 'Full month from move-in'], ['first', 'From the first month'], ['second', 'From the second month']]} />
+            <Pick value={v.prorate} onPick={(k) => setV({ ...v, prorate: k })}
+              options={[['first', 'From the first month'], ['second', 'From the second month']]} />
             {sum?.head && v.prorate === 'first' && <p className="mt-2 text-xs text-mute">{sum.head.days} of {sum.head.of} days = <span className="font-medium text-txt">{aed(sum.head.amount)}</span>, then the rent is due on the 1st.</p>}
             {sum?.head && v.prorate === 'second' && sum.second && <p className="mt-2 text-xs text-mute">{aed(sum.head.amount)} ({sum.head.days} of {sum.head.of} days) added to the bill on <span className="font-medium text-txt">{fmt(sum.second.due)}</span>.</p>}
           </Group>
