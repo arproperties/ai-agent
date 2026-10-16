@@ -29,7 +29,7 @@ const DISCOUNTS = new Set(['percent', 'amount']);
 
 // ---------- tenants ----------
 
-const TENANT_COLS = `id, kind, full_name, nationality, ssn, housing, housing_authority, housing_detail, emirates_id_no, passport_no, phone, email, notes, created_at,
+const TENANT_COLS = `id, kind, full_name, nationality, ssn, housing, housing_authority, housing_detail, emirates_id_no, passport_no, phone, email, notes, old_account, created_at,
   to_char(emirates_id_expiry, 'YYYY-MM-DD') AS emirates_id_expiry`;
 export const HOUSING_AUTHORITIES = ['Beaumont', 'Port Arthur', 'Orange', 'Legacy', 'Louisiana'];
 
@@ -59,13 +59,14 @@ function tenantFields(body = {}, { partial = false } = {}) {
   return out;
 }
 
-/** Tenants, newest first, with how many bookings each has; `q` matches name, phone, email, ID or passport. */
+/** Tenants, newest first, with how many bookings each has; `q` matches name, phone, email, ID, passport or Rent Manager account no. */
 export function listTenants(q = '') {
   const like = `%${String(q).trim().toLowerCase()}%`;
+  // A whole imported tenant list is a few hundred, so the cap sits well above that; the page shows them a page at a time.
   return db.prepare(`SELECT ${TENANT_COLS}, (SELECT count(*)::int FROM lease_bookings b WHERE b.tenant_id = t.id AND b.status <> 'cancelled') AS bookings
     FROM lease_tenants t
-    WHERE lower(concat_ws(' ', full_name, phone, email, emirates_id_no, passport_no, ssn, housing_authority, housing_detail)) LIKE ?
-    ORDER BY id DESC LIMIT 200`).all(like);
+    WHERE lower(concat_ws(' ', full_name, phone, email, emirates_id_no, passport_no, ssn, housing_authority, housing_detail, old_account)) LIKE ?
+    ORDER BY id DESC LIMIT 5000`).all(like);
 }
 
 const getTenant = async (id) => {

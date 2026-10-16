@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, LayoutGrid, List, BedDouble, BedSingle, Lock, History, ClipboardCheck, LogIn, Wrench } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, LayoutGrid, List, BedDouble, BedSingle, Lock, History, ClipboardCheck, LogIn, Wrench, Upload } from 'lucide-react';
 import { api } from '../lib/api';
 import { can } from '../lib/modules';
 import { money as aed, currency, region } from '../lib/region';
@@ -20,6 +20,7 @@ import LeasingReports from './LeasingReports';
 import LeasingAlerts from './LeasingAlerts';
 import Documents from './Documents';
 import TenantHistory from './TenantHistory';
+import TenantImport from './TenantImport';
 import Inspections from './Inspections';
 import WorkOrders from './WorkOrders';
 
@@ -782,6 +783,7 @@ function Tenants({ onHistory }) {
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(false); // a tenant with no lease yet
+  const [importing, setImporting] = useState(false); // the tenant list from Rent Manager
   const [error, setError] = useState('');
   const [view, see] = useView('tenants');
   // The dates are when the tenant was added. Either end can be left open.
@@ -818,10 +820,12 @@ function Tenants({ onHistory }) {
         <span className="ml-auto flex flex-wrap items-center gap-2">
           <DateRange from={from} to={to} onChange={(a, b) => { setFrom(a); setTo(b); }} placeholder="Added any date" className="glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none" />
           <ViewToggle view={view} onView={see} />
-          <button onClick={() => { setEditing(null); setAdding(true); }} className={PRIMARY}><Plus size={16} /> Add tenant</button>
+          <button onClick={() => { setEditing(null); setAdding(false); setImporting(true); }} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke/70 px-4 py-2 text-sm text-mute hover:bg-white/5 hover:text-txt"><Upload size={16} /> Import</button>
+          <button onClick={() => { setEditing(null); setImporting(false); setAdding(true); }} className={PRIMARY}><Plus size={16} /> Add tenant</button>
         </span>
       </div>
       {error && <p className="text-sm text-bad">{error}</p>}
+      {importing && <TenantImport onClose={() => setImporting(false)} onDone={load} />}
       {adding && <div className="grid"><TenantForm onDone={() => { setAdding(false); load(); }} onCancel={() => setAdding(false)} /></div>}
       {!shown ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
         : shown.length === 0 ? <p className="py-3 text-sm text-mute">{rows.length ? 'No tenants match.' : 'No tenants yet.'}</p>
@@ -834,7 +838,7 @@ function Tenants({ onHistory }) {
                   <tbody className="divide-y divide-stroke/60">
                     {paged.rows.map((t) => (
                       <tr key={t.id} className={t.id === editing ? 'bg-p1/10' : ''}>
-                        <td className="px-3 py-2.5"><p className="font-medium">{t.full_name}</p>{t.housing && <p className="text-xs text-mute">Housing · {[t.housing_authority, t.housing_detail].filter(Boolean).join(' – ')}</p>}</td>
+                        <td className="px-3 py-2.5"><p className="font-medium">{t.full_name}</p>{t.housing && <p className="text-xs text-mute">Housing · {[t.housing_authority, t.housing_detail].filter(Boolean).join(' – ')}</p>}{t.old_account && <p className="text-xs text-mute">Rent Manager #{t.old_account}</p>}</td>
                         {[usPhone(t.phone), t.email, t.emirates_id_no].map((x, i) => <td key={i} className={`px-3 py-2.5 ${x ? '' : 'text-mute/50'}`}>{x || '—'}</td>)}
                         <td className="px-3 py-2.5">{t.bookings}</td>
                         <td className="px-3 py-2.5 text-mute">{fmt(added(t))}</td>
@@ -862,7 +866,7 @@ function Tenants({ onHistory }) {
                       <div className="-mr-1.5 flex shrink-0">{tools(t)}</div>
                     </div>
                     <dl className="mx-4 my-3 divide-y divide-stroke/60 border-t border-stroke text-sm">
-                      {[['Phone', usPhone(t.phone)], ['Email', t.email], ['ID', t.emirates_id_no], ['Added', fmt(added(t))]].map(([l, x]) => (
+                      {[['Phone', usPhone(t.phone)], ['Email', t.email], ['ID', t.emirates_id_no], ...(t.old_account ? [['Rent Manager #', t.old_account]] : []), ['Added', fmt(added(t))]].map(([l, x]) => (
                         <div key={l} className="flex gap-4 py-2"><dt className="shrink-0 text-mute">{l}</dt><dd className={`min-w-0 flex-1 truncate text-right ${x ? '' : 'text-mute/50'}`}>{x || '—'}</dd></div>
                       ))}
                     </dl>

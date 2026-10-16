@@ -28,6 +28,7 @@ import { hrLinkRoutes } from './hrLinks.js';
 import { propertyRoutes } from './properties.js';
 import { planRoutes } from './floorPlans.js';
 import { leasingRoutes } from './leasing.js';
+import { tenantImportRoutes } from './tenantImport.js';
 import { historyRoutes } from './leasingHistory.js';
 import { inspectionRoutes } from './inspections.js';
 import { workOrderRoutes, moveMaintenanceNotes } from './workOrders.js';
@@ -97,6 +98,7 @@ app.use('/api/leasing/payments', receiptRoutes); // the receipt PDF for one paym
 app.use('/api/leasing', inspectionRoutes); // a unit's condition over time: make-ready, move-in and move-out inspections
 app.use('/api/leasing', historyRoutes); // a tenant's history: late rent, complaints, maintenance
 app.use('/api/leasing', workOrderRoutes); // repairs to a unit, linked to its lease and tenant, each with its history
+app.use('/api/leasing/tenants/import', tenantImportRoutes); // the tenant list from Rent Manager, read by Claude and previewed before saving
 app.use('/api/leasing', leasingRoutes); // tenants and bookings of units; the rent is set per booking
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 

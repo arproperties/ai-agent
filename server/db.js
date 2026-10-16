@@ -1428,6 +1428,25 @@ await db.exec(`
   ALTER TABLE lease_tenants ADD COLUMN IF NOT EXISTS housing_detail TEXT;
 `);
 
+// Tenants brought in from Rent Manager's tenant list (server/tenantImport.js): old_account
+// holds their account numbers there ("4240, 4241"), so a list imported twice adds no one twice;
+// old_name is the name exactly as it was written there; import_batch lets one import be undone.
+await db.exec(`
+  ALTER TABLE lease_tenants ADD COLUMN IF NOT EXISTS old_account TEXT;
+  ALTER TABLE lease_tenants ADD COLUMN IF NOT EXISTS old_name TEXT;
+  ALTER TABLE lease_tenants ADD COLUMN IF NOT EXISTS import_batch TEXT;
+`);
+
+// What Claude read off each tenant-list file, by a fingerprint of the file (and of the
+// instructions it was read with), so the same screenshot uploaded again is not paid for twice.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lease_import_reads (
+    hash       TEXT PRIMARY KEY,
+    rows       JSONB NOT NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+`);
+
 // A tenant's record beyond the money: complaints made about them (noise, parking…) and
 // maintenance done for them, typed in by staff. Late rent is not here: it is worked out from
 // the schedule and its payments (leasingHistory.js).
