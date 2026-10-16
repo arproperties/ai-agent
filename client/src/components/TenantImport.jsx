@@ -64,6 +64,8 @@ export default function TenantImport({ onClose, onDone }) {
     setError('');
     try {
       const r = await api.post('/leasing/tenants/import', { rows: picked.map(({ name, kind, accounts, notes, original }) => ({ name, kind, accounts, notes, original })) });
+      // The preview is kept: the rows just saved are on file now, and the ones left to check can be gone back to.
+      setRows((rs) => rs.map((x) => (x.pick ? { ...x, status: 'exists', pick: false, was: x.status, batch: r.batch } : x)));
       setResult(r);
       onDone();
     } catch (e) { setError(e.message); }
@@ -73,10 +75,13 @@ export default function TenantImport({ onClose, onDone }) {
     if (!confirm(`Take back the ${result.added} tenants this import added?`)) return;
     try {
       const u = await api.del(`/leasing/tenants/import/${result.batch}`);
+      setRows((rs) => rs.map(({ was, batch, ...x }) => (batch === result.batch ? { ...x, status: was, pick: was === 'new' } : { was, batch, ...x })));
       setResult({ ...result, undone: u });
       onDone();
     } catch (e) { setError(e.message); }
   };
+  const left = rows?.filter((r) => r.status === 'check').length || 0;
+  const review = () => { setResult(null); setFilter('check'); };
 
   return (
     <div className="space-y-4 rounded-2xl border border-p1/40 p-4">
@@ -93,8 +98,10 @@ export default function TenantImport({ onClose, onDone }) {
           {result.undone
             ? <p className="text-sm">Taken back: {result.undone.removed} removed{result.undone.kept ? `, ${result.undone.kept} kept because they have a lease now` : ''}.</p>
             : <p className="flex items-center gap-2 text-sm"><Check size={16} className="text-ok" /> {result.added} tenant{result.added === 1 ? '' : 's'} added{result.skipped ? `, ${result.skipped} already on file` : ''}.</p>}
-          <div className="flex justify-end gap-2">
+          {left > 0 && <p className="text-sm text-warn">{left} row{left === 1 ? '' : 's'} still need{left === 1 ? 's' : ''} checking. They were not imported.</p>}
+          <div className="flex flex-wrap justify-end gap-2">
             {!result.undone && result.added > 0 && <button onClick={undo} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10"><Undo2 size={15} /> Undo this import</button>}
+            {left > 0 && <button onClick={review} className="rounded-full border border-stroke/70 px-4 py-2 text-sm hover:bg-white/5">Review {left === 1 ? 'it' : `the ${left}`}</button>}
             <button onClick={onClose} className={PRIMARY}>Done</button>
           </div>
         </div>
