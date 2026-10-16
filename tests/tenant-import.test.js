@@ -139,8 +139,13 @@ test('importing saves the ticked tenants with their account numbers, and undo ta
   assert.equal(t.find((x) => x.full_name === 'BRET NAZWORTH').old_account, '4240, 4241');
   assert.equal(t.find((x) => x.kind === 'company').full_name, 'DIRECTIONAL SERVICE SO');
   assert.equal((await listTenants('4241')).length, 1, 'the old account number can be searched');
-  await importTenants(planImport([row('Leondrea (LEGACY) S', 'Leondrea Simien', '5299')], await listTenants()), null);
-  assert.deepEqual((await listTenants('legacy')).map((x) => x.full_name), ['Leondrea Simien'], 'a Rent Manager tag finds its tenants, through the notes');
+  const legacy = planImport([row('Leondrea (LEGACY) S', 'Leondrea Simien', '5299')], await listTenants());
+  assert.equal(legacy[0].housing_authority, 'Legacy');
+  assert.equal(one(row('Jarimish James (Lega', 'Jarimish James')).housing_authority, 'Legacy', 'the tag cut off by the column');
+  assert.equal(one(row('Lillian (HUD) Ortiz', 'Lillian Ortiz')).housing_authority, null, 'HUD does not say which authority');
+  await importTenants(legacy, null);
+  const [leo] = await listTenants('legacy');
+  assert.deepEqual([leo.full_name, leo.housing, leo.housing_authority], ['Leondrea Simien', true, 'Legacy'], 'saved as a Legacy housing tenant, and found through the notes');
   await db.prepare("DELETE FROM lease_tenants WHERE full_name = 'Leondrea Simien'").run();
 
   const again = await importTenants(plan, null);

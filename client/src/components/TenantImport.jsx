@@ -63,7 +63,7 @@ export default function TenantImport({ onClose, onDone }) {
     setSaving(true);
     setError('');
     try {
-      const r = await api.post('/leasing/tenants/import', { rows: picked.map(({ name, kind, accounts, notes, original }) => ({ name, kind, accounts, notes, original })) });
+      const r = await api.post('/leasing/tenants/import', { rows: picked.map(({ name, kind, accounts, notes, original, housing_authority }) => ({ name, kind, accounts, notes, original, housing_authority })) });
       // The preview is kept: the rows just saved are on file now, and the ones left to check can be gone back to.
       setRows((rs) => rs.map((x) => (x.pick ? { ...x, status: 'exists', pick: false, was: x.status, batch: r.batch } : x)));
       setResult(r);
@@ -146,7 +146,7 @@ export default function TenantImport({ onClose, onDone }) {
                     <td className="whitespace-nowrap px-3 py-2 tabular-nums text-mute">{r.accounts.join(', ') || '—'}</td>
                     <td className="px-3 py-2"><span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${STATUS[r.status][1]}`}>{STATUS[r.status][0]}</span></td>
                     <td className="px-3 py-2 text-xs text-mute">
-                      {[...r.reasons, ...(r.status === 'skip' ? [WHY_SKIP] : []), ...(r.accounts.length > 1 ? [`On ${r.accounts.length} accounts in Rent Manager, saved as one tenant`] : []), r.notes].filter(Boolean).map((x) => <p key={x}>{x}</p>)}
+                      {[...r.reasons, ...(r.housing_authority ? [`Housing tenant: ${r.housing_authority}`] : []),...(r.status === 'skip' ? [WHY_SKIP] : []), ...(r.accounts.length > 1 ? [`On ${r.accounts.length} accounts in Rent Manager, saved as one tenant`] : []), r.notes].filter(Boolean).map((x) => <p key={x}>{x}</p>)}
                     </td>
                   </tr>
                 ))}

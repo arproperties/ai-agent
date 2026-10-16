@@ -103,8 +103,7 @@ export async function readTenantFiles(files, { read = claudeRead, onProgress = (
 // ---------- cleaning a row ----------
 
 // Rent Manager's tags, as they appear inside names. Each is taken out of the name and kept in
-// the tenant's notes. What they mean is the office's to say; until then none of them changes
-// anything else about the tenant (HUD does not tick "Housing tenant": the authority is not known).
+// the tenant's notes. What they mean is the office's to say; only LEGACY does more so far (HOUSING below).
 const TAGS = [
   [/\(\s*hud\s*\)|\bhud\b/gi, 'HUD'],
   [/\(\s*legacy\s*\)|\blegacy\b/gi, 'LEGACY'],
@@ -117,7 +116,13 @@ const TAGS = [
   [/\bairbnb\b/gi, 'AIRBNB'],
   [/\b(wdc|wdr|wdb)\b\*?/gi, null], // the unit's tag, not part of the name
 ];
-const ORDINAL = /\(\s*(primary|first|second|third|fourth|fifth)\s*\)/gi; // BRET (THIRD) NAZWORTH: one person on several accounts
+// The tags that say which housing authority pays part of the rent: such a tenant is saved as a
+// housing tenant with that authority. (LEGACY) is Legacy; a tag cut off by the column, "(LEGA", too.
+// HUD is not here: it does not say which authority, and the form needs one.
+const HOUSING = [['LEGACY', 'Legacy']];
+const housingOf = (tags) => HOUSING.find(([tag]) => tags.some((t) => t.length >= 4 && tag.startsWith(t)))?.[1] ?? null;
+
+const ORDINAL =/\(\s*(primary|first|second|third|fourth|fifth)\s*\)/gi; // BRET (THIRD) NAZWORTH: one person on several accounts
 const SUFFIX = new Set(['JR', 'SR', 'II', 'III', 'IV']);
 
 const squash = (s) => s.replace(/\s+/g, ' ').trim();
@@ -236,7 +241,7 @@ export function planImport(rows, existing = []) {
   return [...groups.values()].map(({ account, skip, skips, ...g }) => {
     const found = g.accounts.map((a) => byAccount.get(a)).find(Boolean) ?? byName.get(key(g.name));
     const status = skips.every(Boolean) ? 'skip' : found ? 'exists' : g.reasons.length ? 'check' : 'new';
-    return { ...g, tags: [...new Set(g.tags)], notes: notes(g.tags, g.others), status, pick: status === 'new', tenant_id: found ?? null };
+    return { ...g, tags: [...new Set(g.tags)], notes: notes(g.tags, g.others), housing_authority: housingOf(g.tags), status, pick: status === 'new', tenant_id: found ?? null };
   });
 }
 
@@ -257,7 +262,8 @@ export async function importTenants(rows, by) {
       const name = String(r.name ?? '').trim();
       const acc = (Array.isArray(r.accounts) ? r.accounts : accountsOf(r.accounts)).map((a) => String(a).trim()).filter(Boolean);
       if (!name || acc.some((a) => accounts.has(a)) || names.has(key(name))) { skipped += 1; continue; }
-      const t = await addTenant({ full_name: name, kind: r.kind, notes: r.notes }, by);
+      const housing = r.housing_authority ? { housing: true, housing_authority: r.housing_authority } : {}; // checked against the list by addTenant
+      const t = await addTenant({ full_name: name, kind: r.kind, notes: r.notes, ...housing }, by);
       const old = (Array.isArray(r.original) ? r.original : [r.original]).filter(Boolean).join(' / ').slice(0, 300) || null;
       await db.prepare('UPDATE lease_tenants SET old_account = ?, old_name = ?, import_batch = ? WHERE id = ?').run(acc.join(', ') || null, old, batch, t.id);
       acc.forEach((a) => accounts.add(a));
