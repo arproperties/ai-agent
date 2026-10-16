@@ -69,3 +69,26 @@ test('a prorated lease in the database: its charges, its checks, and its deposit
   await takePayment(rent.id, { amount: rent.amount, method: 'cash', received_on: '2026-10-17' }, null, '2026-10-17');
   await assert.rejects(updateBooking(first.id, { prorate: 'second' }), (e) => e.status === 409);
 });
+
+test('a lease that does not prorate is billed exactly as before', async () => {
+  await reset();
+  const c = await create('company', { name: 'J&R' });
+  const bl = await create('building', { name: 'Gates' }, c.id);
+  const u1 = await create('unit', { unit_no: '101' }, bl.id);
+  const u2 = await create('unit', { unit_no: '102' }, bl.id);
+  const t = await addTenant({ full_name: 'Sara Lee' });
+  const fees = async (id) => (await db.prepare("SELECT to_char(due_date, 'YYYY-MM-DD') AS due, amount FROM lease_installments WHERE booking_id = ? AND kind = 'fee' ORDER BY due_date").all(id))
+    .map((r) => [r.due, Number(r.amount)]);
+  // A repeating charge stays its own amount with each payment, however many months the payment covers.
+  const q = await createBooking({ unit_id: u1.id, tenant_id: t.id, start_date: '2026-10-17', end_date: '2027-10-16', rent_amount: 1100,
+    payment_frequency: 'quarterly', fees: [{ label: 'Pet', amount: 50, repeats: true }], status: 'confirmed' });
+  assert.deepEqual(await fees(q.id), [['2026-10-17', 50], ['2027-01-17', 50], ['2027-04-17', 50], ['2027-07-17', 50]]);
+  const m = await createBooking({ unit_id: u2.id, tenant_id: t.id, start_date: '2026-10-17', end_date: '2027-10-16', rent_amount: 1100,
+    payment_frequency: 'monthly', fees: [{ label: 'Pet', amount: 50, repeats: true }], status: 'confirmed' });
+  assert.equal((await getBooking(m.id)).prorate, null);
+  const rent = await db.prepare("SELECT to_char(due_date, 'YYYY-MM-DD') AS due, amount FROM lease_installments WHERE booking_id = ? AND kind = 'rent' ORDER BY due_date").all(m.id);
+  assert.deepEqual([rent.length, rent[0].due, Number(rent[0].amount), rent[1].due], [12, '2026-10-17', 1100, '2026-11-17']);
+  assert.ok((await fees(m.id)).every(([, a]) => a === 50));
+  // An imported lease keeps its own schedule even if prorate were set on it.
+  assert.equal(schedule({ ...B, start_date: '2026-08-17', end_date: '2027-01-31', billed_from: '2026-11-01', prorate: 'first' })[0].due, '2026-11-01');
+});

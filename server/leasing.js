@@ -511,7 +511,7 @@ export const dueName = (i) => (i.kind === 'deposit' ? 'Security deposit' : i.kin
     is the rent after its discount, with the tax on it (`tax`, on a booking that is taxed). */
 export function schedule(b) {
   if (b.billed_from) return importedSchedule(b);
-  if (b.prorate && b.payment_frequency === 'monthly') return proratedSchedule(b);
+  if (prorates(b)) return proratedSchedule(b);
   const months = monthsOf(b);
   const step = STEP[b.payment_frequency] || months;
   const out = [];
@@ -526,6 +526,8 @@ export function schedule(b) {
   return out;
 }
 
+/** Whether a lease's rent follows proratedSchedule(): an imported lease never does. */
+const prorates = (b) => !b.billed_from && b.prorate && b.payment_frequency === 'monthly';
 /** How many days the month of `s` has. */
 const daysIn = (s) => new Date(Date.UTC(+s.slice(0, 4), +s.slice(5, 7), 0)).getUTCDate();
 /** The last day of the month of `s`. */
@@ -593,8 +595,9 @@ async function writeSchedule(b) {
   const rows = [
     ...rent.map((p) => ({ kind: 'rent', label: '', ...p })),
     ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: first, amount: Number(b.security_deposit) }] : []),
-    // A charge that repeats is due with each rent payment, for as many months as that payment bills.
-    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => [p.due, money(f.amount * p.share)]) : [[first, f.amount]])
+    // A charge that repeats is due in full with each rent payment; on a prorated lease it is cut to
+    // the months that payment bills, as the rent is. Other leases are left exactly as they were.
+    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => [p.due, prorates(b) ? money(f.amount * p.share) : f.amount]) : [[first, f.amount]])
       .map(([due, amount]) => ({ kind: 'fee', label: f.label, due, amount: money(amount + taxOn(b, amount)), tax: taxOn(b, amount) }))),
   ];
   const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';
