@@ -368,7 +368,8 @@ function BookingForm({ start, preset, onDone, onCancel }) {
 
       {step === 2 && <Section title="Rent and charges" extra={(
         <span className="ml-auto flex items-center gap-2 text-xs text-mute">Rent per
-          <Pick value={v.rent_period} onPick={(k) => setV({ ...v, rent_period: k })} options={[['month', 'Month'], ['year', 'Year']]} />
+          {/* Rent per month is paid monthly unless someone chooses otherwise after. */}
+          <Pick value={v.rent_period} onPick={(k) => setV({ ...v, rent_period: k, ...(k === 'month' ? { payment_frequency: 'monthly' } : {}) })} options={[['month', 'Month'], ['year', 'Year']]} />
         </span>
       )}>
         <Group title="Rent">
