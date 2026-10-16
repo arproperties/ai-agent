@@ -127,7 +127,7 @@ function proratedRows(v) {
   for (let d = head ? firstOfNext(v.start_date) : v.start_date; d <= v.end_date; d = firstOfNext(d)) {
     rows.push({ due: d, share: v.end_date < lastOfMonth(d) ? part(d, v.end_date) : 1 });
   }
-  if (head && v.prorate === 'second' && rows.length) rows[0] = { ...rows[0], share: rows[0].share + head.share };
+  if (head && v.prorate === 'second' && rows.length) rows.splice(0, 1, { due: v.start_date, share: rows[0].share }, { due: rows[0].due, share: head.share });
   else if (head) rows.unshift({ due: head.due, share: head.share });
   return { rows, head };
 }
@@ -158,8 +158,8 @@ function plan(v) {
     total: monthly * months + allFees + tax,
   };
 }
-/** plan() for a lease that prorates its first month. `head` is the part month; `second`, when it is
-    added to the 2nd month's bill, is that bill: the 1st it falls on and the rent it asks for. */
+/** plan() for a lease that prorates its first month. `head` is the part month; `second`, when the part
+    month is put off to the next 1st, is that bill: the 1st it falls on and the rent it asks for. */
 function proratedPlan(v) {
   const { rows, head } = proratedRows(v);
   const rent = Number(v.rent_amount || 0);
@@ -170,7 +170,6 @@ function proratedPlan(v) {
   const deposit = Number(v.security_deposit || 0);
   const fees = v.fees.filter((f) => Number(f.amount) > 0);
   const shares = rows.reduce((t, r) => t + r.share, 0);
-  // With 'second', nothing of the rent is due at move-in unless the lease has no 1st to add it to.
   const atStart = rows[0]?.due === v.start_date ? rows[0].share : 0;
   const firstRent = monthly * atStart;
   const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? atStart : 1), 0);
@@ -181,7 +180,7 @@ function proratedPlan(v) {
     payments: rows.length, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats ? Number(f.amount) * atStart : f.amount })), firstTax, tax,
     discount: (off / per) * shares,
     head: head && { ...head, amount: monthly * head.share },
-    second: !atStart && rows[0] ? { due: rows[0].due, amount: monthly * rows[0].share } : null,
+    second: head && v.prorate === 'second' && rows[1] ? { due: rows[1].due, amount: monthly * rows[1].share } : null,
     charges: firstRent + firstFees + firstTax,
     first: firstRent + deposit + firstFees + firstTax,
     total: monthly * shares + allFees + tax,
@@ -442,7 +441,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             <Pick value={v.prorate} onPick={(k) => setV({ ...v, prorate: k })}
               options={[['first', 'From the first month'], ['second', 'From the second month']]} />
             {sum?.head && v.prorate === 'first' && <p className="mt-2 text-xs text-mute">{sum.head.days} of {sum.head.of} days = <span className="font-medium text-txt">{aed(sum.head.amount)}</span>, then the rent is due on the 1st.</p>}
-            {sum?.head && v.prorate === 'second' && sum.second && <p className="mt-2 text-xs text-mute">{aed(sum.head.amount)} ({sum.head.days} of {sum.head.of} days) added to the bill on <span className="font-medium text-txt">{fmt(sum.second.due)}</span>.</p>}
+            {sum?.head && v.prorate === 'second' && sum.second && <p className="mt-2 text-xs text-mute">A full month's rent at move-in, then {aed(sum.head.amount)} ({sum.head.days} of {sum.head.of} days) on <span className="font-medium text-txt">{fmt(sum.second.due)}</span>.</p>}
           </Group>
         )}
         <Group title="Discount" hint={`off the rent per ${v.rent_period}`}
@@ -543,13 +542,12 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         {sum ? (
           <>
             <div className="space-y-1.5 border-t border-stroke/60 pt-3">
-              {sum.second
-                ? <Row k={`First month · with the 2nd month, ${fmt(sum.second.due)}`}>{aed(sum.second.amount)}</Row>
-                : <Row k={sum.head && v.prorate ? 'First month · paid at move-in' : sum.payments > 1 ? 'First rent payment' : 'Rent'}>{aed(sum.firstRent)}</Row>}
+              <Row k={sum.second ? 'Rent · at move-in' : sum.head && v.prorate ? 'First month · paid at move-in' : sum.payments > 1 ? 'First rent payment' : 'Rent'}>{aed(sum.firstRent)}</Row>
               {sum.fees.filter((f) => Number(f.amount) > 0).map((f, i) => <Row key={i} k={f.label || 'Other charge'}>{aed(Number(f.amount))}</Row>)}
               {sum.firstTax > 0 && <Row k={`${taxName} ${Number(v.tax_percent)}%`}>{aed(sum.firstTax)}</Row>}
               <Row k="Rent and charges" strong>{aed(sum.charges)}</Row>
               {sum.discount > 0 && <Row k="Discount, already taken off">−{aed(sum.discount)}</Row>}
+              {sum.second && <Row k={`Part month · on ${fmt(sum.second.due)}`}>{aed(sum.second.amount)}</Row>}
               {sum.payments > 1 && <Row k={`Whole stay · ${sum.payments} payments`}>{aed(sum.total)}</Row>}
               {sum.payments > 1 && sum.tax > 0 && <Row k={`Of which ${taxName}`}>{aed(sum.tax)}</Row>}
             </div>

@@ -15,9 +15,10 @@ test('prorated at move-in: the part month on the move-in day, then the 1st', () 
   assert.deepEqual([s.at(-1).due, s.at(-1).amount, s.length], ['2027-10-01', 1100, 13]);
 });
 
-test('prorated into the 2nd month: nothing at move-in, the part added to the 1st', () => {
+test('prorated from the 2nd month: a full month at move-in, the part month on the next 1st', () => {
   const s = schedule({ ...B, start_date: '2026-10-17', end_date: '2027-10-31', prorate: 'second' });
-  assert.deepEqual([s[0].due, s[0].amount, s.length], ['2026-11-01', 1632.26, 12]);
+  assert.deepEqual(s.slice(0, 3).map((r) => [r.due, r.amount]), [['2026-10-17', 1100], ['2026-11-01', 532.26], ['2026-12-01', 1100]]);
+  assert.deepEqual([s.at(-1).due, s.length, Math.round(s.reduce((t, r) => t + r.amount, 0) * 100) / 100], ['2027-10-01', 13, 13732.26]);
 });
 
 test('the edges of a month', () => {
@@ -58,7 +59,7 @@ test('a prorated lease in the database: its charges, its checks, and its deposit
 
   const second = await lease(u2, { prorate: 'second' });
   const fees = await rows(second.id, 'fee');
-  assert.deepEqual([fees[0].due, fees[0].amount], ['2026-11-01', 74.19]);
+  assert.deepEqual(fees.slice(0, 2).map((f) => [f.due, f.amount]), [['2026-10-17', 50], ['2026-11-01', 24.19]]);
   assert.equal((await rows(second.id, 'deposit'))[0].due, '2026-10-17');
 
   await assert.rejects(lease(u1, { prorate: 'first', payment_frequency: 'quarterly', status: 'draft' }), /Proration needs monthly payments/);

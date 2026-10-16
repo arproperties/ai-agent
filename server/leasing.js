@@ -537,8 +537,9 @@ const lastOfMonth = (s) => `${s.slice(0, 8)}${String(daysIn(s)).padStart(2, '0')
  * A lease that prorates its first month, as Rent Manager bills: the days lived in the move-in month
  * are charged at the month's rent divided by that month's days, then full rent is due on each 1st.
  * The last month is cut the same way when the lease ends before it does. With 'first' the part month
- * is due on the move-in day; with 'second' it is added to the bill on the next 1st, or, when the lease
- * has no next 1st, it is still due on the move-in day. Each row's `share` is how many months it bills,
+ * is due on the move-in day. With 'second' a full month's rent (the one after the part month) is taken
+ * on the move-in day, and the part month is due on the next 1st instead; when the lease has no next 1st,
+ * the part month is due on the move-in day. Each row's `share` is how many months it bills,
  * so a charge that repeats is cut the same way.
  */
 function proratedSchedule(b) {
@@ -549,7 +550,7 @@ function proratedSchedule(b) {
   for (let d = head ? firstOfNext(b.start_date) : b.start_date; d <= b.end_date; d = firstOfNext(d)) {
     rows.push({ due: d, share: b.end_date < lastOfMonth(d) ? part(d, b.end_date) : 1 });
   }
-  if (head && b.prorate === 'second' && rows.length) rows[0].share += head.share;
+  if (head && b.prorate === 'second' && rows.length) rows.splice(0, 1, { due: b.start_date, share: rows[0].share }, { due: rows[0].due, share: head.share });
   else if (head) rows.unshift(head);
   return rows.map(({ due, share }) => {
     const rent = money(monthlyRent(b) * share);
