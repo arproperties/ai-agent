@@ -437,7 +437,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         {v.payment_frequency === 'monthly' && v.start_date && !v.start_date.endsWith('-01') && (
           <Group title="First month">
             <Pick value={v.prorate ?? ''} onPick={(k) => setV({ ...v, prorate: k || null })}
-              options={[['', 'Full month from move-in'], ['first', 'Prorated, paid at move-in'], ['second', 'Prorated, added to 2nd month']]} />
+              options={[['', 'Full month from move-in'], ['first', 'From the first month'], ['second', 'From the second month']]} />
             {sum?.head && v.prorate === 'first' && <p className="mt-2 text-xs text-mute">{sum.head.days} of {sum.head.of} days = <span className="font-medium text-txt">{aed(sum.head.amount)}</span>, then the rent is due on the 1st.</p>}
             {sum?.head && v.prorate === 'second' && sum.second && <p className="mt-2 text-xs text-mute">{aed(sum.head.amount)} ({sum.head.days} of {sum.head.of} days) added to the bill on <span className="font-medium text-txt">{fmt(sum.second.due)}</span>.</p>}
           </Group>
