@@ -50,7 +50,7 @@ function Label({ text, need, children, wide }) {
     </label>
   );
 }
-const AUTHORITIES = ['Beaumont', 'Port Arthur', 'Orange', 'Legacy', 'Louisiana']; // the housing authorities; Louisiana has a line of its own typed under it
+const AUTHORITIES = ['Beaumont', 'Port Arthur', 'Orange', 'Legacy', 'Detcog', 'Louisiana']; // the housing authorities; Louisiana has a line of its own typed under it
 /** Whether a tenant's rent is paid in part by a housing authority, and which one. `t` is the tenant, `onChange` gets it back changed. */
 function Housing({ t, onChange }) {
   return (

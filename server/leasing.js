@@ -31,7 +31,7 @@ const DISCOUNTS = new Set(['percent', 'amount']);
 
 const TENANT_COLS = `id, kind, full_name, nationality, ssn, housing, housing_authority, housing_detail, emirates_id_no, passport_no, phone, email, notes, old_account, created_at,
   to_char(emirates_id_expiry, 'YYYY-MM-DD') AS emirates_id_expiry`;
-export const HOUSING_AUTHORITIES = ['Beaumont', 'Port Arthur', 'Orange', 'Legacy', 'Louisiana'];
+export const HOUSING_AUTHORITIES = ['Beaumont', 'Port Arthur', 'Orange', 'Legacy', 'Detcog', 'Louisiana'];
 
 function tenantFields(body = {}, { partial = false } = {}) {
   const out = {};
