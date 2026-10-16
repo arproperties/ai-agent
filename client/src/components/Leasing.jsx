@@ -813,7 +813,7 @@ function Tenants({ onHistory }) {
     <div className="space-y-4">
       <label className="relative block">
         <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search tenants by name, phone, email, ID or passport" className={`${FIELD} pl-10`} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search tenants by name, phone, email, ID, notes or Rent Manager #" className={`${FIELD} pl-10`} />
       </label>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <p className="text-xs text-mute">{shown ? `${shown.length} tenant${shown.length === 1 ? '' : 's'}` : ''}</p>

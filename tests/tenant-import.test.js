@@ -139,6 +139,9 @@ test('importing saves the ticked tenants with their account numbers, and undo ta
   assert.equal(t.find((x) => x.full_name === 'BRET NAZWORTH').old_account, '4240, 4241');
   assert.equal(t.find((x) => x.kind === 'company').full_name, 'DIRECTIONAL SERVICE SO');
   assert.equal((await listTenants('4241')).length, 1, 'the old account number can be searched');
+  await importTenants(planImport([row('Leondrea (LEGACY) S', 'Leondrea Simien', '5299')], await listTenants()), null);
+  assert.deepEqual((await listTenants('legacy')).map((x) => x.full_name), ['Leondrea Simien'], 'a Rent Manager tag finds its tenants, through the notes');
+  await db.prepare("DELETE FROM lease_tenants WHERE full_name = 'Leondrea Simien'").run();
 
   const again = await importTenants(plan, null);
   assert.deepEqual([again.added, again.skipped], [0, 3], 'importing the same list twice adds no one');

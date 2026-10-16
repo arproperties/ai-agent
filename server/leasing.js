@@ -59,13 +59,13 @@ function tenantFields(body = {}, { partial = false } = {}) {
   return out;
 }
 
-/** Tenants, newest first, with how many bookings each has; `q` matches name, phone, email, ID, passport or Rent Manager account no. */
+/** Tenants, newest first, with how many bookings each has; `q` matches name, phone, email, ID, passport, notes, or the Rent Manager account no. and name (so LEGACY or HUD finds those tenants). */
 export function listTenants(q = '') {
   const like = `%${String(q).trim().toLowerCase()}%`;
   // A whole imported tenant list is a few hundred, so the cap sits well above that; the page shows them a page at a time.
   return db.prepare(`SELECT ${TENANT_COLS}, (SELECT count(*)::int FROM lease_bookings b WHERE b.tenant_id = t.id AND b.status <> 'cancelled') AS bookings
     FROM lease_tenants t
-    WHERE lower(concat_ws(' ', full_name, phone, email, emirates_id_no, passport_no, ssn, housing_authority, housing_detail, old_account)) LIKE ?
+    WHERE lower(concat_ws(' ', full_name, phone, email, emirates_id_no, passport_no, ssn, housing_authority, housing_detail, notes, old_account, old_name)) LIKE ?
     ORDER BY id DESC LIMIT 5000`).all(like);
 }
 
