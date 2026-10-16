@@ -7,7 +7,7 @@ import { cleanRow, planImport, importTenants, undoImport, readTenantFiles, parse
 
 test.after(() => closeDb());
 
-const row = (tenant, contacts = tenant, account = '1', extra = {}) => ({ tenant, contacts, account, email: '', phone: '', cut: false, company: false, ...extra });
+const row = (tenant, contacts = tenant, account = '1', extra = {}) => ({ tenant, contacts, account, unit: '', email: '', phone: '', cut: false, company: false, ...extra });
 const one = (r, existing = []) => planImport([r], existing)[0];
 
 test('Rent Manager tags come out of the name and are kept in the notes', () => {
@@ -189,4 +189,26 @@ test('a list with emails and phones: new tenants get them, tenants on file get o
 
   const again = planImport(rows, await listTenants());
   assert.ok(again.filter((p) => !['skip'].includes(p.status)).every((p) => p.status === 'exists'), 'once filled in, the same list has nothing left to add');
+});
+
+test('the unit goes into the notes, for new tenants and for those already on file', async () => {
+  const rows = parseRows('{"rows":[["CHRIS ROBSON","CHRIS ROBSON","4033","GSL 101","","",0,0],["BRET (THIRD) NAZWORTH","BRET NAZWORTH","4240","GSL 409","","",0,0],["BRET (PRIMARY) NAZWORTH","BRET NAZWORTH","4241","GSL 411","bret.nazworth@gmail.com","(405)833-4432",0,0],["KYLE DELEON","KYLE DELEON","4188","GSL 312 WDC*","CAYMAC01@YAHOO.COM","(409)781-0808",0,0]]}');
+  assert.deepEqual(rows.map((r) => r.unit), ['GSL 101', 'GSL 409', 'GSL 411', 'GSL 312 WDC']);
+  assert.equal(rows[2].email, 'bret.nazworth@gmail.com', 'the email still lands in its place after the unit');
+
+  await reset();
+  const chris = await addTenant({ full_name: 'CHRIS ROBSON', notes: 'Pays on the 5th.' });
+  await db.prepare("UPDATE lease_tenants SET old_account = '4033' WHERE id = ?").run(chris.id);
+  const plan = planImport(rows, await listTenants());
+  const bret = plan.find((p) => p.name === 'BRET NAZWORTH');
+  assert.match(bret.notes, /Unit in Rent Manager: GSL 409, GSL 411\./);
+  const c = plan.find((p) => p.name === 'CHRIS ROBSON');
+  assert.deepEqual([c.status, c.fill], ['update', { units: ['GSL 101'] }]);
+
+  await importTenants(plan.filter((p) => p.pick), null);
+  const saved = (await listTenants()).find((t) => t.id === chris.id);
+  assert.equal(saved.notes, 'Pays on the 5th. Unit in Rent Manager: GSL 101.', 'added after what staff wrote, never over it');
+  assert.equal((await listTenants('gsl 312')).length, 1, 'a tenant can be found by unit');
+  const again = planImport(rows, await listTenants());
+  assert.ok(again.every((p) => p.status === 'exists'), 'the unit is not added twice');
 });

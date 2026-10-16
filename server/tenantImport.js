@@ -19,26 +19,28 @@ const MAX_TEXT = 200_000;
 
 // ---------- reading the files ----------
 
-const PROMPT = `This is a tenant list from property management software (such as Rent Manager): a screenshot, a printed report or an export. For every tenant row, copy the Tenant name, the Contacts cell and the Account number exactly as written: keep tags such as M2M, MTM, HUD, (LEGACY), EMP, ABP/75, FF, WDC, *SEE NOTE* where they are, and do not fix spelling or finish cut-off words. Where the list has Email Address and Phone columns, copy those too; where a cell is empty, give "". An email and a phone number printed together with no space between them ("name@mail.com(409)347-0722") are two cells.
-Reply with one JSON object and nothing else: {"rows":[["tenant","contacts","account","email","phone",cut,company], ...]}
+const PROMPT = `This is a tenant list from property management software (such as Rent Manager): a screenshot, a printed report or an export. For every tenant row, copy the Tenant name, the Contacts cell, the Account number and the Unit exactly as written: keep tags such as M2M, MTM, HUD, (LEGACY), EMP, ABP/75, FF, WDC, *SEE NOTE* where they are, and do not fix spelling or finish cut-off words. Where the list has Email Address and Phone columns, copy those too; where a cell is empty, give "". An email and a phone number printed together with no space between them ("name@mail.com(409)347-0722") are two cells.
+Reply with one JSON object and nothing else: {"rows":[["tenant","contacts","account","unit","email","phone",cut,company], ...]}
 cut is 1 when the tenant's name is clipped in both the Tenant and Contacts columns (it runs into the next column, so the whole name cannot be seen), otherwise 0.
 company is 1 when the tenant is a business rather than a person, otherwise 0.
 Leave out column headings, page headers and footers, and blank lines. If this is not a list of tenants, reply {"rows":[]}.`;
 
 const STR = '"((?:[^"\\\\]|\\\\.)*)"';
-// tenant, contacts, account, then email and phone (absent from readings made before they were asked for), then the two flags.
-const ROW = new RegExp(`\\[\\s*${STR}\\s*,\\s*${STR}\\s*,\\s*"?([^",\\]]*?)"?\\s*,\\s*(?:${STR}\\s*,\\s*${STR}\\s*,\\s*)?([01])\\s*,\\s*([01])\\s*\\]`, 'g');
+// tenant, contacts, account, then the unit, email and phone (absent from readings made before they were
+// asked for: the unit last of all), then the two flags.
+const ROW = new RegExp(`\\[\\s*${STR}\\s*,\\s*${STR}\\s*,\\s*"?([^",\\]]*?)"?\\s*,\\s*(?:${STR}\\s*,\\s*)?(?:${STR}\\s*,\\s*${STR}\\s*,\\s*)?([01])\\s*,\\s*([01])\\s*\\]`, 'g');
 const unquote = (s) => { try { return JSON.parse(`"${s}"`); } catch { return s; } };
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** The rows out of the reader's reply, one array at a time, so a reply cut short still gives every row before the cut. */
 export function parseRows(reply) {
   return [...String(reply).matchAll(ROW)]
-    .map(([, tenant, contacts, account, email = '', phone = '', cut, company]) => {
+    .map(([, tenant, contacts, account, unit = '', email = '', phone = '', cut, company]) => {
       const mail = unquote(email).trim().toLowerCase();
       return {
         // The account no. is the last number in the cell: the unit beside it ("GSL 109 4950") is sometimes read into it.
         tenant: unquote(tenant).trim(), contacts: unquote(contacts).trim(), account: String(account).match(/\d+(?!.*\d)/)?.[0] ?? String(account).trim(),
+        unit: squash(unquote(unit).replace(/\*/g, '')),
         email: EMAIL.test(mail) ? mail : '', phone: /\d{7}/.test(unquote(phone).replace(/\D/g, '')) ? unquote(phone).trim() : '',
         cut: cut === '1', company: company === '1',
       };
@@ -213,12 +215,20 @@ export function cleanRow(r) {
   // Finished from Contacts: cut only if the Contacts name is cut too. Seen whole in Contacts: not cut.
   // Otherwise the reader's word for it, or a trailing "…".
   if (name !== t.name ? stillCut : !mine && (t.cut || r.cut)) reasons.push('The name may be cut off in the list');
-  const notesOf = notes(t.tags, others);
-  return { name: tidy(name), kind: company ? 'company' : 'person', account: String(r.account || '').trim(), email: r.email || '', phone: r.phone || '', original: raw, tags: t.tags, others, reasons, skip, notes: notesOf };
+  const units = r.unit ? [r.unit] : [];
+  return { name: tidy(name), kind: company ? 'company' : 'person', account: String(r.account || '').trim(), units, email: r.email || '', phone: r.phone || '', original: raw, tags: t.tags, others, reasons, skip, notes: notes(t.tags, others, units) };
 }
 
-function notes(tags, others) {
-  return [tags.length && `Rent Manager: ${[...new Set(tags)].join(', ')}.`, others.length && `Also on the account: ${[...new Set(others)].join(', ')}.`].filter(Boolean).join(' ') || null;
+const unitLine = (units) => units.length && `Unit in Rent Manager: ${[...new Set(units)].join(', ')}.`;
+function notes(tags, others, units = []) {
+  return [tags.length && `Rent Manager: ${[...new Set(tags)].join(', ')}.`, others.length && `Also on the account: ${[...new Set(others)].join(', ')}.`, unitLine(units)]
+    .filter(Boolean).join(' ') || null;
+}
+/** A tenant's notes with the Rent Manager unit line added, or null when they already say it (or there is no unit). */
+function withUnits(current, units) {
+  const line = unitLine(units);
+  if (!line || String(current || '').includes('Unit in Rent Manager:')) return null;
+  return [current, line].filter(Boolean).join(' ');
 }
 
 const key = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -249,6 +259,7 @@ export function planImport(rows, existing = []) {
     if (!g.original.includes(c.original)) g.original.push(c.original);
     g.email ||= c.email;
     g.phone ||= c.phone;
+    g.units.push(...c.units.filter((u) => !g.units.includes(u)));
     g.tags.push(...c.tags);
     g.others.push(...c.others.filter((o) => !g.others.includes(o)));
     g.reasons.push(...c.reasons.filter((x) => !g.reasons.includes(x)));
@@ -259,7 +270,7 @@ export function planImport(rows, existing = []) {
     const fill = found ? fillFor(byId.get(found), g) : {};
     const status = skips.every(Boolean) ? 'skip' : found ? (Object.keys(fill).length ? 'update' : 'exists') : g.reasons.length ? 'check' : 'new';
     return {
-      ...g, phone: g.phone ? usPhone(g.phone) : '', tags: [...new Set(g.tags)], notes: notes(g.tags, g.others), housing_authority: housingOf(g.tags),
+      ...g, phone: g.phone ? usPhone(g.phone) : '', tags: [...new Set(g.tags)], notes: notes(g.tags, g.others, g.units), housing_authority: housingOf(g.tags),
       status, pick: status === 'new' || status === 'update', tenant_id: found ?? null, fill,
     };
   });
@@ -273,6 +284,7 @@ function fillFor(e, g) {
   if (g.email && !e.email) fill.email = g.email;
   const more = g.accounts.filter((a) => !accountsOf(e.old_account).includes(a));
   if (more.length) fill.accounts = more;
+  if (withUnits(e.notes, g.units)) fill.units = g.units;
   return fill;
 }
 
@@ -304,10 +316,11 @@ export async function importTenants(rows, by) {
         const e = byId.get(Number(r.tenant_id));
         const have = accountsOf(e?.old_account);
         const more = acc.filter((a) => !have.includes(a) && !accounts.has(a));
-        const set = { phone: !e?.phone && phone ? usPhone(phone) : null, email: !e?.email ? email : null };
-        if (!e || (!set.phone && !set.email && !more.length)) { skipped += 1; continue; }
-        await db.prepare('UPDATE lease_tenants SET phone = COALESCE(phone, ?), email = COALESCE(email, ?), old_account = ? WHERE id = ?')
-          .run(set.phone, set.email, [...have, ...more].join(', ') || null, e.id);
+        const units = (Array.isArray(r.units) ? r.units : []).map((u) => String(u).trim().slice(0, 40)).filter(Boolean);
+        const set = { phone: !e?.phone && phone ? usPhone(phone) : null, email: !e?.email ? email : null, notes: e && withUnits(e.notes, units) };
+        if (!e || (!set.phone && !set.email && !set.notes && !more.length)) { skipped += 1; continue; }
+        await db.prepare('UPDATE lease_tenants SET phone = COALESCE(phone, ?), email = COALESCE(email, ?), notes = COALESCE(?, notes), old_account = ? WHERE id = ?')
+          .run(set.phone, set.email, set.notes, [...have, ...more].join(', ') || null, e.id);
         more.forEach((a) => accounts.add(a));
         updated += 1;
         continue;

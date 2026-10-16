@@ -64,7 +64,7 @@ export default function TenantImport({ onClose, onDone }) {
     setSaving(true);
     setError('');
     try {
-      const r = await api.post('/leasing/tenants/import', { rows: picked.map(({ name, kind, accounts, notes, original, housing_authority, phone, email, tenant_id }) => ({ name, kind, accounts, notes, original, housing_authority, phone, email, tenant_id })) });
+      const r = await api.post('/leasing/tenants/import', { rows: picked.map(({ name, kind, accounts, notes, original, housing_authority, phone, email, tenant_id, units }) => ({ name, kind, accounts, notes, original, housing_authority, phone, email, tenant_id, units })) });
       // The preview is kept: the rows just saved are on file now, and the ones left to check can be gone back to.
       setRows((rs) => rs.map((x) => (x.pick ? { ...x, status: 'exists', pick: false, was: x.status, batch: r.batch } : x)));
       setResult(r);
@@ -153,7 +153,7 @@ export default function TenantImport({ onClose, onDone }) {
                     <td className="px-3 py-2 text-xs text-mute">
                       {/* On file: only what an update adds is said; what a new tenant would get does not apply. */}
                       {(r.tenant_id != null
-                        ? [r.status === 'update' && `Adds ${[r.fill.phone && `phone ${r.fill.phone}`, r.fill.email && `email ${r.fill.email}`, r.fill.accounts && `account #${r.fill.accounts.join(', ')}`].filter(Boolean).join(', ')}`]
+                        ? [r.status === 'update' && `Adds ${[r.fill.phone && `phone ${r.fill.phone}`, r.fill.email && `email ${r.fill.email}`, r.fill.accounts && `account #${r.fill.accounts.join(', ')}`, r.fill.units && `unit ${r.fill.units.join(', ')} to the notes`].filter(Boolean).join(', ')}`]
                         : [...r.reasons, ...(r.housing_authority ? [`Housing tenant: ${r.housing_authority}`] : []), ...(r.status === 'skip' ? [WHY_SKIP] : []), ...(r.accounts.length > 1 ? [`On ${r.accounts.length} accounts in Rent Manager, saved as one tenant`] : []), r.notes]
                       ).filter(Boolean).map((x) => <p key={x}>{x}</p>)}
                     </td>
