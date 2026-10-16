@@ -4,6 +4,7 @@ import multer from 'multer';
 import { db, tx } from './db.js';
 import { addTenant, listTenants } from './leasing.js';
 import { fileBlock } from './documentReader.js';
+import { usPhone } from './usFormat.js';
 
 // Bringing in the tenant list from Rent Manager (the old software): its "Tenants" report as
 // screenshots, a PDF or a CSV. Claude only copies the rows out as they are written; the
@@ -18,22 +19,30 @@ const MAX_TEXT = 200_000;
 
 // ---------- reading the files ----------
 
-const PROMPT = `This is a tenant list from property management software (such as Rent Manager): a screenshot, a printed report or an export. For every tenant row, copy the Tenant name, the Contacts cell and the Account number exactly as written: keep tags such as M2M, MTM, HUD, (LEGACY), EMP, ABP/75, FF, WDC, *SEE NOTE* where they are, and do not fix spelling or finish cut-off words.
-Reply with one JSON object and nothing else: {"rows":[["tenant","contacts","account",cut,company], ...]}
+const PROMPT = `This is a tenant list from property management software (such as Rent Manager): a screenshot, a printed report or an export. For every tenant row, copy the Tenant name, the Contacts cell and the Account number exactly as written: keep tags such as M2M, MTM, HUD, (LEGACY), EMP, ABP/75, FF, WDC, *SEE NOTE* where they are, and do not fix spelling or finish cut-off words. Where the list has Email Address and Phone columns, copy those too; where a cell is empty, give "". An email and a phone number printed together with no space between them ("name@mail.com(409)347-0722") are two cells.
+Reply with one JSON object and nothing else: {"rows":[["tenant","contacts","account","email","phone",cut,company], ...]}
 cut is 1 when the tenant's name is clipped in both the Tenant and Contacts columns (it runs into the next column, so the whole name cannot be seen), otherwise 0.
 company is 1 when the tenant is a business rather than a person, otherwise 0.
 Leave out column headings, page headers and footers, and blank lines. If this is not a list of tenants, reply {"rows":[]}.`;
 
-const ROW = /\[\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"\s*,\s*"?([^",\]]*?)"?\s*,\s*([01])\s*,\s*([01])\s*\]/g;
+const STR = '"((?:[^"\\\\]|\\\\.)*)"';
+// tenant, contacts, account, then email and phone (absent from readings made before they were asked for), then the two flags.
+const ROW = new RegExp(`\\[\\s*${STR}\\s*,\\s*${STR}\\s*,\\s*"?([^",\\]]*?)"?\\s*,\\s*(?:${STR}\\s*,\\s*${STR}\\s*,\\s*)?([01])\\s*,\\s*([01])\\s*\\]`, 'g');
 const unquote = (s) => { try { return JSON.parse(`"${s}"`); } catch { return s; } };
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** The rows out of the reader's reply, one array at a time, so a reply cut short still gives every row before the cut. */
 export function parseRows(reply) {
   return [...String(reply).matchAll(ROW)]
-    .map(([, tenant, contacts, account, cut, company]) => ({
-      // The account no. is the last number in the cell: the unit beside it ("GSL 109 4950") is sometimes read into it.
-      tenant: unquote(tenant).trim(), contacts: unquote(contacts).trim(), account: String(account).match(/\d+(?!.*\d)/)?.[0] ?? String(account).trim(), cut: cut === '1', company: company === '1',
-    }))
+    .map(([, tenant, contacts, account, email = '', phone = '', cut, company]) => {
+      const mail = unquote(email).trim().toLowerCase();
+      return {
+        // The account no. is the last number in the cell: the unit beside it ("GSL 109 4950") is sometimes read into it.
+        tenant: unquote(tenant).trim(), contacts: unquote(contacts).trim(), account: String(account).match(/\d+(?!.*\d)/)?.[0] ?? String(account).trim(),
+        email: EMAIL.test(mail) ? mail : '', phone: /\d{7}/.test(unquote(phone).replace(/\D/g, '')) ? unquote(phone).trim() : '',
+        cut: cut === '1', company: company === '1',
+      };
+    })
     .filter((r) => r.tenant);
 }
 
@@ -50,7 +59,8 @@ function contentFor(file) {
 async function claudeRead(content) {
   const { claude } = await import('./ai.js');
   // Streamed: a long list is a long reply, more than a plain request is allowed to wait for.
-  const msg = await claude.messages.stream({ model: MODEL, max_tokens: 32000, messages: [{ role: 'user', content }] }).finalMessage();
+  // Copying rows needs no thinking, and thinking would spend the reply's room: a whole list with emails is long.
+  const msg = await claude.messages.stream({ model: MODEL, max_tokens: 64000, thinking: { type: 'disabled' }, messages: [{ role: 'user', content }] }).finalMessage();
   return { text: msg.content.filter((b) => b.type === 'text').map((b) => b.text).join(''), partial: msg.stop_reason === 'max_tokens' };
 }
 
@@ -136,7 +146,13 @@ function untag(raw) {
   s = s.replace(/\*[^*]*\*?/g, (m) => { marks.push(squash(m)); return ' '; });
   s = s.replace(/\(([^)]*)$/, (m, inner) => { if (inner.trim()) tags.push(inner.trim().toUpperCase()); return ' '; }); // a tag cut off by the column: "(Lega"
   s = s.replace(/[.,;:]+(?=\s|$)/g, ' '); // "Lapoint." is Lapoint
-  s = s.replace(/\s-\s+(.*)$/, (m, rest) => { marks.push(`- ${squash(rest)}`); return ' '; });
+  // "- MTM" after a name is the month-to-month tag; anything else after a dash ("- Balance") is a mark to look at.
+  s = s.replace(/\s-\s+(.*)$/, (m, rest) => {
+    const r = squash(rest);
+    if (/^(m2m|mtm|mti)$/i.test(r)) tags.push(/mti/i.test(r) ? 'MTI' : 'M2M');
+    else marks.push(`- ${r}`);
+    return ' ';
+  });
   for (const [re, label] of TAGS) s = s.replace(re, (m) => { const t = label ?? m.toUpperCase().replace(/\s+/g, ''); if (label !== null || /abp/i.test(m)) tags.push(t); return ' '; });
   return { name: squash(s.replace(/[()]/g, ' ')), tags, marks, cut };
 }
@@ -198,7 +214,7 @@ export function cleanRow(r) {
   // Otherwise the reader's word for it, or a trailing "…".
   if (name !== t.name ? stillCut : !mine && (t.cut || r.cut)) reasons.push('The name may be cut off in the list');
   const notesOf = notes(t.tags, others);
-  return { name: tidy(name), kind: company ? 'company' : 'person', account: String(r.account || '').trim(), original: raw, tags: t.tags, others, reasons, skip, notes: notesOf };
+  return { name: tidy(name), kind: company ? 'company' : 'person', account: String(r.account || '').trim(), email: r.email || '', phone: r.phone || '', original: raw, tags: t.tags, others, reasons, skip, notes: notesOf };
 }
 
 function notes(tags, others) {
@@ -211,11 +227,14 @@ const accountsOf = (s) => String(s || '').split(',').map((x) => x.trim()).filter
 /**
  * The preview: the rows cleaned, one person on several accounts made one, and each matched
  * against the tenants on file. status: new (ticked), check (something to look at), exists
- * (already on file, by account no. or name), skip (not a person: AIRBNB, FF, an employee's account).
+ * (already on file, by account no. or name), update (on file, and the list has what the tenant
+ * lacks: a phone, an email, another account no.; ticked), skip (not a person: AIRBNB, FF, an
+ * employee's account). `fill` is what an update adds; nothing a tenant already has is replaced.
  */
 export function planImport(rows, existing = []) {
   const byAccount = new Map();
   const byName = new Map();
+  const byId = new Map(existing.map((e) => [e.id, e]));
   for (const e of existing) {
     for (const a of accountsOf(e.old_account)) byAccount.set(a, e.id);
     byName.set(key(e.full_name), e.id);
@@ -228,6 +247,8 @@ export function planImport(rows, existing = []) {
     if (!g) { groups.set(k, { ...c, accounts: c.account ? [c.account] : [], original: [c.original], skips: [c.skip] }); continue; }
     if (c.account && !g.accounts.includes(c.account)) g.accounts.push(c.account);
     if (!g.original.includes(c.original)) g.original.push(c.original);
+    g.email ||= c.email;
+    g.phone ||= c.phone;
     g.tags.push(...c.tags);
     g.others.push(...c.others.filter((o) => !g.others.includes(o)));
     g.reasons.push(...c.reasons.filter((x) => !g.reasons.includes(x)));
@@ -235,30 +256,65 @@ export function planImport(rows, existing = []) {
   }
   return [...groups.values()].map(({ account, skip, skips, ...g }) => {
     const found = g.accounts.map((a) => byAccount.get(a)).find(Boolean) ?? byName.get(key(g.name));
-    const status = skips.every(Boolean) ? 'skip' : found ? 'exists' : g.reasons.length ? 'check' : 'new';
-    return { ...g, tags: [...new Set(g.tags)], notes: notes(g.tags, g.others), housing_authority: housingOf(g.tags), status, pick: status === 'new', tenant_id: found ?? null };
+    const fill = found ? fillFor(byId.get(found), g) : {};
+    const status = skips.every(Boolean) ? 'skip' : found ? (Object.keys(fill).length ? 'update' : 'exists') : g.reasons.length ? 'check' : 'new';
+    return {
+      ...g, phone: g.phone ? usPhone(g.phone) : '', tags: [...new Set(g.tags)], notes: notes(g.tags, g.others), housing_authority: housingOf(g.tags),
+      status, pick: status === 'new' || status === 'update', tenant_id: found ?? null, fill,
+    };
   });
+}
+
+/** What the list can add to a tenant on file: a phone or an email where there is none, account numbers not yet kept. */
+function fillFor(e, g) {
+  if (!e) return {};
+  const fill = {};
+  if (g.phone && !e.phone) fill.phone = usPhone(g.phone);
+  if (g.email && !e.email) fill.email = g.email;
+  const more = g.accounts.filter((a) => !accountsOf(e.old_account).includes(a));
+  if (more.length) fill.accounts = more;
+  return fill;
 }
 
 // ---------- saving ----------
 
-/** The ticked rows saved as tenants, all under one batch so they can be undone together. Anyone already on file is left alone. */
+/**
+ * The ticked rows saved, all under one batch: new tenants added (and undone together), and tenants
+ * on file (`tenant_id`) given the phone, email and account numbers they lack. Nothing a tenant
+ * already has is replaced, and anyone already on file is never added again.
+ */
 export async function importTenants(rows, by) {
   if (!Array.isArray(rows) || !rows.length) throw bad('Tick the tenants to import.');
   if (rows.length > 5000) throw bad('That is more tenants than one import takes.');
   const batch = randomUUID();
   let added = 0;
+  let updated = 0;
   let skipped = 0;
   await tx(async () => {
     const existing = await listTenants();
+    const byId = new Map(existing.map((e) => [e.id, e]));
     const accounts = new Set(existing.flatMap((e) => accountsOf(e.old_account)));
     const names = new Set(existing.map((e) => key(e.full_name)));
     for (const r of rows) {
       const name = String(r.name ?? '').trim();
       const acc = (Array.isArray(r.accounts) ? r.accounts : accountsOf(r.accounts)).map((a) => String(a).trim()).filter(Boolean);
+      const email = EMAIL.test(String(r.email ?? '').trim().toLowerCase()) ? String(r.email).trim().toLowerCase() : null;
+      const phone = String(r.phone ?? '').trim() || null;
+      if (r.tenant_id) {
+        const e = byId.get(Number(r.tenant_id));
+        const have = accountsOf(e?.old_account);
+        const more = acc.filter((a) => !have.includes(a) && !accounts.has(a));
+        const set = { phone: !e?.phone && phone ? usPhone(phone) : null, email: !e?.email ? email : null };
+        if (!e || (!set.phone && !set.email && !more.length)) { skipped += 1; continue; }
+        await db.prepare('UPDATE lease_tenants SET phone = COALESCE(phone, ?), email = COALESCE(email, ?), old_account = ? WHERE id = ?')
+          .run(set.phone, set.email, [...have, ...more].join(', ') || null, e.id);
+        more.forEach((a) => accounts.add(a));
+        updated += 1;
+        continue;
+      }
       if (!name || acc.some((a) => accounts.has(a)) || names.has(key(name))) { skipped += 1; continue; }
       const housing = r.housing_authority ? { housing: true, housing_authority: r.housing_authority } : {}; // checked against the list by addTenant
-      const t = await addTenant({ full_name: name, kind: r.kind, notes: r.notes, ...housing }, by);
+      const t = await addTenant({ full_name: name, kind: r.kind, notes: r.notes, phone, email, ...housing }, by);
       const old = (Array.isArray(r.original) ? r.original : [r.original]).filter(Boolean).join(' / ').slice(0, 300) || null;
       await db.prepare('UPDATE lease_tenants SET old_account = ?, old_name = ?, import_batch = ? WHERE id = ?').run(acc.join(', ') || null, old, batch, t.id);
       acc.forEach((a) => accounts.add(a));
@@ -266,7 +322,7 @@ export async function importTenants(rows, by) {
       added += 1;
     }
   });
-  return { batch, added, skipped };
+  return { batch, added, updated, skipped };
 }
 
 /** One import taken back: its tenants deleted, except any who have a lease by now. */

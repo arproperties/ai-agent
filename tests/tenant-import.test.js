@@ -7,7 +7,7 @@ import { cleanRow, planImport, importTenants, undoImport, readTenantFiles, parse
 
 test.after(() => closeDb());
 
-const row = (tenant, contacts = tenant, account = '1', extra = {}) => ({ tenant, contacts, account, cut: false, company: false, ...extra });
+const row = (tenant, contacts = tenant, account = '1', extra = {}) => ({ tenant, contacts, account, email: '', phone: '', cut: false, company: false, ...extra });
 const one = (r, existing = []) => planImport([r], existing)[0];
 
 test('Rent Manager tags come out of the name and are kept in the notes', () => {
@@ -78,7 +78,8 @@ test('the same person on several accounts is one tenant; companies are companies
 
 test('a tenant already on file is not added again, by account number or by name', () => {
   const existing = [{ id: 7, full_name: 'Chris Robson', old_account: null }, { id: 8, full_name: 'Someone Else', old_account: '4034' }];
-  assert.deepEqual([one(row('CHRIS ROBSON', 'CHRIS ROBSON', '4033'), existing).status, one(row('CHRIS ROBSON', 'CHRIS ROBSON', '4033'), existing).tenant_id], ['exists', 7]);
+  const chris = one(row('CHRIS ROBSON', 'CHRIS ROBSON', '4033'), existing);
+  assert.deepEqual([chris.status, chris.tenant_id, chris.fill], ['update', 7, { accounts: ['4033'] }], 'found by name, and given the account number it lacked');
   assert.equal(one(row('JOSHUA MAY', 'JOSHUA MAY', '4034'), existing).status, 'exists');
 });
 
@@ -163,4 +164,29 @@ test('importing saves the ticked tenants with their account numbers, and undo ta
   assert.deepEqual((await listTenants()).map((x) => x.full_name).sort(), ['Christopher Robson', 'Kept Tenant']);
   assert.ok(before.id);
   assert.equal(Number((await db.prepare('SELECT count(*) AS n FROM lease_tenants').get()).n), 2);
+});
+
+test('a list with emails and phones: new tenants get them, tenants on file get only what they lack', async () => {
+  const rows = parseRows('{"rows":[["LEANNE DENTON","LEANNE DENTON","4045","LEANNEAYRES@YMAIL.COM","(409)790-1571",0,0],["Mark Blackshear - MTM","Mark Blackshear","6397","BLACKSHEARMARK@GMAIL.COM","1(409)790-7807",0,0],["CHRIS ROBSON","CHRIS ROBSON","4033","","",0,0],["Chelsie Biano","Chelsie Biano","6274","bianochelsie@gmail.com","(409)277-9036",0,0],["OLD READING","OLD READING","9",0,0]]}');
+  assert.deepEqual(rows.map((r) => [r.email, r.phone]), [['leanneayres@ymail.com', '(409)790-1571'], ['blackshearmark@gmail.com', '1(409)790-7807'], ['', ''], ['bianochelsie@gmail.com', '(409)277-9036'], ['', '']], 'a reading made before emails were asked for still parses');
+
+  await reset();
+  const kept = await addTenant({ full_name: 'Chelsie Biano', phone: '409-000-0000' });
+  await db.prepare("UPDATE lease_tenants SET old_account = '5828' WHERE id = ?").run(kept.id);
+  const plan = planImport(rows, await listTenants());
+  const mark = plan.find((p) => p.name === 'Mark Blackshear');
+  assert.deepEqual([mark.status, mark.tags, mark.phone], ['new', ['M2M'], '409-790-7807'], '"- MTM" is the month-to-month tag, not a mark to look at');
+  const chelsie = plan.find((p) => p.name === 'Chelsie Biano');
+  assert.deepEqual([chelsie.status, chelsie.pick, chelsie.fill], ['update', true, { email: 'bianochelsie@gmail.com', accounts: ['6274'] }], 'her phone is kept; the email and the second account are added');
+
+  const r = await importTenants(plan.filter((p) => p.pick), null);
+  assert.deepEqual([r.added, r.updated], [4, 1]);
+  const all = await listTenants();
+  const c = all.find((t) => t.id === kept.id);
+  assert.deepEqual([c.phone, c.email, c.old_account], ['409-000-0000', 'bianochelsie@gmail.com', '5828, 6274']);
+  const leanne = all.find((t) => t.full_name === 'LEANNE DENTON');
+  assert.deepEqual([leanne.phone, leanne.email], ['409-790-1571', 'leanneayres@ymail.com']);
+
+  const again = planImport(rows, await listTenants());
+  assert.ok(again.filter((p) => !['skip'].includes(p.status)).every((p) => p.status === 'exists'), 'once filled in, the same list has nothing left to add');
 });

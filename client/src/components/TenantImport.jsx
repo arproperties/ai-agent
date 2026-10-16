@@ -13,11 +13,12 @@ const TH = 'whitespace-nowrap px-3 py-2.5 font-medium';
 const HEAD = 'border-b border-stroke text-left text-[11px] uppercase tracking-wider text-mute';
 const STATUS = {
   new: ['New', 'bg-ok/15 text-ok'],
+  update: ['Adds details', 'bg-p3/15 text-p3'],
   check: ['Check', 'bg-warn/15 text-warn'],
   exists: ['Already on file', 'bg-white/10 text-txt/70'],
   skip: ['Not a tenant', 'bg-white/5 text-mute'],
 };
-const FILTERS = [['all', 'All'], ['new', 'New'], ['check', 'Check'], ['exists', 'Already on file'], ['skip', 'Not a tenant']];
+const FILTERS = [['all', 'All'], ['new', 'New'], ['update', 'Adds details'], ['check', 'Check'], ['exists', 'Already on file'], ['skip', 'Not a tenant']];
 const WHY_SKIP = 'Looks like an account rather than a person (AIRBNB, FF, an employee or maintenance account).';
 
 export default function TenantImport({ onClose, onDone }) {
@@ -63,7 +64,7 @@ export default function TenantImport({ onClose, onDone }) {
     setSaving(true);
     setError('');
     try {
-      const r = await api.post('/leasing/tenants/import', { rows: picked.map(({ name, kind, accounts, notes, original, housing_authority }) => ({ name, kind, accounts, notes, original, housing_authority })) });
+      const r = await api.post('/leasing/tenants/import', { rows: picked.map(({ name, kind, accounts, notes, original, housing_authority, phone, email, tenant_id }) => ({ name, kind, accounts, notes, original, housing_authority, phone, email, tenant_id })) });
       // The preview is kept: the rows just saved are on file now, and the ones left to check can be gone back to.
       setRows((rs) => rs.map((x) => (x.pick ? { ...x, status: 'exists', pick: false, was: x.status, batch: r.batch } : x)));
       setResult(r);
@@ -75,7 +76,8 @@ export default function TenantImport({ onClose, onDone }) {
     if (!confirm(`Take back the ${result.added} tenants this import added?`)) return;
     try {
       const u = await api.del(`/leasing/tenants/import/${result.batch}`);
-      setRows((rs) => rs.map(({ was, batch, ...x }) => (batch === result.batch ? { ...x, status: was, pick: was === 'new' } : { was, batch, ...x })));
+      // Undo takes back the tenants it added; the details it filled in on tenants already on file stay.
+      setRows((rs) => rs.map(({ was, batch, ...x }) => (batch === result.batch && was !== 'update' ? { ...x, status: was, pick: was === 'new' } : { was, batch, ...x })));
       setResult({ ...result, undone: u });
       onDone();
     } catch (e) { setError(e.message); }
@@ -97,7 +99,8 @@ export default function TenantImport({ onClose, onDone }) {
         <div className="space-y-3">
           {result.undone
             ? <p className="text-sm">Taken back: {result.undone.removed} removed{result.undone.kept ? `, ${result.undone.kept} kept because they have a lease now` : ''}.</p>
-            : <p className="flex items-center gap-2 text-sm"><Check size={16} className="text-ok" /> {result.added} tenant{result.added === 1 ? '' : 's'} added{result.skipped ? `, ${result.skipped} already on file` : ''}.</p>}
+            : <p className="flex items-center gap-2 text-sm"><Check size={16} className="text-ok" /> {result.added} tenant{result.added === 1 ? '' : 's'} added{result.updated ? `, ${result.updated} given their phone, email or account no.` : ''}{result.skipped ? `, ${result.skipped} already on file` : ''}.</p>}
+          {!result.undone && result.added > 0 && result.updated > 0 && <p className="text-xs text-mute">Undo takes back the added tenants; the details filled in on tenants already on file stay.</p>}
           {left > 0 && <p className="text-sm text-warn">{left} row{left === 1 ? '' : 's'} still need{left === 1 ? 's' : ''} checking. They were not imported.</p>}
           <div className="flex flex-wrap justify-end gap-2">
             {!result.undone && result.added > 0 && <button onClick={undo} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10"><Undo2 size={15} /> Undo this import</button>}
@@ -106,7 +109,7 @@ export default function TenantImport({ onClose, onDone }) {
           </div>
         </div>
       ) : job ? (
-        <p className="flex items-center gap-2 py-4 text-sm text-mute"><Loader2 size={16} className="animate-spin" /> Reading {job.total === 1 ? 'the file' : `file ${Math.min(job.done + 1, job.total)} of ${job.total}`}… a page takes about half a minute.</p>
+        <p className="flex items-center gap-2 py-4 text-sm text-mute"><Loader2 size={16} className="animate-spin" /> Reading {job.total === 1 ? 'the file' : `file ${Math.min(job.done + 1, job.total)} of ${job.total}`}… a page takes about half a minute, so a whole list a few minutes.</p>
       ) : !rows ? (
         <div className="space-y-3">
           <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed border-stroke px-4 py-8 text-sm text-mute hover:border-p1/60 hover:text-txt">
@@ -129,13 +132,14 @@ export default function TenantImport({ onClose, onDone }) {
           </div>
           <div className="overflow-x-auto rounded-2xl border border-stroke">
             <table className="w-full text-sm">
-              <thead><tr className={HEAD}><th className={TH} /><th className={TH}>Name to save</th><th className={TH}>Rent Manager account #</th><th className={TH}>Status</th><th className={TH}>Noticed</th></tr></thead>
+              <thead><tr className={HEAD}><th className={TH} /><th className={TH}>Name to save</th><th className={TH}>Rent Manager account #</th><th className={TH}>Phone / email</th><th className={TH}>Status</th><th className={TH}>Noticed</th></tr></thead>
               <tbody className="divide-y divide-stroke/60">
                 {paged.rows.map((r) => (
                   <tr key={r.i} className={r.pick ? '' : 'opacity-70'}>
                     <td className="px-3 py-2"><input type="checkbox" checked={r.pick} disabled={r.status === 'exists'} onChange={(e) => change(r.i, { pick: e.target.checked })} className="size-4 accent-p1" aria-label={`Import ${r.name}`} /></td>
                     <td className="min-w-48 px-3 py-2">
-                      <input value={r.name} onChange={(e) => change(r.i, { name: e.target.value })} className={`${FIELD} py-1.5`} aria-label="Name to save" />
+                      {/* A tenant on file keeps its name: only a new one is named here. */}
+                      <input value={r.name} onChange={(e) => change(r.i, { name: e.target.value })} readOnly={r.tenant_id != null} className={`${FIELD} py-1.5 ${r.tenant_id != null ? 'opacity-70' : ''}`} aria-label="Name to save" />
                       {/* Only where the name to save is not what Rent Manager shows: a tag taken out, a cut-off name finished, accounts merged. */}
                       {(r.original.some((o) => o !== r.name) || r.kind === 'company') && (
                         <p className="mt-1 truncate text-xs text-mute" title={r.original.join(' / ')}>
@@ -144,9 +148,14 @@ export default function TenantImport({ onClose, onDone }) {
                       )}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 tabular-nums text-mute">{r.accounts.join(', ') || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-mute">{r.phone || r.email ? <><p className="tabular-nums">{r.phone}</p><p className="max-w-56 truncate" title={r.email}>{r.email}</p></> : '—'}</td>
                     <td className="px-3 py-2"><span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${STATUS[r.status][1]}`}>{STATUS[r.status][0]}</span></td>
                     <td className="px-3 py-2 text-xs text-mute">
-                      {[...r.reasons, ...(r.housing_authority ? [`Housing tenant: ${r.housing_authority}`] : []),...(r.status === 'skip' ? [WHY_SKIP] : []), ...(r.accounts.length > 1 ? [`On ${r.accounts.length} accounts in Rent Manager, saved as one tenant`] : []), r.notes].filter(Boolean).map((x) => <p key={x}>{x}</p>)}
+                      {/* On file: only what an update adds is said; what a new tenant would get does not apply. */}
+                      {(r.tenant_id != null
+                        ? [r.status === 'update' && `Adds ${[r.fill.phone && `phone ${r.fill.phone}`, r.fill.email && `email ${r.fill.email}`, r.fill.accounts && `account #${r.fill.accounts.join(', ')}`].filter(Boolean).join(', ')}`]
+                        : [...r.reasons, ...(r.housing_authority ? [`Housing tenant: ${r.housing_authority}`] : []), ...(r.status === 'skip' ? [WHY_SKIP] : []), ...(r.accounts.length > 1 ? [`On ${r.accounts.length} accounts in Rent Manager, saved as one tenant`] : []), r.notes]
+                      ).filter(Boolean).map((x) => <p key={x}>{x}</p>)}
                     </td>
                   </tr>
                 ))}
