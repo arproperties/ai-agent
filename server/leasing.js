@@ -234,16 +234,26 @@ const mustLeaveRent = (b) => { if (b.discount_type === 'amount' && Number(b.disc
  * The confirmed booking of this unit that shares a day with these dates, if any; or one that
  * ended before them whose tenant has not been inspected out (the unit is not vacant until then).
  */
-const clash = (unitId, start, end, exceptId = 0) => db.prepare(`${BOOKING_SELECT}
-  WHERE b.unit_id = ? AND b.status = 'confirmed' AND b.id <> ? AND ((b.start_date <= ? AND b.end_date >= ?) OR (b.end_date < ? AND ${HELD}))
-  ORDER BY b.start_date LIMIT 1`).get(Number(unitId), Number(exceptId), end, start, start);
+const clash = (unitId, start, end, exceptId = 0, followsId = 0) => db.prepare(`${BOOKING_SELECT}
+  WHERE b.unit_id = ? AND b.status = 'confirmed' AND b.id <> ? AND ((b.start_date <= ? AND b.end_date >= ?) OR (b.end_date < ? AND b.id <> ? AND ${HELD}))
+  ORDER BY b.start_date LIMIT 1`).get(Number(unitId), Number(exceptId), end, start, start, Number(followsId) || 0);
 
-/** Fails unless the unit can be confirmed for these dates. Call inside tx(): it locks the unit. */
-async function mustBeFree(unitId, start, end, exceptId) {
+/**
+ * The tenant's own confirmed booking of this unit that ends the day before `start`, if it has no
+ * renewal yet. A lease made straight after it (say an Airbnb stay that turns into a lease) is the
+ * same tenant staying on, so it follows on from it as a renewal does: no move-out, no move-in.
+ */
+const followsOn = async (unitId, tenantId, start, exceptId = 0) => (await db.prepare(`SELECT b.id FROM lease_bookings b
+  WHERE b.unit_id = ? AND b.tenant_id = ? AND b.status = 'confirmed' AND b.end_date = ? AND b.id <> ?
+    AND NOT EXISTS (SELECT 1 FROM lease_bookings r WHERE r.renewed_from = b.id AND r.status <> 'cancelled' AND r.id <> ?)
+  ORDER BY b.id DESC LIMIT 1`).get(Number(unitId), Number(tenantId), iso(dayNo(start) - 1), Number(exceptId), Number(exceptId)))?.id ?? null;
+
+/** Fails unless the unit can be confirmed for these dates. Call inside tx(): it locks the unit. `followsId`: the booking it follows on from, which does not hold the unit against it. */
+async function mustBeFree(unitId, start, end, exceptId, followsId) {
   const unit = await db.prepare('SELECT id, blocked FROM prop_units WHERE id = ? FOR UPDATE').get(Number(unitId));
   if (!unit) throw bad('Unit not found', 404);
   if (unit.blocked) throw bad('This unit is blocked (not for rent). Unblock it on the building page first.', 409);
-  const other = await clash(unitId, start, end, exceptId);
+  const other = await clash(unitId, start, end, exceptId, followsId);
   if (other && other.end_date < start) throw bad(`Unit ${other.unit_no} is not vacant: ${other.tenant}'s move-out inspection is not done (${bookingRef(other)}). Do it first.`, 409);
   if (other) throw bad(`Unit ${other.unit_no} is already leased by ${other.tenant} from ${other.start_date} to ${other.end_date} (${bookingRef(other)}).`, 409);
 }
@@ -281,10 +291,11 @@ async function makeBooking(body = {}, by, extra = {}, made_as = null) {
   if (!body.unit_id) throw bad('Choose a unit.');
   const confirm = body.status === 'confirmed';
   const tenantId = body.tenant_id ? (await getTenant(body.tenant_id)).id : (await addTenant(body.tenant || {}, by)).id;
-  if (confirm) await mustBeFree(body.unit_id, row.start_date, row.end_date, 0);
+  const follows = extra.import_batch ? null : await followsOn(body.unit_id, tenantId, row.start_date);
+  if (confirm) await mustBeFree(body.unit_id, row.start_date, row.end_date, 0, follows);
   else if (!(await db.prepare('SELECT 1 FROM prop_units WHERE id = ?').get(Number(body.unit_id)))) throw bad('Unit not found', 404);
   const full = { type: suggestType(row.start_date, row.end_date), ...row, unit_id: Number(body.unit_id), tenant_id: tenantId,
-    status: confirm ? 'confirmed' : 'draft', created_by: by ?? null, ...extra };
+    status: confirm ? 'confirmed' : 'draft', created_by: by ?? null, ...(follows ? { renewed_from: follows } : {}), ...extra };
   const cols = Object.keys(full);
   const { id } = await db.prepare(`INSERT INTO lease_bookings (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')}) RETURNING id`)
     .run(...cols.map((c) => full[c]));
@@ -308,7 +319,12 @@ export async function updateBooking(id, body = {}, by) {
     if (end < start) throw bad('The end date is before the start date.');
     mustLeaveRent({ ...old, ...row });
     mustProrateMonthly({ ...old, ...row });
-    if (old.status === 'confirmed') await mustBeFree(row.unit_id || old.unit_id, start, end, old.id);
+    // Moved to the day after the same tenant's stay in the unit ends: it follows on from that stay now. A link it has is kept.
+    if (!old.renewed_from && !old.import_batch) {
+      const follows = await followsOn(row.unit_id || old.unit_id, row.tenant_id || old.tenant_id, start, old.id);
+      if (follows) row.renewed_from = follows;
+    }
+    if (old.status === 'confirmed') await mustBeFree(row.unit_id || old.unit_id, start, end, old.id, row.renewed_from);
     // The schedule is rebuilt around the rows already paid, which only holds if they still fit it.
     const fixed = ['start_date', 'rent_period', 'payment_frequency', 'discount_type', 'prorate'].some((f) => f in row && row[f] !== old[f])
       || ['rent_amount', 'discount_value', 'tax_percent'].some((f) => f in row && row[f] !== num(old[f]));
@@ -352,6 +368,11 @@ export async function changeEnd(id, endDate, by) {
       await mustBeFree(old.unit_id, old.start_date, end, old.id);
     }
     await db.prepare('UPDATE lease_bookings SET end_date = ? WHERE id = ?').run(end, old.id);
+    // The tenant's own next lease of the unit, made before this stay was ended, starts the day after now: it follows on from it.
+    if (!(await db.prepare("SELECT 1 FROM lease_bookings WHERE renewed_from = ? AND status <> 'cancelled'").get(old.id))) {
+      await db.prepare(`UPDATE lease_bookings SET renewed_from = ? WHERE id = (SELECT id FROM lease_bookings WHERE unit_id = ? AND tenant_id = ? AND start_date = ?
+        AND status <> 'cancelled' AND renewed_from IS NULL AND import_batch IS NULL ORDER BY id DESC LIMIT 1)`).run(old.id, old.unit_id, old.tenant_id, iso(dayNo(end) + 1));
+    }
     const now = await getBooking(id);
     await writeSchedule(now);
     const overpaid = money(Math.max(0, paidRent - total(schedule(now))));

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { reset, closeDb, makeUser } from './helpers/db.js';
 import { create, remove, listUnits } from '../server/properties.js';
-import { createBooking, getBooking, renewBooking } from '../server/leasing.js';
+import { createBooking, getBooking, renewBooking, changeEnd, updateBooking } from '../server/leasing.js';
 import { addInspection, updateInspection, removeInspection, unitInspections, addInspectionPhotos, getInspectionPhoto, removeInspectionPhoto, confirmInspected } from '../server/inspections.js';
 
 test.after(() => closeDb());
@@ -46,6 +46,51 @@ test('a lease made on the form is confirmed only after its move-in inspection, d
   assert.deepEqual((await unitInspections(u1.id, renewal.id, AT)).next, { kind: 'confirm' });
   const next = await confirmInspected(renewal.id, staff);
   assert.deepEqual([next.status, (await unitInspections(u1.id, next.id, next.start_date)).next], ['confirmed', { kind: 'move_out', late: false }]);
+});
+
+test('a lease made for the same tenant and unit the day after their stay ends follows on from it: no move-out, no move-in', async () => {
+  const { staff, u1, draft } = await tower();
+  const staffDone = (id) => addInspection(u1.id, { kind: 'move_in', booking_id: id, items: rated() }, staff, AT);
+  // An Airbnb stay, moved in and confirmed, then ended early on 15 Nov.
+  await staffDone(draft.id);
+  const stay = await confirmInspected(draft.id, staff);
+  await changeEnd(stay.id, '2026-11-15', staff);
+  const lease = (extra) => ({ unit_id: u1.id, tenant_id: stay.tenant_id, start_date: '2026-11-16', end_date: '2027-11-15', rent_amount: 1100, ...extra });
+
+  // Someone else cannot have it the next day: the unit is not vacant until Sara is inspected out.
+  await assert.rejects(createBooking(lease({ tenant_id: undefined, tenant: { full_name: 'Omar' }, status: 'confirmed' }), staff), /not vacant/);
+  // A gap of a few days is a new tenancy: not linked, and still blocked.
+  const later = await createBooking(lease({ start_date: '2026-11-20' }), staff);
+  assert.equal(later.renewed_from, null);
+
+  // Sara herself the next day: confirmed straight away, already in.
+  const on = await createBooking(lease({ status: 'confirmed' }), staff);
+  assert.deepEqual([on.status, on.renewed_from], ['confirmed', stay.id]);
+  assert.deepEqual((await unitInspections(u1.id, on.id, '2026-11-16')).next, { kind: 'move_out', late: false });
+  await assert.rejects(renewBooking(stay.id, staff), /already has a renewal/);
+});
+
+test('the link is made too when the stay is ended early after the lease draft, or the draft is moved to the next day', async () => {
+  const { staff, u1, draft } = await tower();
+  await addInspection(u1.id, { kind: 'move_in', booking_id: draft.id, items: rated() }, staff, AT);
+  const stay = await confirmInspected(draft.id, staff);
+  const base = { unit_id: u1.id, tenant_id: stay.tenant_id, end_date: '2028-10-31', rent_amount: 1100 };
+
+  // The draft first, starting 1 Dec; then the stay is ended on 30 Nov.
+  const a = await createBooking({ ...base, start_date: '2026-12-01' }, staff);
+  assert.equal(a.renewed_from, null);
+  await changeEnd(stay.id, '2026-11-30', staff);
+  assert.equal((await getBooking(a.id)).renewed_from, stay.id);
+  assert.deepEqual((await unitInspections(u1.id, a.id, AT)).next, { kind: 'confirm' });
+  assert.equal((await confirmInspected(a.id, staff)).status, 'confirmed');
+
+  // A draft a day late, moved back to the day after: linked then.
+  const { staff: by, u1: u, draft: d } = await tower();
+  await addInspection(u.id, { kind: 'move_in', booking_id: d.id, items: rated() }, by, AT);
+  const s = await confirmInspected(d.id, by);
+  const b = await createBooking({ ...base, unit_id: u.id, tenant_id: s.tenant_id, start_date: '2027-11-02' }, by);
+  assert.equal(b.renewed_from, null);
+  assert.equal((await updateBooking(b.id, { start_date: '2027-11-01' }, by)).renewed_from, s.id);
 });
 
 test('what is written down is checked: a kind, a date not ahead, every area named once and rated', async () => {
