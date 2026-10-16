@@ -1446,6 +1446,10 @@ await db.exec(`
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS billed_from DATE;
 `);
 
+// prorate: how a lease that does not start on the 1st charges its part first month (NULL: rent is due on
+// the move-in day each month; 'first': the part month at move-in, then the 1st; 'second': the part month with the 2nd).
+await db.exec('ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS prorate TEXT');
+
 // What Claude read off each tenant-list file, by a fingerprint of the file (and of the
 // instructions it was read with), so the same screenshot uploaded again is not paid for twice.
 await db.exec(`

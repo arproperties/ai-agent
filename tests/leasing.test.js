@@ -135,8 +135,8 @@ test('booking documents: named freely, counted on the booking, gone with a delet
 test('the payment schedule follows the frequency', () => {
   const lease = { start_date: '2026-11-01', end_date: '2027-10-31', rent_amount: '60000', rent_period: 'year' };
   assert.deepEqual(schedule({ ...lease, payment_frequency: 'quarterly' }),
-    ['2026-11-01', '2027-02-01', '2027-05-01', '2027-08-01'].map((due) => ({ due, amount: 15000 })));
-  assert.deepEqual(schedule({ ...lease, payment_frequency: 'upfront' }), [{ due: '2026-11-01', amount: 60000 }]);
+    ['2026-11-01', '2027-02-01', '2027-05-01', '2027-08-01'].map((due) => ({ due, amount: 15000, share: 3 })));
+  assert.deepEqual(schedule({ ...lease, payment_frequency: 'upfront' }), [{ due: '2026-11-01', amount: 60000, share: 12 }]);
   assert.deepEqual(schedule({ start_date: '2027-01-31', end_date: '2027-03-10', rent_amount: 3000, rent_period: 'month', payment_frequency: 'monthly' }).map((p) => p.due),
     ['2027-01-31', '2027-02-28'], 'a month with no 31st is due on its last day');
 });

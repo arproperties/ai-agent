@@ -109,7 +109,7 @@ const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amou
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
     (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
     (b.import_batch IS NOT NULL OR EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete)) AS moved_in,
-    b.import_batch, to_char(b.billed_from, 'YYYY-MM-DD') AS billed_from,
+    b.import_batch, to_char(b.billed_from, 'YYYY-MM-DD') AS billed_from, b.prorate,
     EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_out' AND i.complete) AS moved_out,
     to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
     u.unit_no, u.floor, u.type AS unit_type, bl.id AS building_id, bl.name AS building, c.id AS company_id, c.name AS company,
@@ -214,8 +214,18 @@ function bookingFields(body = {}, { partial = false } = {}) {
     if (v !== '' && v != null && !(Number(v) >= 0 && Number(v) <= 100)) throw bad('The tax is a percentage from 0 to 100.');
     out.tax_percent = Number(v) > 0 ? Number(v) : null;
   }
+  // How a part first month is charged (see proratedSchedule). Left empty, rent is due on the move-in day each month.
+  if ('prorate' in body) {
+    const v = body.prorate || null;
+    if (v && !PRORATE.has(v)) throw bad('Unknown proration.');
+    out.prorate = v;
+  }
   return out;
 }
+
+const PRORATE = new Set(['first', 'second']);
+/** A part month is worked out in days of a month, so only a lease paid month by month can have one. */
+const mustProrateMonthly = (b) => { if (b.prorate && b.payment_frequency !== 'monthly') throw bad('Proration needs monthly payments.'); };
 
 /** An amount taken off the rent has to leave some rent. */
 const mustLeaveRent = (b) => { if (b.discount_type === 'amount' && Number(b.discount_value) >= Number(b.rent_amount)) throw bad('The discount must be less than the rent.'); };
@@ -267,6 +277,7 @@ export const importBooking = (body, by, { batch, billedFrom }) => tx(() => makeB
 async function makeBooking(body = {}, by, extra = {}, made_as = null) {
   const row = bookingFields(body);
   mustLeaveRent(row);
+  mustProrateMonthly(row);
   if (!body.unit_id) throw bad('Choose a unit.');
   const confirm = body.status === 'confirmed';
   const tenantId = body.tenant_id ? (await getTenant(body.tenant_id)).id : (await addTenant(body.tenant || {}, by)).id;
@@ -296,12 +307,13 @@ export async function updateBooking(id, body = {}, by) {
     const end = row.end_date || old.end_date;
     if (end < start) throw bad('The end date is before the start date.');
     mustLeaveRent({ ...old, ...row });
+    mustProrateMonthly({ ...old, ...row });
     if (old.status === 'confirmed') await mustBeFree(row.unit_id || old.unit_id, start, end, old.id);
     // The schedule is rebuilt around the rows already paid, which only holds if they still fit it.
-    const fixed = ['start_date', 'rent_period', 'payment_frequency', 'discount_type'].some((f) => f in row && row[f] !== old[f])
+    const fixed = ['start_date', 'rent_period', 'payment_frequency', 'discount_type', 'prorate'].some((f) => f in row && row[f] !== old[f])
       || ['rent_amount', 'discount_value', 'tax_percent'].some((f) => f in row && row[f] !== num(old[f]));
     if (fixed && await db.prepare('SELECT 1 FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id WHERE i.booking_id = ? LIMIT 1').get(old.id)) {
-      throw bad('Payments are recorded on this lease, so its start date, rent, discount, tax and payment frequency cannot change. Cancel it and make a new lease instead.', 409);
+      throw bad('Payments are recorded on this lease, so its start date, rent, discount, tax and payment frequency cannot change (nor how its first month is charged). Cancel it and make a new lease instead.', 409);
     }
     const cols = Object.keys(row);
     if (cols.length) await db.prepare(`UPDATE lease_bookings SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => row[c]), old.id);
@@ -499,6 +511,7 @@ export const dueName = (i) => (i.kind === 'deposit' ? 'Security deposit' : i.kin
     is the rent after its discount, with the tax on it (`tax`, on a booking that is taxed). */
 export function schedule(b) {
   if (b.billed_from) return importedSchedule(b);
+  if (b.prorate && b.payment_frequency === 'monthly') return proratedSchedule(b);
   const months = monthsOf(b);
   const step = STEP[b.payment_frequency] || months;
   const out = [];
@@ -508,9 +521,39 @@ export function schedule(b) {
   for (let k = 0; k < months; k += step) {
     const rent = money(upTo(Math.min(k + step, months)) - upTo(k));
     const tax = taxOn(b, rent);
-    out.push({ due: addMonths(b.start_date, k), amount: money(rent + tax), ...(tax ? { tax } : {}) });
+    out.push({ due: addMonths(b.start_date, k), amount: money(rent + tax), ...(tax ? { tax } : {}), share: Math.min(step, months - k) });
   }
   return out;
+}
+
+/** How many days the month of `s` has. */
+const daysIn = (s) => new Date(Date.UTC(+s.slice(0, 4), +s.slice(5, 7), 0)).getUTCDate();
+/** The last day of the month of `s`. */
+const lastOfMonth = (s) => `${s.slice(0, 8)}${String(daysIn(s)).padStart(2, '0')}`;
+
+/**
+ * A lease that prorates its first month, as Rent Manager bills: the days lived in the move-in month
+ * are charged at the month's rent divided by that month's days, then full rent is due on each 1st.
+ * The last month is cut the same way when the lease ends before it does. With 'first' the part month
+ * is due on the move-in day; with 'second' it is added to the bill on the next 1st, or, when the lease
+ * has no next 1st, it is still due on the move-in day. Each row's `share` is how many months it bills,
+ * so a charge that repeats is cut the same way.
+ */
+function proratedSchedule(b) {
+  const part = (from, to) => (dayNo(to) - dayNo(from) + 1) / daysIn(from);
+  const firstOfNext = (s) => iso(dayNo(lastOfMonth(s)) + 1);
+  const rows = [];
+  const head = b.start_date.endsWith('-01') ? null : { due: b.start_date, share: part(b.start_date, b.end_date < lastOfMonth(b.start_date) ? b.end_date : lastOfMonth(b.start_date)) };
+  for (let d = head ? firstOfNext(b.start_date) : b.start_date; d <= b.end_date; d = firstOfNext(d)) {
+    rows.push({ due: d, share: b.end_date < lastOfMonth(d) ? part(d, b.end_date) : 1 });
+  }
+  if (head && b.prorate === 'second' && rows.length) rows[0].share += head.share;
+  else if (head) rows.unshift(head);
+  return rows.map(({ due, share }) => {
+    const rent = money(monthlyRent(b) * share);
+    const tax = taxOn(b, rent);
+    return { due, amount: money(rent + tax), ...(tax ? { tax } : {}), share };
+  });
 }
 
 /**
@@ -525,7 +568,7 @@ function importedSchedule(b) {
   for (let k = 0; k < firsts.length; k += step) {
     const rent = money(monthlyRent(b) * Math.min(step, firsts.length - k));
     const tax = taxOn(b, rent);
-    out.push({ due: firsts[k], amount: money(rent + tax), ...(tax ? { tax } : {}) });
+    out.push({ due: firsts[k], amount: money(rent + tax), ...(tax ? { tax } : {}), share: Math.min(step, firsts.length - k) });
   }
   return out;
 }
@@ -550,7 +593,9 @@ async function writeSchedule(b) {
   const rows = [
     ...rent.map((p) => ({ kind: 'rent', label: '', ...p })),
     ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: first, amount: Number(b.security_deposit) }] : []),
-    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => p.due) : [first]).map((due) => ({ kind: 'fee', label: f.label, due, amount: money(f.amount + taxOn(b, f.amount)), tax: taxOn(b, f.amount) }))),
+    // A charge that repeats is due with each rent payment, for as many months as that payment bills.
+    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => [p.due, money(f.amount * p.share)]) : [[first, f.amount]])
+      .map(([due, amount]) => ({ kind: 'fee', label: f.label, due, amount: money(amount + taxOn(b, amount)), tax: taxOn(b, amount) }))),
   ];
   const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';
   for (const r of rows) {
@@ -902,8 +947,8 @@ export async function renewBooking(id, by) {
   if (again) throw bad(`This lease already has a renewal (${bookingRef(await getBooking(again.id))}).`, 409);
   const start = iso(dayNo(b.end_date) + 1);
   const end = iso(dayNo(addMonths(start, monthsOf(b))) - 1);
-  const { id: nextId } = await db.prepare(`INSERT INTO lease_bookings (unit_id, tenant_id, type, start_date, end_date, rent_amount, rent_period, payment_frequency, fees, tax_percent, source, status, renewed_from, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?) RETURNING id`).run(b.unit_id, b.tenant_id, b.type, start, end, b.rent_amount, b.rent_period, b.payment_frequency,
+  const { id: nextId } = await db.prepare(`INSERT INTO lease_bookings (unit_id, tenant_id, type, start_date, end_date, rent_amount, rent_period, payment_frequency, prorate, fees, tax_percent, source, status, renewed_from, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?) RETURNING id`).run(b.unit_id, b.tenant_id, b.type, start, end, b.rent_amount, b.rent_period, b.payment_frequency, b.prorate,
     JSON.stringify(b.fees.filter((f) => f.repeats)), b.tax_percent, b.source, b.id, by ?? null);
   const next = await getBooking(nextId);
   await logEvent(b.id, 'renewed', `Renewal ${next.ref} drafted for ${start} to ${end}`, by);
