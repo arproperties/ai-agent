@@ -106,8 +106,10 @@ test('importing makes confirmed leases of tenants already in, billed from next m
   assert.deepEqual([cormier.status, cormier.moved_in, cormier.start_date, cormier.end_date], ['confirmed', true, '2022-02-05', '2027-01-31'], 'no move-in inspection: the tenant is already in');
   assert.match(cormier.notes, /Imported from Rent Manager/);
   const dues = async (id) => (await db.prepare("SELECT to_char(due_date, 'YYYY-MM-DD') AS due FROM lease_installments WHERE booking_id = ? ORDER BY due_date").all(id)).map((x) => x.due);
-  assert.deepEqual(await dues(cormier.id), ['2026-11-05', '2026-12-05', '2027-01-05'], 'nothing from 2022 is shown as owed');
-  assert.deepEqual(await dues(dick.id), ['2026-11-17', '2026-12-17', '2027-01-17'], 'the part month to 31 January is a month');
+  assert.deepEqual(await dues(cormier.id), ['2026-11-01', '2026-12-01', '2027-01-01'], 'nothing from 2022 is shown as owed');
+  assert.deepEqual(await dues(dick.id), ['2026-11-01', '2026-12-01', '2027-01-01'], 'due on the 1st, as Rent Manager bills it, not on the move-in day');
+  const amounts = (await db.prepare("SELECT amount FROM lease_installments WHERE booking_id = ? AND kind = 'rent' ORDER BY due_date").all(dick.id)).map((x) => Number(x.amount));
+  assert.deepEqual(amounts, [1100, 1100, 1100], 'each month in full');
   assert.deepEqual([johnson.stage, await dues(johnson.id)], ['ended', []], 'ended in Rent Manager: nothing more to bill');
   assert.equal((await availability(b.id, TODAY, TODAY)).find((x) => x.id === u101.id).free, false);
   assert.equal((await availability(b.id, '2027-03-01', '2027-03-31')).find((x) => x.unit_no === '201').free, false, 'past its end date the tenant still holds the unit until the move-out inspection');
@@ -121,7 +123,7 @@ test('importing makes confirmed leases of tenants already in, billed from next m
 
   // A lease with a payment on it by now is kept on undo.
   const first = await db.prepare("SELECT id, amount FROM lease_installments WHERE booking_id = ? AND kind = 'rent' ORDER BY due_date LIMIT 1").get(dick.id);
-  await takePayment(first.id, { amount: Number(first.amount), method: 'cash', received_on: '2026-11-17' }, null, '2026-11-17');
+  await takePayment(first.id, { amount: Number(first.amount), method: 'cash', received_on: '2026-11-01' }, null, '2026-11-01');
   const undone = await undoLeaseImport(r.batch);
   assert.deepEqual([undone.removed, undone.kept], [2, 1]);
   assert.equal(Number((await db.prepare('SELECT count(*) AS n FROM lease_tenants').get()).n), 3, 'the tenants stay');

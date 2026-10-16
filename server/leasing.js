@@ -498,6 +498,7 @@ export const dueName = (i) => (i.kind === 'deposit' ? 'Security deposit' : i.kin
     A part month counts as a month; "upfront" is the whole stay on the first day. The amount
     is the rent after its discount, with the tax on it (`tax`, on a booking that is taxed). */
 export function schedule(b) {
+  if (b.billed_from) return importedSchedule(b);
   const months = monthsOf(b);
   const step = STEP[b.payment_frequency] || months;
   const out = [];
@@ -509,8 +510,24 @@ export function schedule(b) {
     const tax = taxOn(b, rent);
     out.push({ due: addMonths(b.start_date, k), amount: money(rent + tax), ...(tax ? { tax } : {}) });
   }
-  // A lease imported from Rent Manager: what fell due before was billed there.
-  return b.billed_from ? out.filter((p) => p.due >= b.billed_from) : out;
+  return out;
+}
+
+/**
+ * A lease imported from Rent Manager: rent in full on the 1st of each month, as Rent Manager
+ * bills it, from `billed_from` (a 1st) to the lease's end. What fell due before was billed there.
+ */
+function importedSchedule(b) {
+  const firsts = [];
+  for (let d = b.billed_from; d <= b.end_date; d = addMonths(d, 1)) firsts.push(d);
+  const step = STEP[b.payment_frequency] || firsts.length;
+  const out = [];
+  for (let k = 0; k < firsts.length; k += step) {
+    const rent = money(monthlyRent(b) * Math.min(step, firsts.length - k));
+    const tax = taxOn(b, rent);
+    out.push({ due: firsts[k], amount: money(rent + tax), ...(tax ? { tax } : {}) });
+  }
+  return out;
 }
 
 // A row cut down to what was paid on it keeps the same share of tax in what is left.
