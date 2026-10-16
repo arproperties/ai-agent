@@ -21,6 +21,7 @@ import LeasingAlerts from './LeasingAlerts';
 import Documents from './Documents';
 import TenantHistory from './TenantHistory';
 import TenantImport from './TenantImport';
+import LeaseImport from './LeaseImport';
 import Inspections from './Inspections';
 import WorkOrders from './WorkOrders';
 
@@ -686,6 +687,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork }) {
   const [q, setQ] = useState('');
   const [stage, setStage] = useState('');
   const [error, setError] = useState('');
+  const [importing, setImporting] = useState(false); // the leases from Rent Manager's Rent Roll
   const [view, see] = useView('bookings');
   // The order: as added, newest first (so the booking just made is at the top), or by start date as the server sends them.
   const [sort, setSort] = useState(() => { try { return localStorage.getItem('bookings-sort') === 'start' ? 'start' : 'added'; } catch { return 'added'; } });
@@ -704,10 +706,14 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork }) {
   const paged = usePaged(shown, [q, stage, from, to, sort].join('|')); // cards or table, a page at a time
   return (
     <div className="space-y-4">
-      <label className="relative block">
-        <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by tenant, phone, unit, building, company or contract no." className={`${FIELD} pl-10`} />
-      </label>
+      <div className="flex gap-2">
+        <label className="relative block min-w-0 flex-1">
+          <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by tenant, phone, unit, building, company or contract no." className={`${FIELD} pl-10`} />
+        </label>
+        {!importing && <button onClick={() => setImporting(true)} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke/70 px-4 py-2 text-sm text-mute hover:bg-white/5 hover:text-txt"><Upload size={16} /> Import</button>}
+      </div>
+      {importing && <LeaseImport onClose={() => setImporting(false)} onDone={load} />}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="flex flex-wrap gap-1.5 text-xs">
           {[['', 'All', dated?.length || 0], ...['active', 'upcoming', 'draft', 'ended', 'cancelled'].map((k) => [k, STAGE[k][0], count(k)])].map(([k, l, n]) => (

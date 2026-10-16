@@ -145,7 +145,8 @@ export const listBuildings = (companyId) => db.prepare(`
 // Units in floor then number order, the way they read on a building's board (2, 10, 101…).
 // A lease `b` whose tenant was inspected in (or stayed on by renewing) and has not been inspected
 // out, nor renewed again: the unit is theirs until the move-out inspection, whatever the end date says.
-export const HELD = `(b.renewed_from IS NOT NULL OR EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete))
+// A lease imported from Rent Manager (import_batch) is a tenant already in, as a renewal is.
+export const HELD = `(b.renewed_from IS NOT NULL OR b.import_batch IS NOT NULL OR EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete))
   AND NOT EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_out' AND i.complete)
   AND NOT EXISTS (SELECT 1 FROM lease_bookings r WHERE r.renewed_from = b.id AND r.status <> 'cancelled')`;
 

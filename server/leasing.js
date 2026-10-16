@@ -108,7 +108,8 @@ const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amou
     b.fees, b.discount_type, b.discount_value, b.discount_note, b.tax_percent, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
     (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
-    EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete) AS moved_in,
+    (b.import_batch IS NOT NULL OR EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete)) AS moved_in,
+    b.import_batch, to_char(b.billed_from, 'YYYY-MM-DD') AS billed_from,
     EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_out' AND i.complete) AS moved_out,
     to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
     u.unit_no, u.floor, u.type AS unit_type, bl.id AS building_id, bl.name AS building, c.id AS company_id, c.name AS company,
@@ -254,8 +255,16 @@ export async function createBookingWithDocs(body = {}, files = {}, by) {
   });
 }
 
+/**
+ * A lease from Rent Manager's Rent Roll (server/leaseImport.js), confirmed: the tenant is already
+ * living there, so there is no move-in inspection and no documents are asked for. Rent falling due
+ * before `billedFrom` was billed in Rent Manager and is left off the schedule.
+ */
+export const importBooking = (body, by, { batch, billedFrom }) => tx(() => makeBooking({ ...body, status: 'confirmed' }, by,
+  { import_batch: batch, billed_from: billedFrom }, 'Imported from Rent Manager'));
+
 /** createBooking without its own transaction, for a caller that is already in one. */
-async function makeBooking(body = {}, by) {
+async function makeBooking(body = {}, by, extra = {}, made_as = null) {
   const row = bookingFields(body);
   mustLeaveRent(row);
   if (!body.unit_id) throw bad('Choose a unit.');
@@ -264,14 +273,14 @@ async function makeBooking(body = {}, by) {
   if (confirm) await mustBeFree(body.unit_id, row.start_date, row.end_date, 0);
   else if (!(await db.prepare('SELECT 1 FROM prop_units WHERE id = ?').get(Number(body.unit_id)))) throw bad('Unit not found', 404);
   const full = { type: suggestType(row.start_date, row.end_date), ...row, unit_id: Number(body.unit_id), tenant_id: tenantId,
-    status: confirm ? 'confirmed' : 'draft', created_by: by ?? null };
+    status: confirm ? 'confirmed' : 'draft', created_by: by ?? null, ...extra };
   const cols = Object.keys(full);
   const { id } = await db.prepare(`INSERT INTO lease_bookings (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')}) RETURNING id`)
     .run(...cols.map((c) => full[c]));
   const made = await getBooking(id);
   if (confirm) await writeSchedule(made);
   await learnPrices(made.fees, made.building_id);
-  await logEvent(id, 'created', confirm ? 'Confirmed straight away' : 'Saved as a draft', by);
+  await logEvent(id, 'created', made_as || (confirm ? 'Confirmed straight away' : 'Saved as a draft'), by);
   return made;
 }
 
@@ -500,7 +509,8 @@ export function schedule(b) {
     const tax = taxOn(b, rent);
     out.push({ due: addMonths(b.start_date, k), amount: money(rent + tax), ...(tax ? { tax } : {}) });
   }
-  return out;
+  // A lease imported from Rent Manager: what fell due before was billed there.
+  return b.billed_from ? out.filter((p) => p.due >= b.billed_from) : out;
 }
 
 // A row cut down to what was paid on it keeps the same share of tax in what is left.
@@ -518,10 +528,12 @@ async function writeSchedule(b) {
   await db.prepare("DELETE FROM lease_installments i WHERE i.booking_id = ? AND i.kind <> 'late' AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)").run(b.id);
   const fees = typeof b.fees === 'string' ? JSON.parse(b.fees) : b.fees || [];
   const rent = schedule(b);
+  // Due once, on the first day; or, on a lease imported from Rent Manager, the first day billed here.
+  const first = b.billed_from > b.start_date ? b.billed_from : b.start_date;
   const rows = [
     ...rent.map((p) => ({ kind: 'rent', label: '', ...p })),
-    ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: b.start_date, amount: Number(b.security_deposit) }] : []),
-    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => p.due) : [b.start_date]).map((due) => ({ kind: 'fee', label: f.label, due, amount: money(f.amount + taxOn(b, f.amount)), tax: taxOn(b, f.amount) }))),
+    ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: first, amount: Number(b.security_deposit) }] : []),
+    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => p.due) : [first]).map((due) => ({ kind: 'fee', label: f.label, due, amount: money(f.amount + taxOn(b, f.amount)), tax: taxOn(b, f.amount) }))),
   ];
   const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';
   for (const r of rows) {

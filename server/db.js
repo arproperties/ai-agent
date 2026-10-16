@@ -1437,6 +1437,15 @@ await db.exec(`
   ALTER TABLE lease_tenants ADD COLUMN IF NOT EXISTS import_batch TEXT;
 `);
 
+// Leases brought in from Rent Manager's Rent Roll (server/leaseImport.js): import_batch lets one
+// import be undone, and marks a tenant who was already living there (no move-in inspection).
+// billed_from: the schedule only asks for rent falling due on or after it; what came before was
+// billed in Rent Manager.
+await db.exec(`
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS import_batch TEXT;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS billed_from DATE;
+`);
+
 // What Claude read off each tenant-list file, by a fingerprint of the file (and of the
 // instructions it was read with), so the same screenshot uploaded again is not paid for twice.
 await db.exec(`

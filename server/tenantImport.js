@@ -52,10 +52,10 @@ const TEXT = /^text\/|\/(csv|json)$|vnd\.ms-excel$/; // a CSV comes as text/csv,
 const isText = (f) => TEXT.test(f.mimetype || '') || /\.(csv|txt|tsv)$/i.test(f.originalname || '');
 
 /** What the reader is given for one file: the picture or the PDF, or the file's text. Null for a kind it cannot read. */
-function contentFor(file) {
-  if (isText(file)) return [{ type: 'text', text: `<file name="${file.originalname}">\n${file.buffer.toString('utf8').slice(0, MAX_TEXT)}\n</file>` }, { type: 'text', text: PROMPT }];
+function contentFor(file, prompt) {
+  if (isText(file)) return [{ type: 'text', text: `<file name="${file.originalname}">\n${file.buffer.toString('utf8').slice(0, MAX_TEXT)}\n</file>` }, { type: 'text', text: prompt }];
   const b = fileBlock(file);
-  return b && [b, { type: 'text', text: PROMPT }];
+  return b && [b, { type: 'text', text: prompt }];
 }
 
 async function claudeRead(content) {
@@ -68,17 +68,18 @@ async function claudeRead(content) {
 
 // A file already read is not read (or paid for) again. The fingerprint covers the instructions
 // and the model too, so changing either reads every file afresh. Only whole readings are kept.
-const fingerprint = (file) => createHash('sha256').update(MODEL).update(PROMPT).update(file.buffer).digest('hex');
+const fingerprint = (file, prompt) => createHash('sha256').update(MODEL).update(prompt).update(file.buffer).digest('hex');
 const savedReads = {
   get: async (hash) => (await db.prepare('SELECT rows FROM lease_import_reads WHERE hash = ?').get(hash))?.rows,
   set: (hash, rows) => db.prepare('INSERT INTO lease_import_reads (hash, rows) VALUES (?, ?) ON CONFLICT (hash) DO UPDATE SET rows = EXCLUDED.rows').run(hash, JSON.stringify(rows)),
 };
 
 /**
- * Every file read, a few at a time. { rows, failed }: the rows in the order of the files,
- * and the names of the files that could not be read (or only partly), so the page can say so.
+ * Every file read, a few at a time, with these instructions, and the rows taken out of each reply
+ * by `parse`. { rows, failed }: the rows in the order of the files, and the names of the files that
+ * could not be read (or only partly), so the page can say so. The lease import reads with it too.
  */
-export async function readTenantFiles(files, { read = claudeRead, onProgress = () => {}, saved = savedReads } = {}) {
+export async function readFiles(files, { prompt, parse, log, read = claudeRead, onProgress = () => {}, saved = savedReads }) {
   const out = files.map(() => []);
   const failed = [];
   let next = 0;
@@ -87,21 +88,21 @@ export async function readTenantFiles(files, { read = claudeRead, onProgress = (
     while (next < files.length) {
       const i = next++;
       const f = files[i];
-      const content = contentFor(f);
+      const content = contentFor(f, prompt);
       if (!content) failed.push(f.originalname);
       else {
         try {
-          const hash = fingerprint(f);
+          const hash = fingerprint(f, prompt);
           const before = await saved.get(hash).catch(() => null);
           if (before) out[i] = before;
           else {
             const got = await read(content);
-            out[i] = parseRows(typeof got === 'string' ? got : got.text);
+            out[i] = parse(typeof got === 'string' ? got : got.text);
             if (got?.partial) failed.push(`${f.originalname} (only partly read)`);
-            else if (out[i].length) await saved.set(hash, out[i]).catch((e) => console.error('[tenant-import] keeping the reading:', e.message));
+            else if (out[i].length) await saved.set(hash, out[i]).catch((e) => console.error(`[${log}] keeping the reading:`, e.message));
           }
         } catch (e) {
-          console.error('[tenant-import]', f.originalname, e.message);
+          console.error(`[${log}]`, f.originalname, e.message);
           failed.push(f.originalname);
         }
       }
@@ -111,6 +112,9 @@ export async function readTenantFiles(files, { read = claudeRead, onProgress = (
   await Promise.all(Array.from({ length: Math.min(3, files.length) }, worker));
   return { rows: out.flat(), failed };
 }
+
+/** The tenant list's files read: readFiles with the tenant list's instructions. */
+export const readTenantFiles = (files, opts = {}) => readFiles(files, { prompt: PROMPT, parse: parseRows, log: 'tenant-import', ...opts });
 
 // ---------- cleaning a row ----------
 
@@ -140,7 +144,7 @@ const SUFFIX = new Set(['JR', 'SR', 'II', 'III', 'IV']);
 const squash = (s) => s.replace(/\s+/g, ' ').trim();
 
 /** The name without its tags, and the tags found. Marks like *SEE NOTE* or "- Balance" are cut off and reported; a name ending in "…" was cut off in the list. */
-function untag(raw) {
+export function untag(raw) {
   const tags = [];
   const marks = [];
   const cut = /(\.\.\.|…)\s*$/.test(raw);
