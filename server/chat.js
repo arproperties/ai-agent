@@ -15,7 +15,7 @@ import { shelfKit } from './shelf.js';
 import { noticeKit } from './notices.js';
 import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
-import { chatAgents } from './access.js';
+import { chatAgents, privateAgents } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
 import { userModules } from './modules.js';
 import { pictureTag, makePicture, pictureKit } from './pictures.js';
@@ -323,7 +323,8 @@ export async function pictureTurn({ user, team, convId, text, asked, send, res }
 export async function chat(req, res) {
   const user = req.user;
   const team = await chatAgents(user);
-  if (!team.length) return res.status(400).json({ error: 'You have no agents yet' });
+  const byName = await privateAgents(user); // the master's private agents: only when @named
+  if (!team.length && !byName.length) return res.status(400).json({ error: 'You have no agents yet' });
   const text = (req.body.text || '').trim();
   const files = req.files || [];
   if (!text && !files.length) return res.status(400).json({ error: 'Empty message' });
@@ -343,7 +344,7 @@ export async function chat(req, res) {
   // With a file attached, or without the module, the tag is only words and the turn is an ordinary one.
   const canPicture = (await userModules(user)).includes('pictures');
   const asked = canPicture && !files.length && pictureTag(text);
-  if (asked) return pictureTurn({ user, team, convId, text, asked, send, res });
+  if (asked) return pictureTurn({ user, team: [...team, ...byName], convId, text, asked, send, res });
 
   // 1. Read attachments, then pick the agent (the router sees what the files are about)
   const prior = await recentMessages(convId);
@@ -352,7 +353,7 @@ export async function chat(req, res) {
   const savedFiles = meta.map(({ snippet, ...m }) => m);
   if (savedFiles.length) send('files', savedFiles); // lets the app link the just-sent attachments
   send('status', { label: 'Choosing the best agent…' });
-  const { agent, why } = await pickAgent({ agents: team, userId: user.id, text, attachments: meta, recent: prior, currentAgentId });
+  const { agent, why } = await pickAgent({ agents: team, byName, userId: user.id, text, attachments: meta, recent: prior, currentAgentId });
   send('agent', { id: agent.id, why });
 
   // 2. Context: recalled memories + relevant file excerpts

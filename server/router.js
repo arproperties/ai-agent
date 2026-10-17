@@ -27,13 +27,17 @@ export async function teamDocuments(userId, agentIds) {
  * Chooses which of the user's agents should answer.
  * Order: explicit "@Name" mention → only one agent → Claude Haiku router → fallback (current or first agent).
  */
-export async function pickAgent({ agents, userId, text, attachments = [], recent, currentAgentId }) {
+// `byName` are agents never picked on their own - the master's private ones. They answer
+// when @named, and keep a conversation they were named into until another agent is named.
+export async function pickAgent({ agents, byName = [], userId, text, attachments = [], recent, currentAgentId }) {
+  const lower = text.toLowerCase();
+  const mentioned = [...agents, ...byName].find((a) => lower.startsWith(`@${a.name.toLowerCase()}`));
+  if (mentioned) return { agent: mentioned, why: 'You asked for this agent' };
+  const kept = byName.find((a) => a.id === currentAgentId);
+  if (kept || !agents.length) return { agent: kept || byName[0], why: null };
+
   const current = agents.find((a) => a.id === currentAgentId);
   const fallback = current || agents[0];
-
-  const lower = text.toLowerCase();
-  const mentioned = agents.find((a) => lower.startsWith(`@${a.name.toLowerCase()}`));
-  if (mentioned) return { agent: mentioned, why: 'You asked for this agent' };
   if (agents.length === 1) return { agent: agents[0], why: null };
 
   const docs = await teamDocuments(userId, agents.map((a) => a.id));

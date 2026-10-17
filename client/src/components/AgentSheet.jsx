@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
-import { ChevronDown, Sparkles } from 'lucide-react';
+import { Check, ChevronDown, Sparkles } from 'lucide-react';
 import Sheet from './Sheet';
 import Picker from './Picker';
 import { FilesPanel } from './Knowledge';
@@ -45,6 +45,7 @@ function PersonaTab({ agent, config, onSaved }) {
     name: agent.name || '', icon: agent.icon || 'sparkles', color: agent.color || 'violet', persona: agent.persona || '',
     model: agent.model || config.models[0]?.id, voice: agent.voice || 'alloy',
     starters: (agent.starters || []).join('\n'),
+    private: !!agent.private,
   });
   const [picker, setPicker] = useState(false);
   const [more, setMore] = useState(false);
@@ -120,6 +121,20 @@ function PersonaTab({ agent, config, onSaved }) {
           placeholder="One line is enough, e.g. “Helps me with Instagram marketing for my real estate company”. Then tap Write it for me."
           className={`${field} resize-none leading-relaxed`} />
       </div>
+
+      <button type="button" role="switch" aria-checked={f.private} onClick={() => setF({ ...f, private: !f.private })}
+        className={`flex w-full items-start gap-3 rounded-2xl border p-3 text-left transition ${f.private ? 'border-p1/50 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.06]'}`}>
+        <span className={`mt-0.5 grid size-[18px] shrink-0 place-items-center rounded-md transition ${f.private ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/20'}`}>
+          {f.private && <Check size={12} strokeWidth={3.5} />}
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-medium">Private agent</span>
+          <span className="block text-xs leading-relaxed text-mute">
+            Only the people you tick it for in People can use it. Nobody else sees it or reads its shelf,
+            and your own chats use it only when you type @{f.name || 'its name'}.
+          </span>
+        </span>
+      </button>
 
       <button type="button" onClick={() => setMore(!more)} className="flex items-center gap-1 text-xs text-mute hover:text-txt">
         <ChevronDown size={14} className={`transition ${more ? 'rotate-180' : ''}`} /> More options
