@@ -31,7 +31,7 @@ test('one payment can cover several months: it goes against what is owed, oldest
   await assert.rejects(payBooking(bk.id, { amount: 0, method: 'cash' }, staff, AT), /Enter the amount received/);
 
   const made = await payBooking(bk.id, { amount: 12000, method: 'transfer', received_on: '2026-10-08', reference: 'TT-7' }, staff, AT);
-  assert.deepEqual(made.map((p) => p.amount), [5000, 4500, 2500]);
+  assert.deepEqual(made.map((p) => p.amount), [4500, 5000, 2500]); // on one day the rent first, as Rent Manager applies money
   assert.deepEqual((await bookingPayments(bk.id, AT)).map((r) => [r.name, r.due_date, r.paid, r.left, r.status]),
     [['Security deposit', '2026-09-15', 5000, 0, 'paid'], ['Rent', '2026-09-15', 4500, 0, 'paid'], ['Rent', '2026-10-15', 2500, 2000, 'partly_paid']]);
   await payBooking(bk.id, { amount: 2000, method: 'cash' }, staff, AT);

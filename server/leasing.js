@@ -773,7 +773,9 @@ export const payBooking = (bookingId, body = {}, by, today = todayHere(), file =
   if (b.no_payments) throw bad(NO_PAYMENTS, 409);
   let left = money(Number(body.amount));
   if (!Number.isFinite(left) || left <= 0) throw bad('Enter the amount received.');
-  const rows = (await bookingPayments(b.id, today)).filter((r) => r.left > 0);
+  // Oldest first; on one day the rent before anything else, as Rent Manager applies money.
+  const rows = (await bookingPayments(b.id, today)).filter((r) => r.left > 0)
+    .sort((x, y) => x.due_date.localeCompare(y.due_date) || (x.kind === 'rent' ? 0 : 1) - (y.kind === 'rent' ? 0 : 1));
   const owed = total(rows, (r) => r.left);
   if (left > owed) throw bad(owed > 0 ? `Only ${cash(owed)} is still owed on this lease.` : 'Nothing is owed on this lease.', 409);
   if (b.no_partial_payments) {
