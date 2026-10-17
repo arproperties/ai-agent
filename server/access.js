@@ -31,6 +31,19 @@ export async function privateAgents(user) {
   return db.prepare('SELECT * FROM agents WHERE user_id = ? AND private ORDER BY id').all(user.id);
 }
 
+/**
+ * Someone whose agents are all private works apart from the team: their Shelf and their
+ * agents hold only their own files, never what the master shared company-wide. Read once
+ * per request and carried as user.ownFilesOnly, which agentScope() goes by.
+ */
+export async function onlyPrivateAgents(user) {
+  if (isMaster(user)) return false;
+  const r = await db.prepare(`SELECT COUNT(*)::int n, COUNT(*) FILTER (WHERE NOT a.private)::int open
+    FROM agent_assignments aa JOIN agents a ON a.id = aa.agent_id
+    WHERE aa.user_id = ? AND aa.mode = 'chat'`).get(user.id);
+  return r.n > 0 && r.open === 0;
+}
+
 /** Every agent this user's sidebar lists. */
 export async function listedAgents(user) {
   return [...await chatAgents(user), ...await privateAgents(user)];

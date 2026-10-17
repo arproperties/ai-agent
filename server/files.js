@@ -308,7 +308,7 @@ export async function libraryCatalog(user) {
  */
 export async function expiringDocuments(user, within = 90) {
   const days = Math.min(Math.max(Number(within) || 90, 1), 3650);
-  const scope = retrievalScope(user.id);
+  const scope = agentScope(user);
   return db.prepare(`SELECT t.* FROM documents t
     WHERE ${scope.sql} AND status = 'ready' AND expires_on IS NOT NULL
       AND expires_on <= to_char(now() + (? || ' days')::interval, 'YYYY-MM-DD')
@@ -342,7 +342,7 @@ export function docOut({ path, hash, user_id, owner_name, ...d }, viewerId) {
  * assistant can already quote from.
  */
 export async function readableDocuments(user, agentId = null) {
-  const scope = retrievalScope(user.id, 'd');
+  const scope = agentScope(user, 'd');
   const shelf = Number(agentId) || null;
   return db.prepare(`${DOC_SELECT} WHERE ${scope.sql} AND (?::int IS NULL OR d.agent_id = ?)
     ORDER BY COALESCE(d.doc_date, to_char(to_timestamp(d.created_at), 'YYYY-MM-DD')) DESC, d.id DESC`).all(...scope.params, shelf, shelf);
@@ -353,6 +353,6 @@ export async function readableDocuments(user, agentId = null) {
  * master, who is shown what the team uploaded. For opening, never for changing.
  */
 export async function readableDocument(user, docId) {
-  const scope = isMaster(user) ? { sql: 'TRUE', params: [] } : retrievalScope(user.id, 'd');
+  const scope = isMaster(user) ? { sql: 'TRUE', params: [] } : agentScope(user, 'd');
   return db.prepare(`${DOC_SELECT} WHERE d.id = ? AND ${scope.sql}`).get(Number(docId) || 0, ...scope.params);
 }

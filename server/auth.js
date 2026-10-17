@@ -3,6 +3,7 @@ import { scrypt, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { db, tx } from './db.js';
 import { sendPasswordReset } from './mailer.js';
+import { onlyPrivateAgents } from './access.js';
 
 const scryptAsync = promisify(scrypt);
 const SESSION_DAYS = 60;
@@ -73,9 +74,10 @@ function recordSeen(userId) {
 }
 
 export function requireUser(req, res, next) {
-  currentUser(req).then((user) => {
+  currentUser(req).then(async (user) => {
     if (!user) return res.status(401).json({ error: 'Please sign in' });
     if (user.disabled) return res.status(403).json({ error: 'This account has been disabled' });
+    user.ownFilesOnly = await onlyPrivateAgents(user); // see access.js
     req.user = user;
     recordSeen(user.id);
     next();

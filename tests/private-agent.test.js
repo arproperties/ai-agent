@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
-import { chatAgents, privateAgents, listedAgents, canUseAgent } from '../server/access.js';
+import { chatAgents, privateAgents, listedAgents, canUseAgent, onlyPrivateAgents } from '../server/access.js';
 import { setAssignments, listAssignments } from '../server/admin.js';
 import { pickAgent } from '../server/router.js';
-import { libraryCatalog } from '../server/files.js';
+import { libraryCatalog, readableDocuments, readableDocument } from '../server/files.js';
 import { searchFiles } from '../server/shelf.js';
 
 // A private agent is for the people it is ticked for, and stays out of everyone else's
@@ -69,6 +69,27 @@ test("a private agent's turn reads the person's own files, never the company's s
   assert.deepEqual(await titles({ ...boss, ownFilesOnly: true }), ['Marriage Contract']);
   assert.deepEqual(await titles({ ...master, ownFilesOnly: true }), ['Company Lease'], "the master's own, not the boss's");
   assert.doesNotMatch(await searchFiles({ ...boss, ownFilesOnly: true }, 'lease'), /Company Lease/);
+});
+
+test("someone given only private agents gets a Shelf of just their own files", async () => {
+  const { master, sara, boss, ops, legal } = await fixture();
+  await setAssignments(master, boss.id, peopleSave([ops, legal], [legal]));
+  await setAssignments(master, sara.id, peopleSave([ops, legal], [ops]));
+  const doc = (owner, title, shared) => db.prepare(`INSERT INTO documents (user_id, name, title, folder, status, shared)
+    VALUES (?, ?, ?, 'Other', 'ready', ?) RETURNING id`).run(owner, `${title}.pdf`, title, shared);
+  const { id: lease } = await doc(master.id, 'Company Lease', true);
+  await doc(boss.id, 'Marriage Contract', false);
+
+  assert.equal(await onlyPrivateAgents(boss), true);
+  assert.equal(await onlyPrivateAgents(sara), false, 'staff with an ordinary agent');
+  assert.equal(await onlyPrivateAgents(master), false);
+
+  const asRequest = async (u) => ({ ...u, ownFilesOnly: await onlyPrivateAgents(u) }); // what requireUser does
+  const shelf = async (u) => (await readableDocuments(await asRequest(u))).map((d) => d.title).sort();
+  assert.deepEqual(await shelf(boss), ['Marriage Contract']);
+  assert.deepEqual(await shelf(sara), ['Company Lease'], 'staff still see what the master shares');
+  assert.equal(await readableDocument(await asRequest(boss), lease), undefined, 'cannot open it by id either');
+  assert.ok(await readableDocument(await asRequest(master), lease));
 });
 
 test('a normal user has no private-by-name agents', async () => {
