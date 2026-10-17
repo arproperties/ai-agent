@@ -224,8 +224,9 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   };
 
   const lastAgent = byId[[...messages].reverse().find((m) => m.agent_id)?.agent_id];
-  // one random suggestion from each agent, so the whole team is visible
-  const starters = useMemo(() => agents.filter((a) => a.starters?.length)
+  // one random suggestion from each agent, so the whole team is visible. Not from the
+  // master's private agents: those are someone else's, and only answer when @named.
+  const starters = useMemo(() => agents.filter((a) => a.starters?.length && !(a.private && user.role === 'master'))
     .map((a) => ({ a, s: a.starters[Math.floor(Math.random() * a.starters.length)] })), [agents]);
   const firstName = user.name.split(' ')[0];
   // The two lists are counted apart and named apart — "2 reminders and 1 routine" says

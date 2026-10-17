@@ -2,12 +2,12 @@ import express from 'express';
 import multer from 'multer';
 import { existsSync } from 'node:fs';
 import { ROOT, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS } from './config.js';
-import { db } from './db.js';
+import { db, tx } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks } from './agents.js';
-import { chatAgents, canUseAgent, isMaster } from './access.js';
+import { chatAgents, listedAgents, canUseAgent, isMaster } from './access.js';
 import { deleteMessage, chat } from './chat.js';
 import { addMemory } from './knowledge.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument } from './files.js';
@@ -103,7 +103,7 @@ app.get('/api/config', (req, res) => res.json({ models: MODELS, voices: VOICES, 
 
 // ---------- agents ----------
 app.get('/api/agents', wrap(async (req, res) => {
-  res.json((await chatAgents(req.user)).map((a) => agentOut(a, req.user)));
+  res.json((await listedAgents(req.user)).map((a) => agentOut(a, req.user)));
 }));
 // ✨ turn a name + one line into a full agent (persona, icon, colour, quick prompts)
 app.post('/api/agents/draft', requireMaster, wrap(async (req, res) => {
@@ -130,15 +130,19 @@ Keep the user's own wording and intent; expand it, do not change it.`,
 
 app.post('/api/agents', requireMaster, wrap(async (req, res) => {
   const a = agentIn(req.body);
-  const { id } = await db.prepare('INSERT INTO agents (user_id, name, icon, color, persona, model, voice, starters) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id')
-    .run(req.user.id, a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters);
+  const { id } = await db.prepare('INSERT INTO agents (user_id, name, icon, color, persona, model, voice, starters, private) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id')
+    .run(req.user.id, a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, a.private);
   res.json(agentOut(await own('agents', id, req.user.id), req.user));
 }));
 app.put('/api/agents/:id', requireMaster, wrap(async (req, res) => {
   if (!await own('agents', req.params.id, req.user.id)) return notFound(res);
   const a = agentIn(req.body);
-  await db.prepare('UPDATE agents SET name = ?, icon = ?, color = ?, persona = ?, model = ?, voice = ?, starters = ? WHERE id = ?')
-    .run(a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, Number(req.params.id));
+  await tx(async () => {
+    await db.prepare('UPDATE agents SET name = ?, icon = ?, color = ?, persona = ?, model = ?, voice = ?, starters = ?, private = ? WHERE id = ?')
+      .run(a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, a.private, Number(req.params.id));
+    // Made private: it stops being lent out as a hidden shelf. The people it is ticked for keep it.
+    if (a.private) await db.prepare("DELETE FROM agent_assignments WHERE agent_id = ? AND mode = 'knowledge'").run(Number(req.params.id));
+  });
   res.json(agentOut(await own('agents', req.params.id, req.user.id), req.user));
 }));
 app.delete('/api/agents/:id', requireMaster, wrap(async (req, res) => {

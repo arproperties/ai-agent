@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { retrievalScope, findChunks } from './knowledge.js';
+import { retrievalScope, agentScope, findChunks } from './knowledge.js';
 import { isMaster } from './access.js';
 
 // The Shelf, for the agent to look through itself.
@@ -97,7 +97,8 @@ const day = (secs) => new Date(Number(secs) * 1000).toISOString().slice(0, 10);
 const line = (d) => `#${d.id} ${d.title || d.name} (${d.folder || 'Other'}${d.doc_date ? `, ${d.doc_date}` : ''}${d.expires_on ? `; expires ${d.expires_on}` : ''}; file: ${d.name}` +
   `${d.uploader ? `; uploaded by ${d.uploader}${d.created_at ? ` on ${day(d.created_at)}` : ''}` : ''})`;
 
-const scopeOf = (user) => (isMaster(user) ? { sql: 'TRUE', params: [] } : retrievalScope(user.id));
+// A private agent's turn reads only the person's own files, the master's too (agentScope).
+const scopeOf = (user) => (user.ownFilesOnly ? agentScope(user) : isMaster(user) ? { sql: 'TRUE', params: [] } : retrievalScope(user.id));
 const DOC_COLS = `t.id, t.user_id, t.title, t.name, t.folder, t.company, t.tags, t.summary, t.doc_date, t.expires_on, t.created_at,
   CASE WHEN t.user_id = ? THEN NULL ELSE coalesce(u.name, u.email) END AS uploader`;
 

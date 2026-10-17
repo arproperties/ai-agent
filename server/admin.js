@@ -81,16 +81,22 @@ export async function setAssignments(master, userId, wanted) {
   const target = await db.prepare('SELECT id FROM users WHERE id = ?').get(Number(userId));
   if (!target) throw fail(404, 'User not found');
 
-  const rows = (Array.isArray(wanted) ? wanted : []).map((a) => ({
+  let rows = (Array.isArray(wanted) ? wanted : []).map((a) => ({
     agentId: Number(a.agentId),
     mode: a.mode ?? 'chat',
     primary: !!a.primary,
   }));
+  const isPrivate = new Set();
   for (const r of rows) {
     if (!MODES.includes(r.mode)) throw fail(400, `Unknown mode: ${r.mode}`);
-    const owned = await db.prepare('SELECT 1 FROM agents WHERE id = ? AND user_id = ?').get(r.agentId, master.id);
+    const owned = await db.prepare('SELECT private FROM agents WHERE id = ? AND user_id = ?').get(r.agentId, master.id);
     if (!owned) throw fail(404, `Agent not found: ${r.agentId}`);
+    if (owned.private) isPrivate.add(r.agentId);
   }
+  // A private agent is only ever given to talk to. Lending it as a hidden shelf is
+  // dropped here rather than refused, because the People screen sends every unticked
+  // agent as 'knowledge' and an older open screen must still save cleanly.
+  rows = rows.filter((r) => !(r.mode === 'knowledge' && isPrivate.has(r.agentId)));
 
   const keep = rows.map((r) => r.agentId);
   await tx(async () => {

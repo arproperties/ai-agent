@@ -10,15 +10,43 @@ import { db } from './db.js';
 
 export const isMaster = (user) => user?.role === 'master';
 
-/** The agents this user converses with: their sidebar, and what the router may pick. */
+/**
+ * The agents this user converses with: what the router may pick, and what a new file may
+ * be filed against. The master's private agents are left out - they belong to the people
+ * they are ticked for, so the master reaches one only by naming it (privateAgents).
+ */
 export async function chatAgents(user) {
   if (isMaster(user)) {
-    return db.prepare('SELECT * FROM agents WHERE user_id = ? ORDER BY id').all(user.id);
+    return db.prepare('SELECT * FROM agents WHERE user_id = ? AND NOT private ORDER BY id').all(user.id);
   }
   return db.prepare(`SELECT a.* FROM agents a
     JOIN agent_assignments aa ON aa.agent_id = a.id
     WHERE aa.user_id = ? AND aa.mode = 'chat'
     ORDER BY aa.is_primary DESC, a.id`).all(user.id);
+}
+
+/** The master's private agents: in their list to manage, reached in chat only by @name. */
+export async function privateAgents(user) {
+  if (!isMaster(user)) return [];
+  return db.prepare('SELECT * FROM agents WHERE user_id = ? AND private ORDER BY id').all(user.id);
+}
+
+/**
+ * Someone whose agents are all private works apart from the team: their Shelf and their
+ * agents hold only their own files, never what the master shared company-wide. Read once
+ * per request and carried as user.ownFilesOnly, which agentScope() goes by.
+ */
+export async function onlyPrivateAgents(user) {
+  if (isMaster(user)) return false;
+  const r = await db.prepare(`SELECT COUNT(*)::int n, COUNT(*) FILTER (WHERE NOT a.private)::int open
+    FROM agent_assignments aa JOIN agents a ON a.id = aa.agent_id
+    WHERE aa.user_id = ? AND aa.mode = 'chat'`).get(user.id);
+  return r.n > 0 && r.open === 0;
+}
+
+/** Every agent this user's sidebar lists. */
+export async function listedAgents(user) {
+  return [...await chatAgents(user), ...await privateAgents(user)];
 }
 
 /**

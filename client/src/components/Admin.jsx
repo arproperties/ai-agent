@@ -30,6 +30,7 @@ function AgentCard({ agent, on, label, onClick, main, mainLabel, onMain }) {
           className={`relative transition duration-200 ${on ? 'ring-2 ring-white/25' : 'opacity-65 saturate-50 group-hover:opacity-90 group-hover:saturate-100'}`} />
         <span className={`relative min-w-0 flex-1 truncate text-sm font-medium transition ${on ? 'text-txt' : 'text-mute group-hover:text-txt/80'}`}>
           {agent.name}
+          {agent.private && <span className="ml-1.5 text-[11px] font-normal text-mute">private</span>}
         </span>
 
         <span className={`relative grid size-[18px] shrink-0 place-items-center rounded-full transition ${
@@ -197,8 +198,9 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
     try {
       await api.put(`/admin/users/${person.id}/agents`, {
         agents: chatIds.length
-          // Their agents, then every other agent as a shelf they may read.
-          ? agents.map((a) => (chatIds.includes(a.id)
+          // Their agents, then every other agent as a shelf they may read - except a
+          // private one, which is never lent out.
+          ? agents.filter((a) => chatIds.includes(a.id) || !a.private).map((a) => (chatIds.includes(a.id)
             ? { agentId: a.id, mode: 'chat', primary: a.id === mainId }
             : { agentId: a.id, mode: 'knowledge', primary: false }))
           : [],

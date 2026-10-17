@@ -342,6 +342,11 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_access_subject ON access_log(subject_user_id, id DESC);
 `);
 
+// A private agent belongs to the people it is ticked for and to nobody else. It is never
+// lent out as a 'knowledge' shelf, and the master's own chats never route to it unless
+// they name it - so a personal agent stays out of the team's day-to-day work.
+await db.exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS private BOOLEAN NOT NULL DEFAULT false;`);
+
 // Sending. The mailbox row gains its SMTP side and one switch: can_write. It defaults to
 // false so every connection made before this feature existed stays read-only — write
 // access is something its owner turns on, never something they inherit.

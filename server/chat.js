@@ -15,7 +15,7 @@ import { shelfKit } from './shelf.js';
 import { noticeKit } from './notices.js';
 import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
-import { chatAgents } from './access.js';
+import { chatAgents, privateAgents } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
 import { userModules } from './modules.js';
 import { pictureTag, makePicture, pictureKit } from './pictures.js';
@@ -323,7 +323,8 @@ export async function pictureTurn({ user, team, convId, text, asked, send, res }
 export async function chat(req, res) {
   const user = req.user;
   const team = await chatAgents(user);
-  if (!team.length) return res.status(400).json({ error: 'You have no agents yet' });
+  const byName = await privateAgents(user); // the master's private agents: only when @named
+  if (!team.length && !byName.length) return res.status(400).json({ error: 'You have no agents yet' });
   const text = (req.body.text || '').trim();
   const files = req.files || [];
   if (!text && !files.length) return res.status(400).json({ error: 'Empty message' });
@@ -343,7 +344,7 @@ export async function chat(req, res) {
   // With a file attached, or without the module, the tag is only words and the turn is an ordinary one.
   const canPicture = (await userModules(user)).includes('pictures');
   const asked = canPicture && !files.length && pictureTag(text);
-  if (asked) return pictureTurn({ user, team, convId, text, asked, send, res });
+  if (asked) return pictureTurn({ user, team: [...team, ...byName], convId, text, asked, send, res });
 
   // 1. Read attachments, then pick the agent (the router sees what the files are about)
   const prior = await recentMessages(convId);
@@ -352,8 +353,10 @@ export async function chat(req, res) {
   const savedFiles = meta.map(({ snippet, ...m }) => m);
   if (savedFiles.length) send('files', savedFiles); // lets the app link the just-sent attachments
   send('status', { label: 'Choosing the best agent…' });
-  const { agent, why } = await pickAgent({ agents: team, userId: user.id, text, attachments: meta, recent: prior, currentAgentId });
+  const { agent, why } = await pickAgent({ agents: team, byName, userId: user.id, text, attachments: meta, recent: prior, currentAgentId });
   send('agent', { id: agent.id, why });
+  // A private agent reads only this person's own files, never the company's shared ones.
+  const reader = agent.private ? { ...user, ownFilesOnly: true } : user;
 
   // 2. Context: recalled memories + relevant file excerpts
   send('status', { label: `${agent.name} is thinking…` });
@@ -377,7 +380,7 @@ export async function chat(req, res) {
   // What the reply carries: pictures drawn for it, and saved files the agent showed.
   // Both go out on the 'picture' event, which sets the reply's files on screen.
   const pictures = [];
-  const shelf = shelfKit(user, {
+  const shelf = shelfKit(reader, {
     onShow: (docs) => {
       for (const d of docs) if (!pictures.some((p) => p.docId === d.docId)) pictures.push(d);
       send('picture', pictures);
@@ -399,8 +402,8 @@ export async function chat(req, res) {
     }));
   }
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
-  const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
-  const library = await libraryCatalog(user); // same every turn, so read it once
+  const { memories, knowledge } = await recall(reader, text || meta.map((f) => f.name).join(' '));
+  const library = await libraryCatalog(reader); // same every turn, so read it once
   // Chats brought in by this message, plus any brought in earlier: once a chat is carried
   // into this conversation it stays for every message after it, which is what "this chat
   // has both of those chats" has to mean.

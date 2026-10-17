@@ -37,4 +37,5 @@ export const agentIn = (b) => ({
   model: MODELS.some((m) => m.id === b.model) ? b.model : MODELS[0].id,
   voice: VOICES.includes(b.voice) ? b.voice : 'alloy',
   starters: JSON.stringify((Array.isArray(b.starters) ? b.starters : []).map(String).filter(Boolean).slice(0, 8)),
+  private: b.private === true,
 });
