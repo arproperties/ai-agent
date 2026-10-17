@@ -1450,6 +1450,29 @@ await db.exec(`
 // the move-in day each month; 'first': the part month at move-in, then the 1st; 'second': the part month with the 2nd).
 await db.exec('ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS prorate TEXT');
 
+// What Rent Manager's General tab keeps on a lease, for leases entered by hand from it.
+//   start_date stays the lease start (rent is billed from it); move_in_date is the day the tenant moved in.
+//   part_month_amount: the part month's rent as typed, in place of the one worked out by the day.
+//   no_*: Rent Manager's ticks. no_checks and no_twa are kept only: the app takes no checks and has no TWA.
+// lease_installments.kind 'charge': a charge added by hand on a date of its own (a key deposit, a court cost).
+// lease_payments.batch: the payments one amount was spread into, so the transactions list shows it once.
+// lease_documents.category: Lease, Application, Notice, Move-in form or Other, as Rent Manager files its notes.
+await db.exec(`
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS lease_sign_date DATE;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS move_in_date DATE;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS notice_date DATE;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS expected_move_out DATE;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS leasing_agent TEXT;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS part_month_amount NUMERIC;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_late_fees BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_checks BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_partial_payments BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_payments BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_twa BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE lease_payments ADD COLUMN IF NOT EXISTS batch TEXT;
+  ALTER TABLE lease_documents ADD COLUMN IF NOT EXISTS category TEXT;
+`);
+
 // What Claude read off each tenant-list file, by a fingerprint of the file (and of the
 // instructions it was read with), so the same screenshot uploaded again is not paid for twice.
 await db.exec(`

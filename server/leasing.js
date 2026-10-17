@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
 import { saveFile, sendDoc, upload, HELD } from './properties.js';
@@ -109,7 +110,10 @@ const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amou
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
     (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
     (b.import_batch IS NOT NULL OR EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete)) AS moved_in,
-    b.import_batch, to_char(b.billed_from, 'YYYY-MM-DD') AS billed_from, b.prorate,
+    b.import_batch, to_char(b.billed_from, 'YYYY-MM-DD') AS billed_from, b.prorate, b.part_month_amount, b.leasing_agent,
+    to_char(b.lease_sign_date, 'YYYY-MM-DD') AS lease_sign_date, to_char(b.move_in_date, 'YYYY-MM-DD') AS move_in_date,
+    to_char(b.notice_date, 'YYYY-MM-DD') AS notice_date, to_char(b.expected_move_out, 'YYYY-MM-DD') AS expected_move_out,
+    b.no_late_fees, b.no_checks, b.no_partial_payments, b.no_payments, b.no_twa,
     EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_out' AND i.complete) AS moved_out,
     to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
     u.unit_no, u.floor, u.type AS unit_type, bl.id AS building_id, bl.name AS building, c.id AS company_id, c.name AS company,
@@ -129,7 +133,7 @@ export function bookingStage(b, today = todayHere()) {
 }
 
 const num = (v) => (v == null ? null : Number(v));
-const shape = (b, today) => b && { ...b, fees: JSON.parse(b.fees || '[]'), discount_value: num(b.discount_value), tax_percent: num(b.tax_percent),
+const shape = (b, today) => b && { ...b, fees: JSON.parse(b.fees || '[]'), discount_value: num(b.discount_value), tax_percent: num(b.tax_percent), part_month_amount: num(b.part_month_amount),
   ref: bookingRef(b), stage: bookingStage(b, today) };
 
 /** A lease is a year or more (end on or after the day before the same date next year). */
@@ -220,8 +224,27 @@ function bookingFields(body = {}, { partial = false } = {}) {
     if (v && !PRORATE.has(v)) throw bad('Unknown proration.');
     out.prorate = v;
   }
+  // The part month's rent as Rent Manager charged it, in place of the one worked out by the day. Empty: worked out.
+  if ('part_month_amount' in body) {
+    const v = body.part_month_amount;
+    if (v !== '' && v != null && !(Number(v) > 0)) throw bad('The part month\'s rent must be a number above zero.');
+    out.part_month_amount = v === '' || v == null ? null : money(Number(v));
+  }
+  // What Rent Manager's General tab has besides: the day it was signed, the day the tenant moved in, a notice
+  // given and the move-out expected from it, who let it, and its ticks.
+  for (const [f, name] of DATES) {
+    if (!(f in body)) continue;
+    const v = String(body[f] ?? '').trim();
+    if (v && !isDate(v)) throw bad(`${name} is not a date.`);
+    out[f] = v || null;
+  }
+  if ('leasing_agent' in body) out.leasing_agent = text(body.leasing_agent, 80);
+  for (const f of TICKS) if (f in body) out[f] = isTrue(body[f]);
   return out;
 }
+
+const DATES = [['lease_sign_date', 'Lease sign date'], ['move_in_date', 'Move-in date'], ['notice_date', 'Notice date'], ['expected_move_out', 'Expected move-out']];
+export const TICKS = ['no_late_fees', 'no_checks', 'no_partial_payments', 'no_payments', 'no_twa'];
 
 const PRORATE = new Set(['first', 'second']);
 /** A part month is worked out in days of a month, so only a lease paid month by month can have one. */
@@ -338,7 +361,7 @@ export async function updateBooking(id, body = {}, by) {
     if (old.status === 'confirmed') await mustBeFree(row.unit_id || old.unit_id, start, end, old.id, row.renewed_from);
     // The schedule is rebuilt around the rows already paid, which only holds if they still fit it.
     const fixed = ['start_date', 'rent_period', 'payment_frequency', 'discount_type', 'prorate'].some((f) => f in row && row[f] !== old[f])
-      || ['rent_amount', 'discount_value', 'tax_percent'].some((f) => f in row && row[f] !== num(old[f]));
+      || ['rent_amount', 'discount_value', 'tax_percent', 'part_month_amount'].some((f) => f in row && row[f] !== num(old[f]));
     if (fixed && await db.prepare('SELECT 1 FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id WHERE i.booking_id = ? LIMIT 1').get(old.id)) {
       throw bad('Payments are recorded on this lease, so its start date, rent, discount, tax and payment frequency cannot change (nor how its first month is charged). Cancel it and make a new lease instead.', 409);
     }
@@ -442,7 +465,9 @@ export async function removeBooking(id) {
 // ---------- booking documents ----------
 
 const DOC_DIR = `${DATA_DIR}/leasing`;
-const DOC_COLS = `id, booking_id, title, notes, file_name, file_mime, uploaded_by, created_at, (file_path IS NOT NULL) AS has_file`;
+const DOC_COLS = `id, booking_id, title, category, notes, file_name, file_mime, uploaded_by, created_at, (file_path IS NOT NULL) AS has_file`;
+// How Rent Manager files a lease's notes and files (its History / Notes tab). Left empty: no category.
+export const DOC_CATEGORIES = [['lease', 'Lease'], ['application', 'Application'], ['notice', 'Notice'], ['move_in', 'Move-in form'], ['other', 'Other']];
 
 const getDoc = async (id) => {
   const d = await db.prepare(`SELECT ${DOC_COLS}, file_path FROM lease_documents WHERE id = ?`).get(Number(id));
@@ -460,8 +485,10 @@ export async function bookingDocs(bookingId) {
 export async function addBookingDoc(bookingId, body = {}, file, by) {
   const title = text(body.title);
   if (!title) throw bad('Give the document a name.');
+  const category = text(body.category, 20);
+  if (category && !DOC_CATEGORIES.some(([k]) => k === category)) throw bad('Unknown category.');
   const b = await getBooking(bookingId);
-  const row = { title, notes: text(body.notes, 2000), ...saveFile(file, DOC_DIR), booking_id: b.id, uploaded_by: by ?? null };
+  const row = { title, category, notes: text(body.notes, 2000), ...saveFile(file, DOC_DIR), booking_id: b.id, uploaded_by: by ?? null };
   const cols = Object.keys(row);
   const { id } = await db.prepare(`INSERT INTO lease_documents (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')}) RETURNING id`)
     .run(...cols.map((c) => row[c]));
@@ -508,7 +535,7 @@ export async function bookingHistory(bookingId) {
 // ---------- payment schedule and payments ----------
 
 const STEP = { monthly: 1, quarterly: 3, every_6_months: 6, yearly: 12 };
-export const METHODS = [['transfer', 'Bank transfer'], ['cash', 'Cash'], ['card', 'Card']];
+export const METHODS = [['transfer', 'Bank transfer'], ['cash', 'Cash'], ['card', 'Card'], ['money_order', 'Money order'], ['online', 'Online card']];
 export const AGING = [['0–30 days', 0, 30], ['31–60 days', 31, 60], ['61–90 days', 61, 90], ['90+ days', 91, Infinity]];
 const ENDING = 60; // days before its end a lease counts as ending soon
 export const dayNo = (s) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) / 86400000;
@@ -539,7 +566,9 @@ function monthsOf(b) {
   return months;
 }
 /** What a row of the schedule is for, in words: Rent, Security deposit, or the charge's own name. */
-export const dueName = (i) => (i.kind === 'deposit' ? 'Security deposit' : i.kind === 'fee' ? i.label : i.kind === 'late' ? `Late fee (rent due ${i.label})` : 'Rent');
+export const dueName = (i) => (i.kind === 'deposit' ? 'Security deposit' : i.kind === 'fee' || i.kind === 'charge' ? i.label : i.kind === 'late' ? `Late fee (rent due ${i.label})` : 'Rent');
+/** The rows writeSchedule() leaves alone: late fees, and charges added by hand. */
+const KEPT = "('late', 'charge')";
 
 /** When a booking's rent falls due and how much: one row per payment, from its frequency.
     A part month counts as a month; "upfront" is the whole stay on the first day. The amount
@@ -585,10 +614,11 @@ function proratedSchedule(b) {
   for (let d = head ? firstOfNext(b.start_date) : b.start_date; d <= b.end_date; d = firstOfNext(d)) {
     rows.push({ due: d, share: b.end_date < lastOfMonth(d) ? part(d, b.end_date) : 1 });
   }
-  if (head && b.prorate === 'second' && rows.length) rows.splice(0, 1, { due: b.start_date, share: rows[0].share }, { due: rows[0].due, share: head.share });
-  else if (head) rows.unshift(head);
-  return rows.map(({ due, share }) => {
-    const rent = money(monthlyRent(b) * share);
+  if (head && b.prorate === 'second' && rows.length) rows.splice(0, 1, { due: b.start_date, share: rows[0].share }, { due: rows[0].due, share: head.share, part: true });
+  else if (head) rows.unshift({ ...head, part: true });
+  return rows.map(({ due, share, part }) => {
+    // The part month at the amount typed for it, when one was (Rent Manager's own figure).
+    const rent = part && Number(b.part_month_amount) > 0 ? money(Number(b.part_month_amount)) : money(monthlyRent(b) * share);
     const tax = taxOn(b, rent);
     return { due, amount: money(rent + tax), ...(tax ? { tax } : {}), share };
   });
@@ -622,8 +652,8 @@ const TAX_OF_PAID = 'CASE WHEN amount > 0 THEN round(tax * (SELECT coalesce(sum(
  * terms no longer ask for at all (a charge taken off, a stay cut short) owes nothing more.
  */
 async function writeSchedule(b) {
-  // Late fees are not part of the terms: applyLateFees() adds them, and they stay as they are.
-  await db.prepare("DELETE FROM lease_installments i WHERE i.booking_id = ? AND i.kind <> 'late' AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)").run(b.id);
+  // Late fees and charges added by hand are not part of the terms: applyLateFees() and addCharge() add them, and they stay as they are.
+  await db.prepare(`DELETE FROM lease_installments i WHERE i.booking_id = ? AND i.kind NOT IN ${KEPT} AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)`).run(b.id);
   const fees = typeof b.fees === 'string' ? JSON.parse(b.fees) : b.fees || [];
   const rent = schedule(b);
   // Due once, on the first day; or, on a lease imported from Rent Manager, the first day billed here.
@@ -642,7 +672,7 @@ async function writeSchedule(b) {
       ON CONFLICT (booking_id, kind, label, due_date) DO UPDATE SET amount = GREATEST(EXCLUDED.amount, ${paid}), tax = EXCLUDED.tax`).run(b.id, r.kind, r.label, r.due, r.amount, r.tax || 0);
   }
   const asked = new Set(rows.map((r) => `${r.kind}|${r.label}|${r.due}`));
-  const have = await db.prepare("SELECT id, kind, label, to_char(due_date, 'YYYY-MM-DD') AS due FROM lease_installments WHERE booking_id = ? AND kind <> 'late'").all(b.id);
+  const have = await db.prepare(`SELECT id, kind, label, to_char(due_date, 'YYYY-MM-DD') AS due FROM lease_installments WHERE booking_id = ? AND kind NOT IN ${KEPT}`).all(b.id);
   for (const h of have) {
     if (!asked.has(`${h.kind}|${h.label}|${h.due}`)) await db.prepare(`UPDATE lease_installments SET amount = ${paid}, tax = ${TAX_OF_PAID} WHERE id = ?`).run(h.id);
   }
@@ -671,7 +701,7 @@ export async function applyLateFees(today) {
   await db.prepare(`DELETE FROM lease_installments f WHERE f.kind = 'late' AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = f.id)
     AND EXISTS (SELECT 1 FROM lease_installments r WHERE r.booking_id = f.booking_id AND r.kind = 'rent' AND to_char(r.due_date, 'YYYY-MM-DD') = f.label AND ${inTime} >= r.amount)`).run(days);
   const late = await db.prepare(`SELECT r.booking_id, to_char(r.due_date, 'YYYY-MM-DD') AS due, r.amount FROM lease_installments r JOIN lease_bookings b ON b.id = r.booking_id
-    WHERE r.kind = 'rent' AND b.status = 'confirmed' AND r.due_date >= ?::date AND r.due_date + ?::int < ?::date AND ${inTime} < r.amount
+    WHERE r.kind = 'rent' AND b.status = 'confirmed' AND NOT b.no_late_fees AND r.due_date >= ?::date AND r.due_date + ?::int < ?::date AND ${inTime} < r.amount
       AND NOT EXISTS (SELECT 1 FROM lease_installments f WHERE f.booking_id = r.booking_id AND f.kind = 'late' AND f.label = to_char(r.due_date, 'YYYY-MM-DD'))`)
     .all(rule.since || today, days, today, days);
   for (const r of late) {
@@ -687,7 +717,7 @@ export async function bookingPayments(bookingId, today = todayHere()) {
   const b = await getBooking(bookingId);
   const rows = await db.prepare(`SELECT id, kind, label, to_char(due_date, 'YYYY-MM-DD') AS due_date, amount, tax FROM lease_installments WHERE booking_id = ?
     ORDER BY due_date, (kind = 'rent'), kind, label`).all(b.id);
-  const pays = await db.prepare(`SELECT p.id, p.installment_id, p.amount, p.method, p.reference, p.notes, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, w.name AS recorded_by,
+  const pays = await db.prepare(`SELECT p.id, p.installment_id, p.amount, p.method, p.reference, p.notes, p.batch, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, w.name AS recorded_by,
       (p.file_path IS NOT NULL) AS has_file, p.file_name
     FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id LEFT JOIN users w ON w.id = p.recorded_by
     WHERE i.booking_id = ? ORDER BY p.received_on, p.id`).all(b.id);
@@ -703,19 +733,23 @@ export async function bookingPayments(bookingId, today = todayHere()) {
 export const receiptNo = (p) => `RC-${p.received_on.slice(0, 4)}-${String(p.id).padStart(5, '0')}`;
 
 /** Money received against one payment due, inside the caller's transaction. `file` is its proof (the slip), if there is one. */
-export async function takePayment(installmentId, body = {}, by, today = todayHere(), file = null) {
+export async function takePayment(installmentId, body = {}, by, today = todayHere(), file = null, { batch = null, whole = false } = {}) {
   const amount = Number(body.amount);
   if (!Number.isFinite(amount) || amount <= 0) throw bad('Enter the amount received.');
-  if (!METHODS.some(([k]) => k === body.method)) throw bad('Choose how it was paid: bank transfer, cash or card.');
+  if (!METHODS.some(([k]) => k === body.method)) throw bad('Choose how it was paid: bank transfer, cash, card, money order or online card.');
   const received_on = String(body.received_on ?? '').trim() || today;
   if (!isDate(received_on)) throw bad('The date received is not a date.');
   if (received_on > today) throw bad('The date received cannot be in the future.');
   const i = await db.prepare('SELECT id, booking_id, kind, label, amount FROM lease_installments WHERE id = ? FOR UPDATE').get(Number(installmentId));
   if (!i) throw bad('Not found', 404);
+  const ticks = await db.prepare('SELECT no_payments, no_partial_payments FROM lease_bookings WHERE id = ?').get(i.booking_id);
+  if (ticks.no_payments) throw bad(NO_PAYMENTS, 409);
   const { paid } = await db.prepare('SELECT coalesce(sum(amount), 0) AS paid FROM lease_payments WHERE installment_id = ?').get(i.id);
   const left = money(Number(i.amount) - Number(paid));
   if (amount > left) throw bad(left > 0 ? `Only ${cash(left)} is still owed on this one.` : 'This one is already paid in full.', 409);
-  const row = { installment_id: i.id, amount: money(amount), method: body.method, received_on, reference: text(body.reference), notes: text(body.notes, 2000), recorded_by: by ?? null, ...saveFile(file, DOC_DIR) };
+  // Paid against this one row only (not spread by payBooking, which checks the whole for itself).
+  if (whole && ticks.no_partial_payments && money(amount) < left) throw bad(`This lease takes payments in full only: ${cash(left)} is owed on this one.`, 409);
+  const row = { installment_id: i.id, amount: money(amount), method: body.method, received_on, reference: text(body.reference), notes: text(body.notes, 2000), recorded_by: by ?? null, batch, ...saveFile(file, DOC_DIR) };
   const cols = Object.keys(row);
   const { id } = await db.prepare(`INSERT INTO lease_payments (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')}) RETURNING id`).run(...cols.map((c) => row[c]));
   await logEvent(i.booking_id, 'payment', `${cash(amount)} · ${dueName(i)} · ${METHODS.find(([k]) => k === body.method)[1]}`, by);
@@ -723,29 +757,101 @@ export async function takePayment(installmentId, body = {}, by, today = todayHer
 }
 
 /** Money received against one payment due. It can be part of it, never more than is still owed. */
-export const recordPayment = (installmentId, body, by, today, file) => tx(() => takePayment(installmentId, body, by, today, file));
+export const recordPayment = (installmentId, body, by, today, file) => tx(() => takePayment(installmentId, body, by, today, file, { whole: true }));
+
+const NO_PAYMENTS = 'This lease is marked not to take payments (Don\'t accept payments). Untick it on the lease first.';
 
 /**
  * Money received for the booking as a whole (two months paid together, say): it goes against
  * what is owed oldest first, over as many rows as it covers, each with its own receipt.
  * Never more than the booking still owes. The slip, if there is one, goes with the first.
+ * The rows it was spread over share a `batch`, so the transactions list shows it as the one payment it was.
+ * A lease ticked "Don't accept partial payments" takes nothing less than what is due by the day it was received.
  */
 export const payBooking = (bookingId, body = {}, by, today = todayHere(), file = null) => tx(async () => {
   const b = await getBooking(bookingId);
+  if (b.no_payments) throw bad(NO_PAYMENTS, 409);
   let left = money(Number(body.amount));
   if (!Number.isFinite(left) || left <= 0) throw bad('Enter the amount received.');
   const rows = (await bookingPayments(b.id, today)).filter((r) => r.left > 0);
   const owed = total(rows, (r) => r.left);
   if (left > owed) throw bad(owed > 0 ? `Only ${cash(owed)} is still owed on this lease.` : 'Nothing is owed on this lease.', 409);
+  if (b.no_partial_payments) {
+    const on = String(body.received_on ?? '').trim() || today;
+    const due = total(rows.filter((r) => r.due_date <= on), (r) => r.left);
+    if (left < due) throw bad(`This lease takes payments in full only: ${cash(due)} is due by ${on}.`, 409);
+  }
+  const batch = randomUUID();
   const made = [];
   for (const r of rows) {
     if (left <= 0) break;
     const part = Math.min(left, r.left);
-    made.push(await takePayment(r.id, { ...body, amount: part }, by, today, made.length ? null : file));
+    made.push(await takePayment(r.id, { ...body, amount: part }, by, today, made.length ? null : file, { batch }));
     left = money(left - part);
   }
   return made;
 });
+
+// ---------- charges added by hand, and the transactions list ----------
+
+/**
+ * A charge on a date of its own, added to a confirmed lease at any time: a mailbox key deposit,
+ * a court cost, a late charge from before the lease was entered here. Owed like the rent, and
+ * left alone when the schedule is rebuilt. No tax: it is charged as typed.
+ */
+export const addCharge = (bookingId, body = {}, by) => tx(async () => {
+  const b = await getBooking(bookingId);
+  if (b.status !== 'confirmed') throw bad('Charges are added to a confirmed lease.', 409);
+  const label = text(body.label, 60);
+  if (!label) throw bad('Give the charge a name.');
+  const due = String(body.due_date ?? '').trim();
+  if (!isDate(due)) throw bad('Choose the date of the charge.');
+  const amount = Number(body.amount);
+  if (!(amount > 0)) throw bad('The charge needs an amount above zero.');
+  const made = await db.prepare(`INSERT INTO lease_installments (booking_id, kind, label, due_date, amount) VALUES (?, 'charge', ?, ?, ?)
+    ON CONFLICT DO NOTHING RETURNING id`).get(b.id, label, due, money(amount));
+  if (!made) throw bad(`This lease already has a ${label} on ${due}.`, 409);
+  await logEvent(b.id, 'charge', `${label} · ${cash(amount)} on ${due}`, by);
+  return { id: made.id, label, due_date: due, amount: money(amount) };
+});
+
+/** Take off a charge added by hand, while nothing has been paid against it. */
+export const removeCharge = (installmentId, by) => tx(async () => {
+  const i = await db.prepare("SELECT id, booking_id, kind, label, amount, to_char(due_date, 'YYYY-MM-DD') AS due FROM lease_installments WHERE id = ? FOR UPDATE").get(Number(installmentId) || 0);
+  if (!i) throw bad('Not found', 404);
+  if (i.kind !== 'charge') throw bad('Only a charge added by hand can be taken off.', 409);
+  if (await db.prepare('SELECT 1 FROM lease_payments WHERE installment_id = ? LIMIT 1').get(i.id)) throw bad('A payment is recorded against this charge. Delete the payment first.', 409);
+  await db.prepare('DELETE FROM lease_installments WHERE id = ?').run(i.id);
+  await logEvent(i.booking_id, 'charge_removed', `${i.label} · ${cash(Number(i.amount))} on ${i.due}`, by);
+  return { ok: true };
+});
+
+/**
+ * The lease's transactions, as Rent Manager's Transactions tab lists them: each charge on the day
+ * it falls due (up to `today`), each payment on the day it was received, with the balance after
+ * each line. An amount spread over several charges is one line. `balance` is what is owed today.
+ */
+export async function ledger(bookingId, today = todayHere()) {
+  const rows = await bookingPayments(bookingId, today);
+  const charges = rows.map((r, n) => ({ date: r.due_date, kind: 'charge', description: r.name, amount: r.amount, order: n }))
+    .filter((r) => r.date <= today && r.amount > 0);
+  const paid = new Map();
+  for (const p of rows.flatMap((r) => r.payments)) {
+    const key = p.batch || `p${p.id}`;
+    const at = paid.get(key);
+    if (at) at.amount = money(at.amount + p.amount);
+    else paid.set(key, { date: p.received_on, kind: 'payment', amount: p.amount, method: p.method, reference: p.reference, order: p.id });
+  }
+  const payments = [...paid.values()].map((p) => ({
+    date: p.date, kind: 'payment', order: p.order, method: p.method, reference: p.reference, amount: -p.amount,
+    description: ['Payment', METHODS.find(([k]) => k === p.method)?.[1], p.reference].filter(Boolean).join(' · '),
+  }));
+  // Charges first on a day, then payments; each in the order it was made.
+  const all = [...charges, ...payments].sort((a, b) => a.date.localeCompare(b.date) || (a.kind === b.kind ? a.order - b.order : a.kind === 'charge' ? -1 : 1));
+  let balance = 0;
+  const out = all.map(({ order, ...r }) => { balance = money(balance + r.amount); return { ...r, balance }; });
+  return { rows: out, balance };
+}
 
 const getPayment = async (id) => {
   const p = await db.prepare(`SELECT p.id, p.amount, p.file_path, p.file_name, p.file_mime, i.booking_id, i.kind FROM lease_payments p
@@ -1207,6 +1313,9 @@ leasingRoutes.post('/bookings/:id/deposit/pass', wrap(async (req, res) => res.js
 leasingRoutes.delete('/bookings/:id/deposit/pass', wrap(async (req, res) => res.json(await takeBackDeposit(req.params.id, req.user.id))));
 leasingRoutes.get('/bookings/:id/payments', wrap(async (req, res) => res.json(await bookingPayments(req.params.id))));
 leasingRoutes.post('/bookings/:id/payments', upload.single('file'), wrap(async (req, res) => res.json(await payBooking(req.params.id, req.body, req.user.id, undefined, req.file))));
+leasingRoutes.get('/bookings/:id/ledger', wrap(async (req, res) => res.json(await ledger(req.params.id))));
+leasingRoutes.post('/bookings/:id/charges', wrap(async (req, res) => res.json(await addCharge(req.params.id, req.body, req.user.id))));
+leasingRoutes.delete('/charges/:id', wrap(async (req, res) => res.json(await removeCharge(req.params.id, req.user.id))));
 leasingRoutes.post('/installments/:id/payments', upload.single('file'), wrap(async (req, res) => res.json(await recordPayment(req.params.id, req.body, req.user.id, undefined, req.file))));
 leasingRoutes.post('/payments/:id/file', upload.single('file'), wrap(async (req, res) => res.json(await attachPaymentFile(req.params.id, req.file, req.user.id))));
 leasingRoutes.get('/payments/:id/file', wrap(async (req, res) => sendDoc(req, res, await getPayment(req.params.id))));

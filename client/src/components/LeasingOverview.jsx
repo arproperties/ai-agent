@@ -17,7 +17,7 @@ const PERIODS = [[1, 'This month'], [3, '3 months'], [12, '12 months']];
 const VIOLET = 'var(--color-chart)';
 // What is due but not collected: the same violet, thinned, so a bar reads as one amount part-filled.
 const DUE = 'color-mix(in srgb, var(--color-chart) 22%, transparent)';
-const METHOD_COLOR = { transfer: VIOLET, cash: '#e0509a', card: '#0e9bd8' };
+const METHOD_COLOR = { transfer: VIOLET, cash: '#e0509a', card: '#0e9bd8', money_order: '#d9a227', online: '#2fb67c' };
 const HATCH = { backgroundImage: 'repeating-linear-gradient(45deg, transparent 0 3px, color-mix(in srgb, var(--color-white) 22%, transparent) 3px 4px)' };
 const UNIT = {
   occupied: ['Occupied', 'bg-chart/75'], ending: ['Ending soon', 'bg-warn/85'], overdue: ['Overdue', 'bg-bad/90'],
