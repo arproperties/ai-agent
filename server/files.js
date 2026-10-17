@@ -5,7 +5,7 @@ import { extname } from 'node:path';
 import { db, tx } from './db.js';
 import { ask } from './ai.js';
 import { DATA_DIR, FOLDERS } from './config.js';
-import { IMAGE_TYPES, VIDEO_TYPES, VIDEO_EXT, extractText, describeImage, readVideo, indexChunks, retrievalScope } from './knowledge.js';
+import { IMAGE_TYPES, VIDEO_TYPES, VIDEO_EXT, extractText, describeImage, readVideo, indexChunks, retrievalScope, agentScope } from './knowledge.js';
 import { isMaster } from './access.js';
 
 const UPLOAD_DIR = `${DATA_DIR}/uploads`;
@@ -287,7 +287,7 @@ export async function setSharedMany(user, docIds, shared) {
 // is a glimpse, and the agent has to know that or it reads "not listed" as "not there".
 // Captured facts are left out - they are not files, and once crowded the real ones off.
 export async function libraryCatalog(user) {
-  const scope = retrievalScope(user.id);
+  const scope = agentScope(user);
   const files = `${scope.sql} AND status = 'ready' AND kind IS DISTINCT FROM 'fact'`;
   const rows = await db.prepare(`SELECT title, folder, name, doc_date, expires_on FROM documents t
     WHERE ${files} ORDER BY id DESC LIMIT 40`).all(...scope.params);

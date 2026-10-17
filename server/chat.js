@@ -355,6 +355,8 @@ export async function chat(req, res) {
   send('status', { label: 'Choosing the best agent…' });
   const { agent, why } = await pickAgent({ agents: team, byName, userId: user.id, text, attachments: meta, recent: prior, currentAgentId });
   send('agent', { id: agent.id, why });
+  // A private agent reads only this person's own files, never the company's shared ones.
+  const reader = agent.private ? { ...user, ownFilesOnly: true } : user;
 
   // 2. Context: recalled memories + relevant file excerpts
   send('status', { label: `${agent.name} is thinking…` });
@@ -378,7 +380,7 @@ export async function chat(req, res) {
   // What the reply carries: pictures drawn for it, and saved files the agent showed.
   // Both go out on the 'picture' event, which sets the reply's files on screen.
   const pictures = [];
-  const shelf = shelfKit(user, {
+  const shelf = shelfKit(reader, {
     onShow: (docs) => {
       for (const d of docs) if (!pictures.some((p) => p.docId === d.docId)) pictures.push(d);
       send('picture', pictures);
@@ -400,8 +402,8 @@ export async function chat(req, res) {
     }));
   }
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
-  const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
-  const library = await libraryCatalog(user); // same every turn, so read it once
+  const { memories, knowledge } = await recall(reader, text || meta.map((f) => f.name).join(' '));
+  const library = await libraryCatalog(reader); // same every turn, so read it once
   // Chats brought in by this message, plus any brought in earlier: once a chat is carried
   // into this conversation it stays for every message after it, which is what "this chat
   // has both of those chats" has to mean.

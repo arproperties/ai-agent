@@ -274,7 +274,7 @@ async function rank(table, scope, query, qvec, k) {
  * The same search recall() runs, but saying which file each piece came from - for the
  * agent's own look through the Shelf (server/shelf.js), which answers in files, not pieces.
  */
-export async function findChunks(user, query, k = 20, scope = retrievalScope(user.id)) {
+export async function findChunks(user, query, k = 20, scope = agentScope(user)) {
   const [qvec] = await embed([query]);
   const ids = await rank('chunks', scope, query, qvec, k);
   if (!ids.length) return [];
@@ -301,6 +301,14 @@ export function retrievalScope(userId, t = 't') {
 }
 
 /**
+ * What a private agent reads: this person's own files and nothing the master shared
+ * company-wide, so a personal agent's answers never mix in the team's paperwork.
+ * chat.js marks the turn's user `ownFilesOnly` when the agent answering is private.
+ */
+export const agentScope = (user, t = 't') =>
+  (user.ownFilesOnly ? { sql: `${t}.user_id = ?`, params: [user.id] } : retrievalScope(user.id, t));
+
+/**
  * What this app remembers about one person. Memories are facts about a person, never
  * about the company, so they are never shared and never scoped by shelf - which is
  * also why this is the one part of recall that can be used on its own, away from the
@@ -317,7 +325,7 @@ export async function personalMemories(user, query, qvec, k = 12) {
 export async function recall(user, query) {
   const [qvec] = await embed([query]);
   const memories = await personalMemories(user, query, qvec);
-  const knowledge = await search('chunks', retrievalScope(user.id), query, qvec, 6);
+  const knowledge = await search('chunks', agentScope(user), query, qvec, 6);
   return { memories, knowledge };
 }
 

@@ -4,6 +4,8 @@ import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
 import { chatAgents, privateAgents, listedAgents, canUseAgent } from '../server/access.js';
 import { setAssignments, listAssignments } from '../server/admin.js';
 import { pickAgent } from '../server/router.js';
+import { libraryCatalog } from '../server/files.js';
+import { searchFiles } from '../server/shelf.js';
 
 // A private agent is for the people it is ticked for, and stays out of everyone else's
 // day-to-day: never lent as a hidden shelf, never picked for the master's own questions.
@@ -53,6 +55,20 @@ test("the master's own router and filing never see a private agent", async () =>
   assert.deepEqual((await privateAgents(master)).map((a) => a.name), ['Family Law']);
   assert.deepEqual((await listedAgents(master)).map((a) => a.name), ['Operations', 'Family Law'], 'still listed, to manage');
   assert.equal(await canUseAgent(master, (await privateAgents(master))[0].id), true);
+});
+
+test("a private agent's turn reads the person's own files, never the company's shared ones", async () => {
+  const { master, boss } = await fixture();
+  const doc = (owner, title, shared) => db.prepare(`INSERT INTO documents (user_id, name, title, folder, status, shared)
+    VALUES (?, ?, ?, 'Other', 'ready', ?)`).run(owner, `${title}.pdf`, title, shared);
+  await doc(master.id, 'Company Lease', true);
+  await doc(boss.id, 'Marriage Contract', false);
+
+  const titles = async (u) => (await libraryCatalog(u)).files.map((f) => f.split(' (')[0].slice(2)).sort();
+  assert.deepEqual(await titles(boss), ['Company Lease', 'Marriage Contract'], 'an ordinary turn still reads shared files');
+  assert.deepEqual(await titles({ ...boss, ownFilesOnly: true }), ['Marriage Contract']);
+  assert.deepEqual(await titles({ ...master, ownFilesOnly: true }), ['Company Lease'], "the master's own, not the boss's");
+  assert.doesNotMatch(await searchFiles({ ...boss, ownFilesOnly: true }, 'lease'), /Company Lease/);
 });
 
 test('a normal user has no private-by-name agents', async () => {
