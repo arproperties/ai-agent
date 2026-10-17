@@ -113,6 +113,7 @@ const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amou
     b.import_batch, to_char(b.billed_from, 'YYYY-MM-DD') AS billed_from, b.prorate, b.part_month_amount, b.leasing_agent,
     to_char(b.lease_sign_date, 'YYYY-MM-DD') AS lease_sign_date, to_char(b.move_in_date, 'YYYY-MM-DD') AS move_in_date,
     to_char(b.notice_date, 'YYYY-MM-DD') AS notice_date, to_char(b.expected_move_out, 'YYYY-MM-DD') AS expected_move_out,
+    to_char(b.deposit_due, 'YYYY-MM-DD') AS deposit_due,
     b.no_late_fees, b.no_checks, b.no_partial_payments, b.no_payments, b.no_twa,
     EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_out' AND i.complete) AS moved_out,
     to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
@@ -243,7 +244,7 @@ function bookingFields(body = {}, { partial = false } = {}) {
   return out;
 }
 
-const DATES = [['lease_sign_date', 'Lease sign date'], ['move_in_date', 'Move-in date'], ['notice_date', 'Notice date'], ['expected_move_out', 'Expected move-out']];
+const DATES = [['lease_sign_date', 'Lease sign date'], ['move_in_date', 'Move-in date'], ['notice_date', 'Notice date'], ['expected_move_out', 'Expected move-out'], ['deposit_due', 'Deposit date']];
 export const TICKS = ['no_late_fees', 'no_checks', 'no_partial_payments', 'no_payments', 'no_twa'];
 
 const PRORATE = new Set(['first', 'second']);
@@ -658,9 +659,13 @@ async function writeSchedule(b) {
   const rent = schedule(b);
   // Due once, on the first day; or, on a lease imported from Rent Manager, the first day billed here.
   const first = b.billed_from > b.start_date ? b.billed_from : b.start_date;
+  // The deposit on its own date when it was charged before the start, as Rent Manager has it (GSL 102: three weeks before).
+  const depositDue = b.deposit_due || first;
+  // There is only ever one deposit row: a new date moves it, payment and all, rather than owing a second one.
+  await db.prepare("UPDATE lease_installments SET due_date = ? WHERE booking_id = ? AND kind = 'deposit' AND due_date <> ?::date").run(depositDue, b.id, depositDue);
   const rows = [
     ...rent.map((p) => ({ kind: 'rent', label: '', ...p })),
-    ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: first, amount: Number(b.security_deposit) }] : []),
+    ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: depositDue, amount: Number(b.security_deposit) }] : []),
     // A charge that repeats is due in full with each rent payment, a part month too: Rent Manager bills
     // water/trash at its whole price on the prorated month (Francis, 2026-10-17).
     ...fees.flatMap((f) => (f.repeats ? rent.map((p) => [p.due, f.amount]) : [[first, f.amount]])

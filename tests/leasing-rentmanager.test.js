@@ -159,6 +159,31 @@ test('the ticks: no late fees, no payments, no part payments', async () => {
   await assert.rejects(recordPayment(sep.id, { amount: 10, method: 'cash', received_on: AT }, staff, AT), /in full/);
 });
 
+// GSL 102 as Rent Manager has it: the deposit was charged and paid on 10/11/24, three weeks before the lease started on 11/01/24.
+test('the deposit is charged on its own date when it was not the lease start, and moves without doubling once paid', async () => {
+  const { staff, u, t } = await gsl101();
+  const bk = await createBooking({
+    unit_id: u.id, tenant_id: t.id, start_date: '2024-11-01', end_date: '2025-10-31', rent_amount: 1075, rent_period: 'month',
+    payment_frequency: 'monthly', security_deposit: 150, deposit_due: '2024-10-11', status: 'confirmed',
+  }, staff);
+  assert.equal(bk.deposit_due, '2024-10-11');
+  const dep = async () => (await bookingPayments(bk.id, AT)).filter((r) => r.kind === 'deposit').map((r) => [r.due_date, r.amount, r.paid]);
+  assert.deepEqual(await dep(), [['2024-10-11', 150, 0]]);
+
+  await payBooking(bk.id, { amount: 150, method: 'online', reference: 'ePay VISA', received_on: '2024-10-11' }, staff, AT);
+  const l = await ledger(bk.id, AT);
+  assert.deepEqual(l.rows.slice(0, 2).map((r) => [r.date, r.description, r.amount, r.balance]),
+    [['2024-10-11', 'Security deposit', 150, 150], ['2024-10-11', 'Payment · Online card · ePay VISA', -150, 0]]);
+
+  // Moved after it was paid: the one deposit row moves with its payment, no second deposit is owed.
+  await updateBooking(bk.id, { deposit_due: '2024-10-04' }, staff);
+  assert.deepEqual(await dep(), [['2024-10-04', 150, 150]]);
+  // Emptied: due on the lease start again.
+  assert.equal((await updateBooking(bk.id, { deposit_due: '' }, staff)).deposit_due, null);
+  assert.deepEqual(await dep(), [['2024-11-01', 150, 150]]);
+  await assert.rejects(updateBooking(bk.id, { deposit_due: '11/10/2024' }, staff), /Deposit date is not a date/);
+});
+
 test('a note or file has a category, as on Rent Manager\'s History / Notes', async () => {
   const { staff, bk } = await gsl101();
   await addBookingDoc(bk.id, { title: '101 LEASE.pdf', category: 'lease' }, null, staff);

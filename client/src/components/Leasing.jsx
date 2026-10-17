@@ -229,7 +229,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     part_month_amount: start?.part_month_amount ?? '',
     // Rent Manager's General tab: the lease start is start_date; these sit beside it.
     lease_sign_date: start?.lease_sign_date || '', move_in_date: start?.move_in_date || '', notice_date: start?.notice_date || '', expected_move_out: start?.expected_move_out || '',
-    leasing_agent: start?.leasing_agent || '', ...Object.fromEntries(TICKS.map(([k]) => [k, !!start?.[k]])),
+    deposit_due: start?.deposit_due || '', leasing_agent: start?.leasing_agent || '', ...Object.fromEntries(TICKS.map(([k]) => [k, !!start?.[k]])),
   });
   // Whether this lease is billed on the 1st: every new one is. A lease made before that (prorate empty)
   // keeps rent on its move-in day, and the form does not offer to change it.
@@ -455,6 +455,13 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             </Label>
             <Label text={`Security deposit (${currency()})`}><input type="number" min="0" step="any" value={v.security_deposit} onChange={set('security_deposit')} placeholder="None" className={FIELD} /></Label>
           </div>
+          {/* A deposit charged before the lease start (paid before moving in), on the day Rent Manager charged it. */}
+          {Number(v.security_deposit) > 0 && (
+            <label className="mt-3 block max-w-xs">
+              <span className="mb-1 block text-xs text-txt/80">Deposit charged on · if not the lease start</span>
+              <DateField value={v.deposit_due} onChange={set('deposit_due')} max={v.end_date || undefined} className={FIELD} />
+            </label>
+          )}
         </Group>
         {/* A lease that starts after the 1st can charge its part month by the day, then rent on the 1st. */}
         {onTheFirst && v.payment_frequency === 'monthly' && v.start_date && !v.start_date.endsWith('-01') && (
@@ -778,6 +785,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
         {[['Moved in', b.move_in_date && b.move_in_date !== b.start_date && fmt(b.move_in_date)], ['Leasing agent', b.leasing_agent],
           ['Notice given', b.notice_date && `${fmt(b.notice_date)}${b.expected_move_out ? ` · out ${fmt(b.expected_move_out)}` : ''}`],
           ['Expected move-out', !b.notice_date && b.expected_move_out && fmt(b.expected_move_out)],
+          ['Deposit charged', b.deposit_due && b.deposit_due !== b.start_date && fmt(b.deposit_due)],
           ['Payments', TICKS.filter(([k]) => b[k]).map(([, name]) => name).join(' · ')]].filter(([, x]) => x).map(([k, x]) => (
           <div key={k} className="flex justify-between gap-4 py-2">
             <span className="shrink-0 text-mute">{k}</span>

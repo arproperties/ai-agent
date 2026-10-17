@@ -1453,6 +1453,7 @@ await db.exec('ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS prorate TEXT'
 // What Rent Manager's General tab keeps on a lease, for leases entered by hand from it.
 //   start_date stays the lease start (rent is billed from it); move_in_date is the day the tenant moved in.
 //   part_month_amount: the part month's rent as typed, in place of the one worked out by the day.
+//   deposit_due: the day the deposit was charged, when not the lease start (paid before moving in). NULL: the start.
 //   no_*: Rent Manager's ticks. no_checks and no_twa are kept only: the app takes no checks and has no TWA.
 // lease_installments.kind 'charge': a charge added by hand on a date of its own (a key deposit, a court cost).
 // lease_payments.batch: the payments one amount was spread into, so the transactions list shows it once.
@@ -1470,6 +1471,7 @@ await db.exec(`
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_payments BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_twa BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_payments ADD COLUMN IF NOT EXISTS batch TEXT;
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_due DATE;
   ALTER TABLE lease_documents ADD COLUMN IF NOT EXISTS category TEXT;
 `);
 
