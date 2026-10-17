@@ -185,12 +185,13 @@ function proratedPlan(v) {
   const rentOf = (r) => (r.part && typedPart(v) ? typedPart(v) : monthly * r.share);
   const allRent = rows.reduce((t, r) => t + rentOf(r), 0);
   const firstRent = rows[0]?.due === v.start_date ? rentOf(rows[0]) : 0;
-  const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? atStart : 1), 0);
-  const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? shares : 1), 0);
+  // A repeating charge is its whole price with every rent payment, the part month too, as Rent Manager bills it.
+  const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? (atStart ? 1 : 0) : 1), 0);
+  const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? rows.length : 1), 0);
   const firstTax = (firstRent + firstFees) * rate;
   const tax = (allRent + allFees) * rate;
   return {
-    payments: rows.length, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats ? Number(f.amount) * atStart : f.amount })), firstTax, tax,
+    payments: rows.length, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats && !atStart ? 0 : f.amount })), firstTax, tax,
     discount: (off / per) * shares,
     head: head && { ...head, amount: monthly * head.share, typed: typedPart(v) },
     second: head && v.prorate === 'second' && rows[1] ? { due: rows[1].due, amount: rentOf(rows[1]) } : null,

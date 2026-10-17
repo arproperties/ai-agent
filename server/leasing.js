@@ -661,9 +661,9 @@ async function writeSchedule(b) {
   const rows = [
     ...rent.map((p) => ({ kind: 'rent', label: '', ...p })),
     ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: first, amount: Number(b.security_deposit) }] : []),
-    // A charge that repeats is due in full with each rent payment; on a prorated lease it is cut to
-    // the months that payment bills, as the rent is. Other leases are left exactly as they were.
-    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => [p.due, prorates(b) ? money(f.amount * p.share) : f.amount]) : [[first, f.amount]])
+    // A charge that repeats is due in full with each rent payment, a part month too: Rent Manager bills
+    // water/trash at its whole price on the prorated month (Francis, 2026-10-17).
+    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => [p.due, f.amount]) : [[first, f.amount]])
       .map(([due, amount]) => ({ kind: 'fee', label: f.label, due, amount: money(amount + taxOn(b, amount)), tax: taxOn(b, amount) }))),
   ];
   const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';

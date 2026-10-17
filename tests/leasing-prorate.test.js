@@ -53,13 +53,14 @@ test('a prorated lease in the database: its charges, its checks, and its deposit
   const first = await lease(u1, { prorate: 'first' });
   assert.equal((await getBooking(first.id)).prorate, 'first');
   const fee = (await rows(first.id, 'fee'))[0];
-  assert.deepEqual([fee.due, fee.amount], ['2026-10-17', 24.19]);
+  // A repeating charge is its whole price on the part month too, as Rent Manager bills it.
+  assert.deepEqual([fee.due, fee.amount], ['2026-10-17', 50]);
   assert.equal((await rows(first.id, 'rent'))[0].amount, 532.26);
   assert.equal((await rows(first.id, 'deposit'))[0].due, '2026-10-17');
 
   const second = await lease(u2, { prorate: 'second' });
   const fees = await rows(second.id, 'fee');
-  assert.deepEqual(fees.slice(0, 2).map((f) => [f.due, f.amount]), [['2026-10-17', 50], ['2026-11-01', 24.19]]);
+  assert.deepEqual(fees.slice(0, 2).map((f) => [f.due, f.amount]), [['2026-10-17', 50], ['2026-11-01', 50]]);
   assert.equal((await rows(second.id, 'deposit'))[0].due, '2026-10-17');
 
   await assert.rejects(lease(u1, { prorate: 'first', payment_frequency: 'quarterly', status: 'draft' }), /Proration needs monthly payments/);

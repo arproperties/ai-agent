@@ -113,7 +113,7 @@ test('GSL 101 entered by hand: the transactions list ends at Rent Manager\'s bal
     ['2026-08-12', 'Payment · Money order · AC MO 19-839593601', -100],
     ['2026-08-12', 'Payment · Money order · AC MO 19-839593600', -1000],
     ['2026-08-17', 'Payment · Online card · ePay VISA', -197],
-    ['2026-09-01', 'Water/Trash PKG', 32.52],
+    ['2026-09-01', 'Water/Trash PKG', 48],
     ['2026-09-01', 'Rent', 804],
     ['2026-09-04', 'Mail Box Key Deposit', 28],
     ['2026-09-04', 'Payment · Online card · Web Pay VISA', -852],
@@ -126,8 +126,8 @@ test('GSL 101 entered by hand: the transactions list ends at Rent Manager\'s bal
   ]);
   assert.equal(l.rows[3].balance, 1297);
   assert.equal(l.rows[6].balance, 0);
-  // Rent Manager says 1,360.00; it bills the water in full on the part month (48, not 32.52).
-  assert.equal(l.balance, 1344.52);
+  // Rent Manager's balance due, to the cent: the water is billed in full on the part month too.
+  assert.equal(l.balance, 1360);
   assert.equal(l.rows.at(-1).balance, l.balance);
 });
 
