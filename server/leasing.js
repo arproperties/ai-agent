@@ -720,7 +720,7 @@ export async function bookingPayments(bookingId, today = todayHere()) {
   await backfillSchedules();
   await applyLateFees(today);
   const b = await getBooking(bookingId);
-  const rows = await db.prepare(`SELECT id, kind, label, to_char(due_date, 'YYYY-MM-DD') AS due_date, amount, tax FROM lease_installments WHERE booking_id = ?
+  const rows = await db.prepare(`SELECT id, kind, label, to_char(due_date, 'YYYY-MM-DD') AS due_date, amount, tax, held FROM lease_installments WHERE booking_id = ?
     ORDER BY due_date, (kind = 'rent'), kind, label`).all(b.id);
   const pays = await db.prepare(`SELECT p.id, p.installment_id, p.amount, p.method, p.reference, p.notes, p.batch, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, w.name AS recorded_by,
       (p.file_path IS NOT NULL) AS has_file, p.file_name
@@ -815,11 +815,13 @@ export const addCharge = (bookingId, body = {}, by) => tx(async () => {
   if (!isDate(due)) throw bad('Choose the date of the charge.');
   const amount = Number(body.amount);
   if (!(amount > 0)) throw bad('The charge needs an amount above zero.');
-  const made = await db.prepare(`INSERT INTO lease_installments (booking_id, kind, label, due_date, amount) VALUES (?, 'charge', ?, ?, ?)
-    ON CONFLICT DO NOTHING RETURNING id`).get(b.id, label, due, money(amount));
+  // Held with the deposit: counted in what is held, as Rent Manager counts a deposit-type charge (GSL 103's pet fee).
+  const held = isTrue(body.held);
+  const made = await db.prepare(`INSERT INTO lease_installments (booking_id, kind, label, due_date, amount, held) VALUES (?, 'charge', ?, ?, ?, ?)
+    ON CONFLICT DO NOTHING RETURNING id`).get(b.id, label, due, money(amount), held);
   if (!made) throw bad(`This lease already has a ${label} on ${due}.`, 409);
-  await logEvent(b.id, 'charge', `${label} · ${cash(amount)} on ${due}`, by);
-  return { id: made.id, label, due_date: due, amount: money(amount) };
+  await logEvent(b.id, 'charge', `${label} · ${cash(amount)} on ${due}${held ? ' · held with the deposit' : ''}`, by);
+  return { id: made.id, label, due_date: due, amount: money(amount), held };
 });
 
 /** Take off a charge added by hand, while nothing has been paid against it. */
@@ -896,9 +898,11 @@ export async function removePayment(id, by) {
 
 // ---------- security deposit ----------
 
-/** What has been received as deposit on this booking itself. */
+/** What has been received as deposit on this booking itself, with what was paid on charges held with it. */
 const depositPaid = async (id) => Number((await db.prepare(`SELECT coalesce(sum(p.amount), 0) AS n FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id
-  WHERE i.booking_id = ? AND i.kind = 'deposit'`).get(id)).n);
+  WHERE i.booking_id = ? AND (i.kind = 'deposit' OR i.held)`).get(id)).n);
+/** The charges held with the deposit, in full. */
+const heldCharges = async (id) => Number((await db.prepare('SELECT coalesce(sum(amount), 0) AS n FROM lease_installments WHERE booking_id = ? AND held').get(id)).n);
 /** The earlier bookings whose deposit was passed on to this one, each with what it brought: its own, and any passed on to it in turn. */
 async function carriedTo(id) {
   const out = [];
@@ -917,7 +921,7 @@ async function carriedTo(id) {
  */
 export async function depositState(bookingId) {
   const b = await getBooking(bookingId);
-  const amount = Number(b.security_deposit) || 0;
+  const amount = money((Number(b.security_deposit) || 0) + await heldCharges(b.id));
   const from = await carriedTo(b.id);
   const held = money(await depositPaid(b.id) + total(from));
   const refunded = b.deposit_refunded == null ? null : Number(b.deposit_refunded);

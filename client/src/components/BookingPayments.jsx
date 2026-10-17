@@ -33,7 +33,7 @@ const EVENT = {
 
 /** A charge on a date of its own, added to the lease: a mailbox key deposit, a court cost, a late charge from before. */
 function ChargeForm({ bookingId, onDone, onCancel }) {
-  const [v, setV] = useState({ label: '', due_date: today(), amount: '' });
+  const [v, setV] = useState({ label: '', due_date: today(), amount: '', held: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
@@ -54,6 +54,11 @@ function ChargeForm({ bookingId, onDone, onCancel }) {
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Amount ({currency()})</span>
           <input type="number" min="0" step="any" value={v.amount} onChange={set('amount')} required className={FIELD} /></label>
       </div>
+      {/* Rent Manager counts some charges in the deposit held (a pet fee): ticked, so does the app. */}
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={v.held} onChange={(e) => setV({ ...v, held: e.target.checked })} className="size-4 accent-p1" />
+        Held with the deposit <span className="text-mute">· counted in the deposit held, as Rent Manager does</span>
+      </label>
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>

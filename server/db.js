@@ -1456,6 +1456,7 @@ await db.exec('ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS prorate TEXT'
 //   deposit_due: the day the deposit was charged, when not the lease start (paid before moving in). NULL: the start.
 //   no_*: Rent Manager's ticks. no_checks and no_twa are kept only: the app takes no checks and has no TWA.
 // lease_installments.kind 'charge': a charge added by hand on a date of its own (a key deposit, a court cost).
+// lease_installments.held: a charge added by hand that Rent Manager counts in the deposit held (GSL 103's pet fee).
 // lease_payments.batch: the payments one amount was spread into, so the transactions list shows it once.
 // lease_documents.category: Lease, Application, Notice, Move-in form or Other, as Rent Manager files its notes.
 await db.exec(`
@@ -1472,6 +1473,7 @@ await db.exec(`
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_twa BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_payments ADD COLUMN IF NOT EXISTS batch TEXT;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_due DATE;
+  ALTER TABLE lease_installments ADD COLUMN IF NOT EXISTS held BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_documents ADD COLUMN IF NOT EXISTS category TEXT;
 `);
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { reset, closeDb, db, makeUser } from './helpers/db.js';
 import { create } from '../server/properties.js';
 import { addTenant, createBooking, getBooking, updateBooking, bookingPayments, payBooking, recordPayment, addCharge, removeCharge, ledger,
-  addBookingDoc, bookingDocs, applyLateFees } from '../server/leasing.js';
+  addBookingDoc, bookingDocs, applyLateFees, depositState } from '../server/leasing.js';
 import { saveSettings } from '../server/leasingAlerts.js';
 
 test.after(() => closeDb());
@@ -182,6 +182,18 @@ test('the deposit is charged on its own date when it was not the lease start, an
   assert.equal((await updateBooking(bk.id, { deposit_due: '' }, staff)).deposit_due, null);
   assert.deepEqual(await dep(), [['2024-11-01', 150, 150]]);
   await assert.rejects(updateBooking(bk.id, { deposit_due: '11/10/2024' }, staff), /Deposit date is not a date/);
+});
+
+// GSL 103 as Rent Manager has it: a $99 deposit and a $300 non-refundable pet fee, both charged at move-in; Held: 399.00.
+test('a charge held with the deposit counts in what is held, as Rent Manager counts it', async () => {
+  const { staff, bk } = await gsl101();
+  const pet = await addCharge(bk.id, { label: 'Pet Fee Non Refundable', due_date: '2026-08-11', amount: 300, held: true }, staff);
+  assert.equal(pet.held, true);
+  await addCharge(bk.id, { label: 'Court Cost', due_date: '2026-08-11', amount: 204 }, staff); // an ordinary charge is not
+  assert.deepEqual(await depositState(bk.id).then((d) => [d.amount, d.held, d.status]), [399, 0, 'unpaid']);
+  await payBooking(bk.id, { amount: 2000, method: 'online', received_on: '2026-08-12' }, staff, AT);
+  assert.deepEqual(await depositState(bk.id).then((d) => [d.amount, d.held, d.status]), [399, 399, 'held']);
+  assert.equal((await bookingPayments(bk.id, AT)).find((r) => r.id === pet.id).held, true);
 });
 
 test('a note or file has a category, as on Rent Manager\'s History / Notes', async () => {
