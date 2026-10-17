@@ -567,9 +567,10 @@ function monthsOf(b) {
   return months;
 }
 /** What a row of the schedule is for, in words: Rent, Security deposit, or the charge's own name. */
-export const dueName = (i) => (i.kind === 'deposit' ? 'Security deposit' : i.kind === 'fee' || i.kind === 'charge' ? i.label : i.kind === 'late' ? `Late fee (rent due ${i.label})` : 'Rent');
-/** The rows writeSchedule() leaves alone: late fees, and charges added by hand. */
-const KEPT = "('late', 'charge')";
+export const dueName = (i) => (i.kind === 'deposit' ? 'Security deposit' : i.kind === 'fee' || i.kind === 'charge' ? i.label : i.kind === 'late' ? `Late fee (rent due ${i.label})`
+  : i.kind === 'credit' ? 'Credit (paid ahead)' : 'Rent');
+/** The rows writeSchedule() leaves alone: late fees, charges added by hand, and money kept as a credit. */
+const KEPT = "('late', 'charge', 'credit')";
 
 /** When a booking's rent falls due and how much: one row per payment, from its frequency.
     A part month counts as a month; "upfront" is the whole stay on the first day. The amount
@@ -751,7 +752,8 @@ export async function takePayment(installmentId, body = {}, by, today = todayHer
   if (ticks.no_payments) throw bad(NO_PAYMENTS, 409);
   const { paid } = await db.prepare('SELECT coalesce(sum(amount), 0) AS paid FROM lease_payments WHERE installment_id = ?').get(i.id);
   const left = money(Number(i.amount) - Number(paid));
-  if (amount > left) throw bad(left > 0 ? `Only ${cash(left)} is still owed on this one.` : 'This one is already paid in full.', 409);
+  // A credit row owes nothing: it holds money paid beyond what the lease charges.
+  if (i.kind !== 'credit' && amount > left) throw bad(left > 0 ? `Only ${cash(left)} is still owed on this one.` : 'This one is already paid in full.', 409);
   // Paid against this one row only (not spread by payBooking, which checks the whole for itself).
   if (whole && ticks.no_partial_payments && money(amount) < left) throw bad(`This lease takes payments in full only: ${cash(left)} is owed on this one.`, 409);
   const row = { installment_id: i.id, amount: money(amount), method: body.method, received_on, reference: text(body.reference), notes: text(body.notes, 2000), recorded_by: by ?? null, batch, ...saveFile(file, DOC_DIR) };
@@ -772,6 +774,8 @@ const NO_PAYMENTS = 'This lease is marked not to take payments (Don\'t accept pa
  * Never more than the booking still owes. The slip, if there is one, goes with the first.
  * The rows it was spread over share a `batch`, so the transactions list shows it as the one payment it was.
  * A lease ticked "Don't accept partial payments" takes nothing less than what is due by the day it was received.
+ * With `keep_credit`, what is more than the lease owes is kept on it as a credit (a minus balance), as
+ * Rent Manager carries money paid ahead on the account; otherwise more than is owed is refused.
  */
 export const payBooking = (bookingId, body = {}, by, today = todayHere(), file = null) => tx(async () => {
   const b = await getBooking(bookingId);
@@ -782,7 +786,8 @@ export const payBooking = (bookingId, body = {}, by, today = todayHere(), file =
   const rows = (await bookingPayments(b.id, today)).filter((r) => r.left > 0)
     .sort((x, y) => x.due_date.localeCompare(y.due_date) || (x.kind === 'rent' ? 0 : 1) - (y.kind === 'rent' ? 0 : 1));
   const owed = total(rows, (r) => r.left);
-  if (left > owed) throw bad(owed > 0 ? `Only ${cash(owed)} is still owed on this lease.` : 'Nothing is owed on this lease.', 409);
+  const keep = isTrue(body.keep_credit);
+  if (left > owed && !keep) throw bad(owed > 0 ? `Only ${cash(owed)} is still owed on this lease.` : 'Nothing is owed on this lease.', 409);
   if (b.no_partial_payments) {
     const on = String(body.received_on ?? '').trim() || today;
     const due = total(rows.filter((r) => r.due_date <= on), (r) => r.left);
@@ -795,6 +800,12 @@ export const payBooking = (bookingId, body = {}, by, today = todayHere(), file =
     const part = Math.min(left, r.left);
     made.push(await takePayment(r.id, { ...body, amount: part }, by, today, made.length ? null : file, { batch }));
     left = money(left - part);
+  }
+  if (left > 0) {
+    const on = String(body.received_on ?? '').trim() || today;
+    const c = (await db.prepare("SELECT id FROM lease_installments WHERE booking_id = ? AND kind = 'credit' AND due_date = ?").get(b.id, on))
+      ?? (await db.prepare("INSERT INTO lease_installments (booking_id, kind, label, due_date, amount) VALUES (?, 'credit', 'Credit', ?, 0) RETURNING id").get(b.id, on));
+    made.push(await takePayment(c.id, { ...body, amount: left }, by, today, made.length ? null : file, { batch }));
   }
   return made;
 });

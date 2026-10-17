@@ -196,6 +196,27 @@ test('a charge held with the deposit counts in what is held, as Rent Manager cou
   assert.equal((await bookingPayments(bk.id, AT)).find((r) => r.id === pet.id).held, true);
 });
 
+// GSL 102 with late fees left out: the tenant paid $945 more than the lease charges, and the lease has nothing left to bill.
+// Rent Manager carries that on the account as a credit (a minus balance); so does the lease.
+test('money paid beyond what is owed is kept on the lease as a credit, when asked', async () => {
+  const { staff, bk } = await gsl101();
+  const owed = (await ledger(bk.id, '2027-12-31')).balance;
+  await assert.rejects(payBooking(bk.id, { amount: owed + 945, method: 'online', received_on: '2026-10-07' }, staff, AT), /still owed/);
+  const made = await payBooking(bk.id, { amount: owed + 945, method: 'online', received_on: '2026-10-07', keep_credit: true }, staff, AT);
+  assert.equal(made.at(-1).amount, 945);
+  const l = await ledger(bk.id, '2027-12-31');
+  assert.equal(l.balance, -945);
+  assert.equal(l.rows.filter((r) => r.kind === 'payment').length, 1); // one payment line, as received
+  const credit = (await bookingPayments(bk.id, AT)).find((r) => r.kind === 'credit');
+  assert.deepEqual([credit.name, credit.amount, credit.paid, credit.left, credit.status], ['Credit (paid ahead)', 0, 945, 0, 'paid']);
+  // A rebuilt schedule keeps it.
+  await updateBooking(bk.id, { notes: 'x' }, staff);
+  assert.equal((await ledger(bk.id, '2027-12-31')).balance, -945);
+  // Only the excess is kept: with nothing owed, the whole amount is the credit.
+  await payBooking(bk.id, { amount: 5, method: 'cash', received_on: '2026-10-08', keep_credit: true }, staff, AT);
+  assert.equal((await ledger(bk.id, '2027-12-31')).balance, -950);
+});
+
 test('a note or file has a category, as on Rent Manager\'s History / Notes', async () => {
   const { staff, bk } = await gsl101();
   await addBookingDoc(bk.id, { title: '101 LEASE.pdf', category: 'lease' }, null, staff);
