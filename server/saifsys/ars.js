@@ -57,7 +57,7 @@ const LOOKUPS = [
     'Arrivals, departures, in-house and balances come as a total with the direct / Airbnb split: show both, e.g. "32 staying (27 direct, 5 Airbnb)". ' +
     'Use for "how are we doing today", "give me the ARS summary".') },
   { action: 'arrivals', status: 'Checking ARS arrivals…', tool: tool('ars_arrivals',
-    'Who is due to check in on a day (pending, confirmed or already checked in), with unit, guest, phone, total, paid and balance due.' + SAY_SOURCE,
+    'Who is due to check in on a day (pending, confirmed, checked in, or already left — for a past day this is who arrived), with unit, guest, phone, total, paid and balance due.' + SAY_SOURCE,
     { date: { ...DATE, description: 'The day. Omit for today.' }, source: SOURCE }) },
   { action: 'in_house', status: 'Checking who is staying…', tool: tool('ars_in_house',
     'Every guest checked in right now, with unit, checkout date, total, paid and balance due.' + SAY_SOURCE,
