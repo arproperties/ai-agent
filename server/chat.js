@@ -19,6 +19,7 @@ import { chatAgents, privateAgents } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
 import { userModules } from './modules.js';
 import { pictureTag, makePicture, pictureKit } from './pictures.js';
+import { AUTO_MODEL, ADVISOR_MODEL } from './config.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
 // files. The agent's model costs several times the filing model, and the whole turn is re-sent
@@ -31,14 +32,20 @@ const MIN_INLINE = 4000;
 const MAX_ROUNDS = 16;
 export const inlineShare = (files) => Math.max(MIN_INLINE, Math.floor(INLINE_BUDGET / Math.max(1, files)));
 
-// Server-side web search, run by Anthropic. Sonnet 5 / Opus 5 take the newer tool version; Haiku 4.5 the basic one.
+// Server-side web search, run by Anthropic. Haiku 4.5 takes the basic tool version; newer models the newer one.
 const webSearch = (model) => ({
-  type: model.startsWith('claude-haiku') ? 'web_search_20250305' : 'web_search_20260209',
+  type: model.startsWith('claude-haiku-4') ? 'web_search_20250305' : 'web_search_20260209',
   name: 'web_search',
   max_uses: 5, // location hint isn't used: the API doesn't accept country AE; the system prompt keeps searches UAE-focused
 });
 
-function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false) {
+// Auto: the cheap model answers and asks the stronger one for advice mid-answer, only on
+// the hard parts. The advice comes back sealed: it steers the answer, nobody reads it.
+const advisor = { type: 'advisor_20260301', name: 'advisor', model: ADVISOR_MODEL, max_uses: 3, caching: { type: 'ephemeral', ttl: '5m' } };
+const ADVISOR_RULE = 'You have an advisor, a stronger model. Consult it before answering when the question is hard: money or rent calculations, ' +
+  'reading a contract or legal rule, a case history, a plan with several steps, or when you are unsure. Answer simple questions yourself without it.';
+
+function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false, auto = false) {
   const others = team.filter((a) => a.id !== agent.id).map((a) => a.name);
   const parts = [
     agent.persona || `You are ${agent.name}, a helpful assistant.`,
@@ -175,6 +182,7 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
       'Never add a decision, name, number or date that is not in them, and say so plainly if something they are asking for is not there.\n\n' +
       `${carried.map((c) => `<chat title="${c.title.replace(/"/g, "'")}">\n${c.body}\n</chat>`).join('\n\n')}\n</earlier_chats>`);
   }
+  if (auto) parts.push(ADVISOR_RULE);
   return [
     { type: 'text', text: parts.join('\n\n'), cache_control: { type: 'ephemeral' } },
     { type: 'text', text: context.join('\n\n') },
@@ -429,12 +437,16 @@ export async function chat(req, res) {
 
   try {
     let prevType = null;
+    const auto = agent.model === 'auto';
+    const model = auto ? AUTO_MODEL : agent.model;
+    const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto);
     for (let turn = 0; turn < MAX_ROUNDS; turn++) {
-      stream = claude.messages.stream({
-        model: agent.model,
+      stream = claude.beta.messages.stream({
+        model,
         max_tokens: 16000,
-        system: systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture),
-        tools: [webSearch(agent.model), ...kits.flatMap((k) => k.definitions)],
+        ...(auto ? { betas: ['advisor-tool-2026-03-01'] } : {}),
+        system,
+        tools: [webSearch(model), ...(auto ? [advisor] : []), ...kits.flatMap((k) => k.definitions)],
         // The last round has to be the answer: a case history once spent every round
         // searching and reading, and the person got nothing back at all.
         ...(turn === MAX_ROUNDS - 1 ? { tool_choice: { type: 'none' } } : {}),
@@ -451,6 +463,7 @@ export async function chat(req, res) {
         if (block.type === 'server_tool_use' && block.name === 'web_search') {
           send('status', { label: `Searching the web: “${String(block.input?.query || '').slice(0, 60)}”` });
         }
+        if (block.type === 'server_tool_use' && block.name === 'advisor') send('status', { label: 'Thinking it through…' });
         if (block.type === 'tool_use') send('status', { label: kitFor(block.name)?.status(block.name, block.input || {}) || 'Working on that…' });
         for (const c of block.citations || []) if (c.url && !cited.has(c.url)) cited.set(c.url, { url: c.url, title: c.title });
         if (block.type === 'web_search_tool_result' && Array.isArray(block.content)) {

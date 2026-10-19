@@ -116,7 +116,7 @@ await db.exec(`
     icon TEXT DEFAULT 'bot',
     color TEXT DEFAULT 'violet',
     persona TEXT DEFAULT '',
-    model TEXT DEFAULT 'claude-sonnet-5',
+    model TEXT DEFAULT 'auto',
     voice TEXT DEFAULT 'alloy',
     starters TEXT DEFAULT '[]',
     created_at BIGINT DEFAULT ${NOW}
@@ -1031,6 +1031,16 @@ await db.exec(`
   -- account started with keeps its chats; only its name and the name in its persona change.
   UPDATE agents SET name = 'Reem', persona = replace(persona, 'You are Jarvis', 'You are Reem')
    WHERE name = 'Jarvis';
+
+  -- Auto became the default model (2026-10-19). Agents still on the old default move to it;
+  -- ones the master set to something else keep it. Runs once: the column default changes too.
+  DO $$ BEGIN
+    IF (SELECT column_default FROM information_schema.columns
+         WHERE table_name = 'agents' AND column_name = 'model') = '''claude-sonnet-5''::text' THEN
+      UPDATE agents SET model = 'auto' WHERE model = 'claude-sonnet-5';
+      ALTER TABLE agents ALTER COLUMN model SET DEFAULT 'auto';
+    END IF;
+  END $$;
 `);
 
 // What each person is responsible for, written by the master in their own words.

@@ -18,11 +18,19 @@ export const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
 export const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@ainalreempro.com';
 
 export const MODELS = [
+  // Auto: Haiku answers and calls Sonnet in as an advisor only when a question is hard
+  // (server/chat.js), so nobody has to guess per agent which questions will be hard.
+  { id: 'auto', label: 'Auto · cheap, asks Sonnet when hard' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5 · balanced' },
   { id: 'claude-opus-5', label: 'Opus 5 · smartest' },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 · fastest' },
 ];
 export const FAST_MODEL = 'claude-haiku-4-5-20251001';
+// What Auto runs on: the executor writes the answer, the advisor is consulted mid-answer.
+export const AUTO_MODEL = 'claude-haiku-5-5';
+export const ADVISOR_MODEL = 'claude-sonnet-5-5';
+// For work printed or filed as fact (lease renewals, picture captions): always the careful model.
+export const CAREFUL_MODEL = 'claude-sonnet-5';
 // OpenAI's image model, for the pictures a chat tag asks for (server/pictures.js).
 export const IMAGE_MODEL = process.env.IMAGE_MODEL || 'gpt-image-2.5-sunburst';
 export const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'];

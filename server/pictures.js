@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { db } from './db.js';
-import { DATA_DIR, MODELS } from './config.js';
+import { DATA_DIR, CAREFUL_MODEL } from './config.js';
 import { isMaster } from './access.js';
 import { claude, drawPicture } from './ai.js';
 
@@ -78,7 +78,7 @@ const SKETCH = {
 /** What goes in the picture and under it. */
 async function planPicture({ tag, topic }) {
   const res = await claude.messages.create({
-    model: MODELS[0].id, // not the fast one: what it writes is printed as fact
+    model: CAREFUL_MODEL, // not the fast one: what it writes is printed as fact
     max_tokens: 1200,
     system: `You plan an infographic for staff of a property company in the UAE. It answers ${TAGS[tag].asks}. Call the sketch tool.
 

@@ -1,5 +1,5 @@
 import { claude } from './ai.js';
-import { MODELS } from './config.js';
+import { CAREFUL_MODEL } from './config.js';
 
 // What Reem reads for Lease renewals (server/leaseRenewals.js): a tenant's email, and the
 // signed agreement and cheque photos. Each answer is JSON in a fixed shape, and anything
@@ -8,7 +8,7 @@ import { MODELS } from './config.js';
 // Reem only reads and suggests here. Every email to a tenant is sent by a person's tap,
 // with the words they saw (and could change) before sending.
 
-const MODEL = MODELS[0].id; // reading cheques and agreements: the careful model, not the fast one
+const MODEL = CAREFUL_MODEL; // reading cheques and agreements: the careful model, not the fast one
 
 const block = ({ mime, data }) => (mime === 'application/pdf'
   ? { type: 'document', source: { type: 'base64', media_type: mime, data } }
