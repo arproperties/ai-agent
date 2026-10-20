@@ -1766,3 +1766,21 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_lease_renewal_files ON lease_renewal_files(renewal_id);
 `);
+
+// Reading a file in full (2026-10-20). The chunks are cut to overlap for search, so stitched
+// back together they repeat themselves; this is the file's text once, start to end, that
+// read_file pages through. Kept by the filing, not by the upload.
+// A copy is the same document saved again under another name (the same judgment downloaded
+// twice, say). Exact copies never get this far - saveUpload refuses the same bytes - so this
+// is for a second download or a re-scan, which the agent should treat as one file, not two.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS document_texts (
+    document_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    text TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS document_copies (
+    document_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    same_as INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_document_copies_same ON document_copies(same_as);
+`);

@@ -96,9 +96,10 @@ export function kickImports() {
 
 export async function startImportQueue() {
   if (timer) return;
-  // A stopped process leaves the files it was filing half-done. Only imported ones go back:
-  // files attached in chat are filed by the request that brought them, not by this queue.
-  const back = await db.prepare(`UPDATE documents SET status = 'queued' WHERE status = 'processing' AND import_id IS NOT NULL`).run();
+  // A stopped process leaves the files it was filing half-done, and nothing else would ever
+  // finish them: imports, Shelf uploads and files attached in chat all go back in the queue.
+  // A typed note has no file on disk to read again, so it is left as it is.
+  const back = await db.prepare(`UPDATE documents SET status = 'queued' WHERE status = 'processing' AND path IS NOT NULL`).run();
   if (back.changes) console.warn('[imports]', back.changes, 'file(s) left mid-filing are back in the queue');
   timer = setInterval(kickImports, 60_000);
   timer.unref();

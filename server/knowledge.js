@@ -5,7 +5,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { db, tx } from './db.js';
-import { ask, embed, transcribe } from './ai.js';
+import { ask, claude, embed, transcribe } from './ai.js';
+import { CAREFUL_MODEL } from './config.js';
 import { isMaster } from './access.js';
 
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -14,26 +15,55 @@ export const VIDEO_EXT = ['mp4', 'mov', 'webm', 'm4v', '3gp'];
 const TEXT_EXT = ['txt', 'md', 'csv', 'json', 'html', 'xml', 'yaml', 'yml', 'log', 'js', 'ts', 'py', 'sql', 'tsv'];
 
 // ---------- extraction ----------
-export async function extractText({ buffer, mimetype, originalname }) {
+// onProgress(label): a line to show while a long PDF is read page by page.
+export async function extractText({ buffer, mimetype, originalname }, { onProgress } = {}) {
   const ext = originalname.split('.').pop().toLowerCase();
   if (mimetype === 'application/pdf' || ext === 'pdf') {
-    const { extractText: pdfText, getDocumentProxy } = await import('unpdf');
-    const pdf = await getDocumentProxy(new Uint8Array(buffer));
-    const { text } = await pdfText(pdf, { mergePages: true });
-    // Scanned PDFs are just page images with little or no text layer: let Claude read the pages instead
-    if (text.replace(/\s+/g, '').length < 40 * pdf.numPages) return readScannedPdf(buffer, pdf.numPages);
-    return text;
+    const { text, pages, readPages } = await pdfTextLayer(buffer);
+    return readPages ? readPdfPages(buffer, pages, { name: originalname, onProgress }) : text;
   }
   if (ext === 'docx') return (await mammoth.extractRawText({ buffer })).value;
   if (mimetype.startsWith('text/') || TEXT_EXT.includes(ext)) return buffer.toString('utf8');
   throw new Error(`Unsupported file type: ${originalname}`);
 }
 
-// Every scanned page is sent to Claude as a picture, so pages are what cost. The first few
-// are read on their own: a drawing set is recognised there and the rest is never sent.
+/**
+ * A PDF's own text and page count, and whether Claude has to read its pages instead: a scan
+ * is page images with little or no text layer, and a court PDF carries one that reads out
+ * jumbled. Local and free - nothing is sent anywhere to decide.
+ */
+export async function pdfTextLayer(buffer) {
+  const { extractText: pdfText, getDocumentProxy } = await import('unpdf');
+  const pdf = await getDocumentProxy(new Uint8Array(buffer));
+  const { text } = await pdfText(pdf, { mergePages: true });
+  const scanned = text.replace(/\s+/g, '').length < 40 * pdf.numPages;
+  const scrambled = !scanned && scrambledArabic(text);
+  return { text, pages: pdf.numPages, readPages: scanned || scrambled, why: scanned ? 'scanned' : scrambled ? 'court Arabic' : null };
+}
+
+/**
+ * Arabic stored as display shapes in visual order, the way Dubai Courts and other court
+ * systems write their PDFs. The text layer is there, but read out it comes back with the
+ * letters reversed and split apart, and an agent working from it misreads names, figures
+ * and orders. Ordinary Arabic text uses the base letters; these use the presentation forms.
+ */
+export function scrambledArabic(text) {
+  const forms = (text.match(/[\uFB50-\uFDFF\uFE70-\uFEFF]/g) || []).length;
+  const arabic = (text.match(/[\u0600-\u06FF]/g) || []).length;
+  return forms >= 100 && forms >= 0.3 * (forms + arabic);
+}
+
+// Every page read is sent to Claude as a picture, so pages are what cost. They go a few at a
+// time: a dense Arabic court page is a couple of thousand words of transcription, and one call
+// for the whole document ran out of room and dropped its last pages without a word. The
+// first few are read first: a drawing set is recognised there and the rest is never sent.
 export const FIRST_LOOK = 4;
+const PAGES_PER_READ = 4;
+const MAX_PAGES = 100;
 const DRAWING_SET = 'DRAWING SET';
-const TRANSCRIBE = 'Transcribe all text in these scanned pages exactly, page by page, keeping Arabic and English as written. Use Markdown for headings and tables. Note stamps, signatures and handwriting in [brackets]. ' +
+const TRANSCRIBE = 'Transcribe all text in these pages exactly and completely, keeping Arabic and English as written, in reading order. ' +
+  'Leave nothing out: every line, number, date, name, amount and table cell. Use Markdown for headings and tables. ' +
+  'Note stamps, signatures and handwriting in [brackets]; write [unreadable] where you cannot read something, never a guess. ' +
   'A page that is a drawing (architectural or engineering plan, layout, section, elevation, site plan, map) is not transcribed: give it one line instead - what it shows, plus the drawing number, project, parties and date from its title block. Output only the transcription.';
 
 /** Pages [from, to) of a PDF as a new PDF. */
@@ -47,29 +77,61 @@ export async function pdfPages(buffer, from, to) {
 }
 
 const pdfBlock = (buf) => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buf.toString('base64') } });
+const pageMark = (n) => `--- Page ${n} ---`;
 
-async function readScannedPdf(buffer, pages) {
-  if (pages > 100) throw new Error(`This scanned PDF has ${pages} pages; the limit for scanned documents is 100`);
-  const more = pages > FIRST_LOOK;
-  const head = more ? await pdfPages(buffer, 0, FIRST_LOOK) : buffer;
-  const first = await ask(null, {
-    maxTokens: 8000,
-    content: [pdfBlock(head), {
-      type: 'text',
-      text: more
-        ? `These are the first ${FIRST_LOOK} of ${pages} pages. If they are all drawings, start your reply with the line "${DRAWING_SET}" and then give the one-line descriptions only. ${TRANSCRIBE}`
-        : TRANSCRIBE,
-    }],
-  });
-  if (!more) return first;
-  if (first.trimStart().startsWith(DRAWING_SET)) {
-    return `Drawing set, ${pages} pages. First ${FIRST_LOOK} pages:\n${first.trimStart().slice(DRAWING_SET.length).trim()}`;
+/**
+ * Pages [from, to) read by Claude, each under its own "--- Page n ---" line so an answer can
+ * say which page a fact is on. A read that runs out of room is done again a page at a time;
+ * a single page that still does not fit says so, rather than ending mid-sentence unnoticed.
+ */
+export async function readPages(buffer, from, to, total, { extra = '', read = readCall } = {}) {
+  const span = to - from === 1 ? `page ${from + 1}` : `pages ${from + 1}-${to}`;
+  const { text, full } = await read(await pdfPages(buffer, from, to),
+    `These are ${span} of a ${total}-page document. Start each page with a line "${pageMark('n')}" using its page number (${from + 1} is the first here). ${extra}${TRANSCRIBE}`);
+  if (full) return text.trim();
+  if (to - from > 1) {
+    const one = [];
+    for (let p = from; p < to; p++) one.push(await readPages(buffer, p, p + 1, total, { read }));
+    return one.join('\n\n');
   }
-  const rest = await ask(null, {
-    maxTokens: 16000,
-    content: [pdfBlock(await pdfPages(buffer, FIRST_LOOK, pages)), { type: 'text', text: `These are pages ${FIRST_LOOK + 1}-${pages} of the document. ${TRANSCRIBE}` }],
+  return `${text.trim()}\n[The rest of page ${from + 1} could not be read: it is longer than one reading allows.]`;
+}
+
+// Streamed: a long transcription can run for minutes, past what a plain request waits for.
+async function readCall(pdf, prompt) {
+  const msg = await claude.messages.stream({
+    model: CAREFUL_MODEL, // read once and kept as the file's text: the careful model, not the fast one
+    max_tokens: 32000,
+    output_config: { effort: 'low' }, // copying out what is on the page needs care, not deliberation
+    messages: [{ role: 'user', content: [pdfBlock(pdf), { type: 'text', text: prompt }] }],
+  }).finalMessage();
+  const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  // Paid per page and kept as fact: the log says what each reading cost and whether it fit.
+  console.log('[read pages]', msg.usage?.input_tokens, 'in,', msg.usage?.output_tokens, 'out,', msg.stop_reason);
+  return { text, full: msg.stop_reason !== 'max_tokens' };
+}
+
+export async function readPdfPages(buffer, pages, { name = 'the PDF', onProgress, read } = {}) {
+  if (pages > MAX_PAGES) throw new Error(`This PDF has ${pages} pages to read page by page; the limit is ${MAX_PAGES}`);
+  const step = (from) => onProgress?.(pages > PAGES_PER_READ
+    ? `Reading ${name}, page ${from + 1}-${Math.min(from + PAGES_PER_READ, pages)} of ${pages}…`
+    : `Reading ${name}…`);
+  step(0);
+  const head = Math.min(FIRST_LOOK, pages);
+  const more = pages > head;
+  const first = await readPages(buffer, 0, head, pages, {
+    read,
+    extra: more ? `If these pages are all drawings, start your reply with the line "${DRAWING_SET}" and then give the one-line descriptions only. ` : '',
   });
-  return `${first}\n\n${rest}`;
+  if (more && first.trimStart().startsWith(DRAWING_SET)) {
+    return `Drawing set, ${pages} pages. First ${head} pages:\n${first.trimStart().slice(DRAWING_SET.length).trim()}`;
+  }
+  const parts = [first];
+  for (let from = head; from < pages; from += PAGES_PER_READ) {
+    step(from);
+    parts.push(await readPages(buffer, from, Math.min(from + PAGES_PER_READ, pages), pages, { read }));
+  }
+  return parts.join('\n\n');
 }
 
 const DESCRIBE = 'Describe this image in detail for a searchable archive. Transcribe any visible text exactly.';

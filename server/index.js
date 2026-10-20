@@ -16,7 +16,7 @@ import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
 import { emailRoutes } from './emailRoutes.js';
 import { startOutbox } from './outbox.js';
-import { importRoutes, startImportQueue } from './imports.js';
+import { importRoutes, startImportQueue, kickImports } from './imports.js';
 import { messengerRoutes } from './messenger.js';
 import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
@@ -246,19 +246,23 @@ app.get('/api/documents/:id', wrap(async (req, res) => {
 app.post('/api/documents', needsModule('shelf'), upload.array('files', 10), wrap(async (req, res) => {
   const agentId = Number(req.body.agent) || null;
   if (agentId && !await canUseAgent(req.user, agentId)) return notFound(res);
-  // Only needed when no shelf was chosen, but reading it once beats once per file.
-  const team = agentId ? [] : await chatAgents(req.user);
-  const results = await Promise.all((req.files || []).map(async (f) => {
+  // Stored now and filed by the queue, a couple at a time: a court PDF is read page by page
+  // and can take minutes, and filing ten of them inside this request kept the upload waiting
+  // that long. The Shelf shows them as waiting and refreshes until they are done.
+  // One at a time here: two copies of the same file in one batch must meet the dedup check in turn.
+  const results = [];
+  for (const f of req.files || []) {
     const { doc, duplicate } = await saveUpload(req.user.id, agentId, f);
-    if (!duplicate) await processDocument(doc, f, undefined, team);
+    if (!duplicate) await db.prepare("UPDATE documents SET status = 'queued' WHERE id = ?").run(doc.id);
     // Files dedup on their bytes alone, so the copy already held may be filed somewhere
     // other than where this one was headed. Naming the shelf turns "already in your
     // files" from an apparent no-op into an explanation.
     const shelf = duplicate && doc.agent_id
       ? (await db.prepare('SELECT name FROM agents WHERE id = ?').get(doc.agent_id))?.name ?? null
       : null;
-    return { id: doc.id, name: doc.name, duplicate, shelf };
-  }));
+    results.push({ id: doc.id, name: doc.name, duplicate, shelf });
+  }
+  kickImports();
   res.json(results);
 }));
 // A typed note. Runs the identical path as an upload - classify, file to a shelf,

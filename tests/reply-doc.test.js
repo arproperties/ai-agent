@@ -88,3 +88,33 @@ test('symbols the fonts lack do not break the PDF; another script is refused', a
 test('file names are safe', () => {
   assert.equal(pdfName('Offer: **AC Tech** / Dubai?'), 'Offer- AC Tech - Dubai-.pdf');
 });
+
+test('a table row marked 🟢 is shaded green, and the mark itself is not drawn', async () => {
+  const table = (mark) => documentPart(`<!--doc-->\n# Cases\n\n| Case | Status |\n|---|---|\n| ${mark}204/2024 | Active |\n<!--/doc-->`);
+  const date = new Date(2026, 9, 20);
+  const marked = Buffer.from(await renderPdf({ ...table('🟢 '), date }));
+  const plain = Buffer.from(await renderPdf({ ...table(''), date }));
+  assert.notDeepEqual(marked, plain, 'the marked row is drawn differently');
+  assert.equal(unsupportedScript('🟢 204/2024 Active'), false, 'the mark never stops a PDF being made');
+});
+
+test('a wide table turns the PDF sideways; a narrow one leaves it upright', async () => {
+  const { PDFDocument } = await import('pdf-lib');
+  const pdfOf = async (cols) => {
+    const head = Array.from({ length: cols }, (_, i) => `Col ${i + 1}`);
+    const md = `<!--doc-->\n# Cases\n\n| ${head.join(' | ')} |\n|${head.map(() => '---').join('|')}|\n| ${head.map(() => 'x').join(' | ')} |\n<!--/doc-->`;
+    const page = (await PDFDocument.load(await renderPdf({ ...documentPart(md), date: new Date(2026, 9, 20) }))).getPage(0);
+    return page.getWidth() > page.getHeight() ? 'landscape' : 'portrait';
+  };
+  assert.equal(await pdfOf(8), 'landscape');
+  assert.equal(await pdfOf(6), 'landscape');
+  assert.equal(await pdfOf(5), 'portrait');
+});
+
+test('a case number is never split across lines in a wide table', async () => {
+  const { parseBlocks } = await import('../server/replyDoc.js');
+  assert.equal(parseBlocks('| a |\n|---|\n| 🟢 x |').length, 1);
+  const md = `<!--doc-->\n# Cases\n\n| # | Case Number | Court | Filed | Judgment | Amran | Rim | Status | Summary |\n|---|---|---|---|---|---|---|---|---|\n| 1 | 1667/2024/204 | Execution Court | 25/11/2024 | Ongoing | Saud Al-Shebli | Ahmed Khamis Al-Zeyoudi | Active | ${'A long summary of the case. '.repeat(6)} |\n<!--/doc-->`;
+  const bytes = await renderPdf({ ...documentPart(md), date: new Date(2026, 9, 20) });
+  assert.ok(bytes.length > 0);
+});

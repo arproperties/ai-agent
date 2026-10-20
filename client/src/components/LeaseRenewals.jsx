@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -59,12 +59,28 @@ const Money = ({ value, onChange, placeholder = 'AED a year', autoFocus }) => (
     className="w-full rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm outline-none focus:border-p1/60" />
 );
 
+/** A number to copy with one tap, e.g. the premises or Ejari number. */
+function CopyChip({ label, value }) {
+  const [done, setDone] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(String(value)).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }).catch(() => {});
+  };
+  return (
+    <button onClick={copy} title="Copy"
+      className="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-xs text-mute transition hover:text-txt">
+      {label} <span className="text-txt">{value}</span> {done ? <Check size={12} className="text-p1" /> : <Copy size={12} />}
+    </button>
+  );
+}
+
 // ---------- the list ----------
 
 export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('all');
+  const [building, setBuilding] = useState('');
+  const [q, setQ] = useState('');
   const [open, setOpen] = useState(openFirst || null); // a renewal's id
   const [starting, setStarting] = useState(null); // a lease to start
 
@@ -73,7 +89,12 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
 
   if (open) return <Renewal id={open} onBack={() => { setOpen(null); load(); }} />;
 
-  const leases = data?.leases || [];
+  const all = data?.leases || [];
+  const buildings = [...new Set(all.map((l) => l.building).filter(Boolean))].sort().map((b) => ({ value: b, label: b }));
+  const want = q.trim().toLowerCase();
+  // The building and the search narrow the list first, so the tab counts follow them.
+  const leases = all.filter((l) => (!building || l.building === building)
+    && (!want || [l.building, l.unit, l.tenant, l.premises_number, l.ejari].join(' ').toLowerCase().includes(want)));
   const tabs = [
     ['all', 'All', leases],
     ['you', 'Needs you', leases.filter(needsYou)],
@@ -97,6 +118,14 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
         <div className="space-y-4 pb-8">
           {!data.inbox && <Problem text="The Tenant care inbox is not connected, so no email can go to a tenant. Connect it under Tenant care." />}
           {!data.saifsys && <Problem text="saifsys is not connected for actions, so renewals cannot be priced or saved." />}
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="glass flex flex-1 items-center gap-2 rounded-xl px-3.5 py-2">
+              <Search size={15} className="shrink-0 text-mute" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search unit, tenant, premises, Ejari…" className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-mute/70" />
+              {q && <button onClick={() => setQ('')} aria-label="Clear" className="text-mute hover:text-txt"><X size={14} /></button>}
+            </div>
+            <Picker value={building} onChange={setBuilding} options={buildings} none="All buildings" placeholder="All buildings" searchPlaceholder="Search buildings" className="sm:w-64" />
+          </div>
           <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
             {tabs.map(([k, label, list]) => (
               <button key={k} onClick={() => setTab(k)}
@@ -154,21 +183,83 @@ function LeaseCard({ l, onOpen }) {
 
 /** Start: the rent we choose and the cheques, then the offer to read before it goes. */
 function StartSheet({ lease, onClose, onDone }) {
-  const [rent, setRent] = useState(String(Math.round(lease.annual_rent)));
+  const current = Number(lease.annual_rent);
+  const [rent, setRent] = useState(String(Math.round(current)));
+  const [pct, setPct] = useState('0');
   const [cheques, setCheques] = useState(String(lease.cheques || 4));
   const [step, setStep] = useState(null);
+  // The fees start as the old lease's (from saifsys); the person can change them.
+  const [fees, setFees] = useState(null);
+  const [admin, setAdmin] = useState('');
+  const [chiller, setChiller] = useState('');
+  useEffect(() => {
+    api.get(`/lease-renewals/fees/${lease.lease_id}`).then((f) => {
+      setFees(f); setAdmin(String(Math.round(f.admin || 0))); setChiller(String(Math.round(f.chiller || 0)));
+    }).catch(() => setFees({ failed: true }));
+  }, [lease.lease_id]);
+  // The % and the rent fill each other in, so either can be typed.
+  const fromPct = (v) => {
+    setPct(v);
+    const n = Number(v);
+    if (v !== '' && v !== '-' && v !== '.' && Number.isFinite(n)) setRent(String(Math.round(current * (1 + n / 100))));
+  };
+  const fromRent = (v) => {
+    setRent(v);
+    setPct(v && current ? String(Math.round(((Number(v) - current) / current) * 1000) / 10) : '');
+  };
   if (step) return <Compose ask={step} onClose={onClose} onSent={onDone} />;
   return (
-    <Sheet title="Start the renewal" onClose={onClose}>
+    <Sheet title="Start the renewal" onClose={onClose} action={(
+      <a href={DLD_RENTAL_INDEX} target="_blank" rel="noopener noreferrer"
+        className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-3 py-1.5 text-xs text-mute transition hover:text-txt">
+        Rental Index <ExternalLink size={12} />
+      </a>
+    )}>
       <div className="space-y-4">
         <p className="text-sm text-mute">{lease.building} · Unit {lease.unit} · {lease.tenant}<br />Now {aed(lease.annual_rent)} a year, ends {day(lease.end_date)}</p>
-        <label className="block space-y-1.5 text-sm">
-          <span>New yearly rent: your choice</span>
-          <Money value={rent} onChange={setRent} autoFocus />
-          {rent && Number(rent) !== Number(lease.annual_rent) && (
-            <span className="block text-xs text-mute">{Number(rent) > lease.annual_rent ? 'Up' : 'Down'} {Math.abs(((Number(rent) - lease.annual_rent) / lease.annual_rent) * 100).toFixed(1)}% on the current rent</span>
-          )}
-        </label>
+        {(lease.premises_number || lease.ejari) && (
+          <div className="flex flex-wrap gap-1.5">
+            {lease.premises_number && <CopyChip label="Premises" value={lease.premises_number} />}
+            {lease.ejari && <CopyChip label="Ejari" value={lease.ejari} />}
+          </div>
+        )}
+        <div className="grid grid-cols-[7rem_1fr] gap-2">
+          <label className="block space-y-1.5 text-sm">
+            <span>Increase %</span>
+            <div className="relative">
+              <input inputMode="decimal" value={pct} autoFocus onFocus={(e) => e.target.select()}
+                onChange={(e) => fromPct(e.target.value.replace(/[^\d.-]/g, ''))}
+                className="w-full rounded-2xl border border-stroke bg-black/20 py-2.5 pl-3 pr-7 text-sm outline-none focus:border-p1/60" />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-mute">%</span>
+            </div>
+          </label>
+          <label className="block space-y-1.5 text-sm">
+            <span>New yearly rent</span>
+            <Money value={rent} onChange={fromRent} />
+          </label>
+        </div>
+        <div className="-mt-2 flex flex-wrap gap-1.5">
+          {[0, 5, 10, 15, 20].map((p) => (
+            <button key={p} onClick={() => fromPct(String(p))}
+              className={`rounded-full px-3.5 py-1.5 text-sm ${pct === String(p) ? 'bg-p1/30 text-txt' : 'bg-white/5 text-mute'}`}>{p}%</button>
+          ))}
+        </div>
+        {!fees ? (
+          <p className="flex items-center gap-1.5 text-xs text-mute"><Loader2 size={12} className="animate-spin" /> Getting the fees from saifsys…</p>
+        ) : !fees.failed && (
+          <div className={`grid gap-2 ${fees.chiller_shown ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            <label className="block space-y-1.5 text-sm">
+              <span>Admin fee <span className="text-mute">+ VAT</span></span>
+              <Money value={admin} onChange={setAdmin} placeholder="AED" />
+            </label>
+            {fees.chiller_shown && (
+              <label className="block space-y-1.5 text-sm">
+                <span>Chiller fee <span className="text-mute">+ VAT</span></span>
+                <Money value={chiller} onChange={setChiller} placeholder="AED" />
+              </label>
+            )}
+          </div>
+        )}
         <label className="block space-y-1.5 text-sm">
           <span>Cheques</span>
           <div className="flex flex-wrap gap-1.5">
@@ -179,7 +270,10 @@ function StartSheet({ lease, onClose, onDone }) {
           </div>
         </label>
         <div className="flex justify-end">
-          <Btn primary disabled={!rent} onClick={() => setStep({ action: 'start', lease_id: lease.lease_id, rent: Number(rent), cheques: Number(cheques) })}>
+          <Btn primary disabled={!rent} onClick={() => setStep({
+            action: 'start', lease_id: lease.lease_id, rent: Number(rent), cheques: Number(cheques),
+            ...(fees && !fees.failed ? { admin_fees: admin === '' ? null : Number(admin), ...(fees.chiller_shown ? { chiller_charges: chiller === '' ? null : Number(chiller) } : {}) } : {}),
+          })}>
             <Mail size={14} /> Write the offer
           </Btn>
         </div>
@@ -214,6 +308,9 @@ function Compose({ ask, onClose, onSent }) {
           {d.rent && ask.action !== 'convert' && (
             <div className="rounded-2xl border border-stroke bg-black/20 p-3 text-sm">
               <p><span className="text-mute">Rent:</span> <b>{aed(d.rent)}</b> a year{d.source?.kind === 'rera_index' ? ` · RERA index${d.source.pct !== undefined ? ` (+${d.source.pct}%)` : ''}` : ''}</p>
+              {d.fees && (d.fees.admin > 0 || d.fees.chiller > 0) && (
+                <p className="mt-1 text-xs text-mute">{[d.fees.admin > 0 && `Admin fee ${aed(d.fees.admin)}`, d.fees.chiller > 0 && `Chiller fee ${aed(d.fees.chiller)}`].filter(Boolean).join(' · ')} + VAT</p>
+              )}
               {d.schedule && <p className="mt-1 text-xs text-mute">{d.schedule.length} cheques: {d.schedule.map((c) => `${day(c.date)} ${aed(c.amount)}`).join(' · ')}</p>}
             </div>
           )}

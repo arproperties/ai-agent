@@ -80,6 +80,7 @@ const SWAP = {
   '✓': 'v', '✔': 'v', '☑': '[x]', '✅': 'v', '✗': 'x', '✘': 'x', '❌': 'x', // no tick in the standard fonts
   '→': '->', '⇒': '=>', '←': '<-', '↔': '<->', '≥': '>=', '≤': '<=', '≠': '!=', '≈': '~',
   '−': '-', '‐': '-', '‑': '-', '‒': '-', '―': '—', '′': "'", '″': '"',
+  '🟢': '(green)', // a table row's mark is taken out before this and shades the row instead
   '▪': '•', '◦': '•', '●': '•', '○': 'o', '■': '•', '□': '[ ]', '☐': '[ ]', '★': '*', '☆': '*',
   ' ': ' ', ' ': ' ', '​': '', '‎': '', '‏': '', '️': '',
 };
@@ -188,12 +189,22 @@ export function parseInline(text) {
 // ---------- layout ----------
 
 const A4 = [595.28, 841.89];
+// A table this wide turns the whole document sideways: eight columns on an upright page left
+// each one a word wide, and a case table became a column of broken lines.
+export const LANDSCAPE_COLUMNS = 6;
+/** The page size for this markdown: A4 upright, or on its side when a table is wide. */
+export const pageSize = (blocks) =>
+  (blocks.some((b) => b.type === 'table' && Math.max(b.head.length, ...b.rows.map((r) => r.length)) >= LANDSCAPE_COLUMNS) ? [A4[1], A4[0]] : A4);
 const MARGIN = { x: 56, top: 60, bottom: 58 };
 const INK = rgb(0.11, 0.1, 0.18);
 const SOFT = rgb(0.42, 0.41, 0.5);
 const ACCENT = rgb(0.36, 0.3, 0.78);
 const LINE = rgb(0.84, 0.83, 0.89);
 const FILL = rgb(0.95, 0.94, 0.98);
+// A table row marked 🟢 (an active case, a paid bill) is shaded this green: the standard fonts
+// cannot draw the emoji itself, so without this the mark vanished and every row looked alike.
+const GREEN = rgb(0.86, 0.95, 0.87);
+export const GREEN_MARK = '🟢';
 
 /**
  * The document as PDF bytes. `date` is the reply's time: it goes on the page and into the
@@ -214,11 +225,13 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     mono: await pdf.embedFont(StandardFonts.Courier),
   };
   const fontOf = (r) => (r.code ? F.mono : r.bold && r.italic ? F.boldItalic : r.bold ? F.bold : r.italic ? F.italic : F.regular);
-  const width = A4[0] - MARGIN.x * 2;
+  const blocks = parseBlocks(markdown);
+  const SIZE = pageSize(blocks);
+  const width = SIZE[0] - MARGIN.x * 2;
   let page;
   let y;
 
-  const newPage = () => { page = pdf.addPage(A4); y = A4[1] - MARGIN.top; };
+  const newPage = () => { page = pdf.addPage(SIZE); y = SIZE[1] - MARGIN.top; };
   const room = (h) => { if (y - h < MARGIN.bottom) newPage(); };
 
   // Runs → lines no wider than `max`, each line a list of { text, font, w }.
@@ -298,7 +311,6 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
   page.drawLine({ start: { x: MARGIN.x, y }, end: { x: MARGIN.x + width, y }, thickness: 0.6, color: LINE });
   y -= 18;
 
-  const blocks = parseBlocks(markdown);
   // The first heading is the title, already drawn above.
   if (blocks[0]?.type === 'heading' && clean(blocks[0].text) === clean(title)) blocks.shift();
 
@@ -360,7 +372,9 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     const cols = Math.max(head.length, ...rows.map((r) => r.length));
     const size = cols > 4 ? 8.5 : 9.5;
     const pad = 5;
-    const plain = (c) => sanitize(clean(c || ''));
+    // The green mark shades its row and is not printed in the cell.
+    const unmark = (c) => String(c || '').replace(new RegExp(`${GREEN_MARK}\\s*`, 'g'), '');
+    const plain = (c) => sanitize(clean(unmark(c)));
     // Column widths by how much each holds, with a floor so no column collapses.
     const want = Array.from({ length: cols }, (_, i) => Math.max(
       F.bold.widthOfTextAtSize(plain(head[i]), size),
@@ -371,13 +385,23 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     let widths = want.map((w) => Math.max(floor, (w / total) * width));
     const sum = widths.reduce((a, b) => a + b, 0);
     widths = widths.map((w) => (w / sum) * width);
+    // No column narrower than its longest word, so "204/2024/1667" is never split across
+    // lines: the room comes from the columns with the most to spare.
+    const longest = Array.from({ length: cols }, (_, i) => Math.max(0, ...[head[i], ...rows.map((r) => r[i])]
+      .flatMap((c) => plain(c).split(/\s+/)).map((w) => F.bold.widthOfTextAtSize(w, size))) + pad * 2 + 1);
+    const short = widths.map((w, i) => Math.max(0, Math.min(longest[i], width / 3) - w));
+    const need = short.reduce((a, b) => a + b, 0);
+    const spare = widths.map((w, i) => (short[i] ? 0 : Math.max(0, w - longest[i])));
+    const free = spare.reduce((a, b) => a + b, 0);
+    if (need > 0 && free >= need) widths = widths.map((w, i) => w + short[i] - (spare[i] / free) * need);
     const lead = size * 1.35;
 
     const drawRow = (cells, header) => {
-      const wrapped = widths.map((w, i) => wrap(parseInline(cells[i] || ''), size, w - pad * 2, header ? { bold: true } : {}));
+      const wrapped = widths.map((w, i) => wrap(parseInline(unmark(cells[i])), size, w - pad * 2, header ? { bold: true } : {}));
       const h = Math.max(...wrapped.map((l) => l.length)) * lead + pad * 2;
       if (y - h < MARGIN.bottom) { newPage(); if (!header) drawRow(head, true); }
       if (header) page.drawRectangle({ x: MARGIN.x, y: y - h, width, height: h, color: FILL });
+      else if (cells.some((c) => String(c || '').includes(GREEN_MARK))) page.drawRectangle({ x: MARGIN.x, y: y - h, width, height: h, color: GREEN });
       let x = MARGIN.x;
       wrapped.forEach((lines, i) => {
         lines.forEach((line, j) => drawLine(line, x + pad, y - pad - size - j * lead + 1.5));

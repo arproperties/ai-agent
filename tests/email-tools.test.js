@@ -140,6 +140,49 @@ test('send_email on an already-rejected draft says so and does nothing', async (
   assert.match(out.content, /rejected/);
 });
 
+test('a corrected draft withdraws the one it replaces, so only one is left to approve', async () => {
+  await reset();
+  const userId = await mailbox(true);
+  const seen = [];
+  const m = await connectedMailbox(userId, { onDraft: (d) => seen.push(d) });
+  await m.run({ id: 'a', name: 'create_draft', input: { to: ['bob@example.com'], body: 'first' } });
+  const [first] = await listDrafts(userId, {});
+
+  const out = await m.run({ id: 'b', name: 'create_draft', input: { to: ['bob@example.com'], body: 'second', replaces: first.id } });
+
+  assert.match(out.content, /withdrawn/);
+  assert.equal((await getDraft(userId, first.id)).status, 'rejected');
+  assert.deepEqual((await listDrafts(userId, { status: 'pending' })).map((d) => d.body), ['second']);
+  assert.equal(seen.at(-1).id, first.id); // the old card turns to Rejected on screen
+  assert.equal(seen.at(-1).status, 'rejected');
+});
+
+test('a draft the user already decided on is not taken back', async () => {
+  await reset();
+  const userId = await mailbox(true);
+  const m = await connectedMailbox(userId);
+  await m.run({ id: 'a', name: 'create_draft', input: { to: ['bob@example.com'], body: 'first' } });
+  const [first] = await listDrafts(userId, {});
+  await decideDraft(userId, first.id, true);
+
+  const out = await m.run({ id: 'b', name: 'create_draft', input: { to: ['bob@example.com'], body: 'second', replaces: first.id } });
+
+  assert.match(out.content, /not withdrawn/);
+  assert.equal((await getDraft(userId, first.id)).status, 'approved');
+});
+
+test('one person cannot withdraw another\'s draft', async () => {
+  await reset();
+  const sara = await mailbox(true);
+  const tom = await mailbox(true);
+  await (await connectedMailbox(sara)).run({ id: 'a', name: 'create_draft', input: { to: ['bob@example.com'], body: 'hi' } });
+  const [hers] = await listDrafts(sara, {});
+
+  await (await connectedMailbox(tom)).run({ id: 'b', name: 'create_draft', input: { to: ['bob@example.com'], body: 'x', replaces: hers.id } });
+
+  assert.equal((await getDraft(sara, hers.id)).status, 'pending');
+});
+
 test('the status line names the tool in the user\'s words', () => {
   assert.match(statusFor('create_draft', {}), /draft/i);
   assert.match(statusFor('reply_email', {}), /repl/i);

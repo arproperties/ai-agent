@@ -69,11 +69,11 @@ export async function readReply({ facts, history, text }) {
 
 // ---------- the signed agreement and the cheques ----------
 
-const DOCS = `You check the papers a tenant sent back to renew a lease: photos or scans of the signed renewal agreement and of cheques.
+const DOCS = `You check the papers a tenant sent back to renew a lease: photos or scans of the signed renewal agreement (the tenancy contract) and of cheques.
 Answer with JSON only:
 {"agreement": "signed"|"unsigned"|"none", "cheques": [{"amount": number|null, "date": "YYYY-MM-DD"|null, "payee": string|null, "signed": boolean|null, "file": string}],
  "unreadable": [string], "note": string}
-- agreement: "signed" only if a page of the renewal agreement shows the tenant's signature; "unsigned" if the agreement is there without it; "none" if it was not sent.
+- agreement: "signed" only if a page of the renewal agreement or tenancy contract shows the tenant's signature; "unsigned" if the agreement is there without it; "none" if it was not sent.
 - cheques: every cheque you can see, one entry each, with the amount in figures (AED), the date written on it, who it is payable to, and whether it is signed. file = the file name it is in.
 - unreadable: names of files you could not read.
 - Never guess a figure or a date: use null.`;

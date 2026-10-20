@@ -35,8 +35,9 @@ function stub({ leases = [LEASE], replies = [], docs = [], files = {} } = {}) {
     act: async (module, action, body) => {
       assert.equal(module, 'realestate_renewal');
       world.acts.push({ action, ...body });
-      if (action === 'quote') return { quote: quoteOf(body.rent) };
-      if (action === 'start') return { renewal: { workflow_id: 117, status: 'notice_sent' } };
+      if (action === 'quote') return { quote: { ...quoteOf(body.rent), fees: { admin: body.admin_fees ?? 1500, chiller: 0, chiller_shown: false } } };
+      if (action === 'contract') return { contract: { name: 'contract_525.pdf', data: Buffer.from('%PDF-saifsys-contract').toString('base64') } };
+      if (action === 'start') return { renewal: { workflow_id: 117, status: 'notice_sent', notice: { name: 'renewal_notice_117.pdf', data: Buffer.from('%PDF-saifsys-notice!!').toString('base64') } } };
       if (action === 'convert') return { renewal: { workflow_id: 117, new_lease_id: 525, activate_now: false } };
       return { renewal: { workflow_id: body.workflow_id } };
     },
@@ -96,13 +97,13 @@ test('the offer is a draft first, at any rent we choose; nothing goes out until 
   const d = await R.draft(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000 });
   assert.equal(d.to, 'tenant@mail.com');
   assert.match(d.text, /Annual rent: AED 45,000/);
-  assert.deepEqual(d.attachments, ['Renewal offer - PARK PLACE 610.pdf']);
+  assert.deepEqual(d.attachments, ['Renewal notice - PARK PLACE 610.pdf']);
   assert.equal(world.sent.length, 0);
   assert.deepEqual(world.acts.map((a) => a.action), ['quote'], 'saifsys only priced it');
   assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_renewals').get()).n, 0);
 });
 
-test('Send: saifsys makes its renewal, the offer goes with its letter, and the timeline starts', async () => {
+test('Send: saifsys makes its renewal, the offer goes with saifsys\'s own notice, and the timeline starts', async () => {
   const boss = await setup();
   stub();
   const r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000, text: 'Dear Mohamed,\n\nOur offer, as we discussed.' });
@@ -111,9 +112,21 @@ test('Send: saifsys makes its renewal, the offer goes with its letter, and the t
   assert.equal(world.acts[1].email, 'care@company.com');
   assert.match(lastMail(), /Subject: Lease renewal: PARK PLACE, Unit 610/);
   assert.match(lastMail(), /Our offer, as we discussed/, 'the words the person approved, not the draft');
-  assert.match(lastMail(), /application\/pdf/);
+  assert.match(lastMail(), /Renewal notice - PARK PLACE 610\.pdf/);
+  assert.ok(lastMail().includes(Buffer.from('%PDF-saifsys-notice!!').toString('base64')), 'the PDF saifsys made, not one of ours');
   assert.deepEqual(await timeline(r.id), ['out: Offer sent · AED 45,000']);
   await assert.rejects(start(boss), /already started/, 'a second tap starts nothing');
+});
+
+test('Start: the admin fee the person types goes to saifsys and into the offer; later steps keep it', async () => {
+  const boss = await setup();
+  stub();
+  assert.deepEqual(await R.startFees(LEASE.lease_id), { admin: 1500, chiller: 0, chiller_shown: false }, 'the old lease\'s, for the Start box');
+  const r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000, admin_fees: 2000 });
+  assert.equal(world.acts.find((a) => a.action === 'start').admin_fees, 2000);
+  assert.match(lastMail(), /Admin fee: AED 2,000 \+ VAT/);
+  await R.draft(boss, { id: r.id, action: 'counter', rent: 44000 });
+  assert.equal(world.acts.at(-1).admin_fees, 2000, 'a counter-offer is priced with the same fee');
 });
 
 test('a lease the staff started in saifsys, or with no email, cannot be started here', async () => {
@@ -183,6 +196,9 @@ test('negotiation: a counter, a dispute, the RERA index rent, agreement, papers,
   r = await R.send(boss, { id: r.id, action: 'accept' });
   assert.deepEqual([r.status, r.agreed], ['agreed', 37800]);
   assert.equal(world.acts.at(-1).status, 'accepted');
+  assert.deepEqual(world.acts.slice(-2).map((a) => a.action), ['contract', 'status'], 'the contract is made before the renewal moves on');
+  assert.match(lastMail(), /Tenancy contract - PARK PLACE 610\.pdf/);
+  assert.ok(lastMail().includes(Buffer.from('%PDF-saifsys-contract').toString('base64')), 'saifsys\'s contract, not one of ours');
   assert.match(lastMail(), /confirm the renewal of PARK PLACE, Unit 610 at AED 37,800/);
   assert.match(lastMail(), /payable to Saif Holding LLC/);
 

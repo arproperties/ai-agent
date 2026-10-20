@@ -7,6 +7,7 @@ import { ask } from './ai.js';
 import { DATA_DIR, FOLDERS } from './config.js';
 import { IMAGE_TYPES, VIDEO_TYPES, VIDEO_EXT, extractText, describeImage, readVideo, indexChunks, retrievalScope, agentScope } from './knowledge.js';
 import { isMaster } from './access.js';
+import { keepText } from './copies.js';
 
 const UPLOAD_DIR = `${DATA_DIR}/uploads`;
 
@@ -191,6 +192,7 @@ export async function processDocument(doc, f, text, agents = [], said = '') {
     // Some PDFs carry NUL characters in their text layer, which Postgres refuses to store.
     let content = (text ?? await read())?.replace(/\u0000/g, '');
     if (!content?.trim()) throw new Error('No readable text found');
+    const own = content; // the file's own words, without what was said with it
     const words = String(said || '').replace(/[\u0000\s]+/g, ' ').trim().slice(0, 300);
     if (words) content = `Sent with the words: "${words}"\n\n${content}`;
     const c = await classify(doc.name, content, doc.agent_id ? [] : agents, await userCompanies(doc.user_id));
@@ -202,6 +204,7 @@ export async function processDocument(doc, f, text, agents = [], said = '') {
     // listed under one agent and retrievable by another.
     const filed = await db.prepare('SELECT * FROM documents WHERE id = ?').get(doc.id);
     await indexChunks(filed, content);
+    await keepText(filed, own);
     await db.prepare("UPDATE documents SET status = 'ready', error = NULL WHERE id = ?").run(doc.id);
   } catch (e) {
     console.error('[files]', doc.name, e.message);

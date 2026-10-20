@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import Icon from './Icon';
 
 // Bottom sheet on phones, centred dialog on desktop
-export default function Sheet({ title, icon, tabs, tab, onTab, onClose, children }) {
+export default function Sheet({ title, icon, action, tabs, tab, onTab, onClose, children }) {
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -17,6 +17,7 @@ export default function Sheet({ title, icon, tabs, tab, onTab, onClose, children
         <div className="flex items-center gap-2.5 px-5 pb-2 pt-4">
           {icon}
           <h2 className="flex-1 truncate text-lg font-light">{title}</h2>
+          {action}
           <button onClick={onClose} aria-label="Close" className="grid size-9 place-items-center rounded-full text-mute hover:bg-white/10"><Icon name="x" /></button>
         </div>
         {tabs?.length > 0 && (

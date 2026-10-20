@@ -1,6 +1,6 @@
 import { outlookAccount, outlookTools } from './outlook.js';
 import { imapAccount, imapTools, imapActions, replySubject } from './imap.js';
-import { createDraft, getDraft, draftOut, logAction } from './drafts.js';
+import { createDraft, getDraft, withdrawDraft, draftOut, logAction } from './drafts.js';
 import { kick } from './outbox.js';
 import { gather, discard } from './draftFiles.js';
 
@@ -76,6 +76,12 @@ export function replyRecipients(original, myAddress) {
   return norm(original.to).filter((a) => a !== mine);
 }
 
+// A changed draft is a new draft: the old one is taken back so only one is left waiting.
+const REPLACES = {
+  type: 'integer',
+  description: 'When this is a corrected version of a draft still waiting for approval, its id. That draft is withdrawn, so only the new one is left to approve.',
+};
+
 export const EMAIL_WRITE_TOOLS = [
   {
     name: 'create_draft',
@@ -91,6 +97,7 @@ export const EMAIL_WRITE_TOOLS = [
         body: { type: 'string', description: 'Plain text. No Markdown — this goes out as an email, not a chat message.' },
         in_reply_to: { ...MESSAGE_ID, description: 'Optional: an email this is a reply to, so it threads. Prefer reply_email.' },
         attachments: ATTACHMENTS,
+        replaces: REPLACES,
       },
       required: ['to', 'body'],
     },
@@ -101,7 +108,7 @@ export const EMAIL_WRITE_TOOLS = [
       'This does NOT send it — the user must tap Approve. Recipients and subject are taken from the original.',
     input_schema: {
       type: 'object',
-      properties: { message_id: MESSAGE_ID, body: { type: 'string', description: 'Plain text.' }, attachments: ATTACHMENTS },
+      properties: { message_id: MESSAGE_ID, body: { type: 'string', description: 'Plain text.' }, attachments: ATTACHMENTS, replaces: REPLACES },
       required: ['message_id', 'body'],
     },
   },
@@ -193,8 +200,18 @@ function writeTools(ctx) {
   const drafted = (userId, d) =>
     logAction(userId, { agentId: ctx.agentId, action: 'draft', draftId: d.id, recipients: d.to_addrs, target: d.reply_to_id });
 
+  // Taken back only once its replacement exists: a corrected draft that fails to write
+  // leaves the old one waiting, rather than nothing.
+  const replace = async (userId, oldId) => {
+    if (!oldId) return '';
+    const old = await withdrawDraft(userId, oldId);
+    if (!old) return ` Draft ${oldId} was not withdrawn: it is no longer waiting, so the user may still see it.`;
+    show(old);
+    return ` Draft ${oldId} has been withdrawn, so only this one is waiting.`;
+  };
+
   return {
-    create_draft: async (userId, { to, cc, subject, body, in_reply_to, attachments }) => {
+    create_draft: async (userId, { to, cc, subject, body, in_reply_to, attachments, replaces }) => {
       const acc = await imapAccount(userId);
       // in_reply_to is optional here and best-effort: a draft that cannot be threaded is
       // still a draft worth showing, so a failed lookup loses the headers, not the email.
@@ -205,10 +222,10 @@ function writeTools(ctx) {
         inReplyTo: thread?.messageId ?? null, refs: thread?.refs ?? null, replyToId: in_reply_to ?? null,
       }));
       await drafted(userId, d);
-      return waiting(d);
+      return waiting(d) + await replace(userId, replaces);
     },
 
-    reply_email: async (userId, { message_id, body, attachments }) => {
+    reply_email: async (userId, { message_id, body, attachments, replaces }) => {
       const o = await imapActions.original(userId, message_id);
       const acc = await imapAccount(userId);
       const to = replyRecipients(o, acc.email);
@@ -220,7 +237,7 @@ function writeTools(ctx) {
         inReplyTo: o.messageId, refs: o.refs, replyToId: message_id,
       }));
       await drafted(userId, d);
-      return `${waiting(d)} It is threaded onto “${o.subject || '(no subject)'}”.`;
+      return `${waiting(d)} It is threaded onto “${o.subject || '(no subject)'}”.${await replace(userId, replaces)}`;
     },
 
     send_email: async (userId, { draft_id }) => {

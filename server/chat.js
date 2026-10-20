@@ -4,6 +4,7 @@ import { pickAgent } from './router.js';
 import { extractText, readVideo, recall, learn } from './knowledge.js';
 import { saveUpload, processDocument, isImage, isVideo, fileName, libraryCatalog } from './files.js';
 import { connectedMailbox, senderName } from './email.js';
+import { listDrafts } from './drafts.js';
 import { todoKit } from './todos.js';
 import { teamReminderKit } from './teamReminders.js';
 import { responsibilityKit } from './responsibilities.js';
@@ -11,7 +12,7 @@ import { buildingKit } from './buildings.js';
 import { inventoryKit } from './inventory.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
-import { shelfKit } from './shelf.js';
+import { shelfKit, splitParts } from './shelf.js';
 import { noticeKit } from './notices.js';
 import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
@@ -69,6 +70,14 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     `When ${user.name} gives you text and asks for it as a PDF ("convert into pdf"), put their text inside the markers word for word: ` +
     'only add Markdown structure (a # title, headings, lists, tables), never change, add or leave out words, and leave out the request itself. ' +
     'Outside the markers write one short line only, such as "Here it is as a PDF."');
+  // A boss asked for a spreadsheet and was told "Amran_Case_Tracker.xlsx is attached": nothing
+  // was, and the table itself never appeared. The PDF above is the only file a reply can make.
+  parts.push('You cannot make, attach or send files of your own: no Excel, spreadsheet, Word or CSV file. ' +
+    'When asked for a spreadsheet, a sheet or a table, write it in full as a Markdown table inside the document markers, ' +
+    'one row per item with every column asked for, and the app offers it as a PDF. Say in one line that it comes as a PDF, not Excel. ' +
+    'Never say a file is attached, created, saved or sent unless one of your tools did it in this answer. ' +
+    'To mark rows green (active cases, paid items, anything asked to be green), put 🟢 at the start of the first cell of each of those rows: ' +
+    'the chat shows the 🟢 and the PDF shades the whole row green. Colours other than green cannot be shown in a PDF.');
   // The app draws the shapes itself and makes the PDF, PNG and AutoCAD files from them.
   parts.push(`You can draw. When ${user.name} asks for a floor plan, layout, site or seating plan, flowchart, org chart, timeline or labelled diagram, ` +
     'write it as one fenced code block whose language is drawing, holding JSON, and the app shows it as a picture. Never draw with text characters. ' +
@@ -123,6 +132,26 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'So when they send one and say what it is for ("this is for the school project"), answer in a line or two: what it is, and that it is saved on their Shelf for that. ' +
     'Never say you cannot save, log or record it, and do not offer a to-do in its place. ' +
     'When they want something done with it that one of your tools does - a notice to a tenant, an inventory item - do that as well.');
+  // A lawyer agent answered about a 15-page judgment from its first pages, and money and court
+  // orders turn on the lines it skipped. The app adds the "Read:" line itself.
+  parts.push('When an answer depends on what files say - a court order, a judgment, a contract, an amount, a date, a deadline - ' +
+    'read every part of every file it depends on with read_file before answering, never only the first part or a summary. ' +
+    'Where two files are marked as copies of one document, read one and treat them as one. ' +
+    'If there is more to read than you can get through in this answer, say which files or parts you have not read yet and offer to carry on; never answer as if you had read them. ' +
+    'The app puts a line under your answer listing what you read, so do not write one yourself.');
+  // A case table said the court ordered "2 kg of 24K gold". The judgment's order says 2 kg of
+  // gold, no karat; 24K was the wife's own claim, quoted earlier in the same judgment.
+  parts.push('A judgment quotes what each party asked for and argued before it says what the court decided. ' +
+    'What a court ordered - every amount, karat, date, period and obligation - comes only from its operative part ' +
+    '(the ruling at the end, after "for these reasons" / لهذه الأسباب / منطوق الحكم / حكمت المحكمة), never from the claims, requests, pleadings or reasoning. ' +
+    'Anything taken from a claim or a pleading is labelled as that party\'s claim. A later order (an execution decision) is named as that order, not as the judgment. ' +
+    'Before giving a summary or table of judgments, check each figure in it against the operative part you read; ' +
+    'where you have not read the operative part of a judgment, say so for that row instead of filling it in.');
+  // The same table came out with 19/03/2024 above 22/02/2024 under "chronological order".
+  parts.push('Before you finish any table or list, check it against what was asked, row by row, as a separate last step: ' +
+    'when asked for date order, sort by the earliest date in each row (dates are DD/MM/YYYY: compare year, then month, then day), ' +
+    'put rows with no date last and say so, and number the rows only after sorting; ' +
+    'check every requested column is filled or says "not stated", and every count you give matches the rows. Fix anything wrong before you answer.');
   // "The entire history of the Haley case" is a job for several searches and every file they
   // turn up, not for the one summary that happened to be recalled.
   parts.push('When asked for the history, the full picture or everything about a case, a person, a tenant, a unit, a contract or a project: ' +
@@ -172,6 +201,14 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     context.push(`<file_library>\n${some ? `The newest ${library.files.length} of the user's ${library.total} saved files - search_files reaches the rest.` : "The user's saved files (newest first)."} ` +
       `Relevant excerpts appear in <knowledge>. Files can be opened from the Shelf screen in the app.\n${library.files.join('\n')}\n</file_library>`);
   }
+  // Drafts this chat wrote that are still waiting. A reply ends with only its words saved, so
+  // without this the agent could not see the email it was asked to change, and wrote it again
+  // from scratch, leaving two to approve.
+  if (mailbox?.waiting?.length) {
+    context.push(`<waiting_drafts>\nEmails written in this chat, still waiting for ${user.name} to approve. ` +
+      'To change one, write the corrected version in full with replaces set to its id, so the old one is withdrawn.\n' +
+      `${mailbox.waiting.map((d) => `<draft id="${d.id}" to="${JSON.parse(d.to_addrs).join(', ')}" subject="${String(d.subject).replace(/"/g, "'")}">\n${d.body}\n</draft>`).join('\n')}\n</waiting_drafts>`);
+  }
   if (knowledge.length) context.push(`<knowledge>\nExcerpts from the user's files that may be relevant:\n${knowledge.join('\n---\n')}\n</knowledge>`);
   // Chats the user deliberately brought into this one — the material for pulling several
   // conversations together, so it sits above recalled excerpts in importance, and the
@@ -201,6 +238,21 @@ export function withCacheMark(convo) {
   const content = [...last.content];
   content[content.length - 1] = { ...content.at(-1), cache_control: { type: 'ephemeral' } };
   return [...convo.slice(0, -1), { ...last, content }];
+}
+
+/**
+ * The last round, which must be the answer: no more searching or reading. Said to the agent
+ * in so many words. A case-table answer ran out of rounds with seven files half read, and
+ * wrote its answer as though it had read them all - only the Read line gave it away.
+ */
+export const OUT_OF_ROUNDS = 'Note from the app: this is your last step for this answer - you cannot search or read any more files now. ' +
+  'Answer from what you have read. Start your answer by saying plainly which files, or which parts of them, you have not read yet, ' +
+  'and end by offering to carry on reading them if asked to continue. Do not present anything you did not read as checked.';
+
+export function lastRound(convo) {
+  const last = convo.at(-1);
+  if (last?.role !== 'user' || !Array.isArray(last.content)) return convo;
+  return [...convo.slice(0, -1), { ...last, content: [...last.content, { type: 'text', text: OUT_OF_ROUNDS }] }];
 }
 
 async function recentMessages(conversationId) {
@@ -245,7 +297,7 @@ async function readAttachments(user, convId, files, send, team, said = '') {
         const content = await readVideo(doc.path);
         if (!duplicate) processDocument(doc, f, content, team, said);
         meta.push({ name, kind: 'video', docId: doc.id, snippet: content.slice(0, 600) });
-        const inline = content.length > share ? `${content.slice(0, share)}\n…(truncated: the full reading is in the knowledge base)` : content;
+        const inline = content.length > share ? `${content.slice(0, share)}\n…(cut short here: the full reading is saved as file #${doc.id}, read it with read_file id ${doc.id})` : content;
         blocks.push({ type: 'text', text: `<video name="${name}">\n${inline}\n</video>` });
       } else if (isAudio(f)) {
         // Not filed on the Shelf: a voice note is words, and they are kept on the Transcribe page.
@@ -256,12 +308,24 @@ async function readAttachments(user, convId, files, send, team, said = '') {
         blocks.push({ type: 'text', text: voiceNote(name, transcript) });
       } else {
         send('status', { label: `Reading ${name}…` });
-        const content = await extractText({ ...f, originalname: name }); // read first, so unreadable files are never stored
+        // read first, so unreadable files are never stored
+        const content = await extractText({ ...f, originalname: name }, { onProgress: (label) => send('status', { label }) });
         if (!content.trim()) throw new Error(`No readable text found in ${name}`);
         const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
-        if (!duplicate) processDocument(doc, f, content, team, said);
-        meta.push({ name, kind: 'doc', docId: doc.id, snippet: content.slice(0, 600) });
-        const inline = content.length > share ? `${content.slice(0, share)}\n…(truncated: the full file is in the knowledge base)` : content;
+        const cut = content.length > share;
+        // A file that does not fit here is read with read_file, which only opens filed files:
+        // that one is filed before the answer starts, the rest in the background as before.
+        if (cut && !duplicate) {
+          send('status', { label: `Saving ${name} so it can be read in full…` });
+          await processDocument(doc, f, content, team, said);
+        } else if (!duplicate) processDocument(doc, f, content, team, said);
+        // What was shown here counts as part 1 when it covers it, so the Read line does not
+        // say "not all of it" about a file whose other parts were then read with read_file.
+        meta.push({ name, kind: 'doc', docId: doc.id, snippet: content.slice(0, 600), whole: !cut, firstPart: cut && share >= splitParts(content)[0].length });
+        // Said as a step to take: "the full file is in the knowledge base" read as an upload
+        // that had been cut off, and a 15-page judgment was summarised from its first 5.
+        const inline = cut ? `${content.slice(0, share)}\n…(cut short here, not the end of the file. It is saved as file #${doc.id}: ` +
+          `read all of it with read_file id ${doc.id}, every part, before answering.)` : content;
         blocks.push({ type: 'text', text: `<file name="${name}">\n${inline}\n</file>` });
       }
     } catch (e) {
@@ -269,6 +333,29 @@ async function readAttachments(user, convId, files, send, team, said = '') {
     }
   }
   return { blocks, meta };
+}
+
+/**
+ * The line under an answer that drew on files, written by the app rather than the agent so
+ * it cannot be wrong: which files were read, and whether all of each. Where money or the
+ * law is involved, "it did not see page 9" has to be visible, not discovered later.
+ */
+export function whatWasRead(attachments, opened) {
+  const items = [];
+  for (const a of attachments) {
+    if (a.kind === 'doc' && a.whole && !opened.has(a.docId)) items.push(`${a.name} (whole file)`);
+  }
+  for (const [id, was] of opened) {
+    const shown = attachments.find((a) => a.docId === id && a.firstPart);
+    const f = shown && was.total ? { ...was, parts: new Set([1, ...was.parts]) } : was;
+    let how;
+    if (f.total === 1) how = 'whole file';
+    else if (f.total && f.parts.size === f.total) how = `all ${f.total} parts`;
+    else if (f.total) how = `part${f.parts.size > 1 ? 's' : ''} ${[...f.parts].sort((x, y) => x - y).join(', ')} of ${f.total} - not all of it`;
+    else how = `only the bits about "${f.searched.join('", "')}"`;
+    items.push(`${f.title} (${how})`);
+  }
+  return items.length ? `*Read: ${items.join(' · ')}*` : '';
 }
 
 // Asked again before it was answered — the reply was slow, stopped or lost, so the same
@@ -358,7 +445,7 @@ export async function chat(req, res) {
   const prior = await recentMessages(convId);
   const currentAgentId = [...prior].reverse().find((m) => m.agent_id)?.agent_id;
   const { blocks, meta } = await readAttachments(user, convId, files, send, team, text);
-  const savedFiles = meta.map(({ snippet, ...m }) => m);
+  const savedFiles = meta.map(({ snippet, whole, firstPart, ...m }) => m);
   if (savedFiles.length) send('files', savedFiles); // lets the app link the just-sent attachments
   send('status', { label: 'Choosing the best agent…' });
   const { agent, why } = await pickAgent({ agents: team, byName, userId: user.id, text, attachments: meta, recent: prior, currentAgentId });
@@ -374,7 +461,11 @@ export async function chat(req, res) {
     userName: user.name,
     onDraft: (d) => send('draft', d), // the approval card appears as the draft is written
   });
-  const mailbox = email && { address: email.address, canWrite: email.canWrite };
+  const mailbox = email && {
+    address: email.address,
+    canWrite: email.canWrite,
+    waiting: email.canWrite ? (await listDrafts(user.id, { conversationId: convId, status: 'pending' })).slice(0, 5) : [],
+  };
   // Every toolkit this turn has. The to-do list is always there; the mailbox only when one
   // is connected. Each kit names its own tools, so a call is routed by name and nothing here
   // has to know which feature it belongs to.
@@ -388,7 +479,13 @@ export async function chat(req, res) {
   // What the reply carries: pictures drawn for it, and saved files the agent showed.
   // Both go out on the 'picture' event, which sets the reply's files on screen.
   const pictures = [];
+  const opened = new Map(); // what read_file opened this turn, for the "Read:" line
   const shelf = shelfKit(reader, {
+    onRead: (r) => {
+      const was = opened.get(r.id) ?? { title: r.title, parts: new Set(), total: 0, searched: [] };
+      if (r.part) { was.parts.add(r.part); was.total = r.total; } else was.searched.push(r.search);
+      opened.set(r.id, was);
+    },
     onShow: (docs) => {
       for (const d of docs) if (!pictures.some((p) => p.docId === d.docId)) pictures.push(d);
       send('picture', pictures);
@@ -450,7 +547,7 @@ export async function chat(req, res) {
         // The last round has to be the answer: a case history once spent every round
         // searching and reading, and the person got nothing back at all.
         ...(turn === MAX_ROUNDS - 1 ? { tool_choice: { type: 'none' } } : {}),
-        messages: turn ? withCacheMark(convo) : convo,
+        messages: turn === MAX_ROUNDS - 1 ? lastRound(withCacheMark(convo)) : turn ? withCacheMark(convo) : convo,
       });
       stream.on('streamEvent', (ev) => {
         if (ev.type !== 'content_block_start') return;
@@ -491,6 +588,8 @@ export async function chat(req, res) {
   }
   finished = true;
   if (!reply && caption) emit(caption); // a picture with nothing said about it still reads as a reply
+  const readLine = whatWasRead(meta, opened);
+  if (reply && readLine) emit(`\n\n${readLine}`);
 
   let messageId = null;
   const official = (u) => /\.gov\.ae|difc|adgm|u\.ae/i.test(new URL(u.url).hostname) ? 0 : 1;

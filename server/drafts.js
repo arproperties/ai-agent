@@ -69,6 +69,19 @@ export async function decideDraft(userId, id, approved) {
   return getDraft(userId, id);
 }
 
+/**
+ * An agent taking back its own draft when it has written a corrected one, so the person is
+ * not left with two versions to tell apart. Only one still waiting: once they have decided,
+ * it is theirs. Returns the withdrawn draft, or null when there was nothing to withdraw.
+ */
+export async function withdrawDraft(userId, id) {
+  const { changes } = await db.prepare(
+    `UPDATE email_drafts SET status = 'rejected', decided_at = extract(epoch from now())::bigint
+     WHERE id = ? AND user_id = ? AND status = 'pending'`
+  ).run(Number(id), userId);
+  return changes === 1 ? getDraft(userId, id) : null;
+}
+
 // Only a settled draft can be hidden or deleted: one still waiting needs a decision, and
 // one approved or sending is in the outbox's hands.
 const SETTLED = ['sent', 'failed', 'rejected'];
