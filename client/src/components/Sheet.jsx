@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import Icon from './Icon';
 
 // Bottom sheet on phones, centred dialog on desktop
-export default function Sheet({ title, icon, action, tabs, tab, onTab, onClose, children }) {
+// `wide`: room for a document with a table, such as the PDF preview
+export default function Sheet({ title, icon, action, tabs, tab, onTab, onClose, wide = false, children }) {
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -13,7 +14,7 @@ export default function Sheet({ title, icon, action, tabs, tab, onTab, onClose, 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 backdrop-blur-md md:items-center" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()}
-        className="rise flex max-h-[92dvh] w-full flex-col rounded-t-[28px] border border-stroke bg-surface shadow-2xl shadow-black/50 md:max-w-lg md:rounded-[28px]">
+        className={`rise flex max-h-[92dvh] w-full flex-col rounded-t-[28px] border border-stroke bg-surface shadow-2xl shadow-black/50 ${wide ? 'md:max-w-5xl' : 'md:max-w-lg'} md:rounded-[28px]`}>
         <div className="flex items-center gap-2.5 px-5 pb-2 pt-4">
           {icon}
           <h2 className="flex-1 truncate text-lg font-light">{title}</h2>

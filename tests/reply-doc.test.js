@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { documentPart, parseInline, parseBlocks, renderPdf, unsupportedScript, pdfName } from '../server/replyDoc.js';
+import { documentPart, parseInline, parseBlocks, renderPdf, unsupportedScript, pdfName, sanitize } from '../server/replyDoc.js';
 import { documentPart as clientPart, hideMarkers } from '../client/src/lib/replyDoc.js';
 
 const marked = `Sure, here is the packet.
@@ -117,4 +117,12 @@ test('a case number is never split across lines in a wide table', async () => {
   const md = `<!--doc-->\n# Cases\n\n| # | Case Number | Court | Filed | Judgment | Amran | Rim | Status | Summary |\n|---|---|---|---|---|---|---|---|---|\n| 1 | 1667/2024/204 | Execution Court | 25/11/2024 | Ongoing | Saud Al-Shebli | Ahmed Khamis Al-Zeyoudi | Active | ${'A long summary of the case. '.repeat(6)} |\n<!--/doc-->`;
   const bytes = await renderPdf({ ...documentPart(md), date: new Date(2026, 9, 20) });
   assert.ok(bytes.length > 0);
+});
+
+test('yellow and pink rows are shaded too, each its own colour, and a key line gets a dot', async () => {
+  const doc = (mark) => documentPart(`<!--doc-->\n# Cases\n\n- 🟡 **Yellow:** filed\n\n| Case | Status |\n|---|---|\n| ${mark}204/2024 | Filed |\n<!--/doc-->`);
+  const date = new Date(2026, 9, 20);
+  const pdfs = await Promise.all(['🟢 ', '🟡 ', '🩷 ', ''].map(async (m) => Buffer.from(await renderPdf({ ...doc(m), date })).toString('hex')));
+  assert.equal(new Set(pdfs).size, 4, 'green, yellow, pink and plain rows all differ');
+  assert.equal(sanitize('🟡 filed'), '(yellow) filed', 'outside the PDF body the mark reads as a word');
 });

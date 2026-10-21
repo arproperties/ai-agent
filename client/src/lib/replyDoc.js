@@ -25,6 +25,10 @@ function ownText(text) {
   return lines.map((l) => (l.trim() && !l.trim().startsWith('|') ? `${l.trimEnd()}  ` : l)).join('\n');
 }
 
+// The first line that is not part of a table: a reply that is only a table was titled
+// "| Item | Status | Amount (AED) |".
+const firstLine = (body) => (body.split('\n').find((l) => l.trim() && !l.trim().startsWith('|')) || 'Table').split(/(?<=[.!?])\s/)[0];
+
 /** { title, markdown } of what goes in a reply's PDF, or null for an empty reply. */
 export function documentPart(content, { own = false } = {}) {
   const text = String(content || '').replace(/\r\n/g, '\n');
@@ -47,7 +51,7 @@ export function documentPart(content, { own = false } = {}) {
   body = body.replace(/<!--[\s\S]*?-->/g, '').trim();
   if (!body) return null;
   const h = /^#{1,3}[ \t]+(.+)$/m.exec(body);
-  return { title: clean(h ? h[1] : body.split('\n')[0].split(/(?<=[.!?])\s/)[0]).slice(0, 100) || 'Document', markdown: body };
+  return { title: clean(h ? h[1] : firstLine(body)).slice(0, 100) || 'Document', markdown: body };
 }
 
 /** The reply as the person reads it: the markers out, including one still being streamed. */

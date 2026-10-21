@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Globe } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { rehypeMarkRows, markdownComponents } from '../lib/markRows';
 import Icon from './Icon';
 import Avatar from './Avatar';
 import { hideMarkers } from '../lib/replyDoc';
@@ -102,7 +103,7 @@ const VOICE = {
 function Reply({ content, savedId }) {
   const parts = splitDrawings(content);
   return parts.map((p, i) => (p.text !== undefined ? (
-    <div key={i} className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]}>{hideMarkers(p.text)}</Markdown></div>
+    <div key={i} className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypeMarkRows} components={markdownComponents}>{hideMarkers(p.text)}</Markdown></div>
   ) : p.pending ? <DrawingPending key={i} /> : <DrawingCard key={i} drawing={p.drawing} messageId={savedId} />));
 }
 

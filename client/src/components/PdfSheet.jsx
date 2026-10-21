@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { rehypeMarkRows } from '../lib/markRows';
 import { api } from '../lib/api';
 import { documentPart } from '../lib/replyDoc';
 import Icon from './Icon';
@@ -44,14 +45,14 @@ export default function PdfSheet({ messageId, content, own = false, onClose, onO
   };
 
   return (
-    <Sheet title={part?.title || 'PDF'} onClose={onClose}
+    <Sheet title={part?.title || 'PDF'} onClose={onClose} wide
       icon={<span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><Icon name="pdf" size={16} /></span>}>
       <p className="mb-3 text-sm text-mute">
         {own ? 'Your text, word for word.' : 'Only the document goes in the PDF. The chat around it stays here.'}
       </p>
 
-      <div className="paper md mb-4 max-h-[46dvh] overflow-y-auto rounded-2xl bg-white px-5 py-4 text-[13px] text-[#1c1a2e] shadow-inner">
-        {part ? <Markdown remarkPlugins={[remarkGfm]}>{part.markdown}</Markdown> : <p>There is no document in this reply.</p>}
+      <div className="paper md mb-4 max-h-[46dvh] overflow-auto md:max-h-[64dvh] rounded-2xl bg-white px-5 py-4 text-[13px] text-[#1c1a2e] shadow-inner">
+        {part ? <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypeMarkRows}>{part.markdown}</Markdown> : <p>There is no document in this reply.</p>}
       </div>
 
       {error && <p className="mb-3 text-sm text-bad">{error}</p>}

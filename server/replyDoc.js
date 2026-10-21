@@ -31,6 +31,10 @@ function ownText(text) {
   return lines.map((l) => (l.trim() && !l.trim().startsWith('|') ? `${l.trimEnd()}  ` : l)).join('\n');
 }
 
+// The first line that is not part of a table: a reply that is only a table was titled
+// "| Item | Status | Amount (AED) |".
+const firstLine = (body) => (body.split('\n').find((l) => l.trim() && !l.trim().startsWith('|')) || 'Table').split(/(?<=[.!?])\s/)[0];
+
 /**
  * The part of a reply that goes in its PDF, or null for an empty reply.
  * Returns { title, markdown }. Kept in step with client/src/lib/replyDoc.js.
@@ -56,7 +60,7 @@ export function documentPart(content, { own = false } = {}) {
   body = body.replace(/<!--[\s\S]*?-->/g, '').trim();
   if (!body) return null;
   const h = /^#{1,3}[ \t]+(.+)$/m.exec(body);
-  const title = clean(h ? h[1] : body.split('\n')[0].split(/(?<=[.!?])\s/)[0]).slice(0, 100) || 'Document';
+  const title = clean(h ? h[1] : firstLine(body)).slice(0, 100) || 'Document';
   return { title, markdown: body };
 }
 
@@ -80,14 +84,31 @@ const SWAP = {
   '✓': 'v', '✔': 'v', '☑': '[x]', '✅': 'v', '✗': 'x', '✘': 'x', '❌': 'x', // no tick in the standard fonts
   '→': '->', '⇒': '=>', '←': '<-', '↔': '<->', '≥': '>=', '≤': '<=', '≠': '!=', '≈': '~',
   '−': '-', '‐': '-', '‑': '-', '‒': '-', '―': '—', '′': "'", '″': '"',
-  '🟢': '(green)', // a table row's mark is taken out before this and shades the row instead
   '▪': '•', '◦': '•', '●': '•', '○': 'o', '■': '•', '□': '[ ]', '☐': '[ ]', '★': '*', '☆': '*',
   ' ': ' ', ' ': ' ', '​': '', '‎': '', '‏': '', '️': '',
 };
 
-export function sanitize(s) {
+// Colour marks: a table row starting with one is shaded that colour, and in text the mark is
+// drawn as a coloured dot. Only green existed, so a register asked for in green, yellow and pink
+// came out with the yellow and pink rows plain and a "Colour" column spelling them out.
+export const MARKS = {
+  '🟢': { name: 'green', fill: rgb(0.83, 0.94, 0.85), dot: rgb(0.16, 0.65, 0.33) },
+  '🟡': { name: 'yellow', fill: rgb(1, 0.95, 0.7), dot: rgb(0.96, 0.75, 0.05) },
+  '🟠': { name: 'orange', fill: rgb(1, 0.88, 0.75), dot: rgb(0.95, 0.5, 0.1) },
+  '🔴': { name: 'red', fill: rgb(0.99, 0.83, 0.83), dot: rgb(0.86, 0.2, 0.2) },
+  '🩷': { name: 'pink', fill: rgb(0.99, 0.86, 0.93), dot: rgb(0.93, 0.36, 0.64) },
+  '🔵': { name: 'blue', fill: rgb(0.83, 0.9, 0.99), dot: rgb(0.2, 0.45, 0.9) },
+  '🟣': { name: 'purple', fill: rgb(0.91, 0.86, 0.99), dot: rgb(0.55, 0.3, 0.85) },
+  '⚪': { name: 'grey', fill: rgb(0.92, 0.92, 0.93), dot: rgb(0.6, 0.6, 0.64) },
+};
+export const MARK_RE = new RegExp(`(${Object.keys(MARKS).join('|')})\\uFE0F?`, 'gu');
+const markOf = (cells) => cells.map((c) => String(c || '').match(MARK_RE)?.[0]?.replace('\uFE0F', '')).find(Boolean);
+
+/** Text the standard fonts can draw. `keepMarks` leaves colour marks in, for wrap() to draw as dots. */
+export function sanitize(s, { keepMarks = false } = {}) {
   let out = '';
   for (const c of String(s).normalize('NFC')) {
+    if (MARKS[c]) { out += keepMarks ? c : `(${MARKS[c].name})`; continue; }
     const r = SWAP[c] ?? c;
     for (const d of r) if (drawable(d) || d === '\n') out += d; // \n: a hard break, split out by wrap()
   }
@@ -183,7 +204,7 @@ export function parseInline(text) {
     push(s.slice(last), style);
   };
   walk(src, {});
-  return runs.map((r) => ({ ...r, text: sanitize(r.text.replaceAll(BLANK, '_')) })).filter((r) => r.text);
+  return runs.map((r) => ({ ...r, text: sanitize(r.text.replaceAll(BLANK, '_'), { keepMarks: true }) })).filter((r) => r.text);
 }
 
 // ---------- layout ----------
@@ -201,10 +222,6 @@ const SOFT = rgb(0.42, 0.41, 0.5);
 const ACCENT = rgb(0.36, 0.3, 0.78);
 const LINE = rgb(0.84, 0.83, 0.89);
 const FILL = rgb(0.95, 0.94, 0.98);
-// A table row marked 🟢 (an active case, a paid bill) is shaded this green: the standard fonts
-// cannot draw the emoji itself, so without this the mark vanished and every row looked alike.
-const GREEN = rgb(0.86, 0.95, 0.87);
-export const GREEN_MARK = '🟢';
 
 /**
  * The document as PDF bytes. `date` is the reply's time: it goes on the page and into the
@@ -242,8 +259,9 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     for (const r of runs) {
       const font = fontOf({ ...base, ...r });
       const sz = r.code ? size * 0.92 : size;
-      for (const part of r.text.split(/(\n|[^\S\n]+)/)) {
-        if (part) words.push({ text: part === '\n' ? '\n' : /^\s+$/.test(part) ? ' ' : part, font, size: sz, color: base.color });
+      for (const part of r.text.split(MARK_RE).flatMap((t) => (MARKS[t] ? [t] : t.split(/(\n|[^\S\n]+)/)))) {
+        if (MARKS[part]) words.push({ text: part, dot: MARKS[part].dot, font, size: sz });
+        else if (part) words.push({ text: part === '\n' ? '\n' : /^\s+$/.test(part) ? ' ' : part, font, size: sz, color: base.color });
       }
     }
     for (const word of words) {
@@ -252,7 +270,7 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
         lines.push([]); w = 0;
         continue;
       }
-      const ww = word.font.widthOfTextAtSize(word.text, word.size);
+      const ww = word.dot ? word.size * 1.05 : word.font.widthOfTextAtSize(word.text, word.size);
       if (word.text === ' ') {
         if (lines.at(-1).length) { lines.at(-1).push({ ...word, w: ww }); w += ww; }
         continue;
@@ -261,7 +279,7 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
         while (lines.at(-1).at(-1)?.text === ' ') w -= lines.at(-1).pop().w;
         lines.push([]); w = 0;
       }
-      if (ww > max) { // a word longer than the line: break it by letters
+      if (ww > max && !word.dot) { // a word longer than the line: break it by letters
         let chunk = '';
         for (const ch of word.text) {
           if (word.font.widthOfTextAtSize(chunk + ch, word.size) > max - w && chunk) {
@@ -283,7 +301,8 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
   const drawLine = (line, x, baseline, color = INK) => {
     let cx = x;
     for (const seg of line) {
-      if (seg.text !== ' ') page.drawText(seg.text, { x: cx, y: baseline, size: seg.size, font: seg.font, color: seg.color || color });
+      if (seg.dot) page.drawCircle({ x: cx + seg.size * 0.33, y: baseline + seg.size * 0.33, size: seg.size * 0.33, color: seg.dot });
+      else if (seg.text !== ' ') page.drawText(seg.text, { x: cx, y: baseline, size: seg.size, font: seg.font, color: seg.color || color });
       cx += seg.w;
     }
   };
@@ -327,10 +346,13 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
       y -= 6;
     } else if (b.type === 'item') {
       const indent = MARGIN.x + 6 + b.depth * 16;
-      const gap = b.check !== null ? 17 : b.marker === '•' ? 11 : 17;
+      // A line starting with a colour mark (a colour key) has its dot in place of the bullet.
+      const dotted = b.check === null && b.marker === '•' && new RegExp(`^\\s*${MARK_RE.source}`, 'u').test(b.text);
+      const gap = dotted ? 0 : b.check !== null ? 17 : b.marker === '•' ? 11 : 17;
       flow(parseInline(b.text), {
         x: indent + gap,
         before: (baseline) => {
+          if (dotted) return;
           if (b.check !== null) {
             page.drawRectangle({ x: indent, y: baseline - 1, width: 9, height: 9, borderColor: SOFT, borderWidth: 0.8 });
             if (b.check) page.drawText('x', { x: indent + 2, y: baseline + 0.5, size: 8.5, font: F.bold, color: ACCENT });
@@ -372,8 +394,8 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     const cols = Math.max(head.length, ...rows.map((r) => r.length));
     const size = cols > 4 ? 8.5 : 9.5;
     const pad = 5;
-    // The green mark shades its row and is not printed in the cell.
-    const unmark = (c) => String(c || '').replace(new RegExp(`${GREEN_MARK}\\s*`, 'g'), '');
+    // A colour mark shades its row and is not printed in the cell.
+    const unmark = (c) => String(c || '').replace(new RegExp(`${MARK_RE.source}\\s*`, 'gu'), '');
     const plain = (c) => sanitize(clean(unmark(c)));
     // Column widths by how much each holds, with a floor so no column collapses.
     const want = Array.from({ length: cols }, (_, i) => Math.max(
@@ -401,7 +423,11 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
       const h = Math.max(...wrapped.map((l) => l.length)) * lead + pad * 2;
       if (y - h < MARGIN.bottom) { newPage(); if (!header) drawRow(head, true); }
       if (header) page.drawRectangle({ x: MARGIN.x, y: y - h, width, height: h, color: FILL });
-      else if (cells.some((c) => String(c || '').includes(GREEN_MARK))) page.drawRectangle({ x: MARGIN.x, y: y - h, width, height: h, color: GREEN });
+      else if (markOf(cells)) {
+        const m = MARKS[markOf(cells)];
+        page.drawRectangle({ x: MARGIN.x, y: y - h, width, height: h, color: m.fill });
+        page.drawRectangle({ x: MARGIN.x, y: y - h, width: 3, height: h, color: m.dot });
+      }
       let x = MARGIN.x;
       wrapped.forEach((lines, i) => {
         lines.forEach((line, j) => drawLine(line, x + pad, y - pad - size - j * lead + 1.5));

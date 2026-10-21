@@ -347,6 +347,8 @@ body::after, .sky::after {
 .paper.md blockquote, .paper.md th { color: #6b6980; }
 .paper.md th { border-color: #cfcddb; } .paper.md td { border-color: #ebeaf1; } .paper.md hr { border-color: #dcdbe6; }
 .paper.md input[type="checkbox"] { margin-right: 0.4em; }
+/* A table spans the page, as it does in the PDF; a wide one scrolls inside the paper */
+.paper.md table { display: table; width: 100%; }
 
 /* keyboard focus only — no rings when tapping or clicking */
 :focus { outline: none; }

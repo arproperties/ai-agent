@@ -76,8 +76,10 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'When asked for a spreadsheet, a sheet or a table, write it in full as a Markdown table inside the document markers, ' +
     'one row per item with every column asked for, and the app offers it as a PDF. Say in one line that it comes as a PDF, not Excel. ' +
     'Never say a file is attached, created, saved or sent unless one of your tools did it in this answer. ' +
-    'To mark rows green (active cases, paid items, anything asked to be green), put 🟢 at the start of the first cell of each of those rows: ' +
-    'the chat shows the 🟢 and the PDF shades the whole row green. Colours other than green cannot be shown in a PDF.');
+    'To colour rows (active cases, paid items, anything asked to be in a colour), put one mark at the start of the first cell of each of those rows: ' +
+    '🟢 green, 🟡 yellow, 🟠 orange, 🔴 red, 🩷 pink, 🔵 blue, 🟣 purple, ⚪ grey. The chat shows the mark and the PDF shades the whole row in that colour, ' +
+    'so every one of these colours shows in a PDF: never add a column spelling the colour out. In a colour key or a list, start the line with the same mark ' +
+    'and the PDF draws it as a coloured dot.');
   // The app draws the shapes itself and makes the PDF, PNG and AutoCAD files from them.
   parts.push(`You can draw. When ${user.name} asks for a floor plan, layout, site or seating plan, flowchart, org chart, timeline or labelled diagram, ` +
     'write it as one fenced code block whose language is drawing, holding JSON, and the app shows it as a picture. Never draw with text characters. ' +
