@@ -41,6 +41,7 @@ import { meetingShareRoutes } from './meetingShare.js';
 import { drawingRoutes } from './drawing.js';
 import { tenantCareRoutes, startTenantCare } from './tenantCare.js';
 import { mailRoutingRoutes, startMailRouting } from './mailRouting.js';
+import { sharedInboxRoutes } from './sharedInbox.js';
 import { moduleRoutes, needsModule, needsModuleUnless, userModules, giveToEveryoneOnce } from './modules.js';
 import { noticeRoutes } from './notices.js';
 import { pictureRoutes } from './pictures.js';
@@ -81,6 +82,7 @@ app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks for building and unit when an email leaves them out
 app.use('/api/mail-routing', requireMaster, mailRoutingRoutes); // the shared mailbox: who each email is passed on to, and who sent what (master only)
+app.use('/api/shared-inbox', sharedInboxRoutes); // the emails Mail routing passed on to someone, read and answered from the shared address
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
 app.use('/api/lease-renewals', leaseRenewalRoutes); // leases ending within 120 days, renewed with the tenant by email step by step (module renewals)

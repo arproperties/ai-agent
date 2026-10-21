@@ -39,7 +39,7 @@ const lower = (s) => String(s || '').trim().toLowerCase();
 
 export const front = () => db.prepare('SELECT * FROM mail_front WHERE id = 1').get();
 export const rules = async () => (await db.prepare('SELECT * FROM mail_route_rules WHERE id = 1').get()) || { rules: '', auto: false, missing: '[]' };
-const people = () => db.prepare('SELECT * FROM mail_people ORDER BY lower(name)').all();
+export const people = () => db.prepare('SELECT * FROM mail_people ORDER BY lower(name)').all();
 const routable = () => db.prepare('SELECT * FROM mail_people WHERE in_rules ORDER BY lower(name)').all();
 const masters = async () => (await db.prepare(`SELECT id FROM users WHERE role = 'master' AND NOT disabled`).all()).map((r) => r.id);
 
@@ -108,7 +108,7 @@ async function readLatest(acc, n = 10) {
 }
 
 /** One email from the shared inbox by its number, for forwarding it by hand later. */
-async function fetchOne(acc, uid, validity) {
+export async function fetchOne(acc, uid, validity) {
   return withMailbox(acc, async (c) => {
     const lock = await c.getMailboxLock('INBOX', { readOnly: true });
     try {
@@ -268,7 +268,7 @@ export function forwardText(mail, reason, { dropped = false } = {}) {
   const sender = mail.name ? `${mail.name} <${mail.from}>` : mail.from;
   return [
     reason ? `Reem passed this email on to you: ${reason}` : 'Reem passed this email on to you.',
-    `Reply as usual: Reem sends your reply to ${mail.replyTo || mail.from} from the shared address. Write only your answer; this note is not sent.`,
+    `Reply as usual, or from Shared inbox in Reem: Reem sends your reply to ${mail.replyTo || mail.from} from the shared address. Write only your answer; this note is not sent.`,
     ...(dropped ? ['', 'The attachments were too big to forward. They are still in the shared mailbox.'] : []),
     '', '---------- Forwarded message ----------',
     `From: ${sender}`,
@@ -296,6 +296,19 @@ async function forward(acc, row, mail, to, { send = sendRaw } = {}) {
   });
   await db.prepare('UPDATE mail_log SET forward_id = ? WHERE id = ?').run(built.messageId, row.id);
   await send(acc, decrypt(acc.password_enc), built);
+  // Their phone buzzes too: they can read and answer it on the Shared inbox page.
+  usersFor(to).then((ids) => ids.length && sendPush(ids, {
+    title: `Email from ${mail.name || mail.from}`, body: String(mail.subject || '(no subject)').slice(0, 120),
+    url: '/?sharedinbox=1', tag: `shared-inbox-${row.id}`,
+  })).catch(() => {});
+}
+
+/** The Reem accounts behind these addresses: their login, or the mailbox they connected. */
+export async function usersFor(addresses) {
+  const list = [...new Set([addresses].flat().map(lower).filter(Boolean))];
+  if (!list.length) return [];
+  return (await db.prepare(`SELECT DISTINCT u.id FROM users u LEFT JOIN imap_accounts a ON a.user_id = u.id
+    WHERE NOT u.disabled AND (lower(u.email) = ANY(?::text[]) OR lower(a.email) = ANY(?::text[]))`).all(list, list)).map((r) => r.id);
 }
 
 // ---------- replies, sent on from the shared address ----------
@@ -335,30 +348,45 @@ async function relay(acc, m, id, uidValidity, { send = sendRaw, summarize = summ
   const allowed = new Set([...String(row.route_to || '').split(','), ...(await people()).map((p) => p.email)].map(lower).filter(Boolean));
   if (!allowed.has(m.from)) return null;
   const who = (await db.prepare('SELECT name FROM mail_people WHERE email = ?').get(m.from))?.name || m.name || m.from;
-  const answer = ownReply(m.text);
+  return sendAnswer(acc, row, {
+    ref: `${lower(acc.email)}:reply:${uidValidity}:${m.uid}`, uid: m.uid, uidValidity, by: m.from, who,
+    answer: ownReply(m.text), at: m.at, attachments: m.attachments,
+  }, { send, summarize });
+}
+
+/**
+ * A staff answer to a logged email, sent from the shared address to whoever wrote it, threaded
+ * onto it with their words quoted underneath. Both ways in come here: a reply that came back
+ * by email (relay), and one written on the Shared inbox page. ref makes it once only: a second
+ * try with the same ref sends nothing. by is the address it is from, user the Reem account
+ * that pressed Send (if any). Returns { id, failed, error }; id is null when already sent.
+ */
+export async function sendAnswer(acc, row, { ref, uid = null, uidValidity = null, by, who, answer, at, attachments = [], user = null },
+  { send = sendRaw, summarize = summarizeSent } = {}) {
   const to = row.reply_addr || row.from_addr;
   const quote = row.preview ? `\n\nOn ${new Date(Number(row.at) * 1000).toUTCString()}, ${row.from_name || row.from_addr} wrote:\n> ${row.preview}` : '';
   const built = await compose({
     from: { address: acc.email }, to: [to], subject: replySubject(row.subject),
     text: `${answer}${quote}`, inReplyTo: row.message_id || undefined, references: row.message_id || undefined,
-    attachments: (m.attachments || []).filter((a) => a.content?.length).slice(0, 10)
+    attachments: (attachments || []).filter((a) => a.content?.length).slice(0, 10)
       .map((a) => ({ filename: a.filename, contentType: a.contentType, content: a.content.toString('base64') })),
   });
   const mine = lower(acc.email);
   // Logged before it is sent, with its Message-ID, so the Sent check knows it as Reem's.
-  const r = await db.prepare(`INSERT INTO mail_log (kind, ref, mailbox, uid, uid_validity, message_id, from_addr, from_name, to_addrs, subject, preview, at, status, forward_id)
-    VALUES ('out', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'replied', ?) ON CONFLICT (ref) DO NOTHING RETURNING id`)
-    .run(`${mine}:reply:${uidValidity}:${m.uid}`, mine, m.uid, uidValidity, built.messageId, m.from, who, to,
-      replySubject(row.subject).slice(0, 300), answer.replace(/\s+/g, ' ').slice(0, 400), m.at, built.messageId);
+  const r = await db.prepare(`INSERT INTO mail_log (kind, ref, mailbox, uid, uid_validity, message_id, from_addr, from_name, to_addrs, subject, preview, at, status, forward_id, answers, forwarded_by)
+    VALUES ('out', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'replied', ?, ?, ?) ON CONFLICT (ref) DO NOTHING RETURNING id`)
+    .run(ref, mine, uid, uidValidity, built.messageId, by, who, to,
+      replySubject(row.subject).slice(0, 300), answer.replace(/\s+/g, ' ').slice(0, 400), at, built.messageId, row.id, user);
   if (!r.id) return { id: null, failed: false }; // already sent on
   try {
     if (!answer) throw new Error('The reply was empty, so nothing was sent');
     await send(acc, decrypt(acc.password_enc), built);
   } catch (e) {
-    await db.prepare(`UPDATE mail_log SET status = 'failed', error = ? WHERE id = ?`).run(String(e.code ? friendlySmtp(e, acc.smtp_host) : e.message).slice(0, 300), r.id);
-    return { id: r.id, failed: true };
+    const error = String(e.code ? friendlySmtp(e, acc.smtp_host) : e.message).slice(0, 300);
+    await db.prepare(`UPDATE mail_log SET status = 'failed', error = ? WHERE id = ?`).run(error, r.id);
+    return { id: r.id, failed: true, error };
   }
-  const reason = await summarize({ ...m, text: answer, to: [to], cc: [] });
+  const reason = await summarize({ from: by, name: who, subject: replySubject(row.subject), text: answer, to: [to], cc: [] });
   if (reason) await db.prepare('UPDATE mail_log SET reason = ? WHERE id = ?').run(reason, r.id);
   return { id: r.id, failed: false };
 }

@@ -1671,6 +1671,10 @@ await db.exec(`
   ALTER TABLE mail_log ADD COLUMN IF NOT EXISTS reply_addr TEXT;
   ALTER TABLE mail_log DROP CONSTRAINT IF EXISTS mail_log_status_check;
   ALTER TABLE mail_log ADD CONSTRAINT mail_log_status_check CHECK (status IN ('would', 'forwarded', 'failed', 'none', 'sent', 'direct', 'replied'));
+  -- answers: for a 'replied' row, the email it answers, so the Shared inbox page can show who
+  -- has replied to what. forwarded_by on a 'replied' row is who pressed Send in Reem.
+  ALTER TABLE mail_log ADD COLUMN IF NOT EXISTS answers INTEGER;
+  CREATE INDEX IF NOT EXISTS idx_mail_log_answers ON mail_log(answers) WHERE answers IS NOT NULL;
 `);
 
 // The automatic Lease renewals (Reem emailing tenants) was taken out on 2026-10-15; its
