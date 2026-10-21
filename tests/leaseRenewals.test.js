@@ -35,7 +35,10 @@ function stub({ leases = [LEASE], replies = [], docs = [], files = {} } = {}) {
     act: async (module, action, body) => {
       assert.equal(module, 'realestate_renewal');
       world.acts.push({ action, ...body });
-      if (action === 'quote') return { quote: { ...quoteOf(body.rent), fees: { admin: body.admin_fees ?? 1500, chiller: 0, chiller_shown: false } } };
+      if (action === 'quote') {
+        const admin = body.admin_fees ?? 1500;
+        return { quote: { ...quoteOf(body.rent), grand_total: body.rent + admin * 1.05 + 300, fees: { admin, chiller: 0, chiller_shown: false } } };
+      }
       if (action === 'contract') return { contract: { name: 'contract_525.pdf', data: Buffer.from('%PDF-saifsys-contract').toString('base64') } };
       if (action === 'start') return { renewal: { workflow_id: 117, status: 'notice_sent', notice: { name: 'renewal_notice_117.pdf', data: Buffer.from('%PDF-saifsys-notice!!').toString('base64') } } };
       if (action === 'convert') return { renewal: { workflow_id: 117, new_lease_id: 525, activate_now: false } };
@@ -121,10 +124,10 @@ test('Send: saifsys makes its renewal, the offer goes with saifsys\'s own notice
 test('Start: the admin fee the person types goes to saifsys and into the offer; later steps keep it', async () => {
   const boss = await setup();
   stub();
-  assert.deepEqual(await R.startFees(LEASE.lease_id), { admin: 1500, chiller: 0, chiller_shown: false }, 'the old lease\'s, for the Start box');
+  assert.deepEqual(await R.startFees(LEASE.lease_id), { admin: 1500, chiller: 0, chiller_shown: false, vat_rate: 5 }, 'the old lease\'s, for the Start box');
   const r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000, admin_fees: 2000 });
   assert.equal(world.acts.find((a) => a.action === 'start').admin_fees, 2000);
-  assert.match(lastMail(), /Admin fee: AED 2,000 \+ VAT/);
+  assert.match(lastMail(), /Admin fee: AED 2,000\n- VAT \(5%\) on these charges: AED 100\n- Total \(rent, charges and VAT\): AED 47,100\n/);
   await R.draft(boss, { id: r.id, action: 'counter', rent: 44000 });
   assert.equal(world.acts.at(-1).admin_fees, 2000, 'a counter-offer is priced with the same fee');
 });
@@ -459,4 +462,28 @@ test('words typed inside the quoted email are still the tenant\'s', () => {
   assert.equal(R.tenantWords('I can pay 51,000\n\nOn Thu, 15 Oct 2026 at 15:40, Tenant Care <care@company.com> wrote:\n> Dear Test,\n> Our offer'), 'I can pay 51,000');
   assert.equal(R.tenantWords('On Thu, 15 Oct 2026 at 15:53, Tenant Care <care@company.com> wrote:\n> OK, I accept 53,000\n>\n> Dear Test Two Counter,\n> Thank you for your reply.'), 'OK, I accept 53,000');
   assert.equal(R.tenantWords('> OK, I accept\n> Dear Test,\n> offer'), 'OK, I accept');
+});
+
+test('rewrite with Reem: only the words between greeting and sign-off are rewritten, nothing is sent', async () => {
+  const boss = await setup();
+  stub();
+  const r = await start(boss, 42000);
+  const asked = [];
+  R.useForTests({ rewriteReply: async (x) => { asked.push(x); return 'We would be pleased to clarify the admin fee.'; } });
+  const out = await R.rewrite(r.id, 'Dear Mohamed Saeed,\n\nadmin fee is standard ok\n\nKind regards,\nTenant Care Team');
+  assert.equal(asked[0].draft, 'admin fee is standard ok');
+  assert.match(asked[0].facts, /AED 36,000 a year/);
+  assert.equal(out.text, 'Dear Mohamed Saeed,\n\nWe would be pleased to clarify the admin fee.\n\nKind regards,\nTenant Care Team');
+  assert.equal(world.sent.length, 1, 'only the offer was ever sent');
+  await assert.rejects(R.rewrite(r.id, 'Dear Mohamed Saeed,\n\nKind regards,\nTenant Care Team'), /Write a few words first/);
+});
+
+test('charges: each extra listed, VAT taken from saifsys\'s own total, shown as 5% on the charges', () => {
+  const q = { proposed_rent: 249375, rera: 300, grand_total: 249375 + 1500 + 2000 + 175 + 300, fees: { admin: 1500, chiller: 0, parking: 2000, small_store: 0, big_store: 0 } };
+  const c = R.chargesOf(q);
+  assert.deepEqual(c.items.map((x) => [x.label, x.amount]), [['Admin fee', 1500], ['Additional parking slot', 2000]]);
+  assert.equal(c.vat, 175);
+  assert.equal(c.onCharges, true);
+  assert.equal(c.total, 249375 + 3500 + 175);
+  assert.equal(R.chargesOf({ proposed_rent: 1000, rera: 0, grand_total: 1000, fees: {} }).vat, 0);
 });

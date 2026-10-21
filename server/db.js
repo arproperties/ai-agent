@@ -1101,6 +1101,21 @@ await db.exec(`
   );
 `);
 
+// Whose files a person may read besides their own: "Rona can see Said's files". Set by
+// the master per person - see server/fileAccess.js. Its own table, not a flag on users or
+// documents: it is a pair of people, and a file being shared with everyone is a different
+// thing (documents.shared). Reading only; changing a file stays with its owner.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS file_access (
+    viewer_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    owner_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    granted_at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (viewer_id, owner_id),
+    CHECK (viewer_id <> owner_id)
+  );
+`);
+
 // Checklists: the points of one job, ticked off each time it is done - see server/checklists.js.
 // Their own tables rather than a flag on todos or routines: those are single things, and
 // a checklist is several steps that belong together and are done as one.

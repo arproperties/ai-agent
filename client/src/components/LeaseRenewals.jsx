@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -181,6 +181,9 @@ function LeaseCard({ l, onOpen }) {
 
 // ---------- writing and sending ----------
 
+/** The optional extra services saifsys renews with a lease: key, label, the field saifsys takes. */
+const EXTRAS = [['parking', 'Additional parking slot', 'additional_parking_fee'], ['small_store', 'Small storeroom', 'small_store_fee'], ['big_store', 'Big storeroom', 'big_store_fee']];
+
 /** Start: the rent we choose and the cheques, then the offer to read before it goes. */
 function StartSheet({ lease, onClose, onDone }) {
   const current = Number(lease.annual_rent);
@@ -192,9 +195,12 @@ function StartSheet({ lease, onClose, onDone }) {
   const [fees, setFees] = useState(null);
   const [admin, setAdmin] = useState('');
   const [chiller, setChiller] = useState('');
+  // The extra services: off, or on at a yearly fee (the old lease's to start with).
+  const [extras, setExtras] = useState({});
   useEffect(() => {
     api.get(`/lease-renewals/fees/${lease.lease_id}`).then((f) => {
       setFees(f); setAdmin(String(Math.round(f.admin || 0))); setChiller(String(Math.round(f.chiller || 0)));
+      setExtras(Object.fromEntries(EXTRAS.map(([k]) => [k, { on: Number(f[k]) > 0, fee: Number(f[k]) > 0 ? String(Math.round(f[k])) : '' }])));
     }).catch(() => setFees({ failed: true }));
   }, [lease.lease_id]);
   // The % and the rent fill each other in, so either can be typed.
@@ -207,6 +213,10 @@ function StartSheet({ lease, onClose, onDone }) {
     setRent(v);
     setPct(v && current ? String(Math.round(((Number(v) - current) / current) * 1000) / 10) : '');
   };
+  // As saifsys works it out: the rate on admin, chiller and the extra services ticked, never on the rent.
+  const chargeBase = (Number(admin) || 0) + (fees?.chiller_shown ? Number(chiller) || 0 : 0)
+    + EXTRAS.reduce((t, [k]) => t + (extras[k]?.on ? Number(extras[k].fee) || 0 : 0), 0);
+  const vat = Math.round(chargeBase * (fees?.vat_rate ?? 5)) / 100;
   if (step) return <Compose ask={step} onClose={onClose} onSent={onDone} />;
   return (
     <Sheet title="Start the renewal" onClose={onClose} action={(
@@ -249,15 +259,39 @@ function StartSheet({ lease, onClose, onDone }) {
         ) : !fees.failed && (
           <div className={`grid gap-2 ${fees.chiller_shown ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <label className="block space-y-1.5 text-sm">
-              <span>Admin fee <span className="text-mute">+ VAT</span></span>
+              <span>Administration Fees</span>
               <Money value={admin} onChange={setAdmin} placeholder="AED" />
             </label>
             {fees.chiller_shown && (
               <label className="block space-y-1.5 text-sm">
-                <span>Chiller fee <span className="text-mute">+ VAT</span></span>
+                <span>Chiller Fees</span>
                 <Money value={chiller} onChange={setChiller} placeholder="AED" />
               </label>
             )}
+          </div>
+        )}
+        {fees && !fees.failed && (
+          <div className="space-y-2">
+            <p className="text-sm">Optional Extra Services</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {EXTRAS.map(([k, label]) => {
+                const x = extras[k] || { on: false, fee: '' };
+                const set = (v) => setExtras((e) => ({ ...e, [k]: { ...x, ...v } }));
+                return (
+                  <div key={k} className="space-y-1.5 text-sm">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={x.on} onChange={(e) => set({ on: e.target.checked })} className="size-4 accent-p1" />
+                      <span className={x.on ? '' : 'text-mute'}>{label}</span>
+                    </label>
+                    <div className={x.on ? '' : 'opacity-50'}><Money value={x.fee} onChange={(v) => set({ fee: v, on: v !== '' && Number(v) > 0 ? true : x.on })} placeholder="0" /></div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-between rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm">
+              <span>{fees.vat_rate ?? 5}% VAT on Extra Charges</span>
+              <b>{aed(vat)}</b>
+            </div>
           </div>
         )}
         <label className="block space-y-1.5 text-sm">
@@ -270,9 +304,12 @@ function StartSheet({ lease, onClose, onDone }) {
           </div>
         </label>
         <div className="flex justify-end">
-          <Btn primary disabled={!rent} onClick={() => setStep({
+          <Btn primary disabled={!rent || EXTRAS.some(([k]) => extras[k]?.on && !(Number(extras[k].fee) > 0))} onClick={() => setStep({
             action: 'start', lease_id: lease.lease_id, rent: Number(rent), cheques: Number(cheques),
-            ...(fees && !fees.failed ? { admin_fees: admin === '' ? null : Number(admin), ...(fees.chiller_shown ? { chiller_charges: chiller === '' ? null : Number(chiller) } : {}) } : {}),
+            ...(fees && !fees.failed ? {
+              admin_fees: admin === '' ? null : Number(admin), ...(fees.chiller_shown ? { chiller_charges: chiller === '' ? null : Number(chiller) } : {}),
+              ...Object.fromEntries(EXTRAS.map(([k, , field]) => [field, extras[k]?.on ? Number(extras[k].fee) || 0 : 0])),
+            } : {}),
           })}>
             <Mail size={14} /> Write the offer
           </Btn>
@@ -296,34 +333,45 @@ function Compose({ ask, onClose, onSent }) {
   useEffect(() => {
     api.post('/lease-renewals/draft', ask).then((x) => { setD(x); setText(x.text); }).catch((e) => setError(e.message));
   }, [ask]);
+  const [rewriting, setRewriting] = useState(false);
+  const rewrite = async () => {
+    setRewriting(true); setError('');
+    try { setText((await api.post(`/lease-renewals/${ask.id}/rewrite`, { text })).text); } catch (e) { setError(e.message); }
+    setRewriting(false);
+  };
   const send = async () => {
     setBusy(true); setError('');
     try { onSent(await api.post('/lease-renewals/send', { ...ask, text })); } catch (e) { setError(e.message); setBusy(false); }
   };
   return (
-    <Sheet title={TITLES[ask.action]} onClose={onClose}>
+    <Sheet title={TITLES[ask.action]} onClose={onClose} wide="text">
       {!d ? (error ? <Problem text={error} /> : <div className="grid place-items-center py-10 text-mute"><Loader2 className="animate-spin" /></div>) : (
         <div className="space-y-3">
           <p className="text-xs text-mute">To <span className="text-txt">{d.to}</span> · {d.subject}</p>
           {d.rent && ask.action !== 'convert' && (
             <div className="rounded-2xl border border-stroke bg-black/20 p-3 text-sm">
               <p><span className="text-mute">Rent:</span> <b>{aed(d.rent)}</b> a year{d.source?.kind === 'rera_index' ? ` · RERA index${d.source.pct !== undefined ? ` (+${d.source.pct}%)` : ''}` : ''}</p>
-              {d.fees && (d.fees.admin > 0 || d.fees.chiller > 0) && (
-                <p className="mt-1 text-xs text-mute">{[d.fees.admin > 0 && `Admin fee ${aed(d.fees.admin)}`, d.fees.chiller > 0 && `Chiller fee ${aed(d.fees.chiller)}`].filter(Boolean).join(' · ')} + VAT</p>
+              {d.charges && (d.charges.items.length > 0 || d.charges.vat > 0) && (
+                <>
+                  <p className="mt-1 text-xs text-mute">{d.charges.items.map((c) => `${c.label} ${aed(c.amount)}`).join(' · ')}</p>
+                  {d.charges.vat > 0 && <p className="mt-1 text-xs text-mute">VAT{d.charges.onCharges ? ' (5%) on these charges' : ''}: {aed(d.charges.vat)}</p>}
+                  <p className="mt-1 text-xs">Total with charges and VAT: <b>{aed(d.charges.total)}</b></p>
+                </>
               )}
               {d.schedule && <p className="mt-1 text-xs text-mute">{d.schedule.length} cheques: {d.schedule.map((c) => `${day(c.date)} ${aed(c.amount)}`).join(' · ')}</p>}
             </div>
           )}
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={12}
-            className="w-full rounded-2xl border border-stroke bg-black/20 p-3 text-sm leading-relaxed outline-none focus:border-p1/60" />
+          <textarea value={text} onChange={(e) => setText(e.target.value)}
+            className="h-[50dvh] min-h-64 w-full resize-y rounded-2xl border border-stroke bg-black/20 p-3 text-sm leading-relaxed outline-none focus:border-p1/60" />
           {d.attachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5">{d.attachments.map((a) => <span key={a} className="flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1 text-xs text-mute"><Paperclip size={12} /> {a}</span>)}</div>
           )}
           {ask.action === 'convert' && <p className="text-xs text-mute">saifsys makes the new lease and its cheques now, then this email goes to the tenant.</p>}
           <Problem text={error} />
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
+            {ask.action === 'reply' && <Btn busy={rewriting} disabled={!text.trim() || busy} onClick={rewrite}><Sparkles size={14} /> Rewrite with Reem</Btn>}
             <Btn onClick={onClose}>Cancel</Btn>
-            <Btn primary busy={busy} disabled={!text.trim()} onClick={send}><Send size={14} /> Send</Btn>
+            <Btn primary busy={busy} disabled={!text.trim() || rewriting} onClick={send}><Send size={14} /> Send</Btn>
           </div>
         </div>
       )}

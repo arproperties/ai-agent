@@ -15,7 +15,7 @@ import { renderPdf } from './replyDoc.js';
 import { needsModule } from './modules.js';
 import { inbox, fileInSent, ownWords, claimTenantMail, checkTenantMail } from './tenantCare.js';
 import { askSaifsys, actSaifsys, saifsysConfigured, saifsysActionsConfigured, dubaiDate } from './saifsys/client.js';
-import { readReply, readDocs, advise, caseSummary } from './leaseRenewalAi.js';
+import { readReply, readDocs, advise, caseSummary, rewriteReply } from './leaseRenewalAi.js';
 
 // Lease renewals: whoever has the module renews each lease with its tenant by email, from
 // Reem, instead of the staff in saifsys. The list is saifsys's leases ending within 120 days.
@@ -77,7 +77,7 @@ async function indexRent() { return null; }
 
 // Everything that reaches outside, swappable for the tests.
 const D = {
-  ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, caseSummary, checkMail: checkTenantMail,
+  ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, caseSummary, rewriteReply, checkMail: checkTenantMail,
   send: sendRaw, file: fileInSent, fetch: fetchMessage, push: sendPush, todo: createTodo, actor: async () => (await inbox())?.email,
   mirror: (action, body) => saifsys(action, body),
   now: () => Date.now(),
@@ -206,9 +206,38 @@ function offerLines(q, rent) {
     `- Annual rent: ${aed(rent)}`,
     `- Payment by ${q.cheques.length} cheque${q.cheques.length > 1 ? 's' : ''}:`,
     ...schedule(q),
-    ...(q.fees?.admin ? [`- Admin fee: ${aed(q.fees.admin)} + VAT`] : []),
-    ...(q.fees?.chiller ? [`- Chiller fee: ${aed(q.fees.chiller)} + VAT`] : []),
+    ...chargeLines(q),
     ...(q.rera ? [`- Ejari fee: ${aed(q.rera)}, paid on registration`] : []),
+  ];
+}
+
+/** The renewal's charges one by one, as saifsys charges them. */
+const CHARGES = [['admin', 'Admin fee'], ['chiller', 'Chiller fee'], ['parking', 'Additional parking slot'], ['small_store', 'Small storeroom'], ['big_store', 'Big storeroom']];
+const round2 = (n) => Math.round(Number(n) * 100) / 100;
+
+/**
+ * The charges, their VAT and the total, from saifsys's own quote. The VAT is what saifsys
+ * added (its grand total less the rent, the charges and the Ejari fee), never worked out
+ * here, so it is always what the tenant will be asked to pay.
+ */
+export function chargesOf(q) {
+  const f = q?.fees || {};
+  const items = CHARGES.filter(([k]) => Number(f[k]) > 0).map(([k, label]) => ({ key: k, label, amount: round2(f[k]) }));
+  const base = round2(items.reduce((t, c) => t + c.amount, 0));
+  const rent = Number(q?.proposed_rent) || 0;
+  const vat = q?.grand_total != null ? Math.max(0, round2(Number(q.grand_total) - rent - base - (Number(q.rera) || 0))) : 0;
+  // 5% of the charges alone: say so, so nobody thinks the rent carries VAT.
+  const onCharges = base > 0 && Math.abs(vat - round2(base * 0.05)) < 0.02;
+  return { items, base, vat, onCharges, total: round2(rent + base + vat) };
+}
+
+function chargeLines(q) {
+  const c = chargesOf(q);
+  if (!c.items.length && !c.vat) return [];
+  return [
+    ...c.items.map((x) => `- ${x.label}: ${aed(x.amount)}`),
+    ...(c.vat ? [`- VAT ${c.onCharges ? '(5%) on these charges' : ''}: ${aed(c.vat)}`.replace(' :', ':')] : []),
+    `- Total (rent, charges and VAT): ${aed(c.total)}`,
   ];
 }
 
@@ -349,8 +378,11 @@ async function mirror(r, message, { text = null, files = [] } = {}) {
 }
 
 /** saifsys's own cheques and charges for a renewal at this rent. Nothing is saved. */
-/** The admin and chiller fees to ask saifsys for: null keeps the old lease's. */
-const feesOf = (f = {}) => ({ admin_fees: f.admin ?? null, chiller_charges: f.chiller ?? null });
+/** The charges to ask saifsys for: null keeps the old lease's, 0 is none. */
+const feesOf = (f = {}) => ({
+  admin_fees: f.admin ?? null, chiller_charges: f.chiller ?? null,
+  additional_parking_fee: f.parking ?? null, small_store_fee: f.small_store ?? null, big_store_fee: f.big_store ?? null,
+});
 
 async function quoteFor(lease, rent, cheques, fees) {
   const { quote } = await saifsys('quote', { lease_id: lease.lease_id, end_date: lease.end_date, rent, cheques, ...feesOf(fees) });
@@ -362,7 +394,10 @@ export async function startFees(leaseId) {
   const lease = (await dueLeases()).find((l) => l.lease_id === Number(leaseId));
   if (!lease) throw bad('That lease is not in saifsys\'s list of leases ending within 120 days.', 404);
   const q = await quoteFor(lease, Math.round(Number(lease.annual_rent)) || 1, lease.cheques || 4);
-  return q.fees || { admin: 0, chiller: 0, chiller_shown: false };
+  // saifsys's VAT on the extra charges for this building: 5%, or none where it is switched off.
+  const c = chargesOf(q);
+  const vatRate = c.base > 0 && c.vat === 0 ? 0 : 5;
+  return { ...(q.fees || { admin: 0, chiller: 0, chiller_shown: false }), vat_rate: vatRate };
 }
 
 // ---------- what a person does: a draft first, then Send ----------
@@ -390,7 +425,8 @@ const rentOf = (v) => {
 };
 
 /** The renewal (or, for start, the lease) a draft or a send is about, and the figures it needs. */
-async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, words, admin_fees: adminFee, chiller_charges: chillerFee }) {
+async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, words, admin_fees: adminFee, chiller_charges: chillerFee,
+  additional_parking_fee: parkingFee, small_store_fee: smallFee, big_store_fee: bigFee }) {
   const a = ACTIONS[action];
   if (!a) throw bad('Unknown step.');
   const s = await settings();
@@ -424,7 +460,7 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, word
   if (action === 'convert') amount = r.agreed;
   // Start takes the fees the person typed; later steps keep the renewal's.
   const fee = (v) => (v === undefined || v === null || v === '' ? null : Math.max(0, Math.round(Number(v) * 100) / 100));
-  const fees = action === 'start' ? { admin: fee(adminFee), chiller: fee(chillerFee) } : r.quote?.fees;
+  const fees = action === 'start' ? { admin: fee(adminFee), chiller: fee(chillerFee), parking: fee(parkingFee), small_store: fee(smallFee), big_store: fee(bigFee) } : r.quote?.fees;
   const quote = amount && action !== 'convert' ? (action !== 'accept' || amount !== r.offer || !r.quote ? await quoteFor(r.lease, amount, n, fees) : r.quote) : r.quote;
 
   let text;
@@ -454,7 +490,7 @@ export async function draft(user, body) {
   return {
     to: p.r.lease.email, subject: subjectOf(p.r), text: p.text, rent: p.amount, cheques: p.cheques, source: p.source,
     schedule: p.quote?.cheques || null, total: p.quote?.cheques_total ?? null,
-    fees: p.quote?.fees || null,
+    fees: p.quote?.fees || null, charges: p.quote ? chargesOf(p.quote) : null,
     attachments: body.action === 'start' ? [noticeName(p.r)] : body.action === 'accept' ? [contractName(p.r)] : [],
   };
 }
@@ -705,6 +741,20 @@ async function handle(r, e) {
   return null;
 }
 
+/** "Rewrite with Reem": the reply in the box, written again as the building management team. Nothing is sent. */
+export async function rewrite(id, text) {
+  const r = await getRenewal(id);
+  if (!r) throw bad('Renewal not found', 404);
+  // Only the words between the greeting and the sign-off are rewritten; both are put back as they are.
+  const lines = String(text || '').split('\n');
+  const start = lines[0]?.trim() === dear(r) ? 1 : 0;
+  const signAt = lines.findIndex((l) => l.trim() === SIGN[1]);
+  const words = lines.slice(start, signAt > start ? signAt : undefined).join('\n').trim();
+  if (!words) throw bad('Write a few words first, then Reem can write them again.');
+  const body = await D.rewriteReply({ facts: factsOf(r, await settings()), thread: await thread(r.id), draft: words });
+  return { text: replyText(r, body) };
+}
+
 // ---------- the advisors ----------
 
 /** The agents the master picked to advise, as they are now. */
@@ -906,6 +956,9 @@ leaseRenewalRoutes.post('/:id/advise', wrap(async (req, res) => {
   if (!(await advisors(await settings())).length) throw bad('No advisors are picked yet: the master picks them in the Lease renewals settings.', 409);
   res.json({ added: await askAdvisors(r, { user: req.user }) });
 }));
+
+// "Rewrite with Reem": the reply in the box, written again as the building management team. Nothing is sent.
+leaseRenewalRoutes.post('/:id/rewrite', wrap(async (req, res) => { res.json(await rewrite(req.params.id, req.body?.text)); }));
 
 leaseRenewalRoutes.get('/:id/case-pack', wrap(async (req, res) => {
   const r = await getRenewal(req.params.id);

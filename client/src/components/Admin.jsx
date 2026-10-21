@@ -5,6 +5,7 @@ import Avatar from './Avatar';
 import Sheet from './Sheet';
 import { ResponsibilitiesEditor } from './Responsibilities';
 import HrLink from './HrLink';
+import FileAccess from './FileAccess';
 
 /**
  * One agent, as a card in a grid. The same shape whether it is being picked as the
@@ -289,6 +290,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
         {tab === 'memory' && <Memories person={person} />}
         {tab === 'saifsys' && <><HrLink person={person} /><SaifsysModules person={person} /></>}
         {tab === 'modules' && <Modules person={person} />}
+        {tab === 'documents' && <FileAccess person={person} />}
         {(tab === 'documents' || tab === 'conversations' || tab === 'messages') && <Browse person={person} kind={tab} />}
 
         {tab === 'agents' && (!loaded ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (

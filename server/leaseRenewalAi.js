@@ -131,3 +131,21 @@ export async function caseSummary({ facts, story }) {
   const out = await askJson(STORY, [{ type: 'text', text: `Facts of this renewal:\n${facts}\n\nWhat happened, oldest first:\n${story}` }], 1200);
   return String(out.summary || '').trim().slice(0, 4000);
 }
+
+const REWRITE = `You are the building management team of a Dubai landlord, writing to a tenant about the renewal of their lease.
+Rewrite the draft reply you are given into a clear, professional, courteous email from the building management team.
+Answer with JSON only: {"reply": string}
+- reply: only the body: no greeting ("Dear ...") and no sign-off, as both are added.
+- Keep what the draft is trying to say. Answer what the tenant last asked, using ONLY the facts given.
+- Professional and warm, never cold or pushy; short paragraphs; plain English; no slang, no emojis.
+- No new figures, dates, discounts or promises that are not in the facts or the draft.
+- Never say whether a rent increase is legal or allowed, and never threaten the tenant with a case.`;
+
+/** The person's draft reply, written again by Reem as the building management team. */
+export async function rewriteReply({ facts, thread, draft }) {
+  const out = await askJson(REWRITE, [{ type: 'text', text:
+    `Facts of this renewal:\n${facts}\n\nThe emails, oldest first:\n${thread || '(none yet)'}\n\nThe draft reply to rewrite:\n"""\n${String(draft || '').slice(0, 6000)}\n"""` }], 1200);
+  const reply = String(out.reply || '').trim();
+  if (!reply) throw new Error('Reem could not rewrite that. Try again.');
+  return reply.slice(0, 4000);
+}

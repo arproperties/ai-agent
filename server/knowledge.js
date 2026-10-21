@@ -350,15 +350,16 @@ export async function findChunks(user, query, k = 20, scope = agentScope(user)) 
  * Own material has no agent filter: it all belongs to this user, and siloing it per
  * agent would stop their Lawyer agent reading an invoice they uploaded. Shared material
  * has none either: what the master shares reaches every user, whichever shelf it is
- * filed on. The shelf says where a file lives, not who may read it.
+ * filed on. The shelf says where a file lives, not who may read it. And the files of
+ * anyone the master let this person see (file_access - "Rona can see Said's files").
  *
  * `t` is the alias to hang it on, for the queries that already call their table
  * something else.
  */
 export function retrievalScope(userId, t = 't') {
   return {
-    sql: `(${t}.user_id = ? OR ${t}.shared)`,
-    params: [userId],
+    sql: `(${t}.user_id = ? OR ${t}.shared OR ${t}.user_id IN (SELECT owner_id FROM file_access WHERE viewer_id = ?))`,
+    params: [userId, userId],
   };
 }
 

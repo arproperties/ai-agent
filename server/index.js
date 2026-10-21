@@ -24,6 +24,7 @@ import { teamReminderRoutes, bringOldRemindersIntoTodos } from './teamReminders.
 import { responsibilityRoutes } from './responsibilities.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
+import { fileAccessRoutes } from './fileAccess.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
@@ -94,6 +95,7 @@ app.use('/api/buildings', buildingRoutes); // who runs each building, and the st
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
+app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
