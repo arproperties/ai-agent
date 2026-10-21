@@ -3,6 +3,7 @@ import { imapAccount, imapTools, imapActions, replySubject } from './imap.js';
 import { createDraft, getDraft, withdrawDraft, draftOut, logAction } from './drafts.js';
 import { kick } from './outbox.js';
 import { gather, discard } from './draftFiles.js';
+import { checkAddresses } from './addressBook.js';
 
 // The tool surface the agents see. Reading works against an IMAP mailbox or Outlook.
 // Acting works against IMAP only, and only when its owner has turned it on — the write
@@ -212,6 +213,7 @@ function writeTools(ctx) {
 
   return {
     create_draft: async (userId, { to, cc, subject, body, in_reply_to, attachments, replaces }) => {
+      checkAddresses([...(to || []), ...(cc || [])]);
       const acc = await imapAccount(userId);
       // in_reply_to is optional here and best-effort: a draft that cannot be threaded is
       // still a draft worth showing, so a failed lookup loses the headers, not the email.
