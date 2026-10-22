@@ -75,7 +75,10 @@ test('the Web Connector is refused with a wrong password, and told "none" when o
 
   await queueListRead();
   await setEnabled(false);
-  assert.equal((await call('authenticate', { strUserName: username, strPassword: password }))[1], 'none', 'switched off');
+  assert.equal((await call('authenticate', { strUserName: username, strPassword: password }))[1], '', 'reading goes on with sending off');
+  await db.prepare("UPDATE qb_queue SET status = 'done'").run();
+  await db.prepare("INSERT INTO qb_queue (kind, what) VALUES ('sync', 'expense:1')").run();
+  assert.equal((await call('authenticate', { strUserName: username, strPassword: password }))[1], 'none', 'an entry waits while sending is off');
   assert.equal(await call('serverVersion'), '1.0');
   assert.equal(await call('clientVersion', { strVersion: '34.0.10010.76' }), '');
 });
@@ -187,13 +190,18 @@ test('an error from QuickBooks fails that request, the run carries on, and it ca
   assert.equal((await status()).queue.waiting, 5);
 });
 
-test('switching off mid-run ends it, and a run cut off is picked up next time', async () => {
+test('switched off, the lists are still read but no entry is sent; a run cut off is picked up next time', async () => {
   const { username, password } = await ready();
-  await queueListRead();
-  const [ticket] = await call('authenticate', { strUserName: username, strPassword: password });
-  await call('sendRequestXML', { ticket, strCompanyFileName: FILE });
+  await db.prepare("INSERT INTO qb_queue (kind, what) VALUES ('sync', 'expense:1')").run();
+  await db.prepare("INSERT INTO qb_queue (kind, what) VALUES ('list', 'Account')").run();
   await setEnabled(false);
-  assert.equal(await call('receiveResponseXML', { ticket, response: ok('Account', ''), hresult: '', message: '' }), '100');
+  const [ticket, open] = await call('authenticate', { strUserName: username, strPassword: password });
+  assert.equal(open, '');
+  assert.match(await call('sendRequestXML', { ticket, strCompanyFileName: FILE }), /AccountQueryRq/);
+  assert.equal(await call('receiveResponseXML', { ticket, response: ok('Account', ''), hresult: '', message: '' }), '100', 'the entry is not counted, so the run ends');
+  assert.equal((await db.prepare("SELECT status FROM qb_queue WHERE kind = 'sync'").get()).status, 'waiting');
+  await db.prepare("DELETE FROM qb_queue WHERE kind = 'sync'").run();
+  await queueListRead();
 
   // Cut off: sent, never answered.
   await setEnabled(true);
@@ -203,7 +211,7 @@ test('switching off mid-run ends it, and a run cut off is picked up next time', 
   const [t3, file] = await call('authenticate', { strUserName: username, strPassword: password });
   assert.equal(file, FILE);
   assert.equal((await status()).queue.sent, 0, 'sent again in the new run');
-  assert.match(await call('sendRequestXML', { ticket: t3, strCompanyFileName: FILE }), /ClassQueryRq/);
+  assert.match(await call('sendRequestXML', { ticket: t3, strCompanyFileName: FILE }), /AccountQueryRq/, 'the one cut off goes first again');
 });
 
 test('connection errors and unknown calls are answered, not crashed on', async () => {

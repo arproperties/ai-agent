@@ -352,6 +352,7 @@ function QuickBooksTab() {
           <div>
             <p className="text-sm font-medium">Connection</p>
             <p className="text-xs text-mute">{!s.set_up ? 'Not set up yet.' : s.company_file ? `Tied to ${s.company_file}` : 'Set up. Not tied to a company file yet: the first one to connect will be.'}</p>
+            {s.set_up && <p className="text-xs text-mute">{s.enabled ? 'Sending is on: what is recorded here goes into QuickBooks.' : 'Sending is off: QuickBooks\' lists are read, but nothing is written into QuickBooks.'}</p>}
             {s.last_contact && <p className="text-xs text-mute">Last heard from the Web Connector {new Date(s.last_contact).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</p>}
           </div>
           {s.set_up && (

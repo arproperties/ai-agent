@@ -20,7 +20,9 @@ import { plan, syncRequest, syncApply, settings, saveSettings } from './qbSync.j
 //   receiveResponseXML(ticket, …) → how far along, 0-100; 100 ends the run
 //   getLastError / connectionError / closeConnection
 //
-// Safety: sending has an off switch (qb_connection.enabled), and the first company file to
+// Safety: sending has an off switch (qb_connection.enabled). Off, nothing is written into
+// QuickBooks; reading its lists still goes, so the app can be connected and shown the real
+// accounts and vendors before anything is sent. And the first company file to
 // connect is the only one ever served: any other file is refused, so a test copy and the
 // real books can never be mixed up. "Forget the file" is the master's deliberate step.
 //
@@ -52,7 +54,8 @@ const log = (ticket, event, detail = null) =>
   db.prepare('INSERT INTO qb_log (ticket, event, detail) VALUES (?, ?, ?)').run(ticket || null, event, detail);
 const connection = () => db.prepare('SELECT * FROM qb_connection WHERE id = 1').get();
 const session = (ticket) => db.prepare('SELECT * FROM qb_sessions WHERE ticket = ?').get(String(ticket || ''));
-const waiting = async () => (await db.prepare("SELECT count(*)::int AS n FROM qb_queue WHERE status = 'waiting'").get()).n;
+/** What is waiting to go: everything, or with sending off, the reads alone. */
+const waiting = async (sending) => (await db.prepare("SELECT count(*)::int AS n FROM qb_queue WHERE status = 'waiting' AND (kind <> 'sync' OR ?)").get(!!sending)).n;
 const sameFile = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 
 // ---------- what the master sets up ----------
@@ -180,9 +183,9 @@ export async function authenticate(user, password) {
     .run(CUT_OFF_ADD);
   await db.prepare("UPDATE qb_queue SET status = 'waiting', ticket = NULL, error = ? WHERE status = 'sent'").run(SENT_TIMEOUT_NOTE);
   if (c.enabled) await plan(); // what QuickBooks should have that it does not, as the app is now
-  const n = c.enabled ? await waiting() : 0;
+  const n = await waiting(c.enabled);
   if (!n) {
-    await log(ticket, 'nothing', c.enabled ? 'Nothing waiting' : 'Sending is switched off');
+    await log(ticket, 'nothing', c.enabled ? 'Nothing waiting' : 'Nothing to read; sending is switched off');
     return [ticket, 'none'];
   }
   await db.prepare('INSERT INTO qb_sessions (ticket) VALUES (?)').run(ticket);
@@ -209,11 +212,10 @@ export async function sendRequestXML(ticket, companyFile) {
     }
     await db.prepare('UPDATE qb_sessions SET company_file = ? WHERE ticket = ?').run(companyFile, s.ticket);
   }
-  if (!c.enabled) return stop('Sending was switched off.');
   // Reads first (the lists the entries refer to), then entries, oldest first.
   for (;;) {
     const item = await db.prepare(`UPDATE qb_queue SET status = 'sent', ticket = ?, sent_at = now(), attempts = attempts + 1
-      WHERE id = (SELECT id FROM qb_queue WHERE status = 'waiting' ORDER BY (kind = 'sync'), id LIMIT 1) RETURNING *`).get(s.ticket);
+      WHERE id = (SELECT id FROM qb_queue WHERE status = 'waiting' AND (kind <> 'sync' OR ?) ORDER BY (kind = 'sync'), id LIMIT 1) RETURNING *`).get(s.ticket, !!c.enabled);
     if (!item) return stop('Nothing waiting.');
     if (item.kind !== 'sync') {
       await log(s.ticket, 'sent', item.kind === 'look' ? `${item.what} sample` : `${item.what} list${item.iterator_id ? ' (next page)' : ''}`);
@@ -252,7 +254,7 @@ export async function receiveResponseXML(ticket, response, hresult, message) {
   }
   const { handled } = await db.prepare('UPDATE qb_sessions SET handled = handled + 1 WHERE ticket = ? RETURNING handled').get(s.ticket);
   const c = await connection();
-  const left = c?.enabled ? await waiting() : 0;
+  const left = await waiting(c?.enabled);
   if (!left) return 100;
   return Math.max(1, Math.min(99, Math.floor((100 * handled) / (handled + left))));
 }
