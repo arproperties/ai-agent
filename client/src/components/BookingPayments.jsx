@@ -122,7 +122,8 @@ function Plan({ url, amount, on }) {
         {p.rows.map((r) => (
           <li key={r.id} className="flex flex-wrap items-baseline gap-x-2">
             <span className="min-w-0 flex-1 basis-40">{r.name} <span className="text-xs text-mute">· due {fmt(r.due_date)}</span>
-              {r.status === 'overdue' && <span className={`ml-1.5 rounded-full px-2 py-0.5 text-[11px] ${STATUS.overdue[1]}`}>Overdue</span>}</span>
+              {r.status === 'overdue' && <span className={`ml-1.5 rounded-full px-2 py-0.5 text-[11px] ${STATUS.overdue[1]}`}>Overdue</span>}
+              {r.due_date > on && <span className={`ml-1.5 rounded-full px-2 py-0.5 text-[11px] ${STATUS.upcoming[1]}`}>Not due yet</span>}</span>
             <span className="tabular-nums">{aed(r.part)}</span>
             <span className={`w-36 text-right text-xs ${r.after > 0 ? 'text-warn' : 'text-ok'}`}>{r.after > 0 ? `${aed(r.after)} still owed` : 'paid off'}</span>
           </li>
@@ -134,7 +135,8 @@ function Plan({ url, amount, on }) {
 }
 
 /** Recording money against one payment due, or (with `url`) against the booking as a whole, where it is
-    spread over the extra charges due first, then the rent, with the spread shown as it is typed. The amount starts at what is still owed. */
+    spread over the extra charges due first, then the rent, with the spread shown as it is typed. It starts at what is
+    due now; what is not due yet only takes what is typed beyond that, as when a tenant pays ahead. The amount starts at what is still owed. */
 function PayForm({ row, url, onDone, onCancel }) {
   const [v, setV] = useState({ amount: row.left, method: 'transfer', received_on: today(), reference: '' });
   const [file, setFile] = useState(null); // the proof: transfer slip, card slip, a photo of the cash receipt
@@ -163,7 +165,7 @@ function PayForm({ row, url, onDone, onCancel }) {
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Amount received ({currency()})</span>
-          <input type="number" min="0" max={row.left} step="any" value={v.amount} onChange={set('amount')} required className={FIELD} /></label>
+          <input type="number" min="0" max={row.max ?? row.left} step="any" value={v.amount} onChange={set('amount')} required className={FIELD} /></label>
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Received on</span>
           <DateField value={v.received_on} onChange={set('received_on')} max={today()} required className={FIELD} /></label>
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Reference</span>
@@ -312,6 +314,7 @@ export default function BookingPayments({ booking }) {
   const sum = (f, list = dues) => list.reduce((t, r) => t + f(r), 0);
   const overdue = sum((r) => (r.status === 'overdue' ? r.left : 0));
   const owedInAll = Math.round(sum((r) => r.left, rows) * 100) / 100;
+  const dueNow = Math.round(sum((r) => (r.due_date <= today() ? r.left : 0), rows) * 100) / 100; // where the amount starts: what is not due yet only if typed beyond it
   const tax = Math.round(sum((r) => r.tax || 0) * 100) / 100;
   const is = (r, as) => open?.id === r.id && open.as === as;
   // A tab per status the schedule has, most pressing first; a tab that empties (the last overdue paid) goes back to All.
@@ -382,7 +385,7 @@ export default function BookingPayments({ booking }) {
         {owedInAll > 0 && takes && open?.as !== 'all' && <button onClick={() => setOpen({ as: 'all' })} title="Paid for more than one at once? It goes on the extra charges due first, then the rent." className={GHOST}><Banknote size={13} /> Record a payment</button>}
       </div>
       {open?.as === 'charge' && <ChargeForm bookingId={booking.id} onDone={done} onCancel={() => setOpen(null)} />}
-      {open?.as === 'all' && <PayForm row={{ left: owedInAll }} url={`${at}/payments`} onDone={done} onCancel={() => setOpen(null)} />}
+      {open?.as === 'all' && <PayForm row={{ left: dueNow || owedInAll, max: owedInAll }} url={`${at}/payments`} onDone={done} onCancel={() => setOpen(null)} />}
       {view === 'transactions' ? <Transactions bookingId={booking.id} stamp={version} /> : (
         <div className="rounded-2xl border border-stroke">
           {tabs.length > 1 && (
