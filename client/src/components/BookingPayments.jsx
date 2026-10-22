@@ -330,8 +330,13 @@ export default function BookingPayments({ booking }) {
       <div key={r.id} className="px-4 py-3">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <div className="min-w-0 flex-1 basis-48">
-            <p className="font-medium">{aed(r.amount)}<span className={`ml-2 rounded-full px-2.5 py-0.5 text-xs font-normal ${tone}`}>{label}</span></p>
-            <p className="text-xs text-mute">{r.name} · due {fmt(r.due_date)}{r.tax > 0 && ` · includes ${region().tax_name} ${aed(r.tax)}`}{r.paid > 0 && r.left > 0 && ` · ${aed(r.paid)} received, ${aed(r.left)} still owed`}</p>
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-medium">{aed(r.amount)}<span className={`rounded-full px-2.5 py-0.5 text-xs font-normal ${tone}`}>{label}</span>
+              {/* Part paid: what came in and what is left, where the eye lands, not in the small print. */}
+              {r.paid > 0 && r.left > 0 && <>
+                <span className="text-sm text-ok">{aed(r.paid)} received</span>
+                <span className="text-sm text-bad">{aed(r.left)} still owed</span>
+              </>}</p>
+            <p className="text-xs text-mute">{r.name} · due {fmt(r.due_date)}{r.tax > 0 && ` · includes ${region().tax_name} ${aed(r.tax)}`}</p>
           </div>
           {owing && !is(r, 'remind') && <button onClick={() => setOpen({ id: r.id, as: 'remind' })} className={GHOST}><MessageCircle size={13} /> Remind tenant</button>}
           {owing && takes && !is(r, 'pay') && <button onClick={() => setOpen({ id: r.id, as: 'pay' })} className={GHOST}><Plus size={13} /> Record payment</button>}
