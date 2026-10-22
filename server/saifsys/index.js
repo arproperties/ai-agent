@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db, tx } from '../db.js';
-import { isMaster } from '../access.js';
+import { isMaster, isExternal } from '../access.js';
 import { saifsysConfigured } from './client.js';
 import * as ars from './ars.js';
 import * as hr from './hr.js';
@@ -37,6 +37,7 @@ const connected = (m) => !!m.tools?.length;
 /** The module keys this user may use. */
 export async function userModules(user) {
   if (isMaster(user)) return KEYS;
+  if (isExternal(user)) return []; // saifsys is the company's own system
   const rows = await db.prepare('SELECT module FROM saifsys_access WHERE user_id = ?').all(user.id);
   const have = new Set(rows.map((r) => r.module));
   return KEYS.filter((k) => have.has(k));
@@ -44,12 +45,13 @@ export async function userModules(user) {
 
 /** Every module, and whether this person has it — for the admin screen. */
 export async function listAccess(userId) {
-  const target = await db.prepare('SELECT id, role FROM users WHERE id = ?').get(Number(userId));
+  const target = await db.prepare('SELECT id, role, external FROM users WHERE id = ?').get(Number(userId));
   if (!target) throw Object.assign(new Error('User not found'), { status: 404 });
   const have = new Set(await userModules(target));
-  const may = new Set(isMaster(target) ? ACTIONS.map((a) => a.key) : await actionKeys(target.id));
+  const may = new Set(isMaster(target) ? ACTIONS.map((a) => a.key) : isExternal(target) ? [] : await actionKeys(target.id));
   return {
     master: isMaster(target),
+    external: isExternal(target),
     modules: MODULES.map((m) => ({ key: m.key, label: m.label, connected: connected(m), on: have.has(m.key) })),
     // What they may DO, apart from what they may see. An action only works with its module ticked too.
     actions: ACTIONS.map((a) => ({ key: a.key, module: a.module, label: a.label, on: may.has(a.key) })),

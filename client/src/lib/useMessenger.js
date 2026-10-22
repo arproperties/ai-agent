@@ -48,7 +48,7 @@ export function useMessenger(me) {
   const active = useRef([]); // the chats on screen (one, or every topic on the master's group page), whose messages count as read
   const known = useRef(null); // the list as of the last render, readable from the live handler
   known.current = chats;
-  const meId = me?.id;
+  const meId = me?.external ? null : me?.id; // someone external has no team chat
 
   const loadChats = useCallback(() => api.get('/messenger/chats').then((l) => setChats(sortChats(l))).catch(() => {}), []);
   const loadGroups = useCallback(() => api.get('/messenger/groups').then(setGroups).catch(() => {}), []);

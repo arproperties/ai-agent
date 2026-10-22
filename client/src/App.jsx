@@ -137,9 +137,12 @@ export default function App() {
     loadConvs();
     loadExpiring();
     loadDue();
-    loadTenantCare();
-    api.get('/shared-inbox/me').then((r) => setSharedInbox(r.member)).catch(() => {});
-    api.get('/buildings').then((b) => setHasBuildings(me.role === 'master' || b.length > 0)).catch(() => {});
+    // Someone external has none of the company's screens; the server refuses them anyway.
+    if (!me.external) {
+      loadTenantCare();
+      api.get('/shared-inbox/me').then((r) => setSharedInbox(r.member)).catch(() => {});
+      api.get('/buildings').then((b) => setHasBuildings(me.role === 'master' || b.length > 0)).catch(() => {});
+    }
     api.get('/modules/me').then((r) => setModules(r.modules)).catch(() => {});
   }, [me, loadAgents, loadConvs, loadExpiring, loadDue, loadTenantCare]);
 

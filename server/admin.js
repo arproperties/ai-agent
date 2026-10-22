@@ -5,7 +5,8 @@ import { inlineType } from './files.js';
 import { recentErrors, errorCount } from './errors.js';
 import { MSG_SELECT, messageOut } from './messenger.js';
 import { listAccess, setAccess, setActionAccess } from './saifsys/index.js';
-import { listModuleAccess, setModuleAccess } from './modules.js';
+import { listModuleAccess, setModuleAccess, COMPANY_MODULES } from './modules.js';
+import { isMaster, isExternal } from './access.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
 // as an "OR is_master" widening of the ordinary queries. Every cross-user guard in the
@@ -78,7 +79,7 @@ export async function updateUser(master, userId, { name, email, password }, keep
 
 /** Replaces the user's entire assignment set, so the caller sends the desired end state. */
 export async function setAssignments(master, userId, wanted) {
-  const target = await db.prepare('SELECT id FROM users WHERE id = ?').get(Number(userId));
+  const target = await db.prepare('SELECT id, role, external FROM users WHERE id = ?').get(Number(userId));
   if (!target) throw fail(404, 'User not found');
 
   let rows = (Array.isArray(wanted) ? wanted : []).map((a) => ({
@@ -97,6 +98,9 @@ export async function setAssignments(master, userId, wanted) {
   // dropped here rather than refused, because the People screen sends every unticked
   // agent as 'knowledge' and an older open screen must still save cleanly.
   rows = rows.filter((r) => !(r.mode === 'knowledge' && isPrivate.has(r.agentId)));
+  // Someone external has private agents only: the company's agents, and their shelves, are
+  // dropped the same way, so the People screen's usual "every other agent" saves cleanly.
+  if (isExternal(target)) rows = rows.filter((r) => isPrivate.has(r.agentId));
 
   const keep = rows.map((r) => r.agentId);
   await tx(async () => {
@@ -120,6 +124,37 @@ export async function setAssignments(master, userId, wanted) {
   return rows.length;
 }
 
+/**
+ * Makes someone external, or not (access.js, isExternal). Made external, whatever still
+ * ties them to the company is undone at once: the company's agents and shelves (their own
+ * files on them move to their library, as setAssignments always does), the company
+ * modules, saifsys, the tenant inbox, a building they ran, and any "may see someone's
+ * files" either way. Their own files, chats, to-dos and memories stay theirs. Unticking
+ * External gives nothing back by itself: the master ticks again what they should have.
+ */
+export async function setExternal(master, userId, on) {
+  const target = await db.prepare('SELECT id, role FROM users WHERE id = ?').get(Number(userId));
+  if (!target) throw fail(404, 'User not found');
+  if (isMaster(target)) throw fail(400, 'The master cannot be external');
+  const external = !!on;
+  await db.prepare('UPDATE users SET external = ? WHERE id = ?').run(external, target.id);
+  if (!external) return { external };
+
+  const keep = await db.prepare(`SELECT aa.agent_id, aa.is_primary FROM agent_assignments aa JOIN agents a ON a.id = aa.agent_id
+    WHERE aa.user_id = ? AND aa.mode = 'chat' AND a.private AND a.user_id = ?`).all(target.id, master.id);
+  await setAssignments(master, target.id, keep.map((r) => ({ agentId: r.agent_id, mode: 'chat', primary: r.is_primary })));
+  await tx(async () => {
+    await db.prepare('DELETE FROM module_access WHERE user_id = ? AND module = ANY(?::text[])').run(target.id, COMPANY_MODULES);
+    await db.prepare('DELETE FROM saifsys_access WHERE user_id = ?').run(target.id);
+    await db.prepare('DELETE FROM saifsys_action_access WHERE user_id = ?').run(target.id);
+    await db.prepare('DELETE FROM tenant_inbox_members WHERE user_id = ?').run(target.id);
+    await db.prepare('DELETE FROM file_access WHERE viewer_id = ? OR owner_id = ?').run(target.id, target.id);
+    await db.prepare('UPDATE buildings SET admin_id = NULL WHERE admin_id = ?').run(target.id);
+    await db.prepare('UPDATE buildings SET renewals_id = NULL WHERE renewals_id = ?').run(target.id);
+  });
+  return { external };
+}
+
 /** The current set, so the screen can show it before setAssignments replaces it. */
 export function listAssignments(userId) {
   return db.prepare(`SELECT agent_id, mode, is_primary FROM agent_assignments
@@ -136,7 +171,7 @@ export function listAssignments(userId) {
 const WEEK = 7 * 86400;
 
 export function listUsers() {
-  return db.prepare(`SELECT u.id, u.name, u.email, u.role, u.disabled, u.created_at, u.last_seen_at,
+  return db.prepare(`SELECT u.id, u.name, u.email, u.role, u.disabled, u.external, u.created_at, u.last_seen_at,
       (SELECT COUNT(*)::int FROM agent_assignments aa WHERE aa.user_id = u.id) agents,
       (SELECT COUNT(*)::int FROM messages m JOIN conversations c ON c.id = m.conversation_id
          WHERE c.user_id = u.id AND m.role = 'user'
@@ -368,6 +403,10 @@ adminRoutes.get('/users/:id/modules', wrap(async (req, res) => {
 
 adminRoutes.put('/users/:id/modules', wrap(async (req, res) => {
   res.json({ ok: true, modules: await setModuleAccess(req.params.id, req.body.modules) });
+}));
+
+adminRoutes.put('/users/:id/external', wrap(async (req, res) => {
+  res.json({ ok: true, ...await setExternal(req.user, req.params.id, req.body.external) });
 }));
 
 // Disabling keeps the data and revokes every session. Deleting a user cascades away

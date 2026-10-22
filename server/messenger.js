@@ -248,9 +248,9 @@ export const messengerHandlers = {
     res.json({ ok: true });
   },
 
-  /** Everyone who can be messaged. It is a team app: every active account. */
+  /** Everyone who can be messaged. It is a team app: every active account, bar anyone external. */
   async people(req, res) {
-    const rows = await db.prepare('SELECT id, name, email, last_seen_at FROM users WHERE id <> ? AND NOT disabled ORDER BY lower(name)').all(req.user.id);
+    const rows = await db.prepare('SELECT id, name, email, last_seen_at FROM users WHERE id <> ? AND NOT disabled AND NOT external ORDER BY lower(name)').all(req.user.id);
     res.json(rows.map((u) => ({ id: u.id, name: u.name, email: u.email, online: isOnline(u.id), lastSeen: u.last_seen_at })));
   },
 
@@ -274,7 +274,7 @@ export const messengerHandlers = {
     if (req.body.userId) {
       const other = Number(req.body.userId);
       if (other === me) throw bad('You cannot message yourself');
-      if (!await db.prepare('SELECT 1 FROM users WHERE id = ? AND NOT disabled').get(other)) throw bad('That person was not found', 404);
+      if (!await db.prepare('SELECT 1 FROM users WHERE id = ? AND NOT disabled AND NOT external').get(other)) throw bad('That person was not found', 404);
       const key = `${Math.min(me, other)}:${Math.max(me, other)}`;
       const id = await tx(async () => {
         const made = await db.prepare(`INSERT INTO dm_chats (kind, direct_key, created_by) VALUES ('direct', ?, ?)
@@ -294,7 +294,7 @@ export const messengerHandlers = {
     if (!name) throw bad('Give the topic a name');
     const wanted = [...new Set((Array.isArray(req.body.members) ? req.body.members : []).map(Number).filter((id) => id && id !== me))].slice(0, 255);
     const valid = wanted.length
-      ? (await db.prepare('SELECT id FROM users WHERE id = ANY(?::int[]) AND NOT disabled').all(wanted)).map((r) => r.id)
+      ? (await db.prepare('SELECT id FROM users WHERE id = ANY(?::int[]) AND NOT disabled AND NOT external').all(wanted)).map((r) => r.id)
       : [];
     if (!valid.length) throw bad('Add at least one person to the topic');
     const masters = (await masterIds()).filter((u) => u !== me);
@@ -487,7 +487,7 @@ export const messengerHandlers = {
     if (mine.role !== 'admin') throw bad('Only group admins can add people', 403);
     const chatId = mine.chat_id;
     const ids = [...new Set((Array.isArray(req.body.userIds) ? req.body.userIds : []).map(Number).filter(Boolean))];
-    const added = ids.length ? await db.prepare(`SELECT u.id, u.name FROM users u WHERE u.id = ANY(?::int[]) AND NOT u.disabled
+    const added = ids.length ? await db.prepare(`SELECT u.id, u.name FROM users u WHERE u.id = ANY(?::int[]) AND NOT u.disabled AND NOT u.external
       AND NOT EXISTS (SELECT 1 FROM dm_members mb WHERE mb.chat_id = ? AND mb.user_id = u.id) ORDER BY u.name`).all(ids, chatId) : [];
     if (added.length) {
       const top = (await db.prepare('SELECT COALESCE(MAX(id), 0) id FROM dm_messages WHERE chat_id = ?').get(chatId)).id;

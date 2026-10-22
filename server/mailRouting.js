@@ -128,7 +128,7 @@ export async function fetchOne(acc, uid, validity) {
  */
 export async function staff() {
   const rows = await db.prepare(`SELECT u.name, u.email, a.email AS mailbox FROM users u
-    LEFT JOIN imap_accounts a ON a.user_id = u.id WHERE NOT u.disabled ORDER BY lower(u.name)`).all();
+    LEFT JOIN imap_accounts a ON a.user_id = u.id WHERE NOT u.disabled AND NOT u.external ORDER BY lower(u.name)`).all();
   const out = [];
   for (const r of rows) {
     out.push({ name: r.name, email: lower(r.email) });
@@ -190,7 +190,7 @@ async function staffNotes() {
   const rows = await db.prepare(`SELECT u.name, u.email,
       string_agg(trim(coalesce(r.title, '') || ' ' || left(coalesce(r.body, ''), 200)), '; ' ORDER BY r.id) AS duties
     FROM users u LEFT JOIN responsibilities r ON r.user_id = u.id
-    WHERE NOT u.disabled GROUP BY u.id ORDER BY lower(u.name)`).all();
+    WHERE NOT u.disabled AND NOT u.external GROUP BY u.id ORDER BY lower(u.name)`).all();
   return rows.map((r) => ({ name: r.name, email: lower(r.email), duties: String(r.duties || '').replace(/\s+/g, ' ').trim().slice(0, 400) }));
 }
 
@@ -308,7 +308,7 @@ export async function usersFor(addresses) {
   const list = [...new Set([addresses].flat().map(lower).filter(Boolean))];
   if (!list.length) return [];
   return (await db.prepare(`SELECT DISTINCT u.id FROM users u LEFT JOIN imap_accounts a ON a.user_id = u.id
-    WHERE NOT u.disabled AND (lower(u.email) = ANY(?::text[]) OR lower(a.email) = ANY(?::text[]))`).all(list, list)).map((r) => r.id);
+    WHERE NOT u.disabled AND NOT u.external AND (lower(u.email) = ANY(?::text[]) OR lower(a.email) = ANY(?::text[]))`).all(list, list)).map((r) => r.id);
 }
 
 // ---------- replies, sent on from the shared address ----------

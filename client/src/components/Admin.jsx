@@ -223,8 +223,26 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
     } catch (e) { setError(e.message); }
   };
 
-  const chosen = agents.filter((a) => chatIds.includes(a.id));
-  const mainAgent = agents.find((a) => a.id === mainId);
+  // Someone external: none of the company's agents, its team or its screens, only their own
+  // things and private agents (server/access.js). Turning it on undoes their company ties
+  // at once, so it is asked about first.
+  const external = !!person.external;
+  const pool = external ? agents.filter((a) => a.private) : agents;
+  const setExternal = async () => {
+    const ask = external
+      ? `Make ${person.name} staff again? Nothing comes back by itself: tick their agents and modules again afterwards.`
+      : `Make ${person.name} external? They will see only their own files, chats and lists, and only private agents. ` +
+        'The company agents, company modules, saifsys, team chat and any building they run are taken off now. You can still see everything of theirs.';
+    if (!confirm(ask)) return;
+    try {
+      await api.put(`/admin/users/${person.id}/external`, { external: !external });
+      if (!external) setChatIds((ids) => ids.filter((id) => agents.some((a) => a.id === id && a.private)));
+      onChanged();
+    } catch (e) { setError(e.message); }
+  };
+
+  const chosen = pool.filter((a) => chatIds.includes(a.id));
+  const mainAgent = pool.find((a) => a.id === mainId);
 
   // No Activity tab: reading is still recorded, and each person still sees who looked
   // at their workspace from the eye in their own sidebar - the master just does not get
@@ -232,7 +250,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   // "AI chats" and "Team chat" sit next to each other, so neither may be called just
   // "Chats": the whole point of the pair is which side of the app a message came from.
   const TABS = [['agents', 'Agents'], ['modules', 'Modules'], ['duties', 'Responsibilities'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
-    ['messages', 'Team chat'], ['memory', 'Memory'], ['saifsys', 'saifsys']];
+    ['messages', 'Team chat'], ['memory', 'Memory'], ['saifsys', 'saifsys']]
+    .filter(([k]) => !(external && ['duties', 'messages', 'saifsys'].includes(k))); // the company's own, which they do not have
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -256,6 +275,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
             </p>
           </div>
           {person.role === 'master' && <span className="shrink-0 rounded-full bg-p1/25 px-2.5 py-1 text-[11px] text-p1">master</span>}
+          {person.external && <span className="shrink-0 rounded-full bg-warn/20 px-2.5 py-1 text-[11px] text-warn">external</span>}
           {!editing && (
             <button onClick={() => { setEditing(true); setNote(''); }} title="Change their name, email or password"
               aria-label={`Change ${person.name}'s name, email or password`}
@@ -290,14 +310,33 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
         {tab === 'memory' && <Memories person={person} />}
         {tab === 'saifsys' && <><HrLink person={person} /><SaifsysModules person={person} /></>}
         {tab === 'modules' && <Modules person={person} />}
-        {tab === 'documents' && <FileAccess person={person} />}
+        {tab === 'documents' && !external && <FileAccess person={person} />}
         {(tab === 'documents' || tab === 'conversations' || tab === 'messages') && <Browse person={person} kind={tab} />}
 
         {tab === 'agents' && (!loaded ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
           <>
-            {agents.length === 0 && <p className="py-3 text-sm text-mute">You have no agents to give out yet.</p>}
+            {person.role !== 'master' && (
+              <button onClick={setExternal} aria-pressed={external}
+                className={`flex w-full items-center gap-3 rounded-[1.25rem] border p-3 text-left transition ${
+                  external ? 'border-warn/50 bg-warn/10' : 'border-stroke bg-white/[0.035] hover:bg-white/[0.07]'}`}>
+                <span className="min-w-0 flex-1">
+                  <span className={`block text-sm font-medium ${external ? 'text-txt' : 'text-mute'}`}>External</span>
+                  <span className="block text-xs leading-relaxed text-mute">
+                    From outside the company: sees only their own files, chats and lists, and only private agents. Nothing of the company, no team chat. You still see all of theirs.
+                  </span>
+                </span>
+                <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
+                  external ? 'bg-warn text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
+                  {external && <Check size={11} strokeWidth={3.5} />}
+                </span>
+              </button>
+            )}
 
-            {agents.length > 0 && (
+            {pool.length === 0 && <p className="py-3 text-sm text-mute">
+              {external ? 'You have no private agents to give out yet. Tick Private on an agent to give it to someone external.' : 'You have no agents to give out yet.'}
+            </p>}
+
+            {pool.length > 0 && (
               <div className="space-y-1.5">
                 <div className="flex items-baseline justify-between">
                   <span className="text-[11px] font-medium tracking-[0.14em] text-mute">THEIR AGENTS</span>
@@ -309,7 +348,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
                     "Operations Manager" down to "Opera…". One card a row until the
                     panel itself has room for two, three once it is properly wide. */}
                 <div className="grid grid-cols-1 gap-2.5 @md:grid-cols-2 @3xl:grid-cols-3">
-                  {agents.map((a) => (
+                  {pool.map((a) => (
                     <AgentCard key={a.id} agent={a} on={chatIds.includes(a.id)} onClick={() => toggleChat(a.id)}
                       label={`Let ${person.name} chat with ${a.name}`}
                       // A star is only a choice when there is more than one to choose from.
@@ -322,7 +361,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
                   {chosen.length === 1 && (
                     <>
                       {person.name} chats with {chosen[0].name} — and only {chosen[0].name}.
-                      {agents.length > 1 && ` When they ask something it does not know, it reads every other agent's shelf, so nothing you have filed is out of reach. The other agents stay hidden; ${person.name} never sees them.`}
+                      {!external && agents.length > 1 && ` When they ask something it does not know, it reads every other agent's shelf, so nothing you have filed is out of reach. The other agents stay hidden; ${person.name} never sees them.`}
+                      {external && ` It reads only ${person.name}'s own files.`}
                       {' '}Tick another to give them more than one.
                     </>
                   )}
@@ -330,7 +370,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
                     <>
                       {person.name} chats with {chosen.length} agents, and each question goes to the one that fits it.
                       {mainAgent && ` ${mainAgent.name} is their main agent — it leads their sidebar. Tap a star to change it.`}
-                      {chosen.length < agents.length && ` The agents you have not ticked stay hidden, but their shelves are still read in the background.`}
+                      {!external && chosen.length < agents.length && ` The agents you have not ticked stay hidden, but their shelves are still read in the background.`}
+                      {external && ` They read only ${person.name}'s own files.`}
                     </>
                   )}
                 </p>
@@ -839,6 +880,7 @@ export default function AdminPage({ agents, me, onBack }) {
                         <span className="flex min-w-0 items-center gap-2">
                           <span className="truncate text-sm">{p.name}</span>
                           {p.role === 'master' && <span className="shrink-0 rounded-full bg-p1/25 px-2 py-0.5 text-[10px] text-p1">master</span>}
+                          {p.external && <span className="shrink-0 rounded-full bg-warn/20 px-2 py-0.5 text-[10px] text-warn">external</span>}
                           {p.disabled && <span className="shrink-0 rounded-full bg-bad/20 px-2 py-0.5 text-[10px] text-bad">disabled</span>}
                         </span>
                         <span className={`block truncate text-xs ${activity(p).cold ? 'text-warn' : activity(p).quiet ? 'text-mute' : 'text-ok/80'}`}>
