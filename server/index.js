@@ -53,6 +53,8 @@ import { replyPdfRoutes } from './replyPdf.js';
 import { meetingShareRoutes } from './meetingShare.js';
 import { drawingRoutes } from './drawing.js';
 import { moduleGate } from './modules.js';
+import { attachActivityTriggers, actorContext } from './activityCapture.js';
+import { activityRoutes } from './activity.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -66,6 +68,7 @@ app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in 
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api', requireUser); // everything below needs a signed-in user
+app.use('/api', actorContext); // every change from here on is this person's, in the activity log
 app.use('/api', moduleGate); // the leasing and property screens are modules, ticked per person (server/modules.js)
 app.use('/api/outlook', outlookRoutes);
 app.use('/api/imap', imapRoutes);
@@ -102,6 +105,7 @@ app.use('/api/leasing', workOrderRoutes); // repairs to a unit, linked to its le
 app.use('/api/leasing/tenants/import', tenantImportRoutes); // the tenant list from Rent Manager, read by Claude and previewed before saving
 app.use('/api/leasing/bookings/import', leaseImportRoutes); // the leases from Rent Manager's Rent Roll, the same way
 app.use('/api/leasing', leasingRoutes); // tenants and bookings of units; the rent is set per booking
+app.use('/api/activity', activityRoutes); // who changed what, and when: the master and whoever holds Activity
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -406,6 +410,10 @@ if (existsSync(dist)) {
   app.use(express.static(dist, { index: false, setHeaders: (res, p) => p.endsWith('sw.js') && res.setHeader('Cache-Control', 'no-cache') }));
   app.use((req, res, next) => (req.method === 'GET' ? res.sendFile(`${dist}/index.html`) : next()));
 }
+
+// Every table is logged, a table added since the last start included (server/activityCapture.js).
+const logged = await attachActivityTriggers();
+if (logged.length) console.log(`[activity] now logging ${logged.length} table(s): ${logged.join(', ')}`);
 
 app.listen(PORT, '0.0.0.0', () => {
   // drafts approved while the rate limit was full go out when it clears

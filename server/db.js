@@ -18,7 +18,40 @@ pool.on('error', (e) => console.error('[db] idle client error:', e.message));
 // Inside tx() every query must run on that transaction's own connection, not a
 // fresh one from the pool, or it would not be part of the transaction at all.
 const inTx = new AsyncLocalStorage();
-const run = (text, params) => (inTx.getStore() || pool).query(text, params);
+
+// Who is making the changes, for the activity log (server/activityCapture.js): set for each
+// signed-in request and each chat turn, and handed to Postgres with every write as
+// app.actor / app.via, which the logging trigger reads. Reads are left alone.
+const actors = new AsyncLocalStorage();
+export const withActor = (actor, fn) => actors.run(actor, fn);
+export const currentActor = () => actors.getStore();
+const WRITE = /^\s*(insert|update|delete|with)\b/i;
+const told = new WeakMap(); // the transaction client -> the actor it was told about
+const tell = (client, a) => client.query("SELECT set_config('app.actor', $1, true), set_config('app.via', $2, true)", [String(a.userId), a.via || 'screen']);
+
+async function run(text, params) {
+  const client = inTx.getStore();
+  const actor = actors.getStore();
+  if (!actor || !WRITE.test(text)) return (client || pool).query(text, params);
+  if (client) {
+    if (told.get(client) !== actor) { await tell(client, actor); told.set(client, actor); }
+    return client.query(text, params);
+  }
+  // a single write outside tx(): set_config(…, true) lasts only for its transaction, so give it one
+  const own = await pool.connect();
+  try {
+    await own.query('BEGIN');
+    await tell(own, actor);
+    const r = await own.query(text, params);
+    await own.query('COMMIT');
+    return r;
+  } catch (e) {
+    await own.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    own.release();
+  }
+}
 
 // The queries are written with SQLite-style `?` placeholders; Postgres wants $1, $2…
 const compiled = new Map();
@@ -55,6 +88,7 @@ export async function tx(fn) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    told.delete(client); // a pooled client is reused: each transaction is told afresh
     const out = await inTx.run(client, fn);
     await client.query('COMMIT');
     return out;

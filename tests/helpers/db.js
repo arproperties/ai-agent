@@ -43,6 +43,7 @@ const TABLES = [
   'recurring_buildings', 'recurring_payments', 'recurring_payment_dues', 'recurring_accounts', 'recurring_transfers',
   'prop_companies', 'prop_buildings', 'prop_units', 'prop_documents', 'prop_photos', 'prop_unit_photos', 'lease_tenants', 'lease_import_reads', 'lease_bookings', 'lease_documents', 'lease_installments', 'lease_payments', 'lease_settings', 'lease_alerts_sent', 'lease_events', 'lease_services', 'lease_sources', 'prop_building_staff', 'lease_tenant_notices', 'lease_tenant_log', 'lease_tenant_log_files', 'prop_inspections', 'prop_inspection_photos',
   'prop_suppliers', 'prop_renewals', 'prop_renewal_requests', 'prop_renewal_quotes',
+  'activity_log',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

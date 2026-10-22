@@ -18,6 +18,7 @@ import PropertiesPage from './components/Properties';
 import LeasingPage from './components/Leasing';
 import RegionSettings from './components/RegionSettings';
 import SourcesPage from './components/SourcesPage';
+import ActivityLogPage from './components/ActivityLogPage';
 import ChecklistsPage from './components/Checklists';
 import BuildingsPage from './components/Buildings';
 import InventoryPage from './components/Inventory';
@@ -218,7 +219,7 @@ export default function App() {
           hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
           inventoryOpen={panel === 'inventory'} onInventory={() => { setPanel('inventory'); setDrawer(false); }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
-          onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} sourcesOpen={panel === 'sources'} onSources={place('sources')} regionOpen={panel === 'region'} onRegion={place('region')} onActivity={() => { setPanel('activity'); setDrawer(false); }}
+          onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} sourcesOpen={panel === 'sources'} onSources={place('sources')} activityLogOpen={panel === 'activitylog'} onActivityLog={() => { setPanel('activitylog'); setDrawer(false); }} regionOpen={panel === 'region'} onRegion={place('region')} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
       </aside>
 
@@ -289,6 +290,7 @@ export default function App() {
               {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
               {panel === 'properties' && <PropertiesPage key={`p${dataKey}`} me={me} onBack={() => setPanel(null)} />}
               {panel === 'sources' && <SourcesPage onBack={() => setPanel(null)} />}
+              {panel === 'activitylog' && <ActivityLogPage onBack={() => setPanel(null)} />}
               {panel === 'region' && <RegionSettings onBack={() => setPanel(null)} />}
               {panel === 'leasing' && <LeasingPage key={`l${dataKey}`} tab={leasingTab} onTab={setLeasingTab} report={leasingReport} onReport={setLeasingReport} alert={leasingAlert} onAlert={setLeasingAlert} onBack={() => setPanel(null)} />}
               {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}

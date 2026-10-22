@@ -17,6 +17,7 @@ import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
 import { chatAgents } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
+import { activityKit } from './activityKit.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
 // files. The agent's model costs several times the filing model, and the whole turn is re-sent
@@ -324,6 +325,7 @@ export async function chat(req, res) {
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
     await buildingKit(user),
     await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),
+    ...(modules.includes('activity') ? [activityKit()] : []), // the activity log: the master's, and whoever holds Activity
     ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
