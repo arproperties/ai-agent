@@ -87,7 +87,7 @@ export async function refreshBuildings(maxAge = 0) {
 export async function setBuilding(master, id, input) {
   const person = async (v, what) => {
     if (v === null || v === undefined || v === '') return null;
-    const u = await db.prepare('SELECT id FROM users WHERE id = ? AND NOT disabled').get(Number(v) || 0);
+    const u = await db.prepare('SELECT id FROM users WHERE id = ? AND NOT disabled AND NOT external').get(Number(v) || 0);
     if (!u) throw bad(`Pick ${what} from the people in Reem`);
     return u.id;
   };
@@ -101,7 +101,7 @@ export async function setBuilding(master, id, input) {
 
 /** For the editor: the people who can be picked. */
 export async function options() {
-  return { people: await db.prepare('SELECT id, name FROM users WHERE NOT disabled ORDER BY lower(name)').all() };
+  return { people: await db.prepare('SELECT id, name FROM users WHERE NOT disabled AND NOT external ORDER BY lower(name)').all() };
 }
 
 // ---------- the jobs ----------

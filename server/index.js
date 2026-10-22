@@ -7,7 +7,7 @@ import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks } from './agents.js';
-import { chatAgents, listedAgents, canUseAgent, isMaster } from './access.js';
+import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
 import { deleteMessage, chat } from './chat.js';
 import { addMemory } from './knowledge.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument } from './files.js';
@@ -60,6 +60,7 @@ app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in 
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api', requireUser); // everything below needs a signed-in user
+app.use('/api', externalFence); // someone from outside the company reaches only their own things (access.js)
 // Reem's own modules (server/modules.js) stand in front of each screen's routes. Where a
 // chat reads the same data, only what the screen alone does is closed.
 const glance = (req) => req.method === 'GET' && req.path === '/'; // which mailbox is connected: a chat asks too

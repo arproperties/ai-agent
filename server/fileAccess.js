@@ -17,10 +17,12 @@ export const ownersFor = (viewerId) =>
 
 /** Replace the list in one go: the screen sends every ticked person. */
 export async function setOwners(master, viewerId, ownerIds) {
-  const viewer = await db.prepare('SELECT id FROM users WHERE id = ?').get(Number(viewerId));
+  const viewer = await db.prepare('SELECT id, external FROM users WHERE id = ?').get(Number(viewerId));
   if (!viewer) throw bad('User not found', 404);
   const ids = [...new Set((Array.isArray(ownerIds) ? ownerIds : []).map(Number).filter((n) => Number.isInteger(n) && n !== viewer.id))];
-  const known = ids.length ? await db.prepare('SELECT id FROM users WHERE id = ANY(?::int[])').all(ids) : [];
+  // Someone external neither reads anyone's files nor has theirs read (access.js).
+  if (viewer.external && ids.length) throw bad('This person is external: they see only their own files');
+  const known = ids.length ? await db.prepare('SELECT id FROM users WHERE id = ANY(?::int[]) AND NOT external').all(ids) : [];
   await tx(async () => {
     await db.prepare('DELETE FROM file_access WHERE viewer_id = ?').run(viewer.id);
     for (const { id } of known) {

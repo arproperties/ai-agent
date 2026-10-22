@@ -46,7 +46,7 @@ const fail = (key) => {
   attempts.set(key, a && a.until > Date.now() ? { ...a, count: a.count + 1 } : { count: 1, until: Date.now() + 15 * 60000 });
 };
 
-const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role });
+const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, external: !!u.external });
 
 export async function currentUser(req) {
   const token = readCookie(req, COOKIE);

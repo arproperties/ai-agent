@@ -46,7 +46,7 @@ const stamp = (secs) => new Date(secs * 1000).toLocaleString('en-GB', {
 /** Everyone this person could send to: active, and not themselves. has_list: they have the To-do list. */
 const others = (userId) => db.prepare(`SELECT id, name, email,
       (role = 'master' OR EXISTS (SELECT 1 FROM module_access m WHERE m.user_id = users.id AND m.module = 'todos')) has_list
-    FROM users WHERE id <> ? AND NOT disabled ORDER BY lower(name)`).all(userId);
+    FROM users WHERE id <> ? AND NOT disabled AND NOT external ORDER BY lower(name)`).all(userId);
 
 /** Said to Reem, who says it to the sender: the master can switch the list on for them. */
 function noList(people) {

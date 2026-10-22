@@ -325,7 +325,7 @@ tenantCareRoutes.get('/', guard, wrap(async (req, res) => {
     out.directory = await directory().then((d) => ({ buildings: d.buildings.length, units: d.buildings.reduce((n, b) => n + b.units.length, 0), tenants: d.tenants.size }))
       .catch((e) => ({ error: e.message }));
     const have = new Set(await members());
-    out.people = (await db.prepare(`SELECT id, name, email FROM users WHERE NOT disabled AND role IS DISTINCT FROM 'master' ORDER BY lower(name)`).all())
+    out.people = (await db.prepare(`SELECT id, name, email FROM users WHERE NOT disabled AND NOT external AND role IS DISTINCT FROM 'master' ORDER BY lower(name)`).all())
       .map((u) => ({ ...u, member: have.has(u.id) }));
   }
   res.json(out);
@@ -380,7 +380,7 @@ tenantCareRoutes.put('/members', masterOnly, wrap(async (req, res) => {
   const ids = [...new Set((Array.isArray(req.body.userIds) ? req.body.userIds : []).map(Number).filter(Number.isInteger))];
   await tx(async () => {
     await db.prepare('DELETE FROM tenant_inbox_members').run();
-    if (ids.length) await db.prepare('INSERT INTO tenant_inbox_members (user_id) SELECT id FROM users WHERE id = ANY(?::int[]) ON CONFLICT DO NOTHING').run(ids);
+    if (ids.length) await db.prepare('INSERT INTO tenant_inbox_members (user_id) SELECT id FROM users WHERE id = ANY(?::int[]) AND NOT external ON CONFLICT DO NOTHING').run(ids);
   });
   res.json({ members: await members() });
 }));

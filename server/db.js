@@ -268,6 +268,8 @@ await db.exec(`
   ALTER TABLE users     ADD COLUMN IF NOT EXISTS role       TEXT    NOT NULL DEFAULT 'user';
   ALTER TABLE users     ADD COLUMN IF NOT EXISTS disabled   BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE users     ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  -- Someone from outside the company (access.js, isExternal): their own things only.
+  ALTER TABLE users     ADD COLUMN IF NOT EXISTS external   BOOLEAN NOT NULL DEFAULT false;
 
   -- Sharing is per-item and opt-in. Denormalised onto chunks for the same reason
   -- agent_id already is: recall() must filter without joining documents.

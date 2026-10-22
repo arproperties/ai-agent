@@ -11,6 +11,17 @@ import { db } from './db.js';
 export const isMaster = (user) => user?.role === 'master';
 
 /**
+ * Someone from outside the company, ticked External on their People profile. They get an
+ * empty book: their own files, chats, to-dos and memories, and only private agents -
+ * nothing of the company's, no team, no staff list. The master still sees all of theirs.
+ * Each rule below narrows for them; none widens for anyone else.
+ */
+export const isExternal = (user) => !!user?.external && !isMaster(user);
+
+// For an external person only private agents count, whatever else is still ticked.
+const privateOnly = (user) => (isExternal(user) ? ' AND a.private' : '');
+
+/**
  * The agents this user converses with: what the router may pick, and what a new file may
  * be filed against. The master's private agents are left out - they belong to the people
  * they are ticked for, so the master reaches one only by naming it (privateAgents).
@@ -21,7 +32,7 @@ export async function chatAgents(user) {
   }
   return db.prepare(`SELECT a.* FROM agents a
     JOIN agent_assignments aa ON aa.agent_id = a.id
-    WHERE aa.user_id = ? AND aa.mode = 'chat'
+    WHERE aa.user_id = ? AND aa.mode = 'chat'${privateOnly(user)}
     ORDER BY aa.is_primary DESC, a.id`).all(user.id);
 }
 
@@ -38,6 +49,7 @@ export async function privateAgents(user) {
  */
 export async function onlyPrivateAgents(user) {
   if (isMaster(user)) return false;
+  if (isExternal(user)) return true;
   const r = await db.prepare(`SELECT COUNT(*)::int n, COUNT(*) FILTER (WHERE NOT a.private)::int open
     FROM agent_assignments aa JOIN agents a ON a.id = aa.agent_id
     WHERE aa.user_id = ? AND aa.mode = 'chat'`).get(user.id);
@@ -57,7 +69,8 @@ export async function listedAgents(user) {
 export async function shelfIds(user) {
   const rows = isMaster(user)
     ? await db.prepare('SELECT id AS agent_id FROM agents WHERE user_id = ?').all(user.id)
-    : await db.prepare('SELECT agent_id FROM agent_assignments WHERE user_id = ?').all(user.id);
+    : await db.prepare(`SELECT aa.agent_id FROM agent_assignments aa JOIN agents a ON a.id = aa.agent_id
+        WHERE aa.user_id = ?${privateOnly(user)}`).all(user.id);
   return rows.map((r) => r.agent_id);
 }
 
@@ -68,5 +81,24 @@ export async function canUseAgent(user, agentId) {
   if (isMaster(user)) {
     return !!(await db.prepare('SELECT 1 FROM agents WHERE id = ? AND user_id = ?').get(id, user.id));
   }
-  return !!(await db.prepare('SELECT 1 FROM agent_assignments WHERE agent_id = ? AND user_id = ?').get(id, user.id));
+  return !!(await db.prepare(`SELECT 1 FROM agent_assignments aa JOIN agents a ON a.id = aa.agent_id
+    WHERE aa.agent_id = ? AND aa.user_id = ?${privateOnly(user)}`).get(id, user.id));
+}
+
+/**
+ * The parts of the app an external person may reach: their own chats, files and lists.
+ * Anything else under /api - team chat, buildings, the shared inbox, saifsys, and any
+ * company screen added later - is closed to them by default, so a new feature cannot
+ * open the company to them by being forgotten here. Matched on the path's first part.
+ */
+const EXTERNAL_OPEN = new Set(['auth', 'config', 'agents', 'conversations', 'chat', 'messages', 'documents', 'imports',
+  'memories', 'voice', 'access', 'modules', 'todos', 'routines', 'suggestions', 'push', 'meetings', 'transcripts',
+  'translate', 'replies', 'pictures', 'email', 'outlook', 'imap']);
+
+/** Mount after requireUser. Leaves everyone but an external person alone. */
+export function externalFence(req, res, next) {
+  if (!isExternal(req.user)) return next();
+  const first = req.path.split('/')[1];
+  if (EXTERNAL_OPEN.has(first)) return next();
+  res.status(404).json({ error: 'Not found' });
 }

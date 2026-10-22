@@ -75,7 +75,7 @@ export const deleteResponsibility = async (id) =>
 /** "Rona", "rona@…", "me" → one active person. Unclear or unknown names are errors that list who there is. */
 export async function findPerson(masterId, raw) {
   const want = String(raw || '').trim().toLowerCase();
-  const pool = await db.prepare('SELECT id, name, email FROM users WHERE NOT disabled ORDER BY lower(name)').all();
+  const pool = await db.prepare('SELECT id, name, email FROM users WHERE NOT disabled AND NOT external ORDER BY lower(name)').all();
   if (['me', 'myself', 'my', 'mine'].includes(want)) return pool.find((u) => u.id === masterId) || null;
   if (!want) throw bad('Say who it is for.');
   const tiers = [
@@ -219,7 +219,7 @@ async function directory(user, person) {
     SELECT r.id, u.id AS uid, u.name, h.employee_code AS code, r.title, r.body FROM responsibilities r
     JOIN users u ON u.id = r.user_id
     LEFT JOIN hr_links h ON h.user_id = u.id
-    WHERE NOT u.disabled ORDER BY lower(u.name), r.id`).all();
+    WHERE NOT u.disabled AND NOT u.external ORDER BY lower(u.name), r.id`).all();
   const mine = ['me', 'my', 'mine'].includes(want);
   const picked = rows.filter((r) => (mine ? r.uid === user.id : !want || r.name.toLowerCase().includes(want)));
   if (!picked.length) {

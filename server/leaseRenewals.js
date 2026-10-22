@@ -178,7 +178,7 @@ async function step(r, title, { user = null, data = null } = {}) {
 /** Who hears about renewals: the masters and everyone ticked for the module. */
 async function holders() {
   const rows = await db.prepare(`SELECT id FROM users WHERE NOT disabled AND (role = 'master'
-    OR id IN (SELECT user_id FROM module_access WHERE module = 'renewals'))`).all();
+    OR (NOT external AND id IN (SELECT user_id FROM module_access WHERE module = 'renewals')))`).all();
   return rows.map((r) => r.id);
 }
 

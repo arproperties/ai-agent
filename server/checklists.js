@@ -128,7 +128,7 @@ export async function listChecklists(userId, now = secs()) {
 /** The master's view: everyone else who has a checklist, with the same detail they see. */
 export async function teamChecklists(master, now = secs()) {
   const people = await db.prepare(`SELECT u.id, u.name FROM users u
-    WHERE NOT u.disabled AND u.id <> ? AND EXISTS (SELECT 1 FROM checklists c WHERE c.user_id = u.id)
+    WHERE NOT u.disabled AND NOT u.external AND u.id <> ? AND EXISTS (SELECT 1 FROM checklists c WHERE c.user_id = u.id)
     ORDER BY lower(u.name)`).all(master.id);
   return Promise.all(people.map(async (p) => ({ ...p, checklists: await listChecklists(p.id, now) })));
 }
