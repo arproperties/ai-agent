@@ -6,7 +6,7 @@ import { db, tx } from './db.js';
 import { ask } from './ai.js';
 import { DATA_DIR, FOLDERS } from './config.js';
 import { IMAGE_TYPES, VIDEO_TYPES, VIDEO_EXT, extractText, describeImage, readVideo, indexChunks, retrievalScope, agentScope } from './knowledge.js';
-import { isMaster } from './access.js';
+import { isMaster, masterReach } from './access.js';
 import { keepText } from './copies.js';
 
 const UPLOAD_DIR = `${DATA_DIR}/uploads`;
@@ -353,9 +353,10 @@ export async function readableDocuments(user, agentId = null) {
 
 /**
  * One file, if this user owns it or it was shared with them - or any file at all for the
- * master, who is shown what the team uploaded. For opening, never for changing.
+ * master, who is shown what the team uploaded - never an external person's (access.js).
+ * For opening, never for changing.
  */
 export async function readableDocument(user, docId) {
-  const scope = isMaster(user) ? { sql: 'TRUE', params: [] } : agentScope(user, 'd');
+  const scope = isMaster(user) ? masterReach('d') : agentScope(user, 'd');
   return db.prepare(`${DOC_SELECT} WHERE d.id = ? AND ${scope.sql}`).get(Number(docId) || 0, ...scope.params);
 }

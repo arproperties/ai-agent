@@ -2,16 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
 import { chatAgents, canUseAgent, onlyPrivateAgents, shelfIds, externalFence } from '../server/access.js';
-import { setAssignments, setExternal, listAssignments, listUsers, userConversations } from '../server/admin.js';
+import express from 'express';
+import { setAssignments, setExternal, listAssignments, listUsers, adminRoutes } from '../server/admin.js';
 import { userModules, setModuleAccess, listModuleAccess } from '../server/modules.js';
 import { userModules as saifsysModules } from '../server/saifsys/index.js';
 import { setOwners } from '../server/fileAccess.js';
 import { options as buildingOptions } from '../server/buildings.js';
 import { messengerHandlers } from '../server/messenger.js';
-import { readableDocuments } from '../server/files.js';
+import { readableDocuments, readableDocument } from '../server/files.js';
+import { searchFiles } from '../server/shelf.js';
 
 // Someone from outside the company: an empty book. Their own things and private agents
-// only, nothing of the company's, nobody on the team - and the master still sees it all.
+// only, nothing of the company's, nobody on the team - and a wall both ways, the master
+// and other external people included.
 
 test.after(() => closeDb());
 
@@ -141,12 +144,52 @@ test('the fence lets them into their own things only', async () => {
   assert.equal(through(master, '/buildings'), 200);
 });
 
-test('the master still sees everything of theirs, and can make them staff again', async () => {
-  const { master, jeff } = await fixture();
+test("the master cannot see an external person's files, chats or memory either", async () => {
+  const { master, jeff, sara } = await fixture();
+  const { id: deck } = await db.prepare(`INSERT INTO documents (user_id, name, title, folder, status)
+    VALUES (?, 'deck.pdf', 'Deck Contract', 'Other', 'ready') RETURNING id`).run(jeff.id);
+  const { id: visa } = await db.prepare(`INSERT INTO documents (user_id, name, title, folder, status)
+    VALUES (?, 'visa.pdf', 'Staff Visa', 'Other', 'ready') RETURNING id`).run(sara.id);
   await db.prepare('INSERT INTO conversations (user_id, title) VALUES (?, ?)').run(jeff.id, 'Deck case timeline');
   await makeExternal(master, jeff.id);
-  assert.deepEqual((await userConversations(jeff.id)).map((c) => c.title), ['Deck case timeline']);
-  assert.equal((await listUsers()).find((u) => u.id === jeff.id).external, true);
+
+  assert.equal(await readableDocument(master, deck), undefined, 'not by id');
+  assert.ok(await readableDocument(master, visa), 'staff files still open for the master');
+  assert.doesNotMatch(await searchFiles(master, 'contract'), /Deck Contract/);
+  assert.match(await searchFiles(master, 'visa'), /Staff Visa/);
+  assert.equal((await listUsers()).find((u) => u.id === jeff.id).external, true, 'still listed in People, to manage');
+
+  const app = express();
+  app.use((req, res, next) => { req.user = master; next(); });
+  app.use('/a', adminRoutes);
+  const server = app.listen(0);
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/a/users`;
+    for (const what of ['documents', `documents/${deck}`, `documents/${deck}/file`, 'conversations', 'memories', 'messages']) {
+      assert.equal((await fetch(`${url}/${jeff.id}/${what}`)).status, 404, what);
+    }
+    assert.equal((await fetch(`${url}/${sara.id}/conversations`)).status, 200, 'staff unchanged');
+    assert.equal((await fetch(`${url}/${jeff.id}/modules`)).status, 200, 'what they are given is still managed');
+  } finally { server.close(); }
+});
+
+test('two external people are walled off from each other', async () => {
+  const { master, jeff, caseAgent } = await fixture();
+  const amran = await user(await makeUser('Amran'));
+  await setAssignments(master, amran.id, [{ agentId: caseAgent, mode: 'chat', primary: true }]);
+  await db.prepare(`INSERT INTO documents (user_id, name, title, folder, status) VALUES (?, 'poa.pdf', 'POA', 'Other', 'ready')`).run(amran.id);
+  await db.prepare(`INSERT INTO documents (user_id, name, title, folder, status) VALUES (?, 'deck.pdf', 'Deck Contract', 'Other', 'ready')`).run(jeff.id);
+  const a = await makeExternal(master, amran.id);
+  const j = await makeExternal(master, jeff.id);
+  const shelf = async (u) => (await readableDocuments(await asRequest(u))).map((d) => d.title);
+  assert.deepEqual(await shelf(a), ['POA']);
+  assert.deepEqual(await shelf(j), ['Deck Contract'], 'the same private agent does not join them');
+  assert.match(await searchFiles(await asRequest(j), 'POA'), /^No saved file matches "POA" \(1 files looked through\)/);
+});
+
+test('the master can make them staff again, but never themselves external', async () => {
+  const { master, jeff } = await fixture();
+  await makeExternal(master, jeff.id);
   await assert.rejects(setExternal(master, master.id, true), /master cannot be external/);
   await setExternal(master, jeff.id, false);
   assert.equal((await user(jeff.id)).external, false);
