@@ -51,6 +51,16 @@ const TICKS = [
 
 const nights = (a, b) => Math.round((new Date(`${b}T00:00:00`) - new Date(`${a}T00:00:00`)) / 86400000) + 1;
 
+// The usual lease lengths, and the last night of one that starts on `start` (YYYY-MM-DD):
+// a year from 01/01 ends on 12/31. A start on the 31st into a shorter month ends on its last day.
+const LENGTHS = [['1 month', 1], ['3 months', 3], ['6 months', 6], ['1 year', 12], ['2 years', 24]];
+function lastNight(start, months) {
+  const [y, m, d] = start.split('-').map(Number);
+  const to = new Date(y, m - 1 + months, 1);
+  const end = new Date(to.getFullYear(), to.getMonth(), Math.min(d, new Date(to.getFullYear(), to.getMonth() + 1, 0).getDate()) - 1);
+  return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+}
+
 function Label({ text, need, children, wide }) {
   return (
     <label className={`block ${wide ? 'sm:col-span-2' : ''}`}>
@@ -346,10 +356,26 @@ function BookingForm({ start, preset, onDone, onCancel }) {
           <Select value={buildingId} onChange={(e) => { setBuildingId(e.target.value); setV({ ...v, unit_id: '' }); }} required disabled={!companyId} className={SELECT}
             placeholder={companyId ? 'Choose…' : 'Choose a company first'} options={buildings.map((b) => [b.id, b.name])} />
         </Label>
-        <div>
-          <span className="mb-1 block text-xs text-txt/80">Dates<span className="text-p2"> *</span><span className="text-mute"> · first night to last night</span></span>
-          <DateRange from={v.start_date} to={v.end_date} onChange={(a, b) => setV((now) => ({ ...now, start_date: a, end_date: b }))}
-            placeholder="Choose the first and last night" className={SELECT} wrap="w-full" />
+        {/* Two boxes that can be typed into or picked from a calendar; the usual lengths fill the last night from the first. */}
+        <div className="grid gap-x-4 gap-y-2 sm:col-span-2 sm:grid-cols-2">
+          <Label text="First night" need>
+            <DateField value={v.start_date} required aria-label="First night" className={FIELD}
+              onChange={(e) => { const a = e.target.value; setV((now) => ({ ...now, start_date: a, end_date: now.end_date && a && now.end_date < a ? '' : now.end_date })); }} />
+          </Label>
+          <Label text="Last night" need>
+            <DateField value={v.end_date} required min={v.start_date || undefined} aria-label="Last night" className={FIELD}
+              onChange={(e) => setV((now) => ({ ...now, end_date: e.target.value }))} />
+          </Label>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs sm:col-span-2">
+            <span className="text-mute">{v.start_date ? 'Lease length:' : 'Type or pick the first night, then a length:'}</span>
+            {LENGTHS.map(([name, months]) => {
+              const end = v.start_date && lastNight(v.start_date, months);
+              return (
+                <button key={name} type="button" disabled={!v.start_date} onClick={() => setV((now) => ({ ...now, end_date: end }))} aria-pressed={!!end && v.end_date === end}
+                  className={`rounded-full border px-2.5 py-1 disabled:opacity-40 ${end && v.end_date === end ? 'border-p1 bg-p1/15 text-txt' : 'border-stroke/70 text-mute enabled:hover:bg-white/5 enabled:hover:text-txt'}`}>{name}</button>
+              );
+            })}
+          </div>
         </div>
         <div>
           <span className="mb-1 flex items-baseline gap-2 text-xs text-txt/80">

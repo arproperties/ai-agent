@@ -57,7 +57,8 @@ export default function DateField({ value, onChange, min, max, required, autoFoc
       ...(up ? { bottom: window.innerHeight - r.top + 6 } : { top: r.bottom + 6 }) });
   };
   const close = () => { setOpen(false); setPos(null); };
-  const show = () => { const d = value ? day(value) : new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); setOpen(true); };
+  // An empty box opens on the month it may begin in.
+  const show = () => { const d = value ? day(value) : min ? day(min) : new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); setOpen(true); };
 
   useLayoutEffect(() => {
     if (!open) return undefined;
