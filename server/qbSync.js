@@ -229,7 +229,7 @@ export async function syncApply(item, xml, today = todayHere()) {
   if (item.stage === 'vendor') {
     if (failed) throw new Error(code === 3100 ? 'A vendor with this name is already in QuickBooks. Read the lists again on the QuickBooks screen, then try again.' : `QuickBooks said: ${rs.statusMessage} (${code})`);
     const v = rs.VendorRet?.[0];
-    await db.prepare(`INSERT INTO qb_lists (kind, list_id, name, full_name, active) VALUES ('Vendor', ?, ?, ?, true)
+    await db.prepare(`INSERT INTO qb_lists (kind, list_id, name, full_name, active, made_here) VALUES ('Vendor', ?, ?, ?, true, true)
       ON CONFLICT (kind, list_id) DO UPDATE SET name = EXCLUDED.name, full_name = EXCLUDED.full_name, seen_at = now()`).run(v.ListID, v.Name, v.FullName ?? v.Name);
     for (const t of ['expenses', 'expense_repeats']) await db.prepare(`UPDATE ${t} SET vendor_list_id = ? WHERE vendor_list_id IS NULL AND lower(vendor_name) = lower(?)`).run(v.ListID, v.Name);
     await again(); // now the expense itself

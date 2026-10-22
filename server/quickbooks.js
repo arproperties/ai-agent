@@ -1,7 +1,7 @@
 import express, { Router } from 'express';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { XMLParser } from 'fast-xml-parser';
-import { db } from './db.js';
+import { db, tx } from './db.js';
 import { hashPassword, verifyPassword } from './auth.js';
 import { plan, syncRequest, syncApply, settings, saveSettings } from './qbSync.js';
 
@@ -82,7 +82,7 @@ export async function qwcFile(base) {
   const root = String(base).replace(/\/$/, '');
   return `<?xml version="1.0"?>
 <QBWCXML>
-  <AppName>Lease app</AppName>
+  <AppName>${esc(`Lease app (${new URL(root).host})`)}</AppName>
   <AppID></AppID>
   <AppURL>${esc(`${root}/api/qbwc`)}</AppURL>
   <AppDescription>Sends the lease app's entries to QuickBooks and reads its lists.</AppDescription>
@@ -102,9 +102,23 @@ export async function setEnabled(on) {
   await db.prepare('UPDATE qb_connection SET enabled = ? WHERE id = 1').run(!!on);
 }
 
-/** Unties the company file, so the next file to connect becomes the one. */
+/**
+ * Unties the company file, so the next file to connect becomes the one: moving from a test copy
+ * to the real books. Everything the app sent to the old file is forgotten, so the new one is
+ * sent all of it; vendors the app made there are made again in the new one. Sending is switched
+ * off, and the lists are read again from the new file before anything goes.
+ */
 export async function forgetFile() {
-  await db.prepare('UPDATE qb_connection SET company_file = NULL WHERE id = 1').run();
+  await tx(async () => {
+    for (const t of ['expenses', 'expense_repeats']) {
+      await db.prepare(`UPDATE ${t} SET vendor_list_id = NULL WHERE vendor_list_id IN (SELECT list_id FROM qb_lists WHERE kind = 'Vendor' AND made_here)`).run();
+    }
+    await db.prepare("DELETE FROM qb_lists WHERE made_here").run();
+    await db.prepare('DELETE FROM qb_sync').run();
+    await db.prepare("DELETE FROM qb_queue WHERE kind = 'sync'").run();
+    await db.prepare('UPDATE qb_connection SET company_file = NULL, enabled = false WHERE id = 1').run();
+  });
+  await queueListRead();
 }
 
 /** Puts a read of every list in the queue, skipping any already waiting. Returns how many were added. */

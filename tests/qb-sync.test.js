@@ -166,6 +166,17 @@ test('an expense goes as a check to its vendor; a new vendor is made first; a ca
   assert.match(await r.next(), /<TxnDelType>CreditCardCharge<\/TxnDelType><TxnID>K2<\/TxnID>/);
   await r.reply(gone('CreditCardCharge', 'K2'));
   assert.deepEqual((await db.prepare('SELECT key FROM qb_sync ORDER BY key').all()).map((x) => x.key), [`expense:${e.id}`]);
+
+  // From the test copy to the real books: what went to the old file is forgotten, the vendor it made is made again.
+  const { forgetFile } = await import('../server/quickbooks.js');
+  await forgetFile();
+  assert.equal((await getExpense(e.id)).vendor_list_id, null);
+  assert.equal((await db.prepare("SELECT count(*)::int AS n FROM qb_lists WHERE list_id = 'V9'").get()).n, 0);
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM qb_sync').get()).n, 0);
+  const st = await status();
+  assert.deepEqual([st.enabled, st.company_file, st.queue.waiting], [false, null, 5], 'switched off, and the new file\'s lists to be read first');
+  assert.equal((await getExpense(card.id).catch(() => null)), null);
+  assert.equal((await choices()).vendors.some((v) => v.id === 'V1'), true, 'QuickBooks\' own vendors are kept');
 });
 
 test('a refusal from QuickBooks is shown on the entry and waits to be tried again; a cut-off new entry waits for a person', async () => {

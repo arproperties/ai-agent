@@ -1510,6 +1510,8 @@ await db.exec(`
   ALTER TABLE lease_installments ADD COLUMN IF NOT EXISTS held BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_documents ADD COLUMN IF NOT EXISTS category TEXT;
 `);
+// The lease contract the system made from the lease (server/leaseContract.js), as opposed to the signed copy someone adds.
+await db.exec('ALTER TABLE lease_documents ADD COLUMN IF NOT EXISTS generated BOOLEAN NOT NULL DEFAULT false');
 
 // What Claude read off each tenant-list file, by a fingerprint of the file (and of the
 // instructions it was read with), so the same screenshot uploaded again is not paid for twice.
@@ -2064,6 +2066,8 @@ await db.exec(`
   -- 'deposit:2026-10-21', 'expense:7'). stage is what was sent for it (vendor, add, mod, del),
   -- sent_hash what the entry looked like when it was sent.
   ALTER TABLE qb_queue ADD COLUMN IF NOT EXISTS stage TEXT;
+  -- made_here: a vendor the app made in QuickBooks, so a move to another company file makes it again there.
+  ALTER TABLE qb_lists ADD COLUMN IF NOT EXISTS made_here BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE qb_queue ADD COLUMN IF NOT EXISTS sent_hash TEXT;
 `);
 
