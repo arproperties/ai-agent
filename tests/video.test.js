@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDb } from './helpers/db.js';
@@ -62,7 +62,7 @@ test('the length of a clip is read off it', withFfmpeg, async () => {
 
 test('a file that is not a video has no length, rather than throwing', withFfmpeg, async () => {
   const notVideo = join(dir, 'notes.txt');
-  await run('sh', ['-c', `printf 'hello' > ${JSON.stringify(notVideo)}`]);
+  writeFileSync(notVideo, 'hello');
   assert.equal(await videoSeconds(notVideo).catch(() => 0), 0);
 });
 
