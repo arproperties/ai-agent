@@ -129,9 +129,9 @@ test('GSL 101 entered by hand: the transactions list ends at Rent Manager\'s bal
   // Rent Manager's balance due, to the cent: the water is billed in full on the part month too.
   assert.equal(l.balance, 1360);
   assert.equal(l.rows.at(-1).balance, l.balance);
-  // What is still open, as on Rent Manager's Payments tab: money goes on the rent first on its day.
+  // What is still open: unlike Rent Manager, money goes on the extra charges due before the rent.
   assert.deepEqual((await bookingPayments(bk.id, AT)).filter((r) => r.left > 0 && r.due_date <= AT).map((r) => [r.due_date, r.name, r.paid, r.left]), [
-    ['2026-10-01', 'Water/Trash PKG', 0, 48], ['2026-10-01', 'Rent', 72, 1028],
+    ['2026-10-01', 'Rent', 24, 1076],
     ['2026-10-06', 'Late Charge', 0, 50], ['2026-10-12', 'Late Charge', 0, 30], ['2026-10-15', 'Court Cost', 0, 204],
   ]);
 });

@@ -106,14 +106,43 @@ function Transactions({ bookingId, stamp: version }) {
 
 const stamp = (secs) => new Date(Number(secs) * 1000).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-/** Recording money against one payment due, or (with `url`) against the booking as a whole,
-    where it is spread over what is owed oldest first. The amount starts at what is still owed. */
-function PayForm({ row, url = `/leasing/installments/${row.id}/payments`, onDone, onCancel }) {
+/** Where money for the whole lease will go, worked out by the server as it will save it, as the amount is typed. */
+function Plan({ url, amount, on }) {
+  const [p, setP] = useState(null);
+  useEffect(() => {
+    if (!(Number(amount) > 0)) return setP(null);
+    const t = setTimeout(() => api.get(`${url}/plan?amount=${encodeURIComponent(amount)}&received_on=${on}`).then(setP).catch(() => setP(null)), 250);
+    return () => clearTimeout(t);
+  }, [url, amount, on]);
+  if (!p) return null;
+  return (
+    <div className="rounded-xl bg-white/[0.04] px-3 py-2.5 text-sm">
+      <p className={HEAD}>Where it goes</p>
+      <ul className="mt-1.5 space-y-1">
+        {p.rows.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-baseline gap-x-2">
+            <span className="min-w-0 flex-1 basis-40">{r.name} <span className="text-xs text-mute">· due {fmt(r.due_date)}</span>
+              {r.status === 'overdue' && <span className={`ml-1.5 rounded-full px-2 py-0.5 text-[11px] ${STATUS.overdue[1]}`}>Overdue</span>}</span>
+            <span className="tabular-nums">{aed(r.part)}</span>
+            <span className={`w-36 text-right text-xs ${r.after > 0 ? 'text-warn' : 'text-ok'}`}>{r.after > 0 ? `${aed(r.after)} still owed` : 'paid off'}</span>
+          </li>
+        ))}
+      </ul>
+      {p.extra > 0 && <p className="mt-1.5 text-xs text-bad">{aed(p.extra)} is more than this lease owes ({aed(p.owed)}).</p>}
+    </div>
+  );
+}
+
+/** Recording money against one payment due, or (with `url`) against the booking as a whole, where it is
+    spread over the extra charges due first, then the rent, with the spread shown as it is typed. The amount starts at what is still owed. */
+function PayForm({ row, url, onDone, onCancel }) {
   const [v, setV] = useState({ amount: row.left, method: 'transfer', received_on: today(), reference: '' });
   const [file, setFile] = useState(null); // the proof: transfer slip, card slip, a photo of the cash receipt
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
+  const whole = Boolean(url);
+  url ||= `/leasing/installments/${row.id}/payments`;
   const save = async (e) => {
     e.preventDefault();
     if (busy) return;
@@ -144,6 +173,7 @@ function PayForm({ row, url = `/leasing/installments/${row.id}/payments`, onDone
         <Paperclip size={15} className="shrink-0" /> <span className="truncate">{file ? file.name : 'Attach the slip (PDF or photo)'}</span>
         <input type="file" accept="application/pdf,image/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
       </label>
+      {whole && <Plan url={url} amount={v.amount} on={v.received_on} />}
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
@@ -242,6 +272,7 @@ export default function BookingPayments({ booking }) {
   const [history, setHistory] = useState([]);
   const [open, setOpen] = useState(null); // { id, as: 'pay' | 'remind' }: the row something is being done to; { as: 'all' | 'charge' } for the lease as a whole
   const [view, setView] = useState('schedule'); // the schedule row by row, or Transactions
+  const [only, setOnly] = useState('all'); // the schedule cut to one status: overdue, paid, upcoming…
   const [version, setVersion] = useState(0); // bumped on each load, so Transactions reads again
   const [error, setError] = useState('');
   const at = `/leasing/bookings/${booking.id}`;
@@ -283,6 +314,10 @@ export default function BookingPayments({ booking }) {
   const owedInAll = Math.round(sum((r) => r.left, rows) * 100) / 100;
   const tax = Math.round(sum((r) => r.tax || 0) * 100) / 100;
   const is = (r, as) => open?.id === r.id && open.as === as;
+  // A tab per status the schedule has, most pressing first; a tab that empties (the last overdue paid) goes back to All.
+  const tabs = ['overdue', 'due', 'partly_paid', 'upcoming', 'paid', 'waived'].map((k) => [k, dues.filter((r) => r.status === k).length]).filter(([, n]) => n > 0);
+  const shown = tabs.some(([k]) => k === only) ? only : 'all';
+  const listed = shown === 'all' ? dues : dues.filter((r) => r.status === shown);
 
   // One payment due, with the money received against it and what can be done to it.
   const line = (r) => {
@@ -344,14 +379,24 @@ export default function BookingPayments({ booking }) {
         <span className="flex-1" />
         {booking.status === 'confirmed' && open?.as !== 'charge' && <button onClick={() => setOpen({ as: 'charge' })} className={GHOST}><Plus size={13} /> Add a charge</button>}
         {/* Several months paid together: one amount, spread over what is owed, oldest first. */}
-        {owedInAll > 0 && takes && open?.as !== 'all' && <button onClick={() => setOpen({ as: 'all' })} title="Paid for more than one at once? It goes against what is owed, oldest first." className={GHOST}><Banknote size={13} /> Record a payment</button>}
+        {owedInAll > 0 && takes && open?.as !== 'all' && <button onClick={() => setOpen({ as: 'all' })} title="Paid for more than one at once? It goes on the extra charges due first, then the rent." className={GHOST}><Banknote size={13} /> Record a payment</button>}
       </div>
       {open?.as === 'charge' && <ChargeForm bookingId={booking.id} onDone={done} onCancel={() => setOpen(null)} />}
       {open?.as === 'all' && <PayForm row={{ left: owedInAll }} url={`${at}/payments`} onDone={done} onCancel={() => setOpen(null)} />}
       {view === 'transactions' ? <Transactions bookingId={booking.id} stamp={version} /> : (
         <div className="rounded-2xl border border-stroke">
+          {tabs.length > 1 && (
+            <div className="flex flex-wrap gap-1.5 border-b border-stroke/60 px-4 py-2.5">
+              {[['all', 'All', dues.length], ...tabs.map(([k, n]) => [k, STATUS[k][0], n])].map(([k, l, n]) => (
+                <button key={k} type="button" onClick={() => setOnly(k)} aria-pressed={shown === k}
+                  className={`rounded-full px-3 py-1.5 text-xs ${shown === k ? 'bg-p1/20 text-p1' : 'border border-stroke/70 text-mute hover:text-txt'}`}>
+                  {l} <span className="tabular-nums opacity-70">{n}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {dues.length === 0 ? <p className="px-4 py-4 text-sm text-mute">No rent or charges are due on this lease.</p>
-            : <div className="divide-y divide-stroke/60">{dues.map(line)}</div>}
+            : <div className="divide-y divide-stroke/60">{listed.map(line)}</div>}
         </div>
       )}
 

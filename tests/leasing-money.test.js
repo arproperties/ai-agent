@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, closeDb, db, makeUser, giveModules } from './helpers/db.js';
 import { create, setBuildingStaff, buildingStaff } from '../server/properties.js';
-import { createBooking, bookingPayments, recordPayment, removePayment, payBooking, settleDeposit, depositState, bookingHistory, changeEnd, cancelBooking, getBooking } from '../server/leasing.js';
+import { createBooking, bookingPayments, recordPayment, removePayment, payBooking, paymentPlan, addCharge, settleDeposit, depositState, bookingHistory, changeEnd, cancelBooking, getBooking } from '../server/leasing.js';
 import { report } from '../server/leasingReports.js';
 import { runAlerts, saveSettings } from '../server/leasingAlerts.js';
 
@@ -31,11 +31,27 @@ test('one payment can cover several months: it goes against what is owed, oldest
   await assert.rejects(payBooking(bk.id, { amount: 0, method: 'cash' }, staff, AT), /Enter the amount received/);
 
   const made = await payBooking(bk.id, { amount: 12000, method: 'transfer', received_on: '2026-10-08', reference: 'TT-7' }, staff, AT);
-  assert.deepEqual(made.map((p) => p.amount), [4500, 5000, 2500]); // on one day the rent first, as Rent Manager applies money
+  assert.deepEqual(made.map((p) => p.amount), [5000, 4500, 2500]); // what is due goes on the charges first, the rent last
   assert.deepEqual((await bookingPayments(bk.id, AT)).map((r) => [r.name, r.due_date, r.paid, r.left, r.status]),
     [['Security deposit', '2026-09-15', 5000, 0, 'paid'], ['Rent', '2026-09-15', 4500, 0, 'paid'], ['Rent', '2026-10-15', 2500, 2000, 'partly_paid']]);
   await payBooking(bk.id, { amount: 2000, method: 'cash' }, staff, AT);
   await assert.rejects(payBooking(bk.id, { amount: 1, method: 'cash' }, staff, AT), /Nothing is owed on this lease/);
+});
+
+test('money for the lease as a whole pays the extra charges due before the rent, and what is not due yet last; the plan shows it before saving', async () => {
+  const { staff, bk } = await tower();
+  await addCharge(bk.id, { label: 'Key Deposit', due_date: '2026-10-01', amount: 30 }, staff);
+  await addCharge(bk.id, { label: 'Washer/Dryer', due_date: '2026-11-01', amount: 100 }, staff); // not due yet on 10/08
+  const plan = await paymentPlan(bk.id, { amount: 9600, received_on: '2026-10-08' }, AT);
+  assert.deepEqual(plan.rows.map((r) => [r.name, r.due_date, r.part, r.after]), [
+    ['Security deposit', '2026-09-15', 5000, 0], ['Key Deposit', '2026-10-01', 30, 0], ['Rent', '2026-09-15', 4500, 0], ['Rent', '2026-10-15', 70, 4430],
+  ]);
+  assert.deepEqual([plan.owed, plan.extra], [14130, 0]);
+  // Saving spreads it exactly as the plan showed.
+  const made = await payBooking(bk.id, { amount: 9600, method: 'cash', received_on: '2026-10-08' }, staff, AT);
+  assert.deepEqual(made.map((p) => [p.installment_id, p.amount]), plan.rows.map((r) => [r.id, r.part]));
+  // More than is owed: the plan says how much is over.
+  assert.equal((await paymentPlan(bk.id, { amount: 5000, received_on: AT }, AT)).extra, 470);
 });
 
 test('a late fee is added once the days of grace are over, and comes off if the money had come in time', async () => {

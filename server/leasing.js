@@ -769,8 +769,32 @@ export const recordPayment = (installmentId, body, by, today, file) => tx(() => 
 const NO_PAYMENTS = 'This lease is marked not to take payments (Don\'t accept payments). Untick it on the lease first.';
 
 /**
- * Money received for the booking as a whole (two months paid together, say): it goes against
- * what is owed oldest first, over as many rows as it covers, each with its own receipt.
+ * Where money for the booking as a whole goes, in order: of what has fallen due by the day it came in,
+ * the extra charges (deposit, fees, water…) oldest first, then the rent oldest first; after that what
+ * is not due yet, by date, a day's charges before its rent. Each row with the `part` it takes and what
+ * is left on it `after`; `extra` is what is more than the lease owes.
+ */
+export async function paymentPlan(bookingId, body = {}, today = todayHere()) {
+  const b = await getBooking(bookingId);
+  const on = String(body.received_on ?? '').trim() || today;
+  const rent = (r) => (r.kind === 'rent' ? 1 : 0);
+  const step = (r) => (r.due_date <= on ? rent(r) : 2);
+  const open = (await bookingPayments(b.id, today)).filter((r) => r.left > 0)
+    .sort((x, y) => step(x) - step(y) || x.due_date.localeCompare(y.due_date) || rent(x) - rent(y));
+  let left = money(Number(body.amount) || 0);
+  const rows = [];
+  for (const r of open) {
+    if (left <= 0) break;
+    const part = Math.min(left, r.left);
+    rows.push({ id: r.id, kind: r.kind, name: r.name, due_date: r.due_date, status: r.status, part, after: money(r.left - part) });
+    left = money(left - part);
+  }
+  return { on, rows, owed: total(open, (r) => r.left), extra: Math.max(0, left), open };
+}
+
+/**
+ * Money received for the booking as a whole (two months paid together, say): it goes as paymentPlan
+ * lays out, over as many rows as it covers, each with its own receipt.
  * Never more than the booking still owes. The slip, if there is one, goes with the first.
  * The rows it was spread over share a `batch`, so the transactions list shows it as the one payment it was.
  * A lease ticked "Don't accept partial payments" takes nothing less than what is due by the day it was received.
@@ -780,29 +804,19 @@ const NO_PAYMENTS = 'This lease is marked not to take payments (Don\'t accept pa
 export const payBooking = (bookingId, body = {}, by, today = todayHere(), file = null) => tx(async () => {
   const b = await getBooking(bookingId);
   if (b.no_payments) throw bad(NO_PAYMENTS, 409);
-  let left = money(Number(body.amount));
-  if (!Number.isFinite(left) || left <= 0) throw bad('Enter the amount received.');
-  // Oldest first; on one day the rent before anything else, as Rent Manager applies money.
-  const rows = (await bookingPayments(b.id, today)).filter((r) => r.left > 0)
-    .sort((x, y) => x.due_date.localeCompare(y.due_date) || (x.kind === 'rent' ? 0 : 1) - (y.kind === 'rent' ? 0 : 1));
-  const owed = total(rows, (r) => r.left);
+  const amount = money(Number(body.amount));
+  if (!Number.isFinite(amount) || amount <= 0) throw bad('Enter the amount received.');
+  const { on, rows, owed, extra: left, open } = await paymentPlan(b.id, body, today);
   const keep = isTrue(body.keep_credit);
-  if (left > owed && !keep) throw bad(owed > 0 ? `Only ${cash(owed)} is still owed on this lease.` : 'Nothing is owed on this lease.', 409);
+  if (amount > owed && !keep) throw bad(owed > 0 ? `Only ${cash(owed)} is still owed on this lease.` : 'Nothing is owed on this lease.', 409);
   if (b.no_partial_payments) {
-    const on = String(body.received_on ?? '').trim() || today;
-    const due = total(rows.filter((r) => r.due_date <= on), (r) => r.left);
-    if (left < due) throw bad(`This lease takes payments in full only: ${cash(due)} is due by ${on}.`, 409);
+    const due = total(open.filter((r) => r.due_date <= on), (r) => r.left);
+    if (amount < due) throw bad(`This lease takes payments in full only: ${cash(due)} is due by ${on}.`, 409);
   }
   const batch = randomUUID();
   const made = [];
-  for (const r of rows) {
-    if (left <= 0) break;
-    const part = Math.min(left, r.left);
-    made.push(await takePayment(r.id, { ...body, amount: part }, by, today, made.length ? null : file, { batch }));
-    left = money(left - part);
-  }
+  for (const r of rows) made.push(await takePayment(r.id, { ...body, amount: r.part }, by, today, made.length ? null : file, { batch }));
   if (left > 0) {
-    const on = String(body.received_on ?? '').trim() || today;
     const c = (await db.prepare("SELECT id FROM lease_installments WHERE booking_id = ? AND kind = 'credit' AND due_date = ?").get(b.id, on))
       ?? (await db.prepare("INSERT INTO lease_installments (booking_id, kind, label, due_date, amount) VALUES (?, 'credit', 'Credit', ?, 0) RETURNING id").get(b.id, on));
     made.push(await takePayment(c.id, { ...body, amount: left }, by, today, made.length ? null : file, { batch }));
@@ -1334,6 +1348,7 @@ leasingRoutes.post('/bookings/:id/deposit', wrap(async (req, res) => res.json(aw
 leasingRoutes.post('/bookings/:id/deposit/pass', wrap(async (req, res) => res.json(await passDeposit(req.params.id, req.user.id))));
 leasingRoutes.delete('/bookings/:id/deposit/pass', wrap(async (req, res) => res.json(await takeBackDeposit(req.params.id, req.user.id))));
 leasingRoutes.get('/bookings/:id/payments', wrap(async (req, res) => res.json(await bookingPayments(req.params.id))));
+leasingRoutes.get('/bookings/:id/payments/plan', wrap(async (req, res) => { const { open, ...plan } = await paymentPlan(req.params.id, req.query); res.json(plan); }));
 leasingRoutes.post('/bookings/:id/payments', upload.single('file'), wrap(async (req, res) => res.json(await payBooking(req.params.id, req.body, req.user.id, undefined, req.file))));
 leasingRoutes.get('/bookings/:id/ledger', wrap(async (req, res) => res.json(await ledger(req.params.id))));
 leasingRoutes.post('/bookings/:id/charges', wrap(async (req, res) => res.json(await addCharge(req.params.id, req.body, req.user.id))));
