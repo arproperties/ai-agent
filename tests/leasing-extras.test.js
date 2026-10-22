@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { reset, closeDb, db, makeUser } from './helpers/db.js';
 import { create } from '../server/properties.js';
 import { existsSync } from 'node:fs';
-import { addTenant, changeEnd, createBooking, updateBooking, bookingPayments, recordPayment, removePayment, attachPaymentFile, overview, depositState, settleDeposit, passDeposit, takeBackDeposit, removeBooking, renewBooking, bookingHistory, listBookings, listServices, addService, updateService, removeService, listSources, addSource, renameSource, removeSource } from '../server/leasing.js';
+import { addTenant, removeTenant, changeEnd, createBooking, updateBooking, bookingPayments, recordPayment, removePayment, attachPaymentFile, overview, depositState, settleDeposit, passDeposit, takeBackDeposit, removeBooking, renewBooking, bookingHistory, listBookings, listServices, addService, updateService, removeService, listSources, addSource, renameSource, removeSource } from '../server/leasing.js';
 import { receiptRow, renderReceipt, inWords } from '../server/leasingReceipt.js';
 import { tenantReminder, noteReminder, saveWording, whatsappNumber } from '../server/leasingAlerts.js';
 import { leasingKit } from '../server/leasingKit.js';
@@ -159,6 +159,22 @@ test('sources: one list for the whole app, and a booking says where its tenant c
   await assert.rejects(removeSource(airbnb.id), /Source not found/);
   assert.equal((await listBookings({ unit_id: u1.id })).find((b) => b.id === bk.id).source, 'Airbnb app', 'a booking keeps its source when the list changes');
   assert.equal((await updateBooking(bk.id, { source: '' }, staff)).source, null);
+});
+
+test('a lease can name the tenant who referred them, beside the source', async () => {
+  const { staff, u1 } = await tower();
+  const omar = await addTenant({ full_name: 'Omar' }, staff);
+  const bk = await createBooking(sara(u1.id, { source: 'Referral', referred_by: omar.id }), staff);
+  assert.deepEqual([bk.source, bk.referred_by, bk.referred_by_name], ['Referral', omar.id, 'Omar']);
+  assert.deepEqual((await listBookings({ q: 'omar' })).map((b) => b.id), [bk.id], 'a lease is found by who referred them');
+  assert.equal((await renewBooking(bk.id, staff)).referred_by, omar.id, 'a renewal keeps who referred them');
+  await assert.rejects(updateBooking(bk.id, { referred_by: bk.tenant_id }, staff), /cannot be referred by themselves/);
+  await assert.rejects(updateBooking(bk.id, { referred_by: 99999 }, staff), /Tenant not found/);
+  assert.equal((await updateBooking(bk.id, { referred_by: '' }, staff)).referred_by, null, 'left empty, no one referred them');
+  await updateBooking(bk.id, { referred_by: omar.id }, staff);
+  await removeTenant(omar.id);
+  const after = (await listBookings({ unit_id: u1.id })).find((b) => b.id === bk.id);
+  assert.deepEqual([after.referred_by, after.source], [null, 'Referral'], 'a referrer removed takes the link, the lease stays');
 });
 
 test('each building has its own services and prices; a booking learns the price in its own building', async () => {

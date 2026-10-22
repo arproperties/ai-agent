@@ -106,7 +106,7 @@ export async function removeTenant(id) {
 // ---------- bookings ----------
 
 const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amount, b.rent_period, b.payment_frequency,
-    b.security_deposit, b.status, b.contract_no, b.source, b.tenant_energy_account, b.cancel_reason, b.notes, b.created_at,
+    b.security_deposit, b.status, b.contract_no, b.source, b.referred_by, rt.full_name AS referred_by_name, b.tenant_energy_account, b.cancel_reason, b.notes, b.created_at,
     b.fees, b.discount_type, b.discount_value, b.discount_note, b.tax_percent, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
     (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
@@ -124,7 +124,8 @@ const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amou
   JOIN prop_units u ON u.id = b.unit_id
   JOIN prop_buildings bl ON bl.id = u.building_id
   JOIN prop_companies c ON c.id = bl.company_id
-  JOIN lease_tenants t ON t.id = b.tenant_id`;
+  JOIN lease_tenants t ON t.id = b.tenant_id
+  LEFT JOIN lease_tenants rt ON rt.id = b.referred_by`;
 
 export const bookingRef = (b) => `LS-${b.start_date.slice(0, 4)}-${String(b.id).padStart(4, '0')}`;
 
@@ -159,7 +160,7 @@ export async function listBookings({ stage, company_id, building_id, unit_id, te
     if (v) { where.push(`${col} = ?`); args.push(Number(v)); }
   }
   if (q && String(q).trim()) {
-    where.push(`lower(concat_ws(' ', t.full_name, t.phone, t.email, u.unit_no, bl.name, c.name, b.contract_no, b.source)) LIKE ?`);
+    where.push(`lower(concat_ws(' ', t.full_name, t.phone, t.email, u.unit_no, bl.name, c.name, b.contract_no, b.source, rt.full_name)) LIKE ?`);
     args.push(`%${String(q).trim().toLowerCase()}%`);
   }
   const rows = await db.prepare(`${BOOKING_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -191,6 +192,7 @@ function bookingFields(body = {}, { partial = false } = {}) {
   if ('type' in body && body.type) { if (!TYPES.has(body.type)) throw bad('Unknown lease type.'); out.type = body.type; }
   for (const f of ['contract_no', 'notes']) if (f in body) out[f] = text(body[f], 2000);
   if ('source' in body) out.source = text(body.source, 60); // where the tenant came from: a name off the sources list
+  if ('referred_by' in body) out.referred_by = Number(body.referred_by) || null; // the tenant who sent them, checked by mustRefer
   if ('tenant_energy_account' in body) out.tenant_energy_account = isTrue(body.tenant_energy_account); // the energy bill is in the tenant's own name
   // Other charges (pet fee, parking, commission, energy deposit…): each is due once, on the first day,
   // or, when it repeats, with every rent payment.
@@ -247,6 +249,13 @@ function bookingFields(body = {}, { partial = false } = {}) {
 
 const DATES = [['lease_sign_date', 'Lease sign date'], ['move_in_date', 'Move-in date'], ['notice_date', 'Notice date'], ['expected_move_out', 'Expected move-out'], ['deposit_due', 'Deposit date']];
 export const TICKS = ['no_late_fees', 'no_checks', 'no_partial_payments', 'no_payments', 'no_twa'];
+
+/** The tenant named as having sent this one must be on the list, and not the lease's own tenant. */
+async function mustRefer(referredBy, tenantId) {
+  if (!referredBy) return;
+  if (Number(referredBy) === Number(tenantId)) throw bad('A tenant cannot be referred by themselves.');
+  await getTenant(referredBy);
+}
 
 const PRORATE = new Set(['first', 'second']);
 /** A part month is worked out in days of a month, so only a lease paid month by month can have one. */
@@ -326,6 +335,7 @@ async function makeBooking(body = {}, by, extra = {}, made_as = null) {
   if (!body.unit_id) throw bad('Choose a unit.');
   const confirm = body.status === 'confirmed';
   const tenantId = body.tenant_id ? (await getTenant(body.tenant_id)).id : (await addTenant(body.tenant || {}, by)).id;
+  await mustRefer(row.referred_by, tenantId);
   const follows = extra.import_batch ? null : await followsOn(body.unit_id, tenantId, row.start_date);
   if (confirm) await mustBeFree(body.unit_id, row.start_date, row.end_date, 0, follows);
   else if (!(await db.prepare('SELECT 1 FROM prop_units WHERE id = ?').get(Number(body.unit_id)))) throw bad('Unit not found', 404);
@@ -350,6 +360,7 @@ export async function updateBooking(id, body = {}, by) {
     const row = bookingFields(body, { partial: true });
     if (body.unit_id) row.unit_id = Number(body.unit_id);
     if (body.tenant_id) row.tenant_id = (await getTenant(body.tenant_id)).id;
+    if ('referred_by' in row || row.tenant_id) await mustRefer('referred_by' in row ? row.referred_by : old.referred_by, row.tenant_id || old.tenant_id);
     const start = row.start_date || old.start_date;
     const end = row.end_date || old.end_date;
     if (end < start) throw bad('The end date is before the start date.');
@@ -1148,9 +1159,9 @@ export async function renewBooking(id, by) {
   if (again) throw bad(`This lease already has a renewal (${bookingRef(await getBooking(again.id))}).`, 409);
   const start = iso(dayNo(b.end_date) + 1);
   const end = iso(dayNo(addMonths(start, monthsOf(b))) - 1);
-  const { id: nextId } = await db.prepare(`INSERT INTO lease_bookings (unit_id, tenant_id, type, start_date, end_date, rent_amount, rent_period, payment_frequency, prorate, fees, tax_percent, source, status, renewed_from, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?) RETURNING id`).run(b.unit_id, b.tenant_id, b.type, start, end, b.rent_amount, b.rent_period, b.payment_frequency, b.prorate,
-    JSON.stringify(b.fees.filter((f) => f.repeats)), b.tax_percent, b.source, b.id, by ?? null);
+  const { id: nextId } = await db.prepare(`INSERT INTO lease_bookings (unit_id, tenant_id, type, start_date, end_date, rent_amount, rent_period, payment_frequency, prorate, fees, tax_percent, source, referred_by, status, renewed_from, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?) RETURNING id`).run(b.unit_id, b.tenant_id, b.type, start, end, b.rent_amount, b.rent_period, b.payment_frequency, b.prorate,
+    JSON.stringify(b.fees.filter((f) => f.repeats)), b.tax_percent, b.source, b.referred_by, b.id, by ?? null);
   const next = await getBooking(nextId);
   await logEvent(b.id, 'renewed', `Renewal ${next.ref} drafted for ${start} to ${end}`, by);
   await logEvent(next.id, 'created', `Renewal of ${b.ref}, saved as a draft`, by);

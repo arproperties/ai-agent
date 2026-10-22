@@ -61,6 +61,9 @@ function lastNight(start, months) {
   return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
 }
 
+// Where a tenant came from, in a few words: "Referral · by Jane Doe".
+const fromWhere = (source, referrer) => [source, referrer && `by ${referrer}`].filter(Boolean).join(' · ');
+
 function Label({ text, need, children, wide }) {
   return (
     <label className={`block ${wide ? 'sm:col-span-2' : ''}`}>
@@ -230,7 +233,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [v, setV] = useState({
     start_date: init.start_date || '', end_date: init.end_date || '', unit_id: init.unit_id || '',
     rent_amount: start?.rent_amount ?? '', rent_period: start?.rent_period || 'year', payment_frequency: start?.payment_frequency || 'monthly',
-    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], source: start?.source || '', tenant_energy_account: !!start?.tenant_energy_account,
+    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], source: start?.source || '', referred_by: start?.referred_by || '', tenant_energy_account: !!start?.tenant_energy_account,
     discount_type: start?.discount_type || 'percent', discount_value: start?.discount_value ?? '', discount_note: start?.discount_note || '',
     // A new booking starts with the region's usual tax; one being edited keeps what it has. Empty is no tax.
     tax_percent: start ? start.tax_percent ?? '' : region().tax_percent || '',
@@ -385,6 +388,10 @@ function BookingForm({ start, preset, onDone, onCancel }) {
           <Select value={v.source} onChange={set('source')} onCreate={makeSource} className={SELECT} placeholder="Choose, or type a new one…" aria-label="Source"
             options={[['', 'Not known'], ...new Set([...sources.map((x) => x.name), v.source].filter(Boolean))]} />
         </div>
+        <Label text="Referred by tenant · if one sent them">
+          <Select value={v.referred_by} onChange={set('referred_by')} className={SELECT} placeholder="Search tenants…" aria-label="Referred by tenant"
+            options={[['', 'No one'], ...tenants.filter((t) => tenantMode !== 'existing' || String(t.id) !== String(tenantId)).map((t) => [t.id, t.full_name])]} />
+        </Label>
         {sourcesOpen && (
           <div className="rounded-2xl border border-stroke p-3 sm:col-span-2">
             <p className="mb-2 text-xs text-mute">The same list for every company and building, also kept on the Sources page. Renaming a source renames it on the leases that have it; removing one leaves those leases as they are.</p>
@@ -570,7 +577,6 @@ function BookingForm({ start, preset, onDone, onCancel }) {
       </Section>}
 
       {step === 3 && <Section title="Contract & notes">
-        <Label text="Contract / Ejari no." wide><input value={v.contract_no} onChange={set('contract_no')} className={FIELD} /></Label>
         <Label text="Leasing agent"><input value={v.leasing_agent} onChange={set('leasing_agent')} placeholder="Who let the unit" className={FIELD} /></Label>
         <span className="hidden sm:block" />
         <Label text="Notice date · when the tenant gave notice"><DateField value={v.notice_date} onChange={set('notice_date')} className={FIELD} /></Label>
@@ -612,7 +618,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
           {datesOk && <Row k="Stay">{nights(v.start_date, v.end_date)} nights</Row>}
           {v.move_in_date && v.move_in_date !== v.start_date && <Row k="Move-in">{fmt(v.move_in_date)}</Row>}
           <Row k="Tenant">{tenantName || '—'}</Row>
-          {v.source && <Row k="Source">{v.source}</Row>}
+          {(v.source || v.referred_by) && <Row k="Source">{fromWhere(v.source, tenants.find((t) => String(t.id) === String(v.referred_by))?.full_name)}</Row>}
         </div>
         {sum ? (
           <>
@@ -758,7 +764,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
     <tr className={`align-top ${fresh ? 'bg-p1/10' : ''}`}>
       <td className="px-3 py-2.5">
         <p className="font-medium">{b.tenant}{chip}</p>
-        <p className="text-xs text-mute">{b.ref}{b.tenant_phone && ` · ${usPhone(b.tenant_phone)}`}{b.source && ` · ${b.source}`}</p>
+        <p className="text-xs text-mute">{b.ref}{b.tenant_phone && ` · ${usPhone(b.tenant_phone)}`}{(b.source || b.referred_by_name) && ` · ${fromWhere(b.source, b.referred_by_name)}`}</p>
         {b.cancel_reason && <p className="max-w-[16rem] whitespace-normal text-xs text-bad">Cancelled: {b.cancel_reason}</p>}
         {due}
         {error && <p className="max-w-[16rem] whitespace-normal text-xs text-bad">{error}</p>}
@@ -801,10 +807,10 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
           <span className="text-mute">Rent</span>
           <span className="text-right">{rent}</span>
         </div>
-        {b.source && (
+        {(b.source || b.referred_by_name) && (
           <div className="flex justify-between gap-4 py-2">
             <span className="text-mute">Source</span>
-            <span className="truncate text-right">{b.source}</span>
+            <span className="truncate text-right">{fromWhere(b.source, b.referred_by_name)}</span>
           </div>
         )}
         {/* As on Rent Manager's General tab, when they were filled in. */}

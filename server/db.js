@@ -1447,6 +1447,9 @@ await db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_sources_name ON lease_sources(lower(name));
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS source TEXT;
 `);
+// The tenant who sent this one, when that is known (beside the source, not in place of it).
+// A tenant removed later takes the link with them; the lease stays.
+await db.exec('ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS referred_by INTEGER REFERENCES lease_tenants(id) ON DELETE SET NULL');
 // Who the energy (electricity and water) bill of a booked unit goes to. false: the company's
 // account, the one whose number is kept on the unit. true: the tenant has opened an account
 // of their own, so the unit's number is not shown while they are in it.
