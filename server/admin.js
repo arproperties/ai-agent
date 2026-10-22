@@ -6,7 +6,7 @@ import { recentErrors, errorCount } from './errors.js';
 import { MSG_SELECT, messageOut } from './messenger.js';
 import { listAccess, setAccess, setActionAccess } from './saifsys/index.js';
 import { listModuleAccess, setModuleAccess, COMPANY_MODULES } from './modules.js';
-import { isMaster, isExternal } from './access.js';
+import { isMaster, isExternal, externalId } from './access.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
 // as an "OR is_master" widening of the ordinary queries. Every cross-user guard in the
@@ -403,6 +403,16 @@ adminRoutes.get('/users/:id/modules', wrap(async (req, res) => {
 
 adminRoutes.put('/users/:id/modules', wrap(async (req, res) => {
   res.json({ ok: true, modules: await setModuleAccess(req.params.id, req.body.modules) });
+}));
+
+// An external person's workspace is closed to the master too: their files, AI chats,
+// memory, team chat and the record of reads all stay theirs (access.js).
+const WALLED = new Set(['documents', 'conversations', 'memories', 'messages', 'messenger', 'access']);
+adminRoutes.use('/users/:id/:what', wrap(async (req, res, next) => {
+  if (WALLED.has(req.params.what) && await externalId(req.params.id)) {
+    return res.status(404).json({ error: 'This person is external: their things are private' });
+  }
+  next();
 }));
 
 adminRoutes.put('/users/:id/external', wrap(async (req, res) => {

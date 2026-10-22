@@ -192,10 +192,10 @@ export function pictureKit(user, { conversationId, onPicture }, { make = makePic
   };
 }
 
-/** A picture, for the person it was drawn for. The master can open anyone's, as with their chats. */
+/** A picture, for the person it was drawn for. The master can open anyone's but an external person's (access.js). */
 export async function pictureFor(user, id) {
-  const p = await db.prepare('SELECT * FROM pictures WHERE id = ?').get(Number(id) || 0);
-  return p && (p.user_id === user.id || isMaster(user)) ? p : null;
+  const p = await db.prepare('SELECT p.*, u.external FROM pictures p JOIN users u ON u.id = p.user_id WHERE p.id = ?').get(Number(id) || 0);
+  return p && (p.user_id === user.id || (isMaster(user) && !p.external)) ? p : null;
 }
 
 // ---------- routes ----------

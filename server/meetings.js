@@ -113,12 +113,13 @@ async function detail(m) {
 // an "or the master" added to ownMeeting - that one stays the guard for everything that
 // changes a meeting.
 
-const anyMeeting = (id) => db.prepare('SELECT m.*, u.name owner FROM meetings m JOIN users u ON u.id = m.user_id WHERE m.id = ?').get(Number(id));
+// Never an external person's: they are walled off from the master too (access.js).
+const anyMeeting = (id) => db.prepare('SELECT m.*, u.name owner FROM meetings m JOIN users u ON u.id = m.user_id WHERE m.id = ? AND NOT u.external').get(Number(id));
 
 /** Everyone else's meetings, newest first, with whose each one is. */
 export async function teamMeetings(master, limit = 200) {
   const rows = await db.prepare(`SELECT m.*, u.name owner FROM meetings m JOIN users u ON u.id = m.user_id
-    WHERE m.user_id <> ? ORDER BY m.id DESC LIMIT ?`).all(master.id, limit);
+    WHERE m.user_id <> ? AND NOT u.external ORDER BY m.id DESC LIMIT ?`).all(master.id, limit);
   return rows.map(meetingOut);
 }
 

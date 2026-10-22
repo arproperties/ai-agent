@@ -13,10 +13,24 @@ export const isMaster = (user) => user?.role === 'master';
 /**
  * Someone from outside the company, ticked External on their People profile. They get an
  * empty book: their own files, chats, to-dos and memories, and only private agents -
- * nothing of the company's, no team, no staff list. The master still sees all of theirs.
- * Each rule below narrows for them; none widens for anyone else.
+ * nothing of the company's, no team, no staff list. It is a wall both ways: the master
+ * does not see theirs either (masterReach). Each rule here narrows; none widens.
  */
 export const isExternal = (user) => !!user?.external && !isMaster(user);
+
+/**
+ * What the master's "see everyone's" reads cover, as a condition on table alias `t`:
+ * everybody's rows but an external person's.
+ */
+export const masterReach = (t = 't') => ({
+  sql: `NOT EXISTS (SELECT 1 FROM users x WHERE x.id = ${t}.user_id AND x.external)`,
+  params: [],
+});
+
+/** Is this account external? For the master's routes that name a person by id. */
+export async function externalId(userId) {
+  return !!(await db.prepare('SELECT 1 FROM users WHERE id = ? AND external').get(Number(userId) || 0));
+}
 
 // For an external person only private agents count, whatever else is still ticked.
 const privateOnly = (user) => (isExternal(user) ? ' AND a.private' : '');

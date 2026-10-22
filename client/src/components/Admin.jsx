@@ -230,9 +230,10 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   const pool = external ? agents.filter((a) => a.private) : agents;
   const setExternal = async () => {
     const ask = external
-      ? `Make ${person.name} staff again? Nothing comes back by itself: tick their agents and modules again afterwards.`
+      ? `Make ${person.name} staff again? You will be able to see their files and chats, as with any staff. Nothing else comes back by itself: tick their agents and modules again afterwards.`
       : `Make ${person.name} external? They will see only their own files, chats and lists, and only private agents. ` +
-        'The company agents, company modules, saifsys, team chat and any building they run are taken off now. You can still see everything of theirs.';
+        'The company agents, company modules, saifsys, team chat and any building they run are taken off now. ' +
+        'Their files, chats and memory become private to them: not even you can open them.';
     if (!confirm(ask)) return;
     try {
       await api.put(`/admin/users/${person.id}/external`, { external: !external });
@@ -251,7 +252,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   // "Chats": the whole point of the pair is which side of the app a message came from.
   const TABS = [['agents', 'Agents'], ['modules', 'Modules'], ['duties', 'Responsibilities'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
     ['messages', 'Team chat'], ['memory', 'Memory'], ['saifsys', 'saifsys']]
-    .filter(([k]) => !(external && ['duties', 'messages', 'saifsys'].includes(k))); // the company's own, which they do not have
+    .filter(([k]) => !external || ['agents', 'modules'].includes(k)); // the rest is theirs alone, closed to the master too
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -322,7 +323,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
                 <span className="min-w-0 flex-1">
                   <span className={`block text-sm font-medium ${external ? 'text-txt' : 'text-mute'}`}>External</span>
                   <span className="block text-xs leading-relaxed text-mute">
-                    From outside the company: sees only their own files, chats and lists, and only private agents. Nothing of the company, no team chat. You still see all of theirs.
+                    From outside the company, walled off both ways: they see only their own files, chats and lists, and only private agents. Nobody else sees theirs, not even you.
                   </span>
                 </span>
                 <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
