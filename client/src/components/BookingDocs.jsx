@@ -55,11 +55,29 @@ export default function BookingDocs({ booking }) {
     try { await api.del(`/leasing/docs/${d.id}`); load(); } catch (e) { setError(e.message); }
   };
 
+  // The lease contract the system makes from the lease (server/leaseContract.js): a new lease gets one by itself;
+  // an older one, or one whose copy was deleted, gets it here.
+  const makeContract = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try { setDocs(await api.post(`/leasing/bookings/${booking.id}/contract`)); } catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+
   // A booking made before these were asked for, or one whose copy was deleted, says so until the file is attached.
   const missing = docs ? REQUIRED.map(([, name]) => name).filter((name) => !docs.some((d) => d.has_file && d.title.trim().toLowerCase() === name.toLowerCase())) : [];
 
   return (
     <div className="space-y-4">
+      {docs && !docs.some((d) => d.generated) && booking.status !== 'cancelled' && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-stroke px-4 py-3 text-sm">
+          <span className="text-mute">No lease contract has been made for this lease yet.</span>
+          <button type="button" onClick={makeContract} disabled={busy} className="flex items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-1.5 text-xs font-medium text-white disabled:opacity-60">
+            <FileText size={14} /> {busy ? 'Making…' : 'Make lease contract'}
+          </button>
+        </div>
+      )}
       {missing.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
           <span>Missing: {missing.join(' and ')}.</span>
@@ -86,6 +104,7 @@ export default function BookingDocs({ booking }) {
                   <div className="min-w-0 flex-1">
                     <p className="font-medium">{d.title}
                       {d.category && <span className="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-normal text-txt/80">{categoryName(d.category)}</span>}
+                      {d.generated && <span className="ml-2 rounded-full bg-p1/15 px-2 py-0.5 text-[11px] font-normal text-p1">Made by the system · unsigned</span>}
                       <span className="ml-2 text-xs font-normal text-mute">{when(d.created_at)}</span></p>
                     {d.notes && <p className="mt-0.5 whitespace-pre-wrap text-sm text-txt/80">{d.notes}</p>}
                     {d.has_file

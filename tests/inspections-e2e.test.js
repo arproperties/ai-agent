@@ -68,7 +68,8 @@ test('a unit goes round: made ready, a draft, move-in, confirmed, move-out, made
     const straight = await lease(unit.id, 'Sara', today, plus(today, 364), 'confirmed');
     assert.deepEqual([straight.status, straight.error], [409, 'Save the lease as a draft, do the move-in inspection, then confirm it.']);
     const sara = await lease(unit.id, 'Sara', today, plus(today, 364));
-    assert.deepEqual([sara.status, sara.moved_in, sara.docs], ['draft', false, 2]);
+    assert.deepEqual([sara.status, sara.moved_in, sara.docs], ['draft', false, 3], 'the driver license, the proof of employment, and the lease contract made for it');
+    assert.ok(Object.values(await api.get(`/bookings/${sara.id}/docs`)).some((d) => d.title === 'Lease Contract' && d.generated && d.has_file));
     const tooSoon = await api.post(`/bookings/${sara.id}/confirm`);
     assert.deepEqual([tooSoon.status, tooSoon.error], [409, 'Do the move-in inspection first, then confirm the lease.']);
     assert.deepEqual([(await state()).lease.id, (await state()).next], [sara.id, { kind: 'move_in', late: false }]);

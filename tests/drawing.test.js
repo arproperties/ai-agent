@@ -6,7 +6,8 @@ import { splitDrawings, lastDrawing, withoutDrawings, exportAsked, normalize, to
 import { drawingPdf, drawingDxf, fitPage, drawingRoutes } from '../server/drawing.js';
 import { spoken } from '../server/tts.js';
 
-test.after(() => closeDb());
+// A moment after closing, so the forced exit does not land while a handle is still closing (crashes node on Windows: libuv async.c).
+test.after(async () => { await closeDb(); await new Promise((done) => setTimeout(done, 300)); });
 
 const plan = {
   title: 'Kiosk <plan> & co',
@@ -124,6 +125,8 @@ test('the files are only for the person whose reply it is', async () => {
     as = other;
     assert.equal((await fetch(url(drawn, 'pdf'))).status, 404);
   } finally {
-    server.close();
+    // Kept-alive sockets left open crash node on Windows at the forced exit (libuv async.c): close them, and wait.
+    server.closeAllConnections();
+    await new Promise((done) => server.close(done));
   }
 });

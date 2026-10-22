@@ -296,7 +296,7 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   const booking = { building: 'Marina', unit_no: '101', tenant: 'Sara', start_date: '2026-11-01', end_date: '2027-10-31', rent_amount: 60000, rent_period: 'year',
     security_deposit: 5000, tax_percent: 0, charges: [{ name: 'Parking', amount: 300, repeats: true }, { name: 'Pet fee', amount: 800 }] };
   const draft = await says('leasing_add_booking', booking);
-  assert.match(draft, /^Lease LS-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, USD 60,000 per year, paid monthly, no Sales tax\.\nAdded to Marina Tower's services: Pet fee\.\nStill to do: the move-in inspection, after which the lease is confirmed; and, on the screens, attach the tenant's Driver License and Proof of Employment .*$/);
+  assert.match(draft, /^Lease LS-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, USD 60,000 per year, paid monthly, no Sales tax\.\nAdded to Marina Tower's services: Pet fee\.\nThe lease contract \(with the Bed Bug Addendum\) was made and is with the lease's documents, ready to print and sign\.\nStill to do: the move-in inspection, after which the lease is confirmed; and, on the screens, attach the tenant's Driver License and Proof of Employment .*$/);
   assert.match(await says('leasing_list', { what: 'services', building: 'Marina' }), /- Parking: USD 300, with every rent payment\n- Pet fee: USD 800, once/);
   // Asked for again, the same stay is not made twice: the draft is changed, and keeps the charges it had.
   const again = await ask('leasing_add_booking', { ...booking, charges: [{ name: 'Laundry', amount: 20, repeats: true }] });
@@ -316,7 +316,7 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
 
   // Like the form, a new booking starts with the region's usual tax (none by default); where the tenant came from is kept, and a new source joins the list.
   const { tax_percent, ...untaxed } = booking;
-  assert.match(await says('leasing_add_booking', { ...untaxed, unit_no: '102', charges: [], source: 'Airbnb' }), /paid monthly, no Sales tax, source Airbnb\.\nAdded to the sources list: Airbnb\.\nStill to do: the move-in inspection/);
+  assert.match(await says('leasing_add_booking', { ...untaxed, unit_no: '102', charges: [], source: 'Airbnb' }), /paid monthly, no Sales tax, source Airbnb\.\nAdded to the sources list: Airbnb\.\nThe lease contract .*\nStill to do: the move-in inspection/);
   assert.equal(await says('leasing_list', { what: 'sources' }), 'Sources:\n- Airbnb');
   assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: 'airbnb', notes: 'Called' }), /charges: none; source: Airbnb\.$/, 'a source is taken as the list has it, and not added twice');
   assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: '' }), /charges: none\.$/);

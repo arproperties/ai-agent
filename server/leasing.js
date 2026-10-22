@@ -478,7 +478,7 @@ export async function removeBooking(id) {
 // ---------- booking documents ----------
 
 const DOC_DIR = `${DATA_DIR}/leasing`;
-const DOC_COLS = `id, booking_id, title, category, notes, file_name, file_mime, uploaded_by, created_at, (file_path IS NOT NULL) AS has_file`;
+const DOC_COLS = `id, booking_id, title, category, notes, file_name, file_mime, uploaded_by, created_at, generated, (file_path IS NOT NULL) AS has_file`;
 // How Rent Manager files a lease's notes and files (its History / Notes tab). Left empty: no category.
 export const DOC_CATEGORIES = [['lease', 'Lease'], ['application', 'Application'], ['notice', 'Notice'], ['move_in', 'Move-in form'], ['other', 'Other']];
 
@@ -1190,7 +1190,7 @@ export async function snapshot({ company_id, building_id } = {}, today = todayHe
       b.created_at, b.created_by, to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
       b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
       t.full_name AS tenant, t.email AS tenant_email, t.phone AS tenant_phone, w.name AS added_by,
-      (b.contract_no IS NOT NULL OR EXISTS (SELECT 1 FROM lease_documents d WHERE d.booking_id = b.id AND d.title ILIKE '%contract%')) AS has_contract
+      (b.contract_no IS NOT NULL OR EXISTS (SELECT 1 FROM lease_documents d WHERE d.booking_id = b.id AND d.title ILIKE '%contract%' AND NOT d.generated)) AS has_contract
     FROM lease_bookings b JOIN lease_tenants t ON t.id = b.tenant_id LEFT JOIN users w ON w.id = b.created_by
     ORDER BY b.start_date, b.id`).all()).filter((b) => unitOf.has(b.unit_id));
   const bookingOf = new Map(bookings.map((b) => [b.id, b]));
@@ -1363,16 +1363,26 @@ leasingRoutes.get('/overview', wrap(async (req, res) => res.json(await overview(
 leasingRoutes.get('/available',wrap(async (req, res) => res.json(await availability(req.query.building_id, req.query.start, req.query.end))));
 leasingRoutes.get('/bookings', wrap(async (req, res) => res.json(await listBookings(req.query))));
 leasingRoutes.get('/bookings/:id', wrap(async (req, res) => res.json(await getBooking(req.params.id))));
-leasingRoutes.post('/bookings', bookingFiles, wrap(async (req, res) => res.json(await createBookingWithDocs(asDraft(sentBooking(req)), req.files, req.user.id))));
-leasingRoutes.put('/bookings/:id', wrap(async (req, res) => res.json(await updateBooking(req.params.id, req.body, req.user.id))));
+// A new lease gets its contract (server/leaseContract.js) once it is saved; a change makes the one it has again.
+const contract = (id, by, opts) => import('./leaseContract.js').then((m) => m.keepContract(id, by, opts));
+const withContract = async (made, by) => { await contract(made.id, by); return getBooking(made.id); };
+const keepsContract = async (now, by) => { await contract(now.id, by, { onlyIfKept: true }); return now; };
+
+leasingRoutes.post('/bookings', bookingFiles, wrap(async (req, res) => res.json(await withContract(await createBookingWithDocs(asDraft(sentBooking(req)), req.files, req.user.id), req.user.id))));
+leasingRoutes.put('/bookings/:id', wrap(async (req, res) => res.json(await keepsContract(await updateBooking(req.params.id, req.body, req.user.id), req.user.id))));
+leasingRoutes.post('/bookings/:id/contract', wrap(async (req, res) => {
+  const { fileContract } = await import('./leaseContract.js');
+  await fileContract(req.params.id, req.user.id);
+  res.json(await bookingDocs(req.params.id));
+}));
 leasingRoutes.post('/bookings/:id/confirm', wrap(async (req, res) => res.json(await confirmBooking(req.params.id, req.user.id))));
-leasingRoutes.post('/bookings/:id/end', wrap(async (req, res) => res.json(await changeEnd(req.params.id, req.body?.end_date, req.user.id))));
+leasingRoutes.post('/bookings/:id/end', wrap(async (req, res) => res.json(await keepsContract(await changeEnd(req.params.id, req.body?.end_date, req.user.id), req.user.id))));
 leasingRoutes.post('/bookings/:id/cancel', wrap(async (req, res) => res.json(await cancelBooking(req.params.id, req.body?.reason, req.user.id))));
 leasingRoutes.delete('/bookings/:id', wrap(async (req, res) => res.json(await removeBooking(req.params.id))));
 
 leasingRoutes.get('/bookings/:id/docs', wrap(async (req, res) => res.json(await bookingDocs(req.params.id))));
 leasingRoutes.post('/bookings/:id/docs', upload.single('file'), wrap(async (req, res) => res.json(await addBookingDoc(req.params.id, req.body, req.file, req.user.id))));
-leasingRoutes.post('/bookings/:id/renew', wrap(async (req, res) => res.json(await renewBooking(req.params.id, req.user.id))));
+leasingRoutes.post('/bookings/:id/renew', wrap(async (req, res) => res.json(await withContract(await renewBooking(req.params.id, req.user.id), req.user.id))));
 leasingRoutes.get('/bookings/:id/history', wrap(async (req, res) => res.json(await bookingHistory(req.params.id))));
 leasingRoutes.get('/bookings/:id/deposit', wrap(async (req, res) => res.json(await depositState(req.params.id))));
 leasingRoutes.post('/bookings/:id/deposit', wrap(async (req, res) => res.json(await settleDeposit(req.params.id, req.body, req.user.id))));

@@ -3,6 +3,7 @@ import { create, listUnits, HELD } from './properties.js';
 import { availability, todayHere, listServices, addService, listSources, addSource, addTenant, createBooking, updateBooking, getBooking, listBookings, bookingPayments, total, REQUIRED_DOCS } from './leasing.js';
 import { unitInspections, confirmInspected, addInspection, updateInspection, KINDS, USUAL_AREAS } from './inspections.js';
 import { report } from './leasingReports.js';
+import { keepContract } from './leaseContract.js';
 import { tenantHistory } from './leasingHistory.js';
 import { cash, region } from './leasingRegion.js';
 import { createWorkOrder, updateWorkOrder, addWorkOrderNote, getWorkOrder, listWorkOrders, STATUS as WORK_STATUS } from './workOrders.js';
@@ -546,12 +547,14 @@ const writes = (user) => {
         // and is a draft: it is confirmed after the move-in inspection.
         tax_percent: region().tax_percent, ...terms(input), ...(source ? { source: source.name } : {}), status: 'draft',
       }, user.id);
+      await keepContract(made.id, user.id); // as on the lease form, a new lease gets its contract
       if (source?.fresh) await addSource({ name: source.name }, user.id).catch(() => {});
       return [
         `Lease ${made.ref} saved as a DRAFT (not confirmed: the unit is not held yet): ${made.tenant}, unit ${made.unit_no}, ${made.building}, ${made.start_date} to ${made.end_date}, `
           + `${[`${cash(made.rent_amount)} per ${made.rent_period}`, `paid ${made.payment_frequency.replace(/_/g, ' ')}`, discountLine(made), taxLine(made) || `no ${region().tax_name}`, made.source && `source ${made.source}`].filter(Boolean).join(', ')}.`,
         added.length ? `Added to ${b.name}'s services: ${added.join(', ')}.` : '',
         source?.fresh ? `Added to the sources list: ${source.name}.` : '',
+        'The lease contract (with the Bed Bug Addendum) was made and is with the lease\'s documents, ready to print and sign.',
         `Still to do: the move-in inspection, after which the lease is confirmed; and, on the screens, attach the tenant's ${REQUIRED_DOCS.map(([, name]) => name).join(' and ')} (the lease form asks for both).`,
       ].filter(Boolean).join('\n');
     },
@@ -612,6 +615,7 @@ const writes = (user) => {
       if (source) body.source = source.name;
       if (!Object.keys(body).length) throw new Error('Say what to change.');
       const now = await updateBooking(old.id, body, user.id);
+      await keepContract(now.id, user.id, { onlyIfKept: true });
       if (source?.fresh) await addSource({ name: source.name }, user.id).catch(() => {});
       const known = new Set((await listServices(old.building_id)).map((s) => s.name.toLowerCase()));
       for (const c of set) {
