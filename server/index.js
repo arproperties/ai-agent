@@ -55,6 +55,8 @@ import { drawingRoutes } from './drawing.js';
 import { moduleGate } from './modules.js';
 import { attachActivityTriggers, actorContext } from './activityCapture.js';
 import { activityRoutes } from './activity.js';
+import { qbwcRoutes, quickbooksRoutes } from './quickbooks.js';
+import { expenseRoutes, startRepeats } from './expenses.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -65,6 +67,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; checked by its one-time state
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
+app.use('/api/qbwc', qbwcRoutes); // QuickBooks' Web Connector; signs in with its own user name and password (server/quickbooks.js)
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api', requireUser); // everything below needs a signed-in user
@@ -106,6 +109,8 @@ app.use('/api/leasing/tenants/import', tenantImportRoutes); // the tenant list f
 app.use('/api/leasing/bookings/import', leaseImportRoutes); // the leases from Rent Manager's Rent Roll, the same way
 app.use('/api/leasing', leasingRoutes); // tenants and bookings of units; the rent is set per booking
 app.use('/api/activity', activityRoutes); // who changed what, and when: the master and whoever holds Activity
+app.use('/api/quickbooks', requireMaster, quickbooksRoutes); // the QuickBooks connection: master only
+app.use('/api/accounts', expenseRoutes); // Accounts: expenses and monthly bills, sent to QuickBooks (the accounts module)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -430,6 +435,7 @@ app.listen(PORT, '0.0.0.0', () => {
   moveMaintenanceNotes().then((n) => n && console.log(`[work-orders] moved ${n} maintenance note${n === 1 ? '' : 's'} from the tenants' histories`)).catch((e) => console.error('[work-orders]', e.message));
   startBuildings(); // buzzes a building's administrator when a staff job needs them
   startRecurringPayments(); // creates each recurring payment's line on its day of the month
+  startRepeats(); // makes each monthly bill (Accounts) into an expense on its day
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));

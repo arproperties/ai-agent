@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, BellRing, ClipboardList, Compass, Eye, FileClock, Globe, History, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Search, Users, Wrench } from 'lucide-react';
+import { BarChart3, BellRing, ClipboardList, Compass, Eye, FileClock, Globe, History, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Receipt, Search, Users, Wrench } from 'lucide-react';
 import { api } from '../lib/api';
 import { can } from '../lib/modules';
 import Icon from './Icon';
@@ -37,7 +37,7 @@ function Place({ Ico, color, label, hint, here, onClick, badge = 0 }) {
   );
 }
 
-export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, propertiesOpen, onProperties, chatsOpen, unreadMessages = 0, onChats, tourOpen, onTour, leasingOpen, leasingTab, onLeasing, onEditAgent, onFiles, onMemory, onEmail, onPeople, sourcesOpen, onSources, activityLogOpen, onActivityLog, regionOpen, onRegion, onActivity, onLogout, onClose }) {
+export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, propertiesOpen, onProperties, chatsOpen, unreadMessages = 0, onChats, tourOpen, onTour, leasingOpen, leasingTab, onLeasing, onEditAgent, onFiles, onMemory, onEmail, onPeople, sourcesOpen, onSources, activityLogOpen, onActivityLog, accountsOpen, onAccounts, regionOpen, onRegion, onActivity, onLogout, onClose }) {
   // Only shown once somebody has actually looked at this account, so it is silent for
   // anyone nobody inspects - and impossible to miss for anyone who is.
   const [watched, setWatched] = useState(0);
@@ -62,6 +62,7 @@ export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodo
       here: leasingOpen && leasingTab === 'documents', onClick: () => onLeasing('documents'), badge: alerts.rules.document },
     { module: 'properties', Ico: Landmark, color: 'slate', label: 'Properties', hint: 'Companies, buildings, units, documents', here: propertiesOpen, onClick: onProperties },
     { module: 'sources', Ico: Megaphone, color: 'from-emerald-400 to-teal-600 shadow-emerald-500/30', label: 'Sources', hint: 'Where tenants come from', here: sourcesOpen, onClick: onSources },
+    { module: 'accounts', Ico: Receipt, color: 'from-emerald-400 to-green-700 shadow-emerald-500/30', label: 'Accounts', hint: 'Expenses and bills, sent to QuickBooks', here: accountsOpen, onClick: onAccounts },
     { module: 'activity', Ico: History, color: 'slate', label: 'Activity log', hint: 'Who changed what, and when', here: activityLogOpen, onClick: onActivityLog },
     // The business's currency, time zone and phone country code: the master's to set.
     user.role === 'master' && { Ico: Globe, color: 'from-indigo-400 to-purple-600 shadow-indigo-500/30', label: 'Region', hint: 'Currency, time zone, phone code', here: regionOpen, onClick: onRegion },

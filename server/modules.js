@@ -19,6 +19,7 @@ export const MODULES = [
   { key: 'properties', label: 'Properties' },
   { key: 'sources', label: 'Sources' },
   { key: 'activity', label: 'Activity' }, // the activity log: who changed what (server/activity.js)
+  { key: 'accounts', label: 'Accounts' }, // expenses and repeating bills, sent to QuickBooks (server/expenses.js)
 ];
 const KEYS = MODULES.map((m) => m.key);
 const ALWAYS = MODULES.filter((m) => m.always).map((m) => m.key);
@@ -80,6 +81,7 @@ const MASTER = []; // nobody's module: the master alone
 // module that owns the thing, and to a screen that already adds one inline.
 const RULES = [
   [/^\/activity(\/|$)/, ['activity'], MASTER], // read by its holders; nobody writes to the log
+  [/^\/accounts(\/|$)/, ['accounts'], ['accounts']],
   [/^\/leasing\/region\/?$/, ANYONE, ANYONE], // money and dates are written with it everywhere; saving it is the master's, checked in its router
   [/^\/leasing\/alerts\/count$/, ANYONE, MASTER], // the sidebar's badges; trimmed to what they hold in the route
   [/^\/leasing\/alerts\/reminder(\/|$)/, ['alerts', 'overview', 'leasing'], ['alerts', 'leasing']], // the reminder is sent from a lease's Payments too

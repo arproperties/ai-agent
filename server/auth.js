@@ -14,7 +14,7 @@ export async function hashPassword(password) {
   const hash = await scryptAsync(password, salt, 64);
   return `scrypt$${salt}$${hash.toString('hex')}`;
 }
-async function verifyPassword(password, stored) {
+export async function verifyPassword(password, stored) {
   const [, salt, hex] = stored.split('$');
   const hash = await scryptAsync(password, salt, 64);
   return timingSafeEqual(hash, Buffer.from(hex, 'hex'));

@@ -19,6 +19,7 @@ export const SKIP_TABLES = new Set([
   'activity_log', 'sessions', 'password_resets', 'chunks', 'error_log', 'push_subscriptions',
   'reminders_sent', 'lease_alerts_sent', 'suggestion_scans', 'saifsys_runs', 'building_jobs_seen',
   'chat_recaps', 'lease_import_reads',
+  'qb_sessions', 'qb_queue', 'qb_lists', 'qb_log', 'qb_looks', 'qb_sync', // QuickBooks' own traffic; what a person changed is logged where they changed it
 ]);
 // Columns whose change alone is not something a person did.
 const IGNORED = ['updated_at', 'last_seen_at'];

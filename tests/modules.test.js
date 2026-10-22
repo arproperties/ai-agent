@@ -12,7 +12,7 @@ import { RENEWAL_TOOLS } from '../server/renewals.js';
 
 test.after(() => closeDb());
 
-const ALL = ['tour', 'overview', 'chats', 'leasing', 'tenants', 'workorders', 'reports', 'alerts', 'documents', 'properties', 'sources', 'activity'];
+const ALL = ['tour', 'overview', 'chats', 'leasing', 'tenants', 'workorders', 'reports', 'alerts', 'documents', 'properties', 'sources', 'activity', 'accounts'];
 
 async function people() {
   await reset();

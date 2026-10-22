@@ -23,6 +23,7 @@
     "@anthropic-ai/sdk": "^0.126.0",
     "@huggingface/transformers": "^4.3.0",
     "express": "^5.2.1",
+    "fast-xml-parser": "5.11.2",
     "imapflow": "^2.0.5",
     "mailparser": "^3.9.28",
     "mammoth": "^1.12.3",

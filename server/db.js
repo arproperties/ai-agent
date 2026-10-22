@@ -1981,3 +1981,165 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_recurring_transfers_from ON recurring_transfers(from_account_id);
   CREATE INDEX IF NOT EXISTS idx_recurring_transfers_to ON recurring_transfers(to_account_id);
 `);
+
+// QuickBooks Desktop, through Intuit's Web Connector (server/quickbooks.js).
+//   qb_connection: one row. The Web Connector's own sign-in (its password only as a hash),
+//     the ids written into the .qwc file, the on/off switch, and the company file it is
+//     tied to: the first file that connects, after which any other file is refused, so a
+//     test copy and the real books can never be mixed up.
+//   qb_sessions: one Web Connector run, by its ticket.
+//   qb_queue: what is waiting to go to QuickBooks, one request each, oldest first.
+//     A long list comes back in pages: the row stays 'waiting' with the iterator to continue.
+//   qb_lists: QuickBooks' own lists (accounts, classes, vendors, customers, items) as last
+//     read, so the app shows the same names; a full read drops what QuickBooks no longer has.
+//   qb_log: every step of every run, for the master's screen.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS qb_connection (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    username TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT false,
+    company_file TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  CREATE TABLE IF NOT EXISTS qb_sessions (
+    ticket TEXT PRIMARY KEY,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    company_file TEXT,
+    handled INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    closed_at TIMESTAMPTZ
+  );
+
+  CREATE TABLE IF NOT EXISTS qb_queue (
+    id SERIAL PRIMARY KEY,
+    kind TEXT NOT NULL,
+    what TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'sent', 'done', 'failed')),
+    iterator_id TEXT,
+    ticket TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    sent_at TIMESTAMPTZ,
+    done_at TIMESTAMPTZ
+  );
+  CREATE INDEX IF NOT EXISTS idx_qb_queue_status ON qb_queue(status, id);
+
+  CREATE TABLE IF NOT EXISTS qb_lists (
+    kind TEXT NOT NULL,
+    list_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT true,
+    type TEXT,
+    read_by INTEGER,
+    seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (kind, list_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS qb_log (
+    id BIGSERIAL PRIMARY KEY,
+    at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ticket TEXT,
+    event TEXT NOT NULL,
+    detail TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_qb_log_at ON qb_log(at DESC);
+
+  -- A look at how the books are kept: a sample of recent transactions of one type, as
+  -- QuickBooks returned it, read only. Used to match the app's entries to the bookkeeper's.
+  ALTER TABLE qb_queue ADD COLUMN IF NOT EXISTS since DATE;
+  CREATE TABLE IF NOT EXISTS qb_looks (
+    id SERIAL PRIMARY KEY,
+    queue_id INTEGER,
+    what TEXT NOT NULL,
+    xml TEXT NOT NULL,
+    at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  -- A 'sync' row is one of the app's entries kept in step with QuickBooks (what = its key, e.g.
+  -- 'deposit:2026-10-21', 'expense:7'). stage is what was sent for it (vendor, add, mod, del),
+  -- sent_hash what the entry looked like when it was sent.
+  ALTER TABLE qb_queue ADD COLUMN IF NOT EXISTS stage TEXT;
+  ALTER TABLE qb_queue ADD COLUMN IF NOT EXISTS sent_hash TEXT;
+`);
+
+// What the app has put into QuickBooks, and how to send it there (server/qbSync.js).
+//   qb_settings: the master's choices: the day sending starts from, the bank account money
+//     goes into, the income account for each kind of charge, where security deposits sit.
+//     Values are QuickBooks ListIDs (or a date).
+//   qb_sync: one row per entry the app made in QuickBooks, by the same key as its queue row:
+//     the QuickBooks transaction it became, its EditSequence (needed to change it), and the
+//     fingerprint of what was sent, so a change in the app is noticed and sent again.
+// Expenses are recorded in the app (Accounts) and sent as checks or credit card charges:
+//   expenses / expense_lines: one payment out, split over expense accounts as QuickBooks splits it.
+//     The vendor and accounts are QuickBooks' own (ListIDs from qb_lists); a vendor typed new is
+//     created in QuickBooks first.
+//   expense_repeats: a bill paid every month (insurance, a loan, a utility), made into an expense
+//     on its day each month, from first_month on.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS qb_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS qb_sync (
+    key TEXT PRIMARY KEY,
+    txn_type TEXT NOT NULL,
+    txn_id TEXT NOT NULL,
+    edit_seq TEXT,
+    hash TEXT NOT NULL,
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  CREATE TABLE IF NOT EXISTS expense_repeats (
+    id SERIAL PRIMARY KEY,
+    vendor_name TEXT NOT NULL,
+    vendor_list_id TEXT,
+    pay_from TEXT NOT NULL,
+    ref_no TEXT,
+    account_list_id TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    memo TEXT,
+    day INTEGER NOT NULL CHECK (day BETWEEN 1 AND 28),
+    first_month TEXT NOT NULL,
+    last_month TEXT,
+    building_id INTEGER REFERENCES prop_buildings(id) ON DELETE SET NULL,
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+
+  CREATE TABLE IF NOT EXISTS expenses (
+    id SERIAL PRIMARY KEY,
+    paid_on DATE NOT NULL,
+    vendor_name TEXT NOT NULL,
+    vendor_list_id TEXT,
+    pay_from TEXT NOT NULL,
+    ref_no TEXT,
+    memo TEXT,
+    building_id INTEGER REFERENCES prop_buildings(id) ON DELETE SET NULL,
+    unit_id INTEGER REFERENCES prop_units(id) ON DELETE SET NULL,
+    work_order_id INTEGER REFERENCES lease_work_orders(id) ON DELETE SET NULL,
+    repeat_id INTEGER REFERENCES expense_repeats(id) ON DELETE SET NULL,
+    file_path TEXT,
+    file_name TEXT,
+    file_mime TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    UNIQUE (repeat_id, paid_on)
+  );
+  CREATE INDEX IF NOT EXISTS idx_expenses_paid ON expenses(paid_on DESC);
+
+  CREATE TABLE IF NOT EXISTS expense_lines (
+    id SERIAL PRIMARY KEY,
+    expense_id INTEGER NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+    account_list_id TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    memo TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_expense_lines ON expense_lines(expense_id);
+`);

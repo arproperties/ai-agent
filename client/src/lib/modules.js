@@ -13,4 +13,4 @@ const TAB = { overview: 'overview', bookings: 'leasing', '3d': 'leasing', calend
 
 /** The module the open screen belongs to, or null when it is one everybody has. */
 export const moduleOf = (panel, leasingTab) => (panel === 'leasing' ? TAB[leasingTab] || 'overview'
-  : panel === 'properties' || panel === 'sources' ? panel : panel === 'activitylog' ? 'activity' : null);
+  : panel === 'properties' || panel === 'sources' ? panel : panel === 'activitylog' ? 'activity' : panel === 'accounts' ? 'accounts' : null);
