@@ -8,6 +8,7 @@ import { saveFile, sendDoc, upload, HELD } from './properties.js';
 import { requireMaster } from './auth.js';
 import { todayHere, cash } from './leasingRegion.js';
 import { usPhone } from './usFormat.js';
+import { readSlip } from './slipReader.js';
 
 export { todayHere };
 
@@ -763,8 +764,19 @@ export async function takePayment(installmentId, body = {}, by, today = todayHer
   return { id, installment_id: i.id, amount: money(amount), method: body.method, received_on };
 }
 
-/** Money received against one payment due. It can be part of it, never more than is still owed. */
-export const recordPayment = (installmentId, body, by, today, file) => tx(() => takePayment(installmentId, body, by, today, file, { whole: true }));
+/** The slip's amount, as read off it, is the most that can be recorded with it. A slip that cannot be read limits nothing.
+    Read before the transaction opens, so a slow reading holds no lock. */
+async function withinSlip(amount, file) {
+  if (!file) return;
+  const { amount: most } = await readSlip(file);
+  if (most && money(Number(amount)) > most) throw bad(`The slip shows ${cash(most)}. A payment recorded with it cannot be more than that.`, 409);
+}
+
+/** Money received against one payment due. It can be part of it, never more than is still owed, nor than its slip shows. */
+export const recordPayment = async (installmentId, body, by, today, file) => {
+  await withinSlip(body?.amount, file);
+  return tx(() => takePayment(installmentId, body, by, today, file, { whole: true }));
+};
 
 const NO_PAYMENTS = 'This lease is marked not to take payments (Don\'t accept payments). Untick it on the lease first.';
 
@@ -801,7 +813,12 @@ export async function paymentPlan(bookingId, body = {}, today = todayHere()) {
  * With `keep_credit`, what is more than the lease owes is kept on it as a credit (a minus balance), as
  * Rent Manager carries money paid ahead on the account; otherwise more than is owed is refused.
  */
-export const payBooking = (bookingId, body = {}, by, today = todayHere(), file = null) => tx(async () => {
+export const payBooking = async (bookingId, body = {}, by, today = todayHere(), file = null) => {
+  await withinSlip(body.amount, file);
+  return spreadPayment(bookingId, body, by, today, file);
+};
+
+const spreadPayment = (bookingId, body, by, today, file) => tx(async () => {
   const b = await getBooking(bookingId);
   if (b.no_payments) throw bad(NO_PAYMENTS, 409);
   const amount = money(Number(body.amount));
@@ -888,7 +905,7 @@ export async function ledger(bookingId, today = todayHere()) {
 }
 
 const getPayment = async (id) => {
-  const p = await db.prepare(`SELECT p.id, p.amount, p.file_path, p.file_name, p.file_mime, i.booking_id, i.kind FROM lease_payments p
+  const p = await db.prepare(`SELECT p.id, p.amount, p.batch, p.file_path, p.file_name, p.file_mime, i.booking_id, i.kind FROM lease_payments p
     JOIN lease_installments i ON i.id = p.installment_id WHERE p.id = ?`).get(Number(id) || 0);
   if (!p) throw bad('Not found', 404);
   return p;
@@ -898,6 +915,9 @@ const getPayment = async (id) => {
 export async function attachPaymentFile(id, file, by) {
   if (!file) throw bad('Choose a file to attach.');
   const p = await getPayment(id);
+  // Money spread over several rows was one payment: the slip covers all of it.
+  const { paid } = p.batch ? await db.prepare('SELECT sum(amount) AS paid FROM lease_payments WHERE batch = ?').get(p.batch) : { paid: p.amount };
+  await withinSlip(paid, file);
   const f = saveFile(file, DOC_DIR);
   await db.prepare('UPDATE lease_payments SET file_path = ?, file_name = ?, file_mime = ? WHERE id = ?').run(f.file_path, f.file_name, f.file_mime, p.id);
   if (p.file_path) rmSync(p.file_path, { force: true });
@@ -1353,6 +1373,7 @@ leasingRoutes.post('/bookings/:id/payments', upload.single('file'), wrap(async (
 leasingRoutes.get('/bookings/:id/ledger', wrap(async (req, res) => res.json(await ledger(req.params.id))));
 leasingRoutes.post('/bookings/:id/charges', wrap(async (req, res) => res.json(await addCharge(req.params.id, req.body, req.user.id))));
 leasingRoutes.delete('/charges/:id', wrap(async (req, res) => res.json(await removeCharge(req.params.id, req.user.id))));
+leasingRoutes.post('/slips/read', upload.single('file'), wrap(async (req, res) => res.json(await readSlip(req.file))));
 leasingRoutes.post('/installments/:id/payments', upload.single('file'), wrap(async (req, res) => res.json(await recordPayment(req.params.id, req.body, req.user.id, undefined, req.file))));
 leasingRoutes.post('/payments/:id/file', upload.single('file'), wrap(async (req, res) => res.json(await attachPaymentFile(req.params.id, req.file, req.user.id))));
 leasingRoutes.get('/payments/:id/file', wrap(async (req, res) => sendDoc(req, res, await getPayment(req.params.id))));

@@ -136,15 +136,29 @@ function Plan({ url, amount, on }) {
 
 /** Recording money against one payment due, or (with `url`) against the booking as a whole, where it is
     spread over the extra charges due first, then the rent, with the spread shown as it is typed. It starts at what is
-    due now; what is not due yet only takes what is typed beyond that, as when a tenant pays ahead. The amount starts at what is still owed. */
+    due now; what is not due yet only takes what is typed beyond that, as when a tenant pays ahead. The amount starts at what is still owed.
+    The slip comes first: the AI reads the amount, date, method and reference off it and fills them in, and the amount on
+    the slip is the most that can be recorded with it (the server checks this too). */
 function PayForm({ row, url, onDone, onCancel }) {
   const [v, setV] = useState({ amount: row.left, method: 'transfer', received_on: today(), reference: '' });
   const [file, setFile] = useState(null); // the proof: transfer slip, card slip, a photo of the cash receipt
+  const [slip, setSlip] = useState(null); // what was read off it: null before, 'reading', then { amount?, received_on?, method?, reference? }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
   const whole = Boolean(url);
   url ||= `/leasing/installments/${row.id}/payments`;
+  const most = Math.min(row.max ?? row.left, slip?.amount ?? Infinity);
+  const choose = async (f) => {
+    setFile(f);
+    setSlip(f ? 'reading' : null);
+    if (!f) return;
+    const form = new FormData();
+    form.append('file', f);
+    const s = await api.upload('/leasing/slips/read', form).catch(() => ({}));
+    setSlip(s);
+    setV((x) => ({ ...x, ...s, amount: s.amount ? Math.min(s.amount, row.max ?? row.left) : x.amount, reference: s.reference || x.reference }));
+  };
   const save = async (e) => {
     e.preventDefault();
     if (busy) return;
@@ -157,6 +171,16 @@ function PayForm({ row, url, onDone, onCancel }) {
   };
   return (
     <form onSubmit={save} className="mt-3 space-y-3 rounded-xl border border-p1/40 p-3">
+      <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-stroke px-3.5 py-2.5 text-sm text-mute hover:bg-white/5">
+        {slip === 'reading' ? <Loader2 size={15} className="shrink-0 animate-spin" /> : <Paperclip size={15} className="shrink-0" />}
+        <span className="truncate">{file ? file.name : 'Attach the slip (PDF or photo): the amount, date and reference are read off it'}</span>
+        <input type="file" accept="application/pdf,image/*" className="hidden" onChange={(e) => { choose(e.target.files?.[0] || null); e.target.value = ''; }} />
+      </label>
+      {slip === 'reading' && <p className="text-xs text-mute">Reading the slip…</p>}
+      {slip && slip !== 'reading' && (slip.amount
+        ? <p className="rounded-xl bg-ok/10 px-3 py-2 text-sm">The slip shows <b>{aed(slip.amount)}</b>{slip.received_on && ` paid ${fmt(slip.received_on)}`}{slip.reference && ` · ${slip.reference}`}.
+            <span className="text-mute"> No more than this can be recorded with it.</span></p>
+        : <p className="text-xs text-warn">The amount could not be read off this slip. Check it and fill in the payment yourself.</p>)}
       <div className="flex flex-wrap gap-1.5 text-xs">
         {METHODS.map(([k, l]) => (
           <button key={k} type="button" onClick={() => setV({ ...v, method: k })}
@@ -165,21 +189,17 @@ function PayForm({ row, url, onDone, onCancel }) {
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Amount received ({currency()})</span>
-          <input type="number" min="0" max={row.max ?? row.left} step="any" value={v.amount} onChange={set('amount')} required className={FIELD} /></label>
+          <input type="number" min="0" max={most} step="any" value={v.amount} onChange={set('amount')} required className={FIELD} /></label>
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Received on</span>
           <DateField value={v.received_on} onChange={set('received_on')} max={today()} required className={FIELD} /></label>
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Reference</span>
           <input value={v.reference} onChange={set('reference')} placeholder={REF[v.method]} className={FIELD} /></label>
       </div>
-      <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-stroke px-3.5 py-2.5 text-sm text-mute hover:bg-white/5">
-        <Paperclip size={15} className="shrink-0" /> <span className="truncate">{file ? file.name : 'Attach the slip (PDF or photo)'}</span>
-        <input type="file" accept="application/pdf,image/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-      </label>
       {whole && <Plan url={url} amount={v.amount} on={v.received_on} />}
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
-        <button disabled={busy} className={PRIMARY}><Banknote size={16} /> {busy ? 'Saving…' : 'Save payment'}</button>
+        <button disabled={busy || slip === 'reading'} className={PRIMARY}><Banknote size={16} /> {busy ? 'Saving…' : 'Save payment'}</button>
       </div>
     </form>
   );
