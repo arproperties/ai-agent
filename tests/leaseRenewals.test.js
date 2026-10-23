@@ -487,3 +487,194 @@ test('charges: each extra listed, VAT taken from saifsys\'s own total, shown as 
   assert.equal(c.total, 249375 + 3500 + 175);
   assert.equal(R.chargesOf({ proposed_rent: 1000, rera: 0, grand_total: 1000, fees: {} }).vat, 0);
 });
+
+// ---------- automatic: the person gives the RERA index, Reem does the rest ----------
+
+const autoStart = (boss, rent = 42000, rera = 5) => R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent, rera_pct: rera });
+
+test('automatic: a dispute gets the RERA index rent, an acceptance the contract, papers are sent back then renewed', async () => {
+  const boss = await setup();
+  const cheques = quoteOf(37800).cheques;
+  const photo = (name) => ({ contentType: 'image/jpeg', filename: name, content: Buffer.from(name) });
+  stub({
+    replies: [
+      { intent: 'unclear', summary: 'Says the increase is illegal', dispute: true, disputeNote: 'Claims it breaks the index' },
+      { intent: 'accept', summary: 'Accepts', dispute: false },
+    ],
+    docs: [
+      { agreement: 'signed', cheques: cheques.map((ch) => ({ ...ch, payee: 'Mohamed Saeed', signed: true })), unreadable: [] },
+      { agreement: 'none', cheques: cheques.map((ch) => ({ ...ch, payee: 'Saif Holding LLC', signed: true })), unreadable: [] },
+    ],
+  });
+  let r = await autoStart(boss);
+  assert.deepEqual([r.status, r.auto, r.rera_pct], ['offer_sent', true, 5]);
+
+  await arrives({ text: 'This is illegal' });
+  await R.readInbound();
+  r = await R.getRenewal(r.id);
+  assert.deepEqual([r.status, r.offer, r.waiting, r.rent_source], ['negotiating', 37800, null, { kind: 'rera_index', pct: 5 }]);
+  assert.match(lastMail(), /RERA Rental Index/);
+  assert.match(world.pushes.at(-1), /Reem offered the RERA index rent, AED 37,800/);
+
+  await arrives({ text: 'OK agreed' });
+  await R.readInbound();
+  r = await R.getRenewal(r.id);
+  assert.deepEqual([r.status, r.agreed], ['agreed', 37800]);
+  assert.match(lastMail(), /Tenancy contract - PARK PLACE 610\.pdf/);
+
+  R.useForTests({ fetch: async () => ({ attachments: [photo('a.jpg')] }) });
+  await arrives({ text: 'attached' });
+  await R.readInbound();
+  assert.match(lastMail(), /It must be payable to Saif Holding LLC/, 'Reem sent back what is wrong');
+  assert.equal((await R.getRenewal(r.id)).waiting, null);
+
+  await arrives({ text: 'new cheques' });
+  await R.readInbound();
+  r = await R.getRenewal(r.id);
+  assert.equal(r.status, 'converted');
+  assert.equal(world.acts.at(-1).action, 'convert');
+  assert.match(lastMail(), /is complete/);
+  assert.deepEqual(world.todos.map((t) => t.userId), [boss.id], 'the to-do goes to whoever started it');
+  assert.deepEqual((await timeline(r.id)).filter((t) => t.startsWith('out')), [
+    'out: Offer sent · AED 42,000', 'out: RERA index rent offered · AED 37,800', 'out: Agreed · AED 37,800',
+    'out: Asked to fix the papers', 'out: Renewed in saifsys · AED 37,800',
+  ]);
+});
+
+test('automatic: never a counter of its own; a second push-back, a question or not renewing waits for a person', async () => {
+  const boss = await setup();
+  stub({ replies: [
+    { intent: 'counter', amount: 36000, summary: 'Asks for 36,000', asksLess: true, dispute: false },
+    { intent: 'counter', amount: 36000, summary: 'Still asks for 36,000', asksLess: true, dispute: false },
+  ] });
+  let r = await autoStart(boss);
+  await arrives({ text: '36,000?' });
+  await R.readInbound();
+  assert.equal((await R.getRenewal(r.id)).offer, 37800, 'the index rent, not the tenant\'s figure');
+  await arrives({ text: 'still 36,000' });
+  await R.readInbound();
+  r = await R.getRenewal(r.id);
+  assert.deepEqual([r.offer, r.waiting], [37800, 'reply']);
+  assert.match(world.pushes.at(-1), /needs you/);
+
+  assert.equal(R.autoAnswer({ ...r, status: 'offer_sent', rent_source: { kind: 'manual' } }, { intent: 'reject' }), null);
+  assert.equal(R.autoAnswer({ ...r, status: 'offer_sent', rent_source: { kind: 'manual' } }, { intent: 'question' }), null);
+  assert.equal(R.autoAnswer({ ...r, status: 'offer_sent', offer: 37800, rent_source: { kind: 'manual' } }, { intent: 'counter', asksLess: true }), null,
+    'an offer already at the index has nothing to fall back to');
+  assert.equal(R.autoAnswer({ ...r, status: 'offer_sent', auto: false }, { intent: 'accept' }), null, 'switched off: a person answers');
+});
+
+test('a renewal started without the RERA index, or switched off, waits for a person as before', async () => {
+  const boss = await setup();
+  stub({ replies: [{ intent: 'accept', summary: 'Accepts', dispute: false }, { intent: 'accept', summary: 'Accepts', dispute: false }] });
+  const r = await start(boss);
+  assert.equal(r.auto, false);
+  await arrives({ text: 'I accept' });
+  await R.readInbound();
+  assert.deepEqual([(await R.getRenewal(r.id)).status, world.sent.length], ['offer_sent', 1]);
+});
+
+test('scheduled: started more than 120 days ahead, the offer waits, then Reem sends it on the day', async () => {
+  const boss = await setup();
+  const later = { ...LEASE, end_date: '2026-12-31' }; // 169 days from NOW: the offer is due on 2 September
+  stub({ leases: [later] });
+  let r = await autoStart(boss);
+  assert.equal(r.status, 'scheduled');
+  assert.equal(world.sent.length, 0);
+  assert.ok(!world.acts.some((a) => a.action === 'start'), 'saifsys has nothing yet');
+  assert.deepEqual(await timeline(r.id), ['step: Offer ready: Reem sends it on 2 September 2026']);
+
+  world.now = Date.parse('2026-09-01T06:00:00Z');
+  await R.sendDue();
+  assert.equal(world.sent.length, 0, 'not yet');
+  world.now = Date.parse('2026-09-02T06:00:00Z');
+  await R.sendDue();
+  r = await R.getRenewal(r.id);
+  assert.deepEqual([r.status, r.workflow_id, r.plan], ['offer_sent', 117, null]);
+  assert.match(lastMail(), /Please reply to this email by 16 September 2026/, 'the reply-by date is from the day it went');
+  assert.match(world.pushes.at(-1), /Reem sent the renewal offer/);
+  await R.sendDue();
+  assert.equal(world.sent.length, 1, 'once');
+});
+
+test('scheduled: a person can send it now or cancel it', async () => {
+  const boss = await setup();
+  stub({ leases: [{ ...LEASE, end_date: '2026-12-31' }] });
+  let r = await autoStart(boss);
+  assert.equal(await R.mark(boss, r.id, 'unschedule'), null);
+  assert.ok(!(await R.getRenewal(r.id)), 'gone: the lease can start again');
+  r = await autoStart(boss);
+  r = await R.mark(boss, r.id, 'send_now');
+  assert.equal(r.status, 'offer_sent');
+});
+
+test('the RERA check: leases 120 days from the end that nobody started are told once, in one push', async () => {
+  const boss = await setup();
+  stub({ leases: [LEASE, { ...LEASE, lease_id: 295, unit: '611' }, { ...LEASE, lease_id: 296, end_date: '2026-12-31' }] });
+  R.resetNudge();
+  assert.equal(await R.nudge(), 2, 'the one 169 days away is not due yet');
+  assert.match(world.pushes.at(-1), /2 leases are due: check the RERA index/);
+  R.resetNudge();
+  assert.equal(await R.nudge(), 0, 'each lease once');
+});
+
+// ---------- staff can step in ----------
+
+test('take over: staff run it by hand, and can hand it back', async () => {
+  const boss = await setup();
+  stub({ replies: [{ intent: 'accept', summary: 'Accepts', dispute: false }] });
+  let r = await autoStart(boss);
+  r = await R.mark(boss, r.id, 'auto_off');
+  assert.equal(r.auto, false);
+  await arrives({ text: 'I accept' });
+  await R.readInbound();
+  assert.deepEqual([(await R.getRenewal(r.id)).status, world.sent.length], ['offer_sent', 1], 'Reem sent nothing');
+  r = await R.mark(boss, r.id, 'auto_on');
+  assert.equal(r.auto, true);
+  assert.deepEqual((await timeline(r.id)).filter((t) => t.startsWith('step')), ['step: Taken over: staff run it by hand', 'step: Handed back to Reem']);
+});
+
+test('when something breaks Reem stops on that lease and tells staff', async () => {
+  const boss = await setup();
+  stub({ replies: [{ intent: 'accept', summary: 'Accepts', dispute: false }] });
+  let r = await autoStart(boss);
+  R.useForTests({ act: async (m, action) => { if (action === 'contract') throw new Error('saifsys is down'); return { renewal: {} }; } });
+  await arrives({ text: 'I accept' });
+  await R.readInbound();
+  r = await R.getRenewal(r.id);
+  assert.deepEqual([r.auto, r.waiting], [false, 'reply']);
+  assert.match(world.pushes.at(-1), /Reem stopped on this lease: .*saifsys is down.*take it from here/);
+  assert.match((await timeline(r.id)).at(-1), /step: Reem stopped/);
+});
+
+test('papers still wrong after three tries: Reem stops', async () => {
+  const boss = await setup();
+  const wrongDocs = { agreement: 'none', cheques: [], unreadable: [] };
+  stub({ replies: [{ intent: 'accept', summary: 'Accepts', dispute: false }], docs: [wrongDocs, wrongDocs, wrongDocs, wrongDocs] });
+  let r = await autoStart(boss);
+  await arrives({ text: 'I accept' });
+  await R.readInbound();
+  R.useForTests({ fetch: async () => ({ attachments: [{ contentType: 'image/jpeg', filename: 'x.jpg', content: Buffer.from('x') }] }) });
+  for (let i = 0; i < 4; i++) { await arrives({ text: `try ${i}` }); await R.readInbound(); }
+  r = await R.getRenewal(r.id);
+  assert.equal((await timeline(r.id)).filter((t) => t === 'out: Asked to fix the papers').length, 3);
+  assert.deepEqual([r.auto, r.waiting], [false, 'papers']);
+  assert.match(world.pushes.at(-1), /still not right after 3 tries/);
+});
+
+test('pause all: Reem answers nothing and sends no scheduled offer until it is back on', async () => {
+  const boss = await setup();
+  stub({ leases: [LEASE, { ...LEASE, lease_id: 296, end_date: '2026-12-31' }], replies: [{ intent: 'accept', summary: 'Accepts', dispute: false }] });
+  const r = await autoStart(boss);
+  const later = await R.send(boss, { action: 'start', lease_id: 296, rent: 42000, rera_pct: 5 });
+  await db.prepare('UPDATE lease_renewal_settings SET paused = true').run();
+  await arrives({ text: 'I accept' });
+  await R.readInbound();
+  assert.deepEqual([(await R.getRenewal(r.id)).status, world.sent.length], ['offer_sent', 1]);
+  world.now = Date.parse('2026-09-02T06:00:00Z');
+  await R.sendDue();
+  assert.equal((await R.getRenewal(later.id)).status, 'scheduled');
+  await db.prepare('UPDATE lease_renewal_settings SET paused = false').run();
+  await R.sendDue();
+  assert.equal((await R.getRenewal(later.id)).status, 'offer_sent');
+});

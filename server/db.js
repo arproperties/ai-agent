@@ -1786,6 +1786,24 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_lease_renewal_files ON lease_renewal_files(renewal_id);
+  -- Automatic renewals (2026-10-23): a person checks the RERA index once (rera_pct, the
+  -- increase it allows) and Reem does the rest when auto is on. A renewal started more than
+  -- 120 days before the end is 'scheduled': plan holds the offer's words and fees until then.
+  ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS rera_pct NUMERIC;
+  ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS auto BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS plan JSONB;
+  ALTER TABLE lease_renewals DROP CONSTRAINT IF EXISTS lease_renewals_status_check;
+  ALTER TABLE lease_renewals ADD CONSTRAINT lease_renewals_status_check
+    CHECK (status IN ('scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'converted', 'not_renewing', 'closed'));
+  -- paused: the master stops Reem on every renewal at once; each waits for staff.
+  ALTER TABLE lease_renewal_settings ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT false;
+  -- Leases the renewals people were told need the RERA check, so each is told once.
+  CREATE TABLE IF NOT EXISTS lease_renewal_nudges (
+    lease_id INTEGER NOT NULL,
+    end_date TEXT NOT NULL,
+    at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (lease_id, end_date)
+  );
 `);
 
 // Reading a file in full (2026-10-20). The chunks are cut to overlap for search, so stitched

@@ -18,7 +18,7 @@ import { askSaifsys, actSaifsys, saifsysConfigured, saifsysActionsConfigured, du
 import { readReply, readDocs, advise, caseSummary, rewriteReply } from './leaseRenewalAi.js';
 
 // Lease renewals: whoever has the module renews each lease with its tenant by email, from
-// Reem, instead of the staff in saifsys. The list is saifsys's leases ending within 120 days.
+// Reem, instead of the staff in saifsys. The list is saifsys's leases ending within 150 days.
 //
 //   Start      a person types the rent (any rent: our choice) and the cheques; Reem writes the
 //              offer and its letter, they read it and tap Send. saifsys's own renewal workflow
@@ -44,13 +44,26 @@ import { readReply, readDocs, advise, caseSummary, rewriteReply } from './leaseR
 //              say whether an increase is legal. The RDC case pack is one PDF of the story and
 //              its papers, for a person to upload to RDC.
 //
-// Nothing else reaches a tenant without a tap. Every step is on the renewal's timeline.
+// Automatic (the renewal's auto, on when the person gives the RERA index at Start): the
+// person's one step is Start, with the increase the RERA index allows (rera_pct). Reem then
+// sends the offer 120 days before the end (a renewal started earlier waits, 'scheduled'),
+// and answers by itself: an acceptance gets the contract; a dispute, a counter or a request
+// for less gets the RERA index rent (never a counter-offer of its own); papers that match
+// are marked OK and renewed in saifsys; papers that do not are sent back, up to three times.
+// Everything else (not renewing, a question, a second push-back after the index rent, no
+// answer) waits for a person, with a push. Every step is on the renewal's timeline.
 //
-// Later, the steps a person takes can become Reem's (settings.auto): the rent from the DLD
-// Rental Index API is one more rent source (RENT_SOURCES), filling the same slot a typed
-// rent fills now, with nothing else changing.
+// Staff can step in at any time: Take over turns a renewal's auto off and they do it by
+// hand, as before. When something breaks (saifsys, an email it cannot read, papers still
+// wrong after three tries) Reem takes its own auto off and tells them. The master's Pause
+// (settings.paused) stops Reem on every renewal at once.
+//
+// Later, the RERA check itself can be Reem's: the rent from the DLD Rental Index API is one
+// more rent source (RENT_SOURCES), filling the slot the person's % fills now.
 
-const DAYS_AHEAD = 120;
+const DAYS_AHEAD = 150;   // the list: far enough ahead to give the RERA index before the offer is due
+const SEND_AT = 120;      // days before the end the offer goes
+const AUTO_FIXES = 3;     // papers sent back by Reem before a person looks
 const REMIND_AFTER = 7;   // days of silence before each reminder
 const REMINDERS = 2;
 const EVERY = 3 * 60_000;
@@ -99,7 +112,7 @@ export const indexRentFrom = (current, pct) => Math.max(Number(current), down100
 
 // ---------- settings ----------
 
-const DEFAULTS = { payee: null, actor_id: null, reminders: true, auto: {}, advisors: [] };
+const DEFAULTS = { payee: null, actor_id: null, reminders: true, auto: {}, advisors: [], paused: false };
 
 export async function settings() {
   const s = await db.prepare('SELECT * FROM lease_renewal_settings WHERE id = 1').get();
@@ -155,12 +168,12 @@ export function addPapers(before, read) {
 
 const N = (v) => (v === null || v === undefined ? null : Number(v));
 const ROW = (r) => r && {
-  ...r, offer: N(r.offer), agreed: N(r.agreed), tenant_offer: N(r.tenant_offer),
+  ...r, offer: N(r.offer), agreed: N(r.agreed), tenant_offer: N(r.tenant_offer), rera_pct: N(r.rera_pct),
   last_out_at: N(r.last_out_at), last_in_at: N(r.last_in_at), created_at: N(r.created_at), updated_at: N(r.updated_at),
 };
 export const getRenewal = async (id) => ROW(await db.prepare('SELECT * FROM lease_renewals WHERE id = ?').get(Number(id) || 0));
 
-const JSON_COLS = ['lease', 'rent_source', 'quote', 'received', 'papers'];
+const JSON_COLS = ['lease', 'rent_source', 'quote', 'received', 'papers', 'plan'];
 async function update(id, fields) {
   const keys = Object.keys(fields);
   await db.prepare(`UPDATE lease_renewals SET ${keys.map((k) => `${k} = ?`).join(', ')}, updated_at = ${NOW} WHERE id = ?`)
@@ -186,7 +199,16 @@ async function tell(r, body) {
   D.push(await holders(), { title: `${r.lease.building} ${r.lease.unit}`, body, url: `/?renewals=${r.id}`, tag: `renewal-${r.id}` })?.catch?.(() => {});
 }
 
-/** saifsys's leases ending within 120 days, as they are now. */
+/** Something broke on an automatic renewal: Reem stops on it, says why, and staff take it from here. */
+async function stopAuto(r, reason) {
+  if (r.auto) {
+    await update(r.id, { auto: false });
+    await step(r, `Reem stopped: ${reason}`);
+  }
+  await tell(r, `Reem stopped on this lease: ${reason}. Please take it from here.`);
+}
+
+/** saifsys's leases ending within 150 days, as they are now. */
 async function dueLeases() {
   const { leases = [] } = await D.ask('realestate', 'renewals_due', { days: DAYS_AHEAD });
   return leases;
@@ -244,7 +266,7 @@ function chargeLines(q) {
 const offerText = (r, q, rent) => [dear(r), '',
   `Your tenancy of ${r.lease.building}, Unit ${r.lease.unit} ends on ${longDate(r.lease.end_date)}, and we would be glad to renew it.`, '',
   'Our renewal offer:', ...offerLines(q, rent), '',
-  `Please reply to this email by ${longDate(addDays(today(), 14))}:`,
+  `Please reply to this email by ${replyBy()}:`,
   '- to accept, simply reply "I accept";',
   '- or tell us what you would like to propose.', '',
   'The terms of the renewal and the documents we will need are in the attached letter.', ...SIGN].join('\n');
@@ -392,7 +414,7 @@ async function quoteFor(lease, rent, cheques, fees) {
 /** The fees a new renewal of this lease starts with (the old lease's), for the Start box. */
 export async function startFees(leaseId) {
   const lease = (await dueLeases()).find((l) => l.lease_id === Number(leaseId));
-  if (!lease) throw bad('That lease is not in saifsys\'s list of leases ending within 120 days.', 404);
+  if (!lease) throw bad(`That lease is not in saifsys's list of leases ending within ${DAYS_AHEAD} days.`, 404);
   const q = await quoteFor(lease, Math.round(Number(lease.annual_rent)) || 1, lease.cheques || 4);
   // saifsys's VAT on the extra charges for this building: 5%, or none where it is switched off.
   const c = chargesOf(q);
@@ -425,7 +447,7 @@ const rentOf = (v) => {
 };
 
 /** The renewal (or, for start, the lease) a draft or a send is about, and the figures it needs. */
-async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, words, admin_fees: adminFee, chiller_charges: chillerFee,
+async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera_pct: rawPct, words, admin_fees: adminFee, chiller_charges: chillerFee,
   additional_parking_fee: parkingFee, small_store_fee: smallFee, big_store_fee: bigFee }) {
   const a = ACTIONS[action];
   if (!a) throw bad('Unknown step.');
@@ -433,7 +455,7 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, word
   let r;
   if (action === 'start') {
     const lease = (await dueLeases()).find((l) => l.lease_id === Number(leaseId));
-    if (!lease) throw bad('That lease is not in saifsys\'s list of leases ending within 120 days.', 404);
+    if (!lease) throw bad(`That lease is not in saifsys's list of leases ending within ${DAYS_AHEAD} days.`, 404);
     if (lease.saifsys_renewal) throw bad(`The staff already have a renewal for this lease in saifsys (${lease.saifsys_renewal}).`, 409);
     if (!String(lease.email || '').includes('@')) throw bad('saifsys has no email for this tenant. Add it in saifsys first.', 409);
     if (await db.prepare('SELECT 1 FROM lease_renewals WHERE lease_id = ? AND end_date = ?').get(lease.lease_id, lease.end_date)) throw bad('This renewal has already started.', 409);
@@ -474,8 +496,19 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, word
   if (action === 'reply') text = replyText(r, words || '');
   if (action === 'fix') text = fixText(r, r.papers || checkPapers(r, r.received || {}, s.payee));
   if (action === 'convert') text = doneText(r);
-  return { r, a, s, amount, cheques: n, source, quote, fees, text };
+  // Start: the increase the RERA index allows, as the person read it off DLD's calculator.
+  let rera = null;
+  if (action === 'start' && rawPct !== undefined && rawPct !== null && rawPct !== '') {
+    rera = Number(rawPct);
+    if (!(rera >= 0 && rera <= 20)) throw bad('The increase the RERA index allows is 0 to 20%.');
+  }
+  const sendOn = action === 'start' ? sendDate(r.lease) : null;
+  return { r, a, s, amount, cheques: n, source, quote, fees, text, rera, sendOn: sendOn > today() ? sendOn : null };
 }
+
+/** The day the offer goes: 120 days before the lease ends. */
+const sendDate = (lease) => addDays(lease.end_date, -SEND_AT);
+const replyBy = () => longDate(addDays(today(), 14));
 
 const contractName = (r) => `Tenancy contract - ${r.lease.building} ${r.lease.unit}.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
 const noticeName = (r) => `Renewal notice - ${r.lease.building} ${r.lease.unit}.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
@@ -492,7 +525,32 @@ export async function draft(user, body) {
     schedule: p.quote?.cheques || null, total: p.quote?.cheques_total ?? null,
     fees: p.quote?.fees || null, charges: p.quote ? chargesOf(p.quote) : null,
     attachments: body.action === 'start' ? [noticeName(p.r)] : body.action === 'accept' ? [contractName(p.r)] : [],
+    sendOn: p.sendOn,
   };
+}
+
+/**
+ * The offer itself, for a renewal not yet sent: saifsys makes its renewal at this rent, and
+ * the email goes with saifsys's own notice. A person's Send, or Reem on the day.
+ */
+async function sendOffer(r, { text, fees, user = null }) {
+  const { renewal } = await saifsys('start', { lease_id: r.lease.lease_id, end_date: r.lease.end_date, rent: r.offer, cheques: r.cheques, ...feesOf(fees) });
+  // Never an offer without saifsys's notice. Trying again picks up the same saifsys renewal.
+  if (!renewal.notice?.data) throw bad('saifsys did not send its renewal notice PDF, so nothing was emailed. Check the latest realestate_renewal.php is uploaded to saifsys, then try again.', 502);
+  r = await update(r.id, { status: 'offer_sent', workflow_id: renewal.workflow_id, plan: null, waiting: null, error: null });
+  const attachments = [{ filename: noticeName(r), contentType: 'application/pdf', content: renewal.notice.data }];
+  await mail(r, { title: ACTIONS.start.title(r.offer), text, attachments, user, data: { rent: r.offer, source: r.rent_source } });
+  return getRenewal(r.id);
+}
+
+/** A scheduled offer sent now: on its day by Reem, or when a person taps Send now. */
+async function sendPlanned(r, user = null) {
+  const lease = (await dueLeases()).find((l) => l.lease_id === r.lease_id && l.end_date === r.end_date);
+  if (!lease) throw bad('saifsys no longer lists this lease as ending, so nothing was sent.', 409);
+  if (lease.saifsys_renewal) throw bad(`The staff started a renewal for this lease in saifsys (${lease.saifsys_renewal}), so nothing was sent.`, 409);
+  // The reply-by date in the words moves to two weeks from the day it goes.
+  const text = String(r.plan?.text || '').split(r.plan?.by || '\u0000').join(replyBy());
+  return sendOffer(r, { text, fees: r.plan?.fees, user });
 }
 
 /** Send what the person approved, and move the renewal (and saifsys) along with it. */
@@ -506,18 +564,31 @@ export async function send(user, body) {
   let r = p.r;
 
   if (body.action === 'start') {
-    const { renewal } = await saifsys('start', { lease_id: r.lease.lease_id, end_date: r.lease.end_date, rent: p.amount, cheques: p.cheques, ...feesOf(p.fees) });
-    // Never an offer without saifsys's notice. Tapping Send again picks up the same saifsys renewal.
-    if (!renewal.notice?.data) throw bad('saifsys did not send its renewal notice PDF, so nothing was emailed. Check the latest realestate_renewal.php is uploaded to saifsys, then tap Send again.', 502);
-    const made = await db.prepare(`INSERT INTO lease_renewals (lease_id, end_date, lease, workflow_id, status, offer, cheques, rent_source, quote, started_by)
-      VALUES (?, ?, ?, ?, 'offer_sent', ?, ?, ?, ?, ?) ON CONFLICT (lease_id, end_date) DO NOTHING RETURNING id`)
-      .get(r.lease.lease_id, r.lease.end_date, JSON.stringify(r.lease), renewal.workflow_id, p.amount, p.cheques,
-        JSON.stringify(p.source), JSON.stringify(p.quote), user.id);
+    // Reem runs it from here when the person gave the RERA index; without it, a person does.
+    const auto = p.rera !== null && body.auto !== false;
+    if (p.sendOn) {
+      // Too early for the offer: kept, with its words, and sent by Reem on the day.
+      const made = await db.prepare(`INSERT INTO lease_renewals (lease_id, end_date, lease, status, offer, cheques, rent_source, quote, started_by, rera_pct, auto, plan)
+        VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (lease_id, end_date) DO NOTHING RETURNING id`)
+        .get(r.lease.lease_id, r.lease.end_date, JSON.stringify(r.lease), p.amount, p.cheques, JSON.stringify(p.source), JSON.stringify(p.quote),
+          user?.id || null, p.rera, auto, JSON.stringify({ text, fees: p.fees, by: replyBy() }));
+      if (!made) throw bad('This renewal has already started.', 409);
+      r = await getRenewal(made.id);
+      await step(r, `Offer ready: Reem sends it on ${longDate(p.sendOn)}`, { user });
+      return r;
+    }
+    const made = await db.prepare(`INSERT INTO lease_renewals (lease_id, end_date, lease, status, offer, cheques, rent_source, quote, started_by, rera_pct, auto)
+      VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (lease_id, end_date) DO NOTHING RETURNING id`)
+      .get(r.lease.lease_id, r.lease.end_date, JSON.stringify(r.lease), p.amount, p.cheques, JSON.stringify(p.source), JSON.stringify(p.quote),
+        user?.id || null, p.rera, auto);
     if (!made) throw bad('This renewal has already started.', 409);
-    r = await getRenewal(made.id);
-    attachments.push({ filename: noticeName(r), contentType: 'application/pdf', content: renewal.notice.data });
-    await mail(r, { title, text, attachments, user, data: { rent: p.amount, source: p.source } });
-    return getRenewal(r.id);
+    try {
+      return await sendOffer(await getRenewal(made.id), { text, fees: p.fees, user });
+    } catch (e) {
+      // Nothing went: the lease is free to start again.
+      await db.prepare(`DELETE FROM lease_renewals WHERE id = ? AND status = 'scheduled'`).run(made.id);
+      throw e;
+    }
   }
 
   if (body.action === 'counter' || body.action === 'index') {
@@ -551,7 +622,7 @@ export async function send(user, body) {
     const { renewal } = await saifsys('convert', { workflow_id: r.workflow_id, expected_total: r.quote.cheques_total });
     r = await update(r.id, { status: 'converted', waiting: null, error: null });
     await mail(r, { title, text, user, data: { saifsys: renewal } });
-    await D.todo(user.id, {
+    await D.todo(user?.id || r.started_by || (await holders())[0], {
       text: `${r.lease.payment_method === 'cheque' ? 'Collect the original cheques and register' : 'Register'} the Ejari for ${r.lease.building} ${r.lease.unit}`,
       notes: `Renewed by email at ${aed(r.agreed)} a year, ${longDate(r.quote.start_date)} to ${longDate(r.quote.end_date)}. saifsys renewal #${r.workflow_id}.`,
     }).catch((e) => console.warn('[lease renewals] to-do:', e.message));
@@ -577,8 +648,23 @@ export async function mark(user, id, what) {
     await step(r, 'Read, no reply needed', { user });
     return update(r.id, { waiting: null });
   }
+  if (what === 'send_now') {
+    if (r.status !== 'scheduled') throw bad('The offer has already gone.', 409);
+    return sendPlanned(r, user);
+  }
+  if (what === 'unschedule') {
+    if (r.status !== 'scheduled') throw bad('The offer has already gone: use Handle outside Reem instead.', 409);
+    await db.prepare(`DELETE FROM lease_renewals WHERE id = ? AND status = 'scheduled'`).run(r.id);
+    return null;
+  }
+  if (what === 'auto_on' || what === 'auto_off') {
+    const on = what === 'auto_on';
+    if (on === r.auto) return r;
+    await step(r, on ? 'Handed back to Reem' : 'Taken over: staff run it by hand', { user });
+    return update(r.id, { auto: on, ...(on ? { error: null } : {}) });
+  }
   if (what === 'close') {
-    if (!OPEN.includes(r.status)) throw bad('This renewal is already finished.', 409);
+    if (!OPEN.includes(r.status) && r.status !== 'scheduled') throw bad('This renewal is already finished.', 409);
     await step(r, 'Closed: handled outside Reem', { user });
     return update(r.id, { status: 'closed', waiting: null });
   }
@@ -691,7 +777,8 @@ async function readNew() {
       console.warn('[lease renewals] reading an email failed:', err.message);
       await db.prepare(`UPDATE lease_renewal_events SET status = 'error', error = ? WHERE id = ?`).run(String(err.message).slice(0, 500), e.id);
       await update(r.id, { waiting: 'reply', last_in_at: Number(e.at) || secs() });
-      await tell(r, 'The tenant emailed. Reem could not read it: open the renewal to read it yourself.');
+      if (r.auto) await stopAuto(r, 'it could not read the tenant\'s email');
+      else await tell(r, 'The tenant emailed. Reem could not read it: open the renewal to read it yourself.');
     }
   }
   return rows.length;
@@ -718,11 +805,12 @@ async function handle(r, e) {
         JSON.stringify({ check, docs }), secs());
     await update(r.id, { received, papers: check, waiting: 'papers', status: 'agreed' });
     await mirror(r, `The tenant emailed ${files.length} file${files.length > 1 ? 's' : ''}. ${check.complete ? 'Papers complete.' : `To fix: ${[...check.wrong, ...check.missing].join('; ')}`}`, { text: e.body, files });
+    if (r.auto && !s.paused) return autoPapers(await getRenewal(r.id), check);
     return tell(r, check.complete ? 'The papers are complete. Check them and convert in saifsys.' : 'The tenant sent papers: some things need fixing.');
   }
 
   const reading = await D.readReply({ facts: factsOf(r, s), history: await history(r.id, e.id), text: e.body });
-  if (e.data?.via === 'sender' && reading.intent === 'unclear' && !reading.dispute) {
+  if (e.data?.via === 'sender' && reading.intent === 'unclear' && !reading.dispute && !reading.asksLess) {
     await set('Tenant emailed (not about the renewal, it seems)', { ...reading, note: 'Matched only by who sent it.' });
     return null;
   }
@@ -734,11 +822,59 @@ async function handle(r, e) {
     ...(reading.intent === 'counter' ? { tenant_offer: reading.amount } : reading.intent === 'accept' ? { tenant_offer: null } : {}),
     ...(reading.dispute ? { dispute: reading.disputeNote || 'The tenant disputes the renewal.' } : {}),
   });
-  await tell(r, `${reading.dispute ? '⚠️ Dispute: ' : ''}${title}`);
+  const auto = s.paused ? null : autoAnswer(r, reading);
+  if (auto) {
+    try {
+      await send(null, { id: r.id, ...auto.ask });
+      await tell(r, `${title}. Reem ${auto.did}.`);
+    } catch (err) {
+      console.warn('[lease renewals] answering by itself failed:', err.message);
+      await update(r.id, { waiting: 'reply', error: String(err.message).slice(0, 500) });
+      await stopAuto(r, `it could not answer "${title}" (${err.message})`);
+    }
+  } else {
+    await tell(r, `${reading.dispute ? '⚠️ Dispute: ' : ''}${title}${r.auto && !s.paused ? ' (needs you)' : ''}`);
+  }
   // A dispute is put to the advisors straight away. Their answer is advice on the timeline,
   // never an email, so it waits for the same person as everything else.
   if (reading.dispute) await askAdvisors(await getRenewal(r.id)).catch((err) => console.warn('[lease renewals] advisors:', err.message));
   return null;
+}
+
+/**
+ * What Reem answers by itself, on an automatic renewal: an acceptance of the rent on offer
+ * gets the contract; a dispute, a counter or a request for less gets the RERA index rent,
+ * once (never a counter-offer of Reem's own). Anything else is for a person: null.
+ */
+export function autoAnswer(r, reading) {
+  if (!r.auto || !['offer_sent', 'negotiating'].includes(r.status)) return null;
+  if (reading.intent === 'accept' && !reading.dispute) return { ask: { action: 'accept', rent: r.offer }, did: `agreed at ${aed(r.offer)} and sent the contract` };
+  const pushback = reading.dispute || reading.intent === 'counter' || reading.asksLess;
+  if (pushback && r.rent_source?.kind === 'manual' && r.rera_pct !== null) {
+    const index = indexRentFrom(r.lease.annual_rent, r.rera_pct);
+    if (index < r.offer) return { ask: { action: 'index', pct: r.rera_pct }, did: `offered the RERA index rent, ${aed(index)}` };
+  }
+  return null;
+}
+
+/** Papers on an automatic renewal: complete ones are renewed in saifsys, others sent back, up to three times. */
+async function autoPapers(r, check) {
+  try {
+    if (check.complete) {
+      await mark(null, r.id, 'papers_ok');
+      await send(null, { id: r.id, action: 'convert' });
+      return tell(r, 'The papers match. Reem renewed it in saifsys and told the tenant.');
+    }
+    const { n } = await db.prepare(`SELECT count(*)::int AS n FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'out' AND title = ? AND user_id IS NULL`)
+      .get(r.id, ACTIONS.fix.title());
+    if (n >= AUTO_FIXES) return stopAuto(r, `the papers are still not right after ${AUTO_FIXES} tries`);
+    await send(null, { id: r.id, action: 'fix' });
+    return tell(r, 'The papers were not right. Reem asked the tenant to fix them.');
+  } catch (err) {
+    console.warn('[lease renewals] papers by itself failed:', err.message);
+    await update(r.id, { waiting: 'papers', error: String(err.message).slice(0, 500) });
+    return stopAuto(r, `it could not finish the papers (${err.message})`);
+  }
 }
 
 /** "Rewrite with Reem": the reply in the box, written again as the building management team. Nothing is sent. */
@@ -855,6 +991,46 @@ export async function chase() {
   }
 }
 
+// ---------- the offers due, and the leases waiting for the RERA check ----------
+
+/** Scheduled offers whose day has come, sent by Reem. One that fails stops, for staff to Send now. */
+export async function sendDue() {
+  if ((await settings()).paused) return;
+  const rows = await db.prepare(`SELECT id FROM lease_renewals WHERE status = 'scheduled' AND auto AND end_date <= ? ORDER BY end_date, id`)
+    .all(addDays(today(), SEND_AT));
+  for (const { id } of rows) {
+    const r = await getRenewal(id);
+    try {
+      await sendPlanned(r);
+      await tell(r, `Reem sent the renewal offer, ${aed(r.offer)} a year.`);
+    } catch (e) {
+      console.warn('[lease renewals] a scheduled offer failed:', e.message);
+      await update(r.id, { waiting: 'error', error: String(e.message).slice(0, 500) });
+      await stopAuto(r, `it could not send the offer (${e.message})`);
+    }
+  }
+}
+
+/**
+ * The one step that is a person's: leases 120 days or less from their end that nobody has
+ * started, told to the renewals people in one push, each lease once.
+ */
+let nudgedAt = 0;
+export async function nudge() {
+  if (D.now() - nudgedAt < 3600_000) return 0;
+  nudgedAt = D.now();
+  const started = new Set((await db.prepare('SELECT lease_id, end_date FROM lease_renewals').all()).map((x) => `${x.lease_id}:${x.end_date}`));
+  const told = new Set((await db.prepare('SELECT lease_id, end_date FROM lease_renewal_nudges').all()).map((x) => `${x.lease_id}:${x.end_date}`));
+  const fresh = (await dueLeases()).filter((l) => daysLeft(l.end_date) <= SEND_AT && !l.saifsys_renewal
+    && !started.has(`${l.lease_id}:${l.end_date}`) && !told.has(`${l.lease_id}:${l.end_date}`));
+  if (!fresh.length) return 0;
+  for (const l of fresh) await db.prepare('INSERT INTO lease_renewal_nudges (lease_id, end_date) VALUES (?, ?) ON CONFLICT DO NOTHING').run(l.lease_id, l.end_date);
+  const one = fresh.length === 1 ? `${fresh[0].building} ${fresh[0].unit}` : `${fresh.length} leases`;
+  D.push(await holders(), { title: 'Lease renewals', body: `${one} ${fresh.length === 1 ? 'is' : 'are'} due: check the RERA index so Reem can send the offer${fresh.length === 1 ? '' : 's'}.`, url: '/?renewals=list', tag: 'renewals-due' })?.catch?.(() => {});
+  return fresh.length;
+}
+export const resetNudge = () => { nudgedAt = 0; };
+
 // ---------- the clock ----------
 
 let timer = null;
@@ -866,6 +1042,10 @@ export async function tick() {
     await readInbound();
     await chase();
     await resend();
+    if (saifsysConfigured()) {
+      await sendDue();
+      await nudge();
+    }
   } catch (e) {
     console.warn('[lease renewals]', e.message);
   } finally { busy = false; }
@@ -885,6 +1065,8 @@ const out = (r) => r && {
   tenantOffer: r.tenant_offer, cheques: r.cheques, rentSource: r.rent_source, workflowId: r.workflow_id,
   schedule: r.quote?.cheques || null, total: r.quote?.cheques_total ?? null, start: r.quote?.start_date ?? null, end: r.quote?.end_date ?? null,
   papers: r.papers, reminders: r.reminders, lastOutAt: r.last_out_at, lastInAt: r.last_in_at, updatedAt: r.updated_at,
+  auto: r.auto, reraPct: r.rera_pct, indexRent: r.rera_pct !== null ? indexRentFrom(r.lease.annual_rent, r.rera_pct) : null,
+  sendOn: r.status === 'scheduled' ? sendDate(r.lease) : null,
 };
 
 const daysLeft = (end) => daysBetween(today(), end);
@@ -902,7 +1084,7 @@ const masterOnly = (req, res, next) => (isMaster(req.user) ? next() : res.status
 
 leaseRenewalRoutes.get('/', wrap(async (req, res) => {
   const leases = saifsysConfigured() ? await dueLeases() : [];
-  const rows = (await db.prepare(`SELECT * FROM lease_renewals WHERE status IN ('offer_sent', 'negotiating', 'agreed', 'papers_ok')
+  const rows = (await db.prepare(`SELECT * FROM lease_renewals WHERE status IN ('scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok')
     OR updated_at > ${NOW} - 30 * 86400`).all()).map(ROW);
   const byLease = new Map(rows.map((r) => [`${r.lease_id}:${r.end_date}`, r]));
   const list = leases.map((l) => { const k = `${l.lease_id}:${l.end_date}`; const r = byLease.get(k); byLease.delete(k); return card(l, r); });
@@ -910,9 +1092,9 @@ leaseRenewalRoutes.get('/', wrap(async (req, res) => {
   const s = await settings();
   const acc = await inbox();
   res.json({
-    days: DAYS_AHEAD, leases: list.sort((a, b) => a.end_date.localeCompare(b.end_date) || String(a.building).localeCompare(String(b.building))),
+    days: DAYS_AHEAD, sendAt: SEND_AT, leases: list.sort((a, b) => a.end_date.localeCompare(b.end_date) || String(a.building).localeCompare(String(b.building))),
     settings: {
-      payee: s.payee || '', reminders: !!s.reminders,
+      payee: s.payee || '', reminders: !!s.reminders, paused: !!s.paused,
       advisors: (await advisors(s)).map((a) => a.id),
     },
     // The team the master picks advisors from: their own agents.
@@ -929,7 +1111,7 @@ leaseRenewalRoutes.get('/:id', wrap(async (req, res) => {
     FROM lease_renewal_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.renewal_id = ? ORDER BY e.at DESC, e.id DESC`).all(r.id);
   const files = await db.prepare('SELECT id, event_id, name, mime FROM lease_renewal_files WHERE renewal_id = ? ORDER BY id').all(r.id);
   res.json({
-    ...card(r.lease, r), advisors: (await advisors(await settings())).length,
+    ...card(r.lease, r), advisors: (await advisors(await settings())).length, paused: !!(await settings()).paused,
     events: events.map((e) => ({ ...e, at: Number(e.at), files: files.filter((f) => f.event_id === e.id) })),
   });
 }));
@@ -975,8 +1157,9 @@ leaseRenewalRoutes.put('/settings', masterOnly, wrap(async (req, res) => {
   // Advisors are the master's own agents: an id that is not one of theirs is dropped.
   const wanted = (Array.isArray(b.advisors) ? b.advisors : []).map(Number).filter(Boolean);
   const own = wanted.length ? (await db.prepare('SELECT id FROM agents WHERE user_id = ? AND id = ANY(?::int[]) ORDER BY id').all(req.user.id, wanted)).map((a) => a.id) : [];
-  await db.prepare(`INSERT INTO lease_renewal_settings (id, payee, actor_id, reminders, advisors, updated_at) VALUES (1, ?, ?, ?, ?, ${NOW})
-    ON CONFLICT (id) DO UPDATE SET payee = EXCLUDED.payee, actor_id = EXCLUDED.actor_id, reminders = EXCLUDED.reminders, advisors = EXCLUDED.advisors, updated_at = EXCLUDED.updated_at`)
-    .run(String(b.payee || '').trim().slice(0, 200) || null, req.user.id, b.reminders !== false, JSON.stringify(own));
+  await db.prepare(`INSERT INTO lease_renewal_settings (id, payee, actor_id, reminders, advisors, paused, updated_at) VALUES (1, ?, ?, ?, ?, ?, ${NOW})
+    ON CONFLICT (id) DO UPDATE SET payee = EXCLUDED.payee, actor_id = EXCLUDED.actor_id, reminders = EXCLUDED.reminders, advisors = EXCLUDED.advisors,
+      paused = EXCLUDED.paused, updated_at = EXCLUDED.updated_at`)
+    .run(String(b.payee || '').trim().slice(0, 200) || null, req.user.id, b.reminders !== false, JSON.stringify(own), b.paused === true);
   res.json({ ok: true });
 }));
