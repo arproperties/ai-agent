@@ -76,6 +76,19 @@ test('create_draft writes a pending draft and tells the screen about it', async 
   assert.deepEqual(seen[0].to, ['bob@example.com']);
 });
 
+test("a wrong company address is refused with the real ones, but never named to someone external", async () => {
+  await reset();
+  const staff = await mailbox(true);
+  const out = await (await connectedMailbox(staff)).run({ id: 'a', name: 'create_draft', input: { to: ['account@ainalreempro.com'], body: 'hi' } });
+  assert.match(out.content, /Did you mean accounts@ainalreempro\.com/);
+
+  await reset();
+  const ext = await mailbox(true);
+  await db.prepare('UPDATE users SET external = true WHERE id = ?').run(ext);
+  const theirs = await (await connectedMailbox(ext)).run({ id: 'b', name: 'create_draft', input: { to: ['account@ainalreempro.com'], body: 'hi' } });
+  assert.doesNotMatch(theirs.content, /accounts@|company mailbox/);
+});
+
 test('writing a draft is recorded in the action log', async () => {
   await reset();
   const userId = await mailbox(true);
