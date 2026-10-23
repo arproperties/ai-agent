@@ -124,10 +124,10 @@ test('Send: saifsys makes its renewal, the offer goes with saifsys\'s own notice
 test('Start: the admin fee the person types goes to saifsys and into the offer; later steps keep it', async () => {
   const boss = await setup();
   stub();
-  assert.deepEqual(await R.startFees(LEASE.lease_id), { admin: 1500, chiller: 0, chiller_shown: false, vat_rate: 5 }, 'the old lease\'s, for the Start box');
+  assert.deepEqual(await R.startFees(LEASE.lease_id), { admin: 1500, chiller: 0, chiller_shown: false, vat_rate: 5, rera: 300 }, 'the old lease\'s, for the Start box');
   const r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000, admin_fees: 2000 });
   assert.equal(world.acts.find((a) => a.action === 'start').admin_fees, 2000);
-  assert.match(lastMail(), /Admin fee: AED 2,000\n- VAT \(5%\) on these charges: AED 100\n- Total \(rent, charges and VAT\): AED 47,100\n/);
+  assert.match(lastMail(), /Admin fee: AED 2,000 \+ 5% VAT AED 100 = AED 2,100\n- Ejari fee: AED 300\n- Total: AED 47,400\n/);
   await R.draft(boss, { id: r.id, action: 'counter', rent: 44000 });
   assert.equal(world.acts.at(-1).admin_fees, 2000, 'a counter-offer is priced with the same fee');
 });
@@ -677,4 +677,41 @@ test('pause all: Reem answers nothing and sends no scheduled offer until it is b
   await db.prepare('UPDATE lease_renewal_settings SET paused = false').run();
   await R.sendDue();
   assert.equal((await R.getRenewal(later.id)).status, 'offer_sent');
+});
+
+// ---------- the offer's figures ----------
+
+test('the offer for unit 604: each charge with its VAT, the total, and what cheque 1 is made of', async () => {
+  const boss = await setup();
+  stub();
+  const dates = ['2027-02-18', '2027-04-18', '2027-06-18', '2027-08-18', '2027-10-18', '2027-12-18'];
+  R.useForTests({ act: async (m, action, body) => {
+    world.acts.push({ action, ...body });
+    return { quote: {
+      proposed_rent: 60690, rera: 300, grand_total: 75690, start_date: '2027-02-18', end_date: '2028-02-17', terms_text: '', required_documents_text: '',
+      fees: { chiller: 8000, admin: 1500, parking: 3000, small_store: 1500, big_store: 0, chiller_shown: true },
+      cheques: dates.map((date, i) => ({ date, amount: i === 0 ? 18450 : 11448, type: 'rent' })), cheques_total: 75690,
+    } };
+  } });
+  const d = await R.draft(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 60690, cheques: 6 });
+  assert.match(d.text, new RegExp([
+    '- Annual rent: AED 60,690',
+    '- Chiller fee: AED 8,000 + 5% VAT AED 400 = AED 8,400',
+    '- Admin fee: AED 1,500 + 5% VAT AED 75 = AED 1,575',
+    '- Additional parking slot: AED 3,000 + 5% VAT AED 150 = AED 3,150',
+    '- Small storeroom: AED 1,500 + 5% VAT AED 75 = AED 1,575',
+    '- Ejari fee: AED 300',
+    '- Total: AED 75,690',
+    '- Payment by 6 cheques:',
+    '  1. 18 February 2027: AED 18,450 (rent AED 10,115 + chiller AED 1,335 + chiller VAT AED 400 + admin fee with VAT AED 1,575 + additional parking slot with VAT AED 3,150 + small storeroom with VAT AED 1,575 + Ejari fee AED 300)',
+    '  2. 18 April 2027: AED 11,448 (rent AED 10,115 + chiller AED 1,333)',
+  ].join('\n').replace(/[()+.]/g, '\\$&')));
+  assert.match(d.text, /6\. 18 December 2027: AED 11,448/);
+});
+
+test('the admin fee starts at 1,500 for every renewal', async () => {
+  await setup();
+  stub();
+  R.useForTests({ act: async () => ({ quote: { ...quoteOf(36000), fees: { admin: 900, chiller: 0, chiller_shown: false } } }) });
+  assert.equal((await R.startFees(LEASE.lease_id)).admin, 1500);
 });

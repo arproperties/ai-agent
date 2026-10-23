@@ -228,6 +228,13 @@ function StartSheet({ lease, onClose, onDone }) {
   const chargeBase = (Number(admin) || 0) + (fees?.chiller_shown ? Number(chiller) || 0 : 0)
     + EXTRAS.reduce((t, [k]) => t + (extras[k]?.on ? Number(extras[k].fee) || 0 : 0), 0);
   const vat = Math.round(chargeBase * (fees?.vat_rate ?? 5)) / 100;
+  // What the offer will add up to, cheque by cheque, as saifsys lays out Reem's renewals:
+  // rent and chiller split in whole dirhams, the rest (fees, VAT, Ejari) in cheque 1.
+  const n = Number(cheques) || 1;
+  const chillerFee = fees?.chiller_shown ? Number(chiller) || 0 : 0;
+  const total = (Number(rent) || 0) + chargeBase + vat + (Number(fees?.rera) || 0);
+  const others = Math.floor((Number(rent) || 0) / n) + Math.floor(chillerFee / n);
+  const first = Math.round((total - others * (n - 1)) * 100) / 100;
   const pickRera = (v) => {
     setRera(v);
     // Until the offer is typed by hand, it starts at the index rent.
@@ -323,6 +330,14 @@ function StartSheet({ lease, onClose, onDone }) {
               <span>{fees.vat_rate ?? 5}% VAT on Extra Charges</span>
               <b>{aed(vat)}</b>
             </div>
+            {Number(rent) > 0 && (
+              <div className="space-y-1 rounded-2xl border border-p1/30 bg-p1/[0.06] px-3 py-2.5 text-sm">
+                {Number(fees.rera) > 0 && <div className="flex justify-between text-mute"><span>Ejari fee</span><span>{aed(fees.rera)}</span></div>}
+                <div className="flex justify-between"><span>Total</span><b>{aed(total)}</b></div>
+                <div className="flex justify-between text-mute"><span>Cheque 1 (with all fees, VAT and Ejari)</span><span className="text-txt">{aed(first)}</span></div>
+                {n > 1 && <div className="flex justify-between text-mute"><span>{n === 2 ? 'Cheque 2' : `Cheques 2–${n}, each`}</span><span className="text-txt">{aed(others)}</span></div>}
+              </div>
+            )}
           </div>
         )}
         <label className="block space-y-1.5 text-sm">
@@ -386,7 +401,7 @@ function Compose({ ask, onClose, onSent }) {
                 <>
                   <p className="mt-1 text-xs text-mute">{d.charges.items.map((c) => `${c.label} ${aed(c.amount)}`).join(' · ')}</p>
                   {d.charges.vat > 0 && <p className="mt-1 text-xs text-mute">VAT{d.charges.onCharges ? ' (5%) on these charges' : ''}: {aed(d.charges.vat)}</p>}
-                  <p className="mt-1 text-xs">Total with charges and VAT: <b>{aed(d.charges.total)}</b></p>
+                  <p className="mt-1 text-xs">Total with charges, VAT and Ejari: <b>{aed(d.total ?? d.charges.total)}</b></p>
                 </>
               )}
               {d.schedule && <p className="mt-1 text-xs text-mute">{d.schedule.length} cheques: {d.schedule.map((c) => `${day(c.date)} ${aed(c.amount)}`).join(' · ')}</p>}

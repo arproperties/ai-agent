@@ -63,7 +63,8 @@ import { readReply, readDocs, advise, caseSummary, rewriteReply } from './leaseR
 
 const DAYS_AHEAD = 150;   // the list: far enough ahead to give the RERA index before the offer is due
 const SEND_AT = 120;      // days before the end the offer goes
-const AUTO_FIXES = 3;     // papers sent back by Reem before a person looks
+const AUTO_FIXES = 3;
+const DEFAULT_ADMIN = 1500; // the admin fee a renewal starts with     // papers sent back by Reem before a person looks
 const REMIND_AFTER = 7;   // days of silence before each reminder
 const REMINDERS = 2;
 const EVERY = 3 * 60_000;
@@ -222,45 +223,84 @@ const dear = (r) => `Dear ${r.lease.tenant || 'Tenant'},`;
 
 const schedule = (q) => q.cheques.map((ch, i) => `  ${i + 1}. ${longDate(ch.date)}: ${aed(ch.amount)}${ch.type !== 'rent' ? ' (renewal charges)' : ''}`);
 
+/**
+ * The offer, charge by charge: each with its VAT, the Ejari fee, the total, and the cheques.
+ * When saifsys laid the cheques out Reem's way (fees, VAT and Ejari in the first; rent and
+ * chiller split in whole dirhams) each cheque says what it is made of.
+ */
 function offerLines(q, rent) {
+  const c = chargesOf(q);
+  const rera = Number(q.rera) || 0;
+  const total = q.grand_total != null ? round2(q.grand_total) : round2(c.total + rera);
+  const parts = chequeParts(q, rent, c);
   return [
     `- Period: ${longDate(q.start_date)} to ${longDate(q.end_date)}`,
     `- Annual rent: ${aed(rent)}`,
+    ...c.items.map((x) => `- ${x.label}: ${aed(x.amount)}${x.vat ? ` + ${c.onCharges ? '5% ' : ''}VAT ${aed(x.vat)} = ${aed(x.amount + x.vat)}` : ''}`),
+    ...(c.vat && !c.onCharges ? [`- VAT: ${aed(c.vat)}`] : []),
+    ...(rera ? [`- Ejari fee: ${aed(rera)}`] : []),
+    `- Total: ${aed(total)}`,
     `- Payment by ${q.cheques.length} cheque${q.cheques.length > 1 ? 's' : ''}:`,
-    ...schedule(q),
-    ...chargeLines(q),
-    ...(q.rera ? [`- Ejari fee: ${aed(q.rera)}, paid on registration`] : []),
+    ...(parts || schedule(q)),
   ];
 }
 
+/**
+ * Each cheque and what it is made of, when the cheques are laid out Reem's way: the first
+ * carries the rent and chiller left over from whole dirhams, every fee with its VAT and the
+ * Ejari fee; the others the rent and chiller alone. null when saifsys's cheques are not
+ * laid out so (a renewal started before), and the plain list is shown instead.
+ */
+export function chequeParts(q, rent, c = chargesOf(q)) {
+  const ch = q.cheques || [];
+  const n = ch.length;
+  if (!n || ch.some((x) => x.type !== 'rent')) return null;
+  const chiller = c.items.find((x) => x.key === 'chiller');
+  const chAmount = chiller?.amount || 0;
+  const rentPer = Math.floor(rent / n);
+  const chPer = Math.floor(chAmount / n);
+  const per = rentPer + chPer;
+  const rera = Number(q.rera) || 0;
+  const firstRent = round2(rent - rentPer * (n - 1));
+  const firstCh = round2(chAmount - chPer * (n - 1));
+  const fees = c.items.filter((x) => x.key !== 'chiller');
+  const first = round2(firstRent + firstCh + (chiller?.vat || 0) + fees.reduce((t, x) => t + x.amount + x.vat, 0) + rera);
+  if (Math.abs(ch[0].amount - first) > 0.05 || ch.slice(1).some((x) => Math.abs(x.amount - per) > 0.01)) return null;
+  const firstBits = [
+    `rent ${aed(firstRent)}`,
+    ...(chiller ? [`chiller ${aed(firstCh)}`, ...(chiller.vat ? [`chiller VAT ${aed(chiller.vat)}`] : [])] : []),
+    ...fees.map((x) => `${x.label.toLowerCase()}${x.vat ? ' with VAT' : ''} ${aed(x.amount + x.vat)}`),
+    ...(rera ? [`Ejari fee ${aed(rera)}`] : []),
+  ];
+  const restBits = chiller ? ` (rent ${aed(rentPer)} + chiller ${aed(chPer)})` : '';
+  return ch.map((x, i) => (i === 0
+    ? `  1. ${longDate(x.date)}: ${aed(x.amount)} (${firstBits.join(' + ')})`
+    : `  ${i + 1}. ${longDate(x.date)}: ${aed(x.amount)}${restBits}`));
+}
+
 /** The renewal's charges one by one, as saifsys charges them. */
-const CHARGES = [['admin', 'Admin fee'], ['chiller', 'Chiller fee'], ['parking', 'Additional parking slot'], ['small_store', 'Small storeroom'], ['big_store', 'Big storeroom']];
+const CHARGES = [['chiller', 'Chiller fee'], ['admin', 'Admin fee'], ['parking', 'Additional parking slot'], ['small_store', 'Small storeroom'], ['big_store', 'Big storeroom']];
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
 
 /**
  * The charges, their VAT and the total, from saifsys's own quote. The VAT is what saifsys
  * added (its grand total less the rent, the charges and the Ejari fee), never worked out
- * here, so it is always what the tenant will be asked to pay.
+ * here, so it is always what the tenant will be asked to pay. Each charge carries its share
+ * of it, the last taking what rounding leaves, so the shares add up to saifsys's VAT.
  */
 export function chargesOf(q) {
   const f = q?.fees || {};
-  const items = CHARGES.filter(([k]) => Number(f[k]) > 0).map(([k, label]) => ({ key: k, label, amount: round2(f[k]) }));
+  const items = CHARGES.filter(([k]) => Number(f[k]) > 0).map(([k, label]) => ({ key: k, label, amount: round2(f[k]), vat: 0 }));
   const base = round2(items.reduce((t, c) => t + c.amount, 0));
   const rent = Number(q?.proposed_rent) || 0;
   const vat = q?.grand_total != null ? Math.max(0, round2(Number(q.grand_total) - rent - base - (Number(q.rera) || 0))) : 0;
   // 5% of the charges alone: say so, so nobody thinks the rent carries VAT.
   const onCharges = base > 0 && Math.abs(vat - round2(base * 0.05)) < 0.02;
+  if (onCharges) {
+    let left = vat;
+    items.forEach((x, i) => { x.vat = i === items.length - 1 ? round2(left) : round2(x.amount * 0.05); left -= x.vat; });
+  }
   return { items, base, vat, onCharges, total: round2(rent + base + vat) };
-}
-
-function chargeLines(q) {
-  const c = chargesOf(q);
-  if (!c.items.length && !c.vat) return [];
-  return [
-    ...c.items.map((x) => `- ${x.label}: ${aed(x.amount)}`),
-    ...(c.vat ? [`- VAT ${c.onCharges ? '(5%) on these charges' : ''}: ${aed(c.vat)}`.replace(' :', ':')] : []),
-    `- Total (rent, charges and VAT): ${aed(c.total)}`,
-  ];
 }
 
 const offerText = (r, q, rent) => [dear(r), '',
@@ -419,7 +459,8 @@ export async function startFees(leaseId) {
   // saifsys's VAT on the extra charges for this building: 5%, or none where it is switched off.
   const c = chargesOf(q);
   const vatRate = c.base > 0 && c.vat === 0 ? 0 : 5;
-  return { ...(q.fees || { admin: 0, chiller: 0, chiller_shown: false }), vat_rate: vatRate };
+  // The admin fee starts at 1,500 for every renewal (the user's rule); the person can change it.
+  return { ...(q.fees || { admin: 0, chiller: 0, chiller_shown: false }), admin: DEFAULT_ADMIN, vat_rate: vatRate, rera: Number(q.rera) || 0 };
 }
 
 // ---------- what a person does: a draft first, then Send ----------
