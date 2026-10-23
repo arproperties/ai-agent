@@ -26,6 +26,40 @@ let current = null;
 
 const tell = (job, state) => { if (current === job) job.onState(state); };
 
+// ---------- each word as it is said, for the highlighter ----------
+// The voice service does not say when each word is spoken, so the server transcribes the
+// finished audio with word times (GET /voice/words/:key). Those arrive a moment after
+// playback starts; the highlight catches up then. Listeners get { word } in spoken order,
+// or { reset: true } when a new reading starts or reading stops.
+const wordListeners = new Set();
+export function onSpokenWord(fn) { wordListeners.add(fn); return () => wordListeners.delete(fn); }
+const emit = (e) => wordListeners.forEach((fn) => fn(e));
+
+function wordsOf(piece) {
+  if (!piece?.key || piece.wordsAsked) return;
+  piece.wordsAsked = true;
+  api.get(`/voice/words/${piece.key}`).then((r) => { piece.words = r.words || []; }).catch(() => { piece.words = []; });
+}
+
+// Hand over every word of this piece said by now. Runs every frame while playing.
+function catchUp(piece, t) {
+  if (!piece?.words) return;
+  piece.shown ??= 0;
+  while (piece.shown < piece.words.length && piece.words[piece.shown].s <= t) emit({ word: piece.words[piece.shown++].w });
+}
+
+// One loop per reading: 'playing' fires again after every stall, and must not start another.
+function tick(job) {
+  if (job.ticking) return;
+  job.ticking = true;
+  const step = () => {
+    if (current !== job || !audio || audio.paused) { job.ticking = false; return; }
+    catchUp(job.chunks[job.at], audio.currentTime);
+    requestAnimationFrame(step);
+  };
+  step();
+}
+
 export function stopSpeaking() {
   if (!audio || !current) return;
   const job = current;
@@ -34,6 +68,7 @@ export function stopSpeaking() {
   audio.removeAttribute('src');
   audio.load();            // drops whatever is still downloading
   job.onState('idle');
+  emit({ reset: true });
   job.onDone?.();          // lets anything awaiting this reply carry on
 }
 
@@ -74,6 +109,7 @@ async function keyFor(job, i) {
   const piece = job.chunks[i];
   if (!piece) return null;
   piece.key ??= (await api.post('/voice/speak', { text: piece.text, agentId: job.agentId })).key;
+  wordsOf(piece);
   return piece.key;
 }
 
@@ -98,6 +134,7 @@ async function playFrom(job) {
 
 function advance(job) {
   if (current !== job) return;
+  catchUp(job.chunks[job.at], Infinity); // the rest of this piece was said
   job.at++;
   if (job.at < job.chunks.length) {
     playFrom(job).catch(() => { tell(job, 'error'); if (current === job) current = null; });
@@ -107,11 +144,12 @@ function advance(job) {
   if (job.streaming) return tell(job, 'loading'); // the reply is still being written
   tell(job, 'idle');
   current = null;
+  emit({ reset: true });
   job.onDone?.();
 }
 
 function attach(job) {
-  audio.onplaying = () => tell(job, 'speaking');
+  audio.onplaying = () => { tell(job, 'speaking'); tick(job); };
   audio.onwaiting = () => tell(job, 'loading');
   audio.onerror = () => { tell(job, 'error'); if (current === job) { current = null; job.onDone?.(); } };
   audio.onended = () => advance(job);
@@ -124,6 +162,7 @@ export async function speakText(text, agentId, onState) {
   if (!chunks.length) return;
   const job = { onState, agentId, chunks, at: 0, streaming: false };
   current = job;
+  emit({ reset: true });
   onState('loading');
   try {
     attach(job);
@@ -161,6 +200,7 @@ export function speakAsItArrives(agentId, onState) {
   stopSpeaking();
   const job = { onState, agentId, chunks: [], at: 0, streaming: true, playing: false };
   current = job;
+  emit({ reset: true });
   onState('loading');
   attach(job);
 

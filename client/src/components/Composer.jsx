@@ -4,7 +4,13 @@ import { listenUntilSilence, finishListening, stopListening, unlockAudio } from 
 
 const ACCEPT = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,audio/*,.opus,.ogg,.oga,.m4a,.aac,.amr,.caf,.mp3,.wav,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
-export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, onDropChat, onSend, onStop, onVoiceState, onError }) {
+// quote: part of a reply picked with select → Reply. It rides above the box and goes with
+// the next message as "draft a reply to this", with whatever was typed as the instructions.
+const withQuote = (quote, said) => (quote
+  ? `Draft a reply email for this:\n\n${quote.split('\n').map((l) => `> ${l}`).join('\n')}${said ? `\n\n${said}` : ''}`
+  : said);
+
+export default function Composer({ busy, voiceEnabled, carry = [], quote = '', onDropQuote, onPickChats, onDropChat, onSend, onStop, onVoiceState, onError }) {
   const [text, setText] = useState('');
   const [files, setFiles] = useState([]);
   const [rec, setRec] = useState(null); // null | 'recording' | 'transcribing'
@@ -18,11 +24,14 @@ export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, 
 
   const grow = (el) => { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 160)}px`; };
 
+  useEffect(() => { if (quote) areaRef.current?.focus(); }, [quote]);
+
   const submit = (e) => {
     e?.preventDefault();
-    if (busy || (!text.trim() && !files.length)) return;
+    if (busy || (!text.trim() && !files.length && !quote)) return;
     unlockAudio();
-    onSend(text.trim(), files);
+    onSend(withQuote(quote, text.trim()), files);
+    onDropQuote?.();
     setText('');
     setFiles([]);
     if (areaRef.current) areaRef.current.style.height = 'auto';
@@ -48,7 +57,8 @@ export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, 
         onCaptured: () => { setRec('transcribing'); onVoiceState('thinking'); },
       });
       if (said) {
-        const whole = [text, said].filter(Boolean).join(' ');
+        const whole = withQuote(quote, [text, said].filter(Boolean).join(' '));
+        onDropQuote?.();
         if (busyNow.current) setQueued(whole); // a reply is still coming; wait for it
         else onSend(whole, files, { voice: true });
         setText('');
@@ -82,6 +92,17 @@ export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, 
           ))}
         </div>
       )}
+      {quote && (
+        <div className="mb-2 flex items-start gap-2 rounded-2xl border border-p1/40 bg-p1/10 py-2 pl-3 pr-1 text-[13px]">
+          <Icon name="reply" size={14} className="mt-0.5 shrink-0 text-p1" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] font-medium text-p1">Replying to</span>
+            <span className="line-clamp-2 text-mute">{quote}</span>
+          </span>
+          <button type="button" onClick={onDropQuote} aria-label="Don't reply to this"
+            className="grid size-7 shrink-0 place-items-center rounded-full hover:bg-white/10"><Icon name="x" size={13} /></button>
+        </div>
+      )}
       {files.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-1.5">
           {files.map((f, i) => (
@@ -111,6 +132,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, 
           placeholder={rec === 'recording' ? 'Listening… pause when you are done'
             : rec ? 'Transcribing…'
             : queued ? 'Waiting for the reply, then sending…'
+            : quote ? 'What should the reply say? (or just send)'
             : 'Message'}
           className="max-h-40 min-h-10 flex-1 resize-none bg-transparent px-1 py-2 leading-6 outline-none placeholder:text-mute/70" />
         {/* Said the wrong thing: throw the recording away. Nothing is transcribed or sent. */}
@@ -134,7 +156,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], onPickChats, 
           <button type="button" onClick={onStop} aria-label="Stop"
             className="grid size-10 shrink-0 place-items-center rounded-full bg-white/15 text-hi"><Icon name="stop" size={18} /></button>
         ) : (
-          <button type="submit" disabled={!text.trim() && !files.length} aria-label="Send"
+          <button type="submit" disabled={!text.trim() && !files.length && !quote} aria-label="Send"
             className="grid size-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-p1 to-p2 text-white transition active:scale-95 disabled:opacity-30">
             <Icon name="send" size={18} />
           </button>

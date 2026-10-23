@@ -4,11 +4,11 @@ import { existsSync } from 'node:fs';
 import { ROOT, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS } from './config.js';
 import { db, tx } from './db.js';
 import { transcribe, ask } from './ai.js';
-import { spoken, prepare, cachedPath, claim, streamTo } from './tts.js';
+import { spoken, prepare, cachedPath, claim, streamTo, timingsFor } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
-import { deleteMessage, chat } from './chat.js';
+import { deleteMessage, editReply, chat } from './chat.js';
 import { addMemory } from './knowledge.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
@@ -214,6 +214,11 @@ app.delete('/api/conversations/:id', wrap(async (req, res) => {
 
 app.post('/api/chat', upload.array('files', 10), wrap(chat));
 // One message taken out of a Reem chat, as in WhatsApp: a voice note said wrong, or a reply not worth keeping.
+// Part of a reply taken out (select → Remove): the reply is saved without it.
+app.patch('/api/messages/:id', wrap(async (req, res) => {
+  if (!await editReply(req.user.id, req.params.id, req.body.content)) return notFound(res);
+  res.json({ ok: true });
+}));
 app.delete('/api/messages/:id', wrap(async (req, res) => {
   if (!await deleteMessage(req.user.id, req.params.id)) return notFound(res);
   res.json({ ok: true });
@@ -371,6 +376,13 @@ app.get('/api/voice/speak/:key', wrap(async (req, res) => {
   const job = claim(req.params.key, req.user.id);
   if (!job) return notFound(res);
   await streamTo(req.params.key, job, res);
+}));
+
+// When each word of a spoken reply is said, so the reply can be highlighted as it is read.
+app.get('/api/voice/words/:key', wrap(async (req, res) => {
+  const list = await timingsFor(req.params.key, req.user.id);
+  if (!list) return notFound(res);
+  res.json({ words: list });
 }));
 
 app.use('/api', (req, res) => notFound(res));
