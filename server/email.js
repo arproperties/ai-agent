@@ -4,6 +4,7 @@ import { createDraft, getDraft, withdrawDraft, draftOut, logAction } from './dra
 import { kick } from './outbox.js';
 import { gather, discard } from './draftFiles.js';
 import { checkAddresses } from './addressBook.js';
+import { externalId } from './access.js';
 
 // The tool surface the agents see. Reading works against an IMAP mailbox or Outlook.
 // Acting works against IMAP only, and only when its owner has turned it on — the write
@@ -216,7 +217,8 @@ function writeTools(ctx) {
 
   return {
     create_draft: async (userId, { to, cc, subject, body, in_reply_to, attachments, replaces }) => {
-      checkAddresses([...(to || []), ...(cc || [])]);
+      // The company's list of real mailboxes is not checked for, or named to, someone external.
+      if (!await externalId(userId)) checkAddresses([...(to || []), ...(cc || [])]);
       const acc = await imapAccount(userId);
       // in_reply_to is optional here and best-effort: a draft that cannot be threaded is
       // still a draft worth showing, so a failed lookup loses the headers, not the email.
