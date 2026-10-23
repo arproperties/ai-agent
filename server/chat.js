@@ -169,7 +169,9 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
       'messages from someone, bills, bookings or anything likely to be in their inbox. ' +
       'read_attachment opens a file attached to an email (PDF, Word, text, image): when an email has attachments, offer to read them, ' +
       'and read them without asking when the answer is plainly in the file. ' +
-      "When you use an email, mention its sender and date (and link it when an 'Open in Outlook' link is given).");
+      "When you use an email, mention its sender and date (and link it when an 'Open in Outlook' link is given). " +
+      `Listing the inbox already leaves out emails ${user.name} has replied to. Never list an email marked ALREADY REPLIED as needing a reply, ` +
+      'and do not bring up replied emails in an update unless asked.');
     if (mailbox.canWrite) {
       parts.push(`You can also act on this mailbox. create_draft and reply_email write an email and put it in front of ${user.name} with ` +
         'Approve and Reject buttons — you never send anything yourself, and send_email cannot bypass that. Prefer reply_email over create_draft ' +
@@ -384,6 +386,16 @@ export async function saveQuestion(convId, text, files) {
 export async function deleteMessage(userId, id) {
   const r = await db.prepare(`DELETE FROM messages m USING conversations c
     WHERE c.id = m.conversation_id AND m.id = ? AND c.user_id = ?`).run(Number(id) || 0, userId);
+  return r.changes > 0;
+}
+
+// A reply with part of it taken out (select text → Remove). Only Reem's replies: what the
+// user wrote is theirs as they said it. The agent sees the shorter reply from then on.
+export async function editReply(userId, id, content) {
+  const text = String(content ?? '').trim();
+  if (!text || text.length > 200000) return false;
+  const r = await db.prepare(`UPDATE messages m SET content = ? FROM conversations c
+    WHERE c.id = m.conversation_id AND m.id = ? AND c.user_id = ? AND m.role = 'assistant'`).run(text, Number(id) || 0, userId);
   return r.changes > 0;
 }
 

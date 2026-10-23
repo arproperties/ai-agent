@@ -22,6 +22,18 @@ export async function transcribe(buffer, mimetype, { language, prompt } = {}) {
   return res.text;
 }
 
+/** When each word is said in a spoken reply: [{ w, s, e }] in seconds, for the read-aloud highlighter. */
+export async function wordTimings(buffer) {
+  if (!openai) throw new Error('Voice is not configured (OPENAI_API_KEY missing)');
+  const res = await openai.audio.transcriptions.create({
+    file: await toFile(buffer, 'speech.mp3', { type: 'audio/mpeg' }),
+    model: 'whisper-1', // the one model that gives word times
+    response_format: 'verbose_json',
+    timestamp_granularities: ['word'],
+  });
+  return (res.words || []).map((x) => ({ w: x.word, s: x.start, e: x.end }));
+}
+
 const EXT = { mp4: 'mp4', m4a: 'm4a', mpeg: 'mp3', mp3: 'mp3', wav: 'wav', ogg: 'ogg' };
 export const audioExt = (mimetype = '') => EXT[Object.keys(EXT).find((k) => mimetype.includes(k))] || 'webm';
 

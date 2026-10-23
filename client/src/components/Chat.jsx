@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ListTodo, Lightbulb, X, Bell } from 'lucide-react';
 import { api, streamChat } from '../lib/api';
 import { speakText, stopSpeaking, togglePause } from '../lib/voice';
+import { cutSelection } from '../lib/cut';
 import Icon from './Icon';
 import Orb from './Orb';
 import Avatar from './Avatar';
@@ -71,6 +72,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [carry, setCarry] = useState([]); // earlier chats picked for the message being written
   const [carrying, setCarrying] = useState([]); // titles of the chats this conversation is already using
   const [picking, setPicking] = useState(false); // the bring-in-a-chat sheet is open
+  const [quote, setQuote] = useState(''); // part of a reply picked to answer (select → Reply)
   const abortRef = useRef();
   const scrollRef = useRef();
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
@@ -220,6 +222,25 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       await api.del(`/messages/${savedIdOf(m)}`);
       if (voice.id === m.id) stopSpeaking();
       setMessages((list) => list.filter((x) => x.id !== m.id));
+    } catch (e) { flash(e.message); }
+  };
+
+  // Select → Remove: that text comes out of the reply, saved, with a moment to undo it.
+  const setContent = (id, content) => setMessages((list) => list.map((x) => (x.id === id ? { ...x, content } : x)));
+  const removeText = async (m, text) => {
+    const next = cutSelection(m.content, text);
+    if (next === null) return flash("Couldn't find that text in the reply. Try selecting a little less.");
+    if (!next) return removeMessage(m); // all of it: that is deleting the reply
+    const before = m.content;
+    try {
+      await api.patch(`/messages/${savedIdOf(m)}`, { content: next });
+      setContent(m.id, next);
+      const undo = async () => {
+        setToast('');
+        try { await api.patch(`/messages/${savedIdOf(m)}`, { content: before }); setContent(m.id, before); } catch (e) { flash(e.message); }
+      };
+      flash(<span className="flex items-center justify-between gap-3">Removed.
+        <button onClick={undo} className="rounded-full px-3 py-1 font-medium text-p1 hover:bg-white/10">Undo</button></span>);
     } catch (e) { flash(e.message); }
   };
 
@@ -390,6 +411,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 onSpeak={() => say(m.content, m.id, m.agent_id)}
                 onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined}
                 onDelete={savedIdOf(m) && !m.streaming ? () => removeMessage(m) : undefined}
+                onReplyTo={m.role === 'assistant' ? setQuote : undefined}
+                onRemoveText={m.role === 'assistant' && savedIdOf(m) && !m.streaming ? (t) => removeText(m, t) : undefined}
                 onPdf={savedIdOf(m) && m.content && !(m.role === 'assistant' && lastDrawing(m.content)) ? () => setPdfOf({ id: savedIdOf(m), content: m.content, own: m.role === 'user' }) : undefined} />
             ))}
             {drafts.map((d) => (
@@ -431,6 +454,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           </div>
         )}
         <Composer busy={busy} voiceEnabled={voiceEnabled} carry={carry} onPickChats={() => setPicking(true)}
+          quote={quote} onDropQuote={() => setQuote('')}
           onDropChat={(id) => setCarry((c) => c.filter((x) => x.id !== id))}
           onSend={send} onStop={() => abortRef.current?.abort()}
           onVoiceState={(s) => { stopSpeaking(); setOrb(s); }} onError={flash} />

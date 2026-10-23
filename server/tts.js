@@ -5,10 +5,10 @@
 // playing on the first chunk and can pause, resume and seek. Finished audio is
 // cached by content, so reading the same reply again is instant and free.
 import { createHash, randomUUID } from 'node:crypto';
-import { createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { DATA_DIR } from './config.js';
-import { speakStream } from './ai.js';
+import { speakStream, wordTimings } from './ai.js';
 
 const DIR = `${DATA_DIR}/tts`;
 const MAX_FILES = 400;          // ~a few hundred replies; oldest are dropped
@@ -84,6 +84,29 @@ export async function streamTo(key, job, res) {
   source.pipe(res);
 }
 
+// ---------- word times, for highlighting each word as it is read ----------
+// Asked for once the audio is whole: the finished mp3 is transcribed with word timestamps
+// and kept beside it, so a replay highlights for free.
+const words = (key) => `${DIR}/${key}.words.json`;
+const making = new Map(); // key -> promise, so two asks share one transcription
+
+export async function timingsFor(key, userId) {
+  if (!/^[a-f0-9]{32}$/.test(key)) return null;
+  if (existsSync(words(key))) return JSON.parse(readFileSync(words(key), 'utf8'));
+  if (!existsSync(file(key)) && !claim(key, userId)) return null;
+  if (!making.has(key)) {
+    making.set(key, (async () => {
+      // The audio may still be arriving: wait for it to be whole (at most two minutes).
+      for (let i = 0; i < 240 && !existsSync(file(key)); i++) await new Promise((r) => setTimeout(r, 500));
+      if (!existsSync(file(key))) return null;
+      const list = await wordTimings(readFileSync(file(key)));
+      writeFileSync(words(key), JSON.stringify(list));
+      return list;
+    })().finally(() => making.delete(key)));
+  }
+  return making.get(key);
+}
+
 function prune() {
   const all = readdirSync(DIR);
   for (const f of all.filter((f) => f.endsWith('.part'))) { // abandoned by an earlier crash
@@ -92,5 +115,8 @@ function prune() {
   const files = all.filter((f) => f.endsWith('.mp3'))
     .map((f) => ({ f, at: statSync(`${DIR}/${f}`).mtimeMs }))
     .sort((a, b) => b.at - a.at);
-  for (const { f } of files.slice(MAX_FILES)) try { unlinkSync(`${DIR}/${f}`); } catch { /* raced */ }
+  for (const { f } of files.slice(MAX_FILES)) {
+    try { unlinkSync(`${DIR}/${f}`); } catch { /* raced */ }
+    try { unlinkSync(`${DIR}/${f.replace(/\.mp3$/, '.words.json')}`); } catch { /* never made */ }
+  }
 }

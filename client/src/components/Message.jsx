@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Globe } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -8,6 +8,8 @@ import Avatar from './Avatar';
 import { hideMarkers } from '../lib/replyDoc';
 import { splitDrawings, withoutDrawings, exportAsked } from '../lib/drawing';
 import { DrawingCard, DrawingPending, DrawingFile } from './Drawing';
+import { onSpokenWord } from '../lib/voice';
+import { makeHighlighter } from '../lib/highlight';
 
 const isImg = (f) => f.kind === 'image' || /\.(png|jpe?g|gif|webp|heic)$/i.test(f.name);
 const isVid = (f) => f.kind === 'video' || /\.(mp4|mov|webm|m4v|3gp)$/i.test(f.name);
@@ -107,10 +109,59 @@ function Reply({ content, savedId }) {
   ) : p.pending ? <DrawingPending key={i} /> : <DrawingCard key={i} drawing={p.drawing} messageId={savedId} />));
 }
 
+// Select some of a reply and two buttons appear by it: Reply (draft an answer to what was
+// selected) and Remove (take it out of the reply). Below the selection on a phone, where
+// the phone's own copy menu sits above it.
+function SelectionBar({ rootRef, onReply, onRemove }) {
+  const [sel, setSel] = useState(null); // { text, x, y }
+
+  useEffect(() => {
+    let frame = 0;
+    const read = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const s = window.getSelection();
+        const root = rootRef.current;
+        const text = s && !s.isCollapsed ? s.toString().trim() : '';
+        if (!text || !root || !root.contains(s.anchorNode) || !root.contains(s.focusNode)) return setSel(null);
+        const box = s.getRangeAt(0).getBoundingClientRect();
+        const below = window.matchMedia('(pointer: coarse)').matches;
+        const x = Math.min(Math.max(box.left + box.width / 2, 90), window.innerWidth - 90);
+        setSel({ text, x, y: below ? box.bottom + 12 : box.top - 52 });
+      });
+    };
+    document.addEventListener('selectionchange', read);
+    window.addEventListener('scroll', read, true);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener('selectionchange', read); window.removeEventListener('scroll', read, true); };
+  }, [rootRef]);
+
+  if (!sel) return null;
+  const act = (fn) => () => { fn(sel.text); window.getSelection()?.removeAllRanges(); setSel(null); };
+  const btn = 'flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition hover:bg-white/10';
+  return (
+    // mousedown is stopped so tapping a button does not clear the selection first
+    <div onMouseDown={(e) => e.preventDefault()} style={{ left: sel.x, top: Math.max(sel.y, 8) }}
+      className="fixed z-40 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-stroke bg-surface-2/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
+      {onReply && <button type="button" onClick={act(onReply)} className={btn}><Icon name="reply" size={14} /> Reply</button>}
+      {onRemove && <button type="button" onClick={act(onRemove)} className={`${btn} hover:text-bad`}><Icon name="trash" size={14} /> Remove</button>}
+    </div>
+  );
+}
+
 // savedId: the reply's row, which the PDF and AutoCAD files are made from. drawingFrom: the
 // latest drawing up to this reply, for a reply that hands it over as a file.
-export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile, onShare, onPdf, onDelete, savedId, drawingFrom }) {
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile, onShare, onPdf, onDelete, onReplyTo, onRemoveText, savedId, drawingFrom }) {
   const [copied, setCopied] = useState(false);
+  const bodyRef = useRef();
+  const reading = voice !== 'idle';
+
+  // While this reply is read aloud, each word lights up as it is said.
+  useEffect(() => {
+    if (!reading) return;
+    const h = makeHighlighter(() => bodyRef.current);
+    const off = onSpokenWord((e) => (e.reset ? h.clear() : h.word(e.word)));
+    return () => { off(); h.clear(); };
+  }, [reading]);
 
   if (msg.role === 'user') {
     return (
@@ -170,7 +221,10 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
       {msg.error ? (
         <div className="rounded-2xl border border-bad/30 bg-bad/10 px-4 py-3 text-sm">{msg.error}</div>
       ) : msg.content ? (
-        <Reply content={msg.content} savedId={savedId} />
+        <div ref={bodyRef}>
+          <Reply content={msg.content} savedId={savedId} />
+          {!msg.streaming && (onReplyTo || onRemoveText) && <SelectionBar rootRef={bodyRef} onReply={onReplyTo} onRemove={onRemoveText} />}
+        </div>
       ) : (
         <div className="flex gap-1.5 py-2">{[0, 1, 2].map((i) => (
           <span key={i} className="size-2 animate-bounce rounded-full bg-p1" style={{ animationDelay: `${i * 0.15}s` }} />

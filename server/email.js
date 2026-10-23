@@ -14,13 +14,16 @@ export const EMAIL_READ_TOOLS = [
   {
     name: 'search_email',
     description: "Search or list emails in the user's mailbox. Returns up to `limit` messages with id, date, sender, subject and a short preview. " +
-      'Leave query empty to list the latest emails. Use read_email with an id to read the full message.',
+      'Leave query empty to list the latest emails; those the user already replied to are left out (a search marks them ALREADY REPLIED). ' +
+      'Use read_email with an id to read the full message.',
     input_schema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Keywords, a person, company or email address. Empty = latest emails.' },
         folder: { type: 'string', enum: ['inbox', 'sent', 'all'], description: 'Default: inbox and sent when searching, inbox when listing.' },
         unread_only: { type: 'boolean' },
+        include_replied: { type: 'boolean', description: 'Listing the inbox leaves out emails the user has already replied to. ' +
+          'Set true only when they ask about replied emails or which ones they answered.' },
         since: { type: 'string', description: 'Only emails received on or after this date (YYYY-MM-DD).' },
         limit: { type: 'integer', minimum: 1, maximum: 25, description: 'Default 10.' },
       },

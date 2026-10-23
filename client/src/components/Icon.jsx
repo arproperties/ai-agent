@@ -1,7 +1,7 @@
 import {
   ChevronLeft, ChevronRight, Plus, ArrowUp, Square, Paperclip, Mic, Volume2, History, SquarePen,
   Settings2, X, Trash2, Copy, Check, FileText, Image, Lock, Brain, Menu, LogOut, Sparkles, Users, Folder, Mail,
-  Pause, Play, LoaderCircle, AudioLines, Forward, Search, FileDown, Download,
+  Pause, Play, LoaderCircle, AudioLines, Forward, Search, FileDown, Download, Reply,
 } from 'lucide-react';
 
 const ICONS = {
@@ -9,7 +9,7 @@ const ICONS = {
   mic: Mic, speaker: Volume2, history: History, edit: SquarePen, gear: Settings2, x: X, trash: Trash2,
   copy: Copy, check: Check, file: FileText, image: Image, lock: Lock, brain: Brain, menu: Menu, logout: LogOut,
   sparkles: Sparkles, users: Users, folder: Folder, mail: Mail,
-  pause: Pause, play: Play, spinner: LoaderCircle, live: AudioLines, share: Forward, search: Search,
+  pause: Pause, play: Play, spinner: LoaderCircle, live: AudioLines, share: Forward, reply: Reply, search: Search,
   pdf: FileDown, download: Download,
 };
 

@@ -172,37 +172,131 @@ async function folders(c, box) {
   return ['INBOX', ...(sent ? [sent] : [])];
 }
 
-async function searchEmail(userId, { query = '', folder, unread_only, since, limit = 10 }) {
+// ---------- has the user already answered it? ----------
+const addr = (list) => (list || []).map((a) => String(a.address || '').toLowerCase()).filter(Boolean);
+const bareSubject = (s) => String(s || '').replace(/^\s*((re|fw|fwd|aw|tr)\s*(\[\d+\])?\s*:\s*)+/i, '').replace(/\s+/g, ' ').trim().toLowerCase();
+const msgIds = (s) => String(s || '').match(/<[^>]+>/g) || [];
+
+/**
+ * Which inbox messages the user has already answered, and when. Pure, so it is testable.
+ * inbox: [{ key, messageId, subject, from: [address], at: Date, answeredFlag }]
+ * sent:  [{ inReplyTo, references: [messageId], subject, to: [address], at: Date }]
+ * A reply counts when the mail program marked it answered, when a sent email points at it
+ * (In-Reply-To / References), or — for programs that drop those headers — when a later
+ * sent email in the same subject went to the person who wrote it.
+ */
+export function answered(inbox, sent) {
+  const byId = new Map();
+  for (const s of sent) {
+    for (const id of [s.inReplyTo, ...(s.references || [])].filter(Boolean)) {
+      if (!byId.has(id) || byId.get(id) > s.at) byId.set(id, s.at);
+    }
+  }
+  const out = new Map(); // key -> Date | null (null = answered, date unknown)
+  for (const m of inbox) {
+    let when = m.messageId ? byId.get(m.messageId) : undefined;
+    if (!when) {
+      const subj = bareSubject(m.subject);
+      if (subj.length >= 4) {
+        const hit = sent.filter((s) => s.at > m.at && bareSubject(s.subject) === subj && s.to.some((a) => m.from.includes(a)))
+          .sort((a, b) => a.at - b.at)[0];
+        when = hit?.at;
+      }
+    }
+    if (when) out.set(m.key, when);
+    else if (m.answeredFlag) out.set(m.key, null);
+  }
+  return out;
+}
+
+// The sent mail since `since`, as answered() reads it. At most the newest 400.
+async function sentSince(c, since) {
+  const path = await sentPath(c);
+  if (!path) return [];
+  const lock = await c.getMailboxLock(path, { readOnly: true });
+  try {
+    const day = new Date(since.getTime() - 86400000);
+    const uids = ((await c.search({ since: day }, { uid: true })) || []).slice(-400);
+    const out = [];
+    if (!uids.length) return out;
+    for await (const m of c.fetch(uids, { uid: true, envelope: true, internalDate: true, headers: ['references'] }, { uid: true })) {
+      out.push({
+        inReplyTo: msgIds(m.envelope?.inReplyTo)[0],
+        references: msgIds(m.headers?.toString()),
+        subject: m.envelope?.subject,
+        to: [...addr(m.envelope?.to), ...addr(m.envelope?.cc)],
+        at: new Date(m.envelope?.date || m.internalDate || 0),
+      });
+    }
+    return out;
+  } finally { lock.release(); }
+}
+
+async function searchEmail(userId, { query = '', folder, unread_only, since, limit = 10, include_replied }) {
   const top = Math.min(Math.max(Number(limit) || 10, 1), 25);
   const q = String(query).trim().slice(0, 200);
+  // A plain "what's in my inbox" leaves out what the user has already answered;
+  // a search for something specific shows it, marked as answered.
+  const hideReplied = !q && !include_replied;
   const criteria = {
     ...(q ? { text: q } : { all: true }),
     ...(unread_only ? { seen: false } : {}),
     ...(/^\d{4}-\d{2}-\d{2}$/.test(since || '') ? { since: new Date(`${since}T00:00:00Z`) } : {}),
   };
+  const date = (m) => new Date(m.envelope?.date || m.internalDate || 0);
+  let skipped = 0;
   const found = await withMailbox(await imapAccount(userId), async (c) => {
     const out = [];
     for (const path of await folders(c, folder || (q ? 'all' : 'inbox'))) {
-      const lock = await c.getMailboxLock(path, { readOnly: true });
+      const inbox = path === 'INBOX';
+      let heads = [];
+      let lock = await c.getMailboxLock(path, { readOnly: true });
       try {
-        const uids = ((await c.search(criteria, { uid: true })) || []).slice(-top); // highest UIDs = newest
+        // Look further back in the inbox, so dropping answered mail still leaves a full page.
+        const uids = ((await c.search(criteria, { uid: true })) || []).slice(inbox ? -top * 4 : -top); // highest UIDs = newest
         if (!uids.length) continue;
-        const query = { uid: true, envelope: true, flags: true, internalDate: true, bodyStructure: true, source: { maxLength: 20000 } };
-        for await (const m of c.fetch(uids, query, { uid: true })) {
-          const preview = await simpleParser(m.source).then((p) => p.text || '').catch(() => '');
-          out.push({ id: `${path}:${m.uid}`, m, preview });
+        for await (const m of c.fetch(uids, { uid: true, envelope: true, flags: true, internalDate: true, bodyStructure: true }, { uid: true })) heads.push(m);
+      } finally { lock.release(); }
+
+      let replied = new Map();
+      if (inbox && heads.length) {
+        const oldest = new Date(Math.min(...heads.map((m) => date(m).getTime())));
+        const sent = await sentSince(c, oldest).catch(() => []);
+        replied = answered(heads.map((m) => ({
+          key: m.uid, messageId: m.envelope?.messageId, subject: m.envelope?.subject,
+          from: addr(m.envelope?.from), at: date(m), answeredFlag: m.flags?.has('\\Answered'),
+        })), sent);
+      }
+      heads.sort((a, b) => date(b) - date(a));
+      if (hideReplied && inbox) {
+        const kept = heads.filter((m) => !replied.has(m.uid)).slice(0, top);
+        const cutoff = kept.length === top ? date(kept[top - 1]) : new Date(0);
+        skipped += heads.filter((m) => replied.has(m.uid) && date(m) >= cutoff).length; // only the ones that would have shown
+        heads = kept;
+      }
+      heads = heads.slice(0, top);
+      if (!heads.length) continue;
+
+      const previews = new Map();
+      lock = await c.getMailboxLock(path, { readOnly: true });
+      try {
+        for await (const m of c.fetch(heads.map((m) => m.uid), { uid: true, source: { maxLength: 20000 } }, { uid: true })) {
+          previews.set(m.uid, await simpleParser(m.source).then((p) => p.text || '').catch(() => ''));
         }
       } finally { lock.release(); }
+      for (const m of heads) out.push({ id: `${path}:${m.uid}`, m, preview: previews.get(m.uid) || '', replied: replied.has(m.uid) ? replied.get(m.uid) || true : false });
     }
     return out;
   });
-  if (!found.length) return 'No emails found.';
-  const date = (m) => new Date(m.envelope?.date || m.internalDate || 0);
-  return found.sort((a, b) => date(b.m) - date(a.m)).slice(0, top).map(({ id, m, preview }) => [
+  const note = skipped ? `\n\n(${skipped} email${skipped === 1 ? '' : 's'} the user already replied to ${skipped === 1 ? 'was' : 'were'} left out. ` +
+    'Do not mention them unless asked; search with include_replied to see them.)' : '';
+  if (!found.length) return `No emails found.${note}`;
+  return found.sort((a, b) => date(b.m) - date(a.m)).slice(0, top).map(({ id, m, preview, replied }) => [
     `[id: ${id}] ${stamp(date(m))} · From: ${person(m.envelope?.from)} · Subject: ${m.envelope?.subject || '(no subject)'}` +
-      `${m.flags?.has('\\Seen') ? '' : ' · UNREAD'}${hasAttachment(m.bodyStructure) ? ' · has attachments' : ''}`,
+      `${m.flags?.has('\\Seen') ? '' : ' · UNREAD'}${hasAttachment(m.bodyStructure) ? ' · has attachments' : ''}` +
+      `${replied ? ` · ALREADY REPLIED${replied instanceof Date ? ` ${stamp(replied)}` : ''}` : ''}`,
     `  ${preview.replace(/\s+/g, ' ').slice(0, 220)}`,
-  ].join('\n')).join('\n\n');
+  ].join('\n')).join('\n\n') + note;
 }
 
 // One whole message, parsed. `path` rides along because read_email reports the folder.
