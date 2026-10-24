@@ -43,8 +43,8 @@ const TABLES = [
   'module_access', 'module_rollouts', 'tenant_notices', 'tenant_notice_photos', 'pictures',
   'recurring_buildings', 'recurring_payments', 'recurring_payment_dues', 'recurring_payment_receipts', 'recurring_accounts', 'recurring_transfers', 'recurring_heads',
   'mail_front', 'mail_route_rules', 'mail_people', 'mail_log',
-  'lease_renewal_settings', 'lease_renewals', 'lease_renewal_events', 'lease_renewal_files',
-  'document_texts', 'document_copies',
+  'lease_renewal_settings', 'lease_renewals', 'lease_renewal_events', 'lease_renewal_files', 'lease_renewal_nudges',
+  'document_texts', 'document_copies', 'company_addresses', 'address_proposals', 'ai_costs',
   'legal_case_settings', 'legal_cases', 'legal_case_events', 'legal_case_files', 'legal_case_alerts',
 ];
 

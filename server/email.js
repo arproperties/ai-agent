@@ -110,10 +110,15 @@ export const EMAIL_WRITE_TOOLS = [
   {
     name: 'reply_email',
     description: 'Write a reply to an existing email, correctly threaded onto it, and show it to the user for approval. ' +
-      'This does NOT send it — the user must tap Approve. Recipients and subject are taken from the original.',
+      'This does NOT send it — the user must tap Approve. Recipients and subject are taken from the original; ' +
+      'use cc to copy anyone else into the conversation.',
     input_schema: {
       type: 'object',
-      properties: { message_id: MESSAGE_ID, body: { type: 'string', description: 'Plain text.' }, attachments: ATTACHMENTS, replaces: REPLACES },
+      properties: {
+        message_id: MESSAGE_ID, body: { type: 'string', description: 'Plain text.' },
+        cc: { type: 'array', items: { type: 'string' }, description: 'Extra people to copy in.' },
+        attachments: ATTACHMENTS, replaces: REPLACES,
+      },
       required: ['message_id', 'body'],
     },
   },
@@ -167,7 +172,7 @@ export function statusFor(name, input = {}) {
   }
 }
 
-// ctx: { agentId, conversationId, onDraft } — onDraft puts the approval card in the chat
+// ctx: { agentId, conversationId, onDraft, canAddAddress } — onDraft puts the approval card in the chat
 // as the draft is written, rather than making the user go and look for it.
 function writeTools(ctx) {
   const show = (d) => { ctx.onDraft?.(draftOut(d)); return d; };
@@ -218,7 +223,7 @@ function writeTools(ctx) {
   return {
     create_draft: async (userId, { to, cc, subject, body, in_reply_to, attachments, replaces }) => {
       // The company's list of real mailboxes is not checked for, or named to, someone external.
-      if (!await externalId(userId)) checkAddresses([...(to || []), ...(cc || [])]);
+      if (!await externalId(userId)) await checkAddresses([...(to || []), ...(cc || [])], { canAdd: ctx.canAddAddress });
       const acc = await imapAccount(userId);
       // in_reply_to is optional here and best-effort: a draft that cannot be threaded is
       // still a draft worth showing, so a failed lookup loses the headers, not the email.
@@ -232,13 +237,14 @@ function writeTools(ctx) {
       return waiting(d) + await replace(userId, replaces);
     },
 
-    reply_email: async (userId, { message_id, body, attachments, replaces }) => {
+    reply_email: async (userId, { message_id, body, cc, attachments, replaces }) => {
+      await checkAddresses(cc, { canAdd: ctx.canAddAddress });
       const o = await imapActions.original(userId, message_id);
       const acc = await imapAccount(userId);
       const to = replyRecipients(o, acc.email);
       const d = show(await draftWith(userId, attachments, {
         agentId: ctx.agentId, conversationId: ctx.conversationId,
-        to,
+        to, cc,
         subject: replySubject(o.subject),
         body, from: acc.email,
         inReplyTo: o.messageId, refs: o.refs, replyToId: message_id,

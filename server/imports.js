@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { readFileSync } from 'node:fs';
 import { db } from './db.js';
+import { billAs } from './billing.js';
 import { saveUpload, processDocument } from './files.js';
 import { chatAgents } from './access.js';
 
@@ -82,7 +83,8 @@ async function worker() {
   while (Date.now() >= pausedUntil) {
     const doc = await claim();
     if (!doc) return;
-    await fileOne(doc).catch((e) => console.error('[imports]', doc.name, e.message));
+    // billed to the file's owner, whoever's upload woke the queue
+    await billAs({ userId: doc.user_id, job: 'files', note: doc.name }, () => fileOne(doc)).catch((e) => console.error('[imports]', doc.name, e.message));
   }
 }
 

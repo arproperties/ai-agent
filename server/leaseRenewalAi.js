@@ -5,8 +5,8 @@ import { CAREFUL_MODEL } from './config.js';
 // signed agreement and cheque photos. Each answer is JSON in a fixed shape, and anything
 // Claude is not sure of comes back as unsure, never as a guess.
 //
-// Reem only reads and suggests here. Every email to a tenant is sent by a person's tap,
-// with the words they saw (and could change) before sending.
+// Reem only reads and suggests here. What is sent, by a person's tap or by Reem itself on
+// an automatic renewal, is decided in leaseRenewals.js from these answers.
 
 const MODEL = CAREFUL_MODEL; // reading cheques and agreements: the careful model, not the fast one
 
@@ -35,7 +35,7 @@ const num = (v) => (v === null || v === undefined || v === '' || Number.isNaN(Nu
 const REPLY = `You read a tenant's email in a lease renewal conversation for a Dubai landlord and say what it means. The email may be in any language.
 Answer with JSON only:
 {"intent": "accept"|"counter"|"reject"|"question"|"documents"|"unclear", "amount": number|null, "summary": string,
- "dispute": boolean, "dispute_note": string|null, "suggested_reply": string|null}
+ "asks_less": boolean, "dispute": boolean, "dispute_note": string|null, "suggested_reply": string|null}
 - accept: they agree to the rent last offered to them.
 - counter: they propose a different annual rent. amount = that annual rent in AED. A monthly figure is multiplied by 12.
   A discount asked for without a figure ("can you reduce it?") is unclear, not counter.
@@ -43,6 +43,7 @@ Answer with JSON only:
 - question: they ask something before deciding.
 - documents: they are only sending documents, cheques or the signed agreement.
 - unclear: anything else, or you are not sure. Never guess a figure.
+- asks_less: true when they ask for a lower rent or a discount, with or without a figure.
 - summary: one short line in plain English of what they said, e.g. "Asks for AED 58,000 instead" or "Will move out at the end".
 - dispute: true when they contest the increase or the renewal: say it is not legal, cite RERA, the Rental Index, Decree 43,
   the Rental Dispute Settlement Centre (RDC), a lawyer or a complaint, or refuse to pay or to leave.
@@ -61,6 +62,7 @@ export async function readReply({ facts, history, text }) {
     intent: intent === 'counter' && !(amount > 0) ? 'unclear' : intent,
     amount: intent === 'counter' ? amount : null,
     summary: String(out.summary || '').slice(0, 300),
+    asksLess: !!out.asks_less || (intent === 'counter' && amount > 0),
     dispute: !!out.dispute,
     disputeNote: out.dispute && out.dispute_note ? String(out.dispute_note).slice(0, 300) : null,
     suggestedReply: out.suggested_reply ? String(out.suggested_reply).slice(0, 2000) : null,

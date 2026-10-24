@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { billNote } from './billing.js';
 import { claude } from './ai.js';
 import { pickAgent } from './router.js';
 import { extractText, readVideo, recall, learn } from './knowledge.js';
@@ -21,7 +22,7 @@ import { carry, noteCarried, pickedIds } from './chatRecap.js';
 import { userModules } from './modules.js';
 import { pictureTag, makePicture, pictureKit } from './pictures.js';
 import { AUTO_MODEL, ADVISOR_MODEL } from './config.js';
-import { addressPrompt } from './addressBook.js';
+import { addressPrompt, addressKit, loadAddresses } from './addressBook.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
 // files. The agent's model costs several times the filing model, and the whole turn is re-sent
@@ -475,6 +476,7 @@ export async function chat(req, res) {
     agentId: agent.id,
     conversationId: convId,
     userName: user.name,
+    canAddAddress: user.role === 'master', // a right-but-missing company address goes on an Add card
     onDraft: (d) => send('draft', d), // the approval card appears as the draft is written
   });
   const mailbox = email && {
@@ -513,6 +515,7 @@ export async function chat(req, res) {
   const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), meetingKit(user.id), shelf,
     ...(external ? [] : [sendKit,
       responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
+      addressKit(user, { conversationId: convId, onCard: (p) => send('companyAddress', p) }),
       await buildingKit(user),
       await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) })]),
     await noticeKit(user, { conversationId: convId, onCard: (c) => send('tenantNotice', c) }), // only with Tenant notices
@@ -537,6 +540,7 @@ export async function chat(req, res) {
   const { chats: carried, added } = await carry(user, convId, picked);
   if (carried.length) send('carried', carried.map(({ id, title }) => ({ id, title })));
   const { id: userMessageId, repeat } = await saveQuestion(convId, text, savedFiles);
+  billNote(text || meta.map((f) => f.name).join(', ')); // shown beside this answer's price in Billing
   if (repeat) send('repeat', { userMessageId }); // the app shows it once too
   if (added.length) await noteCarried(userMessageId, added);
 
@@ -556,6 +560,7 @@ export async function chat(req, res) {
     let prevType = null;
     const auto = agent.model === 'auto';
     const model = auto ? AUTO_MODEL : agent.model;
+    if (mailbox) await loadAddresses(); // the master may have added one since the last message
     const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto);
     for (let turn = 0; turn < MAX_ROUNDS; turn++) {
       stream = claude.beta.messages.stream({

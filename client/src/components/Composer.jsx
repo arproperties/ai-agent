@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
-import { listenUntilSilence, finishListening, stopListening, unlockAudio } from '../lib/voice';
+import { listenUntilSilence, finishListening, stopListening, unlockAudio, TAP_TO_STOP } from '../lib/voice';
 
 const ACCEPT = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,audio/*,.opus,.ogg,.oga,.m4a,.aac,.amr,.caf,.mp3,.wav,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
@@ -54,6 +54,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', o
     onVoiceState('listening');
     try {
       const said = await listenUntilSilence({
+        ...TAP_TO_STOP,
         onCaptured: () => { setRec('transcribing'); onVoiceState('thinking'); },
       });
       if (said) {
@@ -129,7 +130,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', o
         )}
         <textarea ref={areaRef} rows={1} value={text} onKeyDown={onKey}
           onChange={(e) => { setText(e.target.value); grow(e.target); }}
-          placeholder={rec === 'recording' ? 'Listening… pause when you are done'
+          placeholder={rec === 'recording' ? 'Listening… tap ■ to send'
             : rec ? 'Transcribing…'
             : queued ? 'Waiting for the reply, then sending…'
             : quote ? 'What should the reply say? (or just send)'
