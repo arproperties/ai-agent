@@ -8,6 +8,7 @@ import { db, tx } from './db.js';
 import { ask, claude, embed, transcribe } from './ai.js';
 import { CAREFUL_MODEL } from './config.js';
 import { isMaster } from './access.js';
+import { EMBED_MODEL } from './config.js';
 
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 export const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v', 'video/3gpp'];
@@ -237,31 +238,64 @@ export async function readVideo(path) {
 }
 
 // ---------- indexing ----------
-function chunk(text, size = 1500, overlap = 200) {
+/**
+ * Pieces of about `size` characters, each starting with the last `overlap` of the one
+ * before it - so a sentence that falls on a cut is still whole in one of the two.
+ */
+export function chunk(text, size = 1500, overlap = 200) {
   const clean = text.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
   const out = [];
-  for (let i = 0; i < clean.length; i += size - overlap) {
+  for (let i = 0; i < clean.length;) {
     let end = Math.min(i + size, clean.length);
     const para = clean.lastIndexOf('\n', end);
     if (end < clean.length && para > i + size / 2) end = para; // prefer to break at a newline
     out.push(clean.slice(i, end).trim());
     if (end >= clean.length) break;
-    i = end - (size - overlap);
+    i = end - overlap;
+    const gap = clean.slice(i, end).search(/\s/);
+    if (gap > 0) i += gap + 1; // start the next piece on a whole word
   }
   return out.filter(Boolean);
+}
+
+/**
+ * The text chunk() was given, back from its pieces - for indexing a file again without
+ * reading the file again, which for a scan or a video would be paid for twice.
+ *
+ * Where a piece starts with the end of the one before, the repeat is dropped. Pieces
+ * stored before chunk() overlapped have no repeat: those are simply joined, with nothing
+ * in between when the first is a full `size` long, since that one was cut mid-text.
+ */
+export function stitch(pieces, size = 1500) {
+  let text = '';
+  let last = '';
+  for (const p of pieces) {
+    if (!last) { text = last = p; continue; }
+    let k = Math.min(300, p.length, last.length);
+    while (k >= 20 && !last.endsWith(p.slice(0, k))) k--;
+    text += k >= 20 ? p.slice(k) : (last.length >= size ? '' : '\n') + p;
+    last = p;
+  }
+  return text;
 }
 
 // Float32Array -> pgvector literal, e.g. '[0.1,-0.2,…]'. Always passed as a bound parameter.
 const toVecLiteral = (v) => (v ? `[${Array.from(v).join(',')}]` : null);
 
-// embed() normalises, so cosine distance = 1 - similarity. These are the old JS thresholds:
-// a match was similarity > 0.25, and a memory was already known at similarity > 0.9.
-const MAX_DIST = 0.75;
-const DUPE_DIST = 0.1;
+// embed() normalises, so cosine distance = 1 - similarity. EMBED_MODEL scores everything
+// high: measured on Arabic and English samples, a question and an unrelated piece came to
+// 0.71-0.77, a question and the piece that answers it to 0.84-0.93, in either language. So a
+// match is similarity > 0.78. Two memories that say different things came to 0.94-0.96 and
+// the same one said twice to 0.985: already known is similarity > 0.98.
+const MAX_DIST = 0.22;
+const DUPE_DIST = 0.02;
+
+/** What indexChunks() puts in front of every piece of a document, without the brackets. */
+export const chunkLabel = (doc) => [doc.title, doc.folder, doc.title !== doc.name && doc.name].filter(Boolean).join(' · ');
 
 // Split a stored document into searchable chunks, labelled with its smart title and folder
 export async function indexChunks(doc, text) {
-  const label = [doc.title, doc.folder, doc.title !== doc.name && doc.name].filter(Boolean).join(' · ');
+  const label = chunkLabel(doc);
   const pieces = chunk(text).map((c) => `[${label}] ${c}`);
   const vectors = [];
   for (let i = 0; i < pieces.length; i += 32) vectors.push(...(await embed(pieces.slice(i, i + 32))));
@@ -269,8 +303,11 @@ export async function indexChunks(doc, text) {
     await db.prepare('DELETE FROM chunks WHERE document_id = ?').run(doc.id);
     // shared is denormalised off the document; carry it over or re-processing a shared
     // file would silently unshare its chunks while the document still reads as shared.
-    const ins = db.prepare('INSERT INTO chunks (user_id, agent_id, document_id, text, shared, embedding) VALUES (?, ?, ?, ?, ?, ?::vector)');
-    for (const [i, p] of pieces.entries()) await ins.run(doc.user_id, doc.agent_id, doc.id, p, !!doc.shared, toVecLiteral(vectors[i]));
+    const ins = db.prepare('INSERT INTO chunks (user_id, agent_id, document_id, text, shared, embedding, embed_model) VALUES (?, ?, ?, ?, ?, ?::vector, ?)');
+    for (const [i, p] of pieces.entries()) {
+      const lit = toVecLiteral(vectors[i]);
+      await ins.run(doc.user_id, doc.agent_id, doc.id, p, !!doc.shared, lit, lit && EMBED_MODEL);
+    }
   });
 }
 
@@ -283,7 +320,8 @@ export async function addMemory(userId, text) {
       WHERE user_id = ? AND embedding IS NOT NULL AND embedding <=> ?::vector < ${DUPE_DIST} LIMIT 1`).get(userId, lit);
     if (known) return null;
   }
-  const { id } = await db.prepare('INSERT INTO memories (user_id, text, embedding) VALUES (?, ?, ?::vector) RETURNING id').run(userId, text, lit);
+  const { id } = await db.prepare('INSERT INTO memories (user_id, text, embedding, embed_model) VALUES (?, ?, ?::vector, ?) RETURNING id')
+    .run(userId, text, lit, lit && EMBED_MODEL);
   return id;
 }
 
@@ -337,7 +375,7 @@ async function rank(table, scope, query, qvec, k) {
  * agent's own look through the Shelf (server/shelf.js), which answers in files, not pieces.
  */
 export async function findChunks(user, query, k = 20, scope = agentScope(user)) {
-  const [qvec] = await embed([query]);
+  const [qvec] = await embed([query], 'query');
   const ids = await rank('chunks', scope, query, qvec, k);
   if (!ids.length) return [];
   const rows = await db.prepare(`SELECT id, document_id, text FROM chunks WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
@@ -386,7 +424,7 @@ export async function personalMemories(user, query, qvec, k = 12) {
 }
 
 export async function recall(user, query) {
-  const [qvec] = await embed([query]);
+  const [qvec] = await embed([query], 'query');
   const memories = await personalMemories(user, query, qvec);
   const knowledge = await search('chunks', agentScope(user), query, qvec, 6);
   return { memories, knowledge };

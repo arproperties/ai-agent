@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI, { toFile } from 'openai';
-import { DATA_DIR, FAST_MODEL, IMAGE_MODEL } from './config.js';
+import { DATA_DIR, EMBED_MODEL, FAST_MODEL, IMAGE_MODEL } from './config.js';
 import { watch, recordOpenAI } from './billing.js';
 
 // Claude: chat, reading attachments, learning memories. Every call is priced (server/billing.js).
@@ -114,7 +114,7 @@ function embedder() {
   embedderPromise ??= (async () => {
     const { pipeline, env } = await import('@huggingface/transformers');
     env.cacheDir = `${DATA_DIR}/models`;
-    return pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'q8' });
+    return pipeline('feature-extraction', EMBED_MODEL, { dtype: 'q8' });
   })().catch((e) => {
     console.warn('[embeddings] disabled, using keyword search only:', e.message);
     return null;
@@ -123,17 +123,21 @@ function embedder() {
 }
 embedder(); // warm up on boot
 
-// Texts per model run. The runtime keeps whatever memory its largest run needed: 32 long
-// chunks at once took it past 1 GB for good, and PM2 restarts the app at 900 MB. 8 peaks
-// near 350 MB, for much the same total time.
-const EMBED_BATCH = 8;
+// Texts per model run. The runtime keeps whatever memory its largest run needed, and PM2
+// restarts the app when it grows too large. The multilingual model takes about 560 MB just
+// to load; 2 long chunks at once peak near 590 MB, 8 near 810 MB, for the same total time.
+const EMBED_BATCH = 2;
 
-export async function embed(texts) {
+/**
+ * kind: 'passage' for text that is stored, 'query' for the question it is searched with.
+ * The model was trained with the two marked, and ranks worse when they are not.
+ */
+export async function embed(texts, kind = 'passage') {
   const fn = await embedder();
   if (!fn) return texts.map(() => null);
   const vectors = [];
   for (let i = 0; i < texts.length; i += EMBED_BATCH) {
-    const out = await fn(texts.slice(i, i + EMBED_BATCH), { pooling: 'mean', normalize: true });
+    const out = await fn(texts.slice(i, i + EMBED_BATCH).map((t) => `${kind}: ${t}`), { pooling: 'mean', normalize: true });
     const dims = out.dims[1];
     for (let j = 0; j < out.dims[0]; j++) vectors.push(new Float32Array(out.data.slice(j * dims, (j + 1) * dims)));
   }
