@@ -1903,6 +1903,58 @@ await db.exec(`
     sent_at BIGINT DEFAULT ${NOW},
     UNIQUE (document_id, step)
   );
+  -- Renewal cases (server/renewalCases.js): a document being renewed or cancelled, from the
+  -- decision through approval and the PRO to the papers that come back. A contract opens one by
+  -- itself at open_days; any other document when the admin taps Renew or Cancel. One open case
+  -- per document. status: open (nobody has decided), renew_review / cancel_review (deciding the
+  -- terms), needs_review (deferred), awaiting_approval, with_pro, checking_documents, writing_back,
+  -- paused (paused_from is where it was), closed. Every step is an event, with who took it.
+  CREATE TABLE IF NOT EXISTS renewal_case_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    open_days INTEGER NOT NULL DEFAULT 60,
+    approver_ids INTEGER[] NOT NULL DEFAULT '{}',
+    pro_ids INTEGER[] NOT NULL DEFAULT '{}'
+  );
+  CREATE TABLE IF NOT EXISTS renewal_cases (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    employee_code TEXT,
+    employee_name TEXT,
+    subject TEXT,
+    ends_on TEXT,
+    kind TEXT CHECK (kind IN ('renew', 'cancel')),
+    status TEXT NOT NULL DEFAULT 'open',
+    paused_from TEXT,
+    paused_reason TEXT,
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    proposal JSONB,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW},
+    closed_at BIGINT,
+    closed_note TEXT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_renewal_cases_open ON renewal_cases(document_id) WHERE closed_at IS NULL;
+  CREATE TABLE IF NOT EXISTS renewal_case_events (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES renewal_cases(id) ON DELETE CASCADE,
+    at BIGINT DEFAULT ${NOW},
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,
+    detail JSONB NOT NULL DEFAULT '{}'
+  );
+  CREATE INDEX IF NOT EXISTS idx_renewal_case_events ON renewal_case_events(case_id, id);
+  CREATE TABLE IF NOT EXISTS renewal_case_tasks (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES renewal_cases(id) ON DELETE CASCADE,
+    assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,
+    instructions TEXT,
+    due_date TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'blocked')),
+    evidence JSONB NOT NULL DEFAULT '{}',
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
   CREATE TABLE IF NOT EXISTS saifsys_doc_links (
     saifsys_id INTEGER PRIMARY KEY,
     document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,

@@ -6,6 +6,7 @@ import { DATA_DIR } from './config.js';
 import { isMaster } from './access.js';
 import { readableDocument } from './files.js';
 import { askSaifsys, fileFromSaifsys, dubaiHour } from './saifsys/client.js';
+import { scanCases } from './renewalCases.js';
 
 // saifsys's employee documents (passports, visas, Emirates IDs, labour cards, contracts),
 // copied onto the Shelf so Document Renewals, its alerts and its cases work on them like
@@ -229,8 +230,9 @@ export async function syncNow(user, deps = {}) {
 /** Every night at 2 (Dubai), and once shortly after start-up. */
 export function startSaifsysDocSync() {
   let lastDay = null;
+  // Then the renewal cases: a contract just brought in may be within 60 days of its end.
   const run = (why) => syncSaifsysDocs()
-    .then((r) => console.log(`[saifsys-docs] ${why}:`, JSON.stringify(r)))
+    .then(async (r) => console.log(`[saifsys-docs] ${why}:`, JSON.stringify(r), 'cases:', JSON.stringify(await scanCases())))
     .catch((e) => console.error('[saifsys-docs] sync failed:', e.message));
   setTimeout(() => run('after start-up'), 60_000).unref();
   setInterval(() => {
