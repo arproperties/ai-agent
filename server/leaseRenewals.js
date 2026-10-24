@@ -113,7 +113,12 @@ export const indexRentFrom = (current, pct) => Math.max(Number(current), down100
 
 // ---------- settings ----------
 
-const DEFAULTS = { payee: null, actor_id: null, reminders: true, auto: {}, advisors: [], paused: false };
+const DEFAULTS = { payee: null, actor_id: null, reminders: true, auto: {}, advisors: [], paused: false, bcc: ['accounts@ainalreempro.com'] };
+
+const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
+/** The addresses copied silently on a renewal's emails: valid ones only, never the tenant's own. */
+const bccFor = (s, r) => [...new Set((s.bcc || []).map((x) => String(x).trim().toLowerCase()))]
+  .filter((x) => EMAIL.test(x) && x !== String(r.lease.email || '').toLowerCase());
 
 export async function settings() {
   const s = await db.prepare('SELECT * FROM lease_renewal_settings WHERE id = 1').get();
@@ -374,8 +379,9 @@ async function mail(r, { title, text, attachments = [], user = null, data = null
   const thread = await db.prepare(`SELECT message_id FROM lease_renewal_events WHERE renewal_id = ? AND message_id IS NOT NULL ORDER BY id`).all(r.id);
   const ids = thread.map((t) => t.message_id);
   const subject = ids.length ? replySubject(subjectOf(r)) : subjectOf(r);
+  const bcc = bccFor(await settings(), r);
   const m = await compose({
-    from: { name: 'Tenant Care', address: acc ? acc.email : 'tenant-care@invalid' }, to: [r.lease.email], subject, text, attachments,
+    from: { name: 'Tenant Care', address: acc ? acc.email : 'tenant-care@invalid' }, to: [r.lease.email], bcc, subject, text, attachments,
     ...(ids.length ? { inReplyTo: ids[ids.length - 1], references: ids.join(' ') } : {}),
   });
   const { id } = await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, subject, message_id, raw, status, error, data, user_id, at)
@@ -405,7 +411,8 @@ async function resend() {
   if (!acc) return 0;
   const rows = await db.prepare(`SELECT e.id, e.raw, r.lease FROM lease_renewal_events e JOIN lease_renewals r ON r.id = e.renewal_id
     WHERE e.kind = 'out' AND e.status = 'failed' ORDER BY e.id LIMIT 20`).all();
-  for (const x of rows) await deliver(acc, x.id, { raw: x.raw, envelope: { from: acc.email, to: [x.lease.email] } });
+  const s = await settings();
+  for (const x of rows) await deliver(acc, x.id, { raw: x.raw, envelope: { from: acc.email, to: [x.lease.email, ...bccFor(s, x)] } });
   return rows.length;
 }
 
@@ -1135,7 +1142,7 @@ leaseRenewalRoutes.get('/', wrap(async (req, res) => {
   res.json({
     days: DAYS_AHEAD, sendAt: SEND_AT, leases: list.sort((a, b) => a.end_date.localeCompare(b.end_date) || String(a.building).localeCompare(String(b.building))),
     settings: {
-      payee: s.payee || '', reminders: !!s.reminders, paused: !!s.paused,
+      payee: s.payee || '', reminders: !!s.reminders, paused: !!s.paused, bcc: s.bcc || [],
       advisors: (await advisors(s)).map((a) => a.id),
     },
     // The team the master picks advisors from: their own agents.
@@ -1198,9 +1205,13 @@ leaseRenewalRoutes.put('/settings', masterOnly, wrap(async (req, res) => {
   // Advisors are the master's own agents: an id that is not one of theirs is dropped.
   const wanted = (Array.isArray(b.advisors) ? b.advisors : []).map(Number).filter(Boolean);
   const own = wanted.length ? (await db.prepare('SELECT id FROM agents WHERE user_id = ? AND id = ANY(?::int[]) ORDER BY id').all(req.user.id, wanted)).map((a) => a.id) : [];
-  await db.prepare(`INSERT INTO lease_renewal_settings (id, payee, actor_id, reminders, advisors, paused, updated_at) VALUES (1, ?, ?, ?, ?, ?, ${NOW})
+  const bcc = [...new Set((Array.isArray(b.bcc) ? b.bcc : []).map((x) => String(x).trim().toLowerCase()).filter(Boolean))];
+  const wrong = bcc.find((x) => !EMAIL.test(x));
+  if (wrong) throw bad(`"${wrong}" is not an email address.`);
+  if (bcc.length > 10) throw bad('Up to 10 addresses can be copied.');
+  await db.prepare(`INSERT INTO lease_renewal_settings (id, payee, actor_id, reminders, advisors, paused, bcc, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ${NOW})
     ON CONFLICT (id) DO UPDATE SET payee = EXCLUDED.payee, actor_id = EXCLUDED.actor_id, reminders = EXCLUDED.reminders, advisors = EXCLUDED.advisors,
-      paused = EXCLUDED.paused, updated_at = EXCLUDED.updated_at`)
-    .run(String(b.payee || '').trim().slice(0, 200) || null, req.user.id, b.reminders !== false, JSON.stringify(own), b.paused === true);
+      paused = EXCLUDED.paused, bcc = EXCLUDED.bcc, updated_at = EXCLUDED.updated_at`)
+    .run(String(b.payee || '').trim().slice(0, 200) || null, req.user.id, b.reminders !== false, JSON.stringify(own), b.paused === true, JSON.stringify(bcc));
   res.json({ ok: true });
 }));

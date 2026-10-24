@@ -715,3 +715,20 @@ test('the admin fee starts at 1,500 for every renewal', async () => {
   R.useForTests({ act: async () => ({ quote: { ...quoteOf(36000), fees: { admin: 900, chiller: 0, chiller_shown: false } } }) });
   assert.equal((await R.startFees(LEASE.lease_id)).admin, 1500);
 });
+
+test('Bcc: every renewal email goes silently to the addresses in Settings, and the tenant never sees them', async () => {
+  const boss = await setup();
+  stub();
+  await db.prepare(`UPDATE lease_renewal_settings SET bcc = '["accounts@ainalreempro.com", "boss@ainalreempro.com", "TENANT@mail.com"]'`).run();
+  await start(boss);
+  const m = world.sent.at(-1);
+  assert.deepEqual(m.envelope.to.sort(), ['accounts@ainalreempro.com', 'boss@ainalreempro.com', 'tenant@mail.com']);
+  assert.doesNotMatch(lastMail(), /^Bcc:/mi, 'not in the email itself');
+  assert.doesNotMatch(lastMail(), /accounts@ainalreempro/);
+});
+
+test('Bcc: accounts@ is copied by default', async () => {
+  await setup();
+  stub();
+  assert.equal((await R.settings()).bcc[0], 'accounts@ainalreempro.com', 'accounts@ by default');
+});

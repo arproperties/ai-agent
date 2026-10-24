@@ -1797,6 +1797,8 @@ await db.exec(`
     CHECK (status IN ('scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'converted', 'not_renewing', 'closed'));
   -- paused: the master stops Reem on every renewal at once; each waits for staff.
   ALTER TABLE lease_renewal_settings ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT false;
+  -- bcc: addresses copied silently (Bcc) on every renewal email to a tenant, e.g. accounts.
+  ALTER TABLE lease_renewal_settings ADD COLUMN IF NOT EXISTS bcc JSONB NOT NULL DEFAULT '["accounts@ainalreempro.com"]';
   -- Leases the renewals people were told need the RERA check, so each is told once.
   CREATE TABLE IF NOT EXISTS lease_renewal_nudges (
     lease_id INTEGER NOT NULL,

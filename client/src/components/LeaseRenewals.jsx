@@ -859,12 +859,21 @@ function Settings({ s, agents, inbox, onSaved }) {
   const [payee, setPayee] = useState(s.payee);
   const [reminders, setReminders] = useState(s.reminders);
   const [running, setRunning] = useState(!s.paused);
+  // Silent copies (Bcc) of every renewal email to a tenant, e.g. the accountant.
+  const [bcc, setBcc] = useState(s.bcc || []);
+  const [typed, setTyped] = useState('');
+  const addBcc = () => {
+    const add = typed.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+    if (add.length) setBcc((b) => [...new Set([...b, ...add])]);
+    setTyped('');
+  };
   const [advisors, setAdvisors] = useState(s.advisors || []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const save = async () => {
     setBusy(true); setError('');
-    try { await api.put('/lease-renewals/settings', { payee, reminders, advisors, paused: !running }); onSaved(); } catch (e) { setError(e.message); }
+    const all = typed.trim() ? [...new Set([...bcc, ...typed.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean)])] : bcc;
+    try { await api.put('/lease-renewals/settings', { payee, reminders, advisors, paused: !running, bcc: all }); setBcc(all); setTyped(''); onSaved(); } catch (e) { setError(e.message); }
     setBusy(false);
   };
   return (
@@ -894,6 +903,22 @@ function Settings({ s, agents, inbox, onSaved }) {
           className={`relative h-7 w-12 shrink-0 rounded-full transition ${reminders ? 'bg-p1' : 'bg-white/15'}`}>
           <span className={`absolute top-1 size-5 rounded-full bg-white transition-all ${reminders ? 'left-6' : 'left-1'}`} />
         </button>
+      </div>
+      <div className="space-y-1.5 text-sm">
+        <span className="text-mute">Copy every renewal email to (Bcc)</span>
+        <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-stroke bg-black/20 p-2">
+          {bcc.map((x) => (
+            <span key={x} className="flex items-center gap-1 rounded-full bg-white/10 py-1 pl-3 pr-1.5 text-xs">
+              {x}
+              <button onClick={() => setBcc(bcc.filter((y) => y !== x))} aria-label={`Remove ${x}`} className="text-mute hover:text-txt"><X size={13} /></button>
+            </span>
+          ))}
+          <input value={typed} onChange={(e) => setTyped(e.target.value)} onBlur={addBcc}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addBcc(); } }}
+            placeholder={bcc.length ? 'Add another email' : 'e.g. accounts@ainalreempro.com'} inputMode="email"
+            className="min-w-48 flex-1 bg-transparent px-1.5 py-1 text-sm outline-none placeholder:text-mute/70" />
+        </div>
+        <p className="text-xs text-mute">They get a silent copy of every email Reem sends to a tenant. The tenant does not see them.</p>
       </div>
       <div className="space-y-1.5 text-sm">
         <span className="text-mute">Advisors</span>
