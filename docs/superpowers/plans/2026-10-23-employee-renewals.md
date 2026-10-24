@@ -218,7 +218,7 @@ Decided by me where Francis was silent (change if he disagrees): a file with no 
 
 - [ ] **Step 1:** Failing route tests: `module is required`, `lists categorised files only`, `filters by category`, `shows the next alert step`.
 - [ ] **Step 2–4:** fail → implement → pass.
-- [ ] **Step 5:** Screen grouped Expired / ≤14 / ≤30 / ≤60 / Later / No date, each row with "Upload renewed" and "Not renewing". Options shown to Francis first. Browser check.
+- [ ] **Step 5:** Screen (Francis, 2026-10-24): **a strip of flags, reminders and alerts across the top** (expired, due soon, dates to confirm, payroll flags), then **one card per employee** (and one per subject for company files). Tapping a card opens that employee's data: their documents with dates and alert state, contract, saifsys profile, each document with "Upload renewed" and "Not renewing". Inside a card, documents sort Expired / ≤14 / ≤30 / ≤60 / Later / No date. Options shown to Francis first. Browser check.
 - [ ] **Step 6: Commit** `feat: Document Renewals screen`.
 
 ## Phase C: Employee Renewals

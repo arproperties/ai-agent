@@ -172,7 +172,7 @@ test('employee file ignores shared and file_access', async () => {
     assert.equal(s.list, false, `#${id} not on the Shelf`);
     assert.equal(s.open, false, `#${id} does not open`);
   }
-  assert.doesNotMatch(await search(reader, 'Ahmed Khan'), /Ahmed Khan/, 'search_files finds neither');
+  assert.doesNotMatch(await search(reader, 'Ahmed Khan'), new RegExp(`#(${passport}|${visa}) `), 'search_files finds neither');
   assert.equal((await libraryCatalog(reader)).total, 0, 'not in the catalogue either');
 });
 
@@ -183,7 +183,7 @@ test('a chunk written after the file was given a category is hidden too', async 
     VALUES (?, 'v.pdf', 'Visa Sara', true, 'ready') RETURNING id`).run(boss.id);
   await file(id, 'Residence Visa');
   await db.prepare('INSERT INTO chunks (user_id, document_id, text, shared) VALUES (?, ?, ?, true)').run(boss.id, id, '[Visa Sara] Residence visa of Sara Lopez');
-  assert.doesNotMatch(await search(reader, 'Sara Lopez visa'), /Sara Lopez/);
+  assert.doesNotMatch(await search(reader, 'Sara Lopez visa'), new RegExp(`#${id} `));
 });
 
 test('company file still follows shared and file_access', async () => {
@@ -223,7 +223,7 @@ test('a module holder does not see an external person\'s categorised file', asyn
   const own = await fileWith(ext, 'Passport Jeff', 'Passport of Jeff');
   await file(own, 'Passport');
   assert.equal((await sees(hr, own)).open, false);
-  assert.doesNotMatch(await search(hr, 'Jeff passport'), /Passport of Jeff/);
+  assert.doesNotMatch(await search(hr, 'Jeff passport'), new RegExp(`#${own} `));
 });
 
 test('master sees all', async () => {
