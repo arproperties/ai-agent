@@ -1,7 +1,7 @@
 import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdirSync } from 'node:fs';
-import { DATA_DIR, DATABASE_URL } from './config.js';
+import { DATA_DIR, DATABASE_URL, EMBED_MODEL } from './config.js';
 
 mkdirSync(DATA_DIR, { recursive: true }); // uploads and the embedding model still live on disk
 
@@ -70,8 +70,8 @@ export const closeDb = () => pool.end();
 
 const NOW = "extract(epoch from now())::bigint"; // unix seconds, matching the original schema
 
-// Dimensions of Xenova/all-MiniLM-L6-v2, the local embedding model in ai.js.
-// Changing the model means changing this and re-embedding everything.
+// Dimensions of EMBED_MODEL (config.js), the local embedding model in ai.js.
+// A model of another size means changing this as well as re-embedding everything.
 export const EMBED_DIMS = 384;
 
 // pgvector does the similarity search inside Postgres, against an index. Creating an
@@ -179,7 +179,7 @@ await db.exec(`
   );
 
   -- chunk/memory text is searched two ways: by meaning (embedding) and by keyword (tsvector).
-  -- 384 dims = Xenova/all-MiniLM-L6-v2, and embed() normalises, so cosine is the right metric.
+  -- 384 dims = EMBED_MODEL, and embed() normalises, so cosine is the right metric.
   CREATE TABLE IF NOT EXISTS chunks (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -258,6 +258,17 @@ await db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_chunks_vec ON chunks USING hnsw (embedding vector_cosine_ops);
   CREATE INDEX IF NOT EXISTS idx_mem_vec ON memories USING hnsw (embedding vector_cosine_ops);
+`);
+
+// Which model made each vector. A question is embedded with today's model, and measured
+// against a vector from another one the distance means nothing - it would rank at random
+// rather than fail. So a vector from any other model is cleared here, and search falls
+// back to keywords for that row until scripts/backfill-embeddings.js has rebuilt it.
+await db.exec(`
+  ALTER TABLE chunks   ADD COLUMN IF NOT EXISTS embed_model TEXT;
+  ALTER TABLE memories ADD COLUMN IF NOT EXISTS embed_model TEXT;
+  UPDATE chunks   SET embedding = NULL WHERE embedding IS NOT NULL AND embed_model IS DISTINCT FROM '${EMBED_MODEL}';
+  UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL AND embed_model IS DISTINCT FROM '${EMBED_MODEL}';
 `);
 
 // Columns added for the master/assignment model. ADD COLUMN IF NOT EXISTS is safe to
