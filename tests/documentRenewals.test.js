@@ -179,6 +179,7 @@ test('an employee\'s data: saifsys profile and their documents, soonest first', 
   assert.equal(v.state.step, 'd14');
   assert.deepEqual(v.state.confirm, ['expiry']);
   assert.equal(v.path, undefined, 'never the file\'s place on disk');
+  assert.equal(v.has_file, false, 'and whether there is a file to open');
 });
 
 test('an employee saifsys does not know is still shown from their documents', async () => {

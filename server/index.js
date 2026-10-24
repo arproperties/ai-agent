@@ -27,6 +27,7 @@ import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
 import { docCategoryRoutes, seedCategories } from './docCategories.js';
 import { documentRenewalRoutes } from './documentRenewals.js';
+import { startSaifsysDocSync } from './saifsysDocSync.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
@@ -444,6 +445,8 @@ await bringOldRemindersIntoTodos()
   .catch((e) => console.error('[team-reminders] could not bring old reminders into to-dos:', e.message));
 
 app.listen(PORT, '0.0.0.0', () => {
+  // saifsys's employee documents onto the Shelf, for Document Renewals: nightly, and once now
+  startSaifsysDocSync();
   // drafts approved while the rate limit was full go out when it clears
   startOutbox().catch((e) => console.error('[outbox]', e.message));
   // files from a folder or ZIP import that were still waiting when the server stopped

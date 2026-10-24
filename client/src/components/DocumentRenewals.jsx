@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Loader2, AlertTriangle, Search, X, ChevronRight, Check, FileText, Upload, Ban, Undo2, Building2, UserRound, Clock, HelpCircle, Link2Off,
+  Loader2, AlertTriangle, Search, X, ChevronRight, Check, FileText, Upload, Ban, Undo2, Building2, UserRound, Clock, HelpCircle, Link2Off, RefreshCw,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -78,8 +78,28 @@ export default function DocumentRenewalsPage({ onBack }) {
   const [alert, setAlert] = useState(null);
   const [open, setOpen] = useState(null); // { kind: 'employee', code } | { kind: 'subject', name } | { kind: 'unlinked' }
 
+  const [syncing, setSyncing] = useState(false);
+  const [synced, setSynced] = useState('');
+
   const load = useCallback(() => api.get('/document-renewals').then(setData).catch((e) => setError(e.message)), []);
   useEffect(() => { load(); }, [load]);
+
+  // The master brings saifsys's employee documents across now instead of waiting for the night.
+  const sync = async () => {
+    setSyncing(true); setSynced(''); setError('');
+    try {
+      const r = await api.post('/document-renewals/sync');
+      setSynced(r.skipped ? r.skipped : `From saifsys: ${r.added} new, ${r.updated} changed, ${r.files} files brought, ${r.superseded} replaced by a newer one.`);
+      await load();
+    } catch (e) { setError(e.message); }
+    setSyncing(false);
+  };
+  const syncButton = data?.master && (
+    <button onClick={sync} disabled={syncing}
+      className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt disabled:opacity-50">
+      <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Syncing…' : 'Sync from saifsys'}
+    </button>
+  );
 
   if (open) return <Holder open={open} types={data?.types || []} onBack={() => { setOpen(null); load(); }} />;
 
@@ -93,9 +113,10 @@ export default function DocumentRenewalsPage({ onBack }) {
   };
 
   return (
-    <Page title="Document Renewals" onBack={onBack}>
+    <Page title="Document Renewals" onBack={onBack} action={syncButton}>
       {error ? <div className="pt-6"><Problem text={error} /></div> : !data ? <Spinner /> : (
         <div className="space-y-4 pb-8">
+          {synced && <p className="flex items-center gap-1.5 text-sm text-ok"><Check size={15} /> {synced}</p>}
           {!data.saifsys && <Problem text="saifsys did not answer, so only the employees who already have documents are listed." />}
           <AlertStrip alerts={data.alerts} active={alert} onPick={pickAlert} />
           <div className="glass flex items-center gap-2 rounded-xl px-3.5 py-2">
@@ -220,7 +241,10 @@ function DocRow({ doc, onChanged }) {
         <span className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-mute"><FileText size={16} /></span>
         <div className="min-w-0 flex-1">
           <p className="font-medium">{doc.type}</p>
-          <a href={`/api/documents/${doc.id}/file`} target="_blank" rel="noreferrer" className="block truncate text-xs text-mute hover:text-txt hover:underline">{doc.title || doc.name}</a>
+          {doc.has_file
+            ? <a href={`/api/documents/${doc.id}/file`} target="_blank" rel="noreferrer" className="block truncate text-xs text-mute hover:text-txt hover:underline">{doc.title || doc.name}</a>
+            : <p className="truncate text-xs text-mute">{doc.title || doc.name} · no file yet</p>}
+          {doc.summary && <p className="mt-0.5 text-xs text-mute/80">{doc.summary}</p>}
           <p className="mt-1 text-sm">{doc.expires_on ? <>Expires {day(doc.expires_on)}</> : <span className="text-mute">No expiry date read</span>}</p>
           {doc.not_renewing_note && <p className="text-xs text-mute">Not renewing: {doc.not_renewing_note}</p>}
         </div>

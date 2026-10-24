@@ -1879,3 +1879,16 @@ await db.exec(`
     FOR EACH ROW WHEN (OLD.category_id IS DISTINCT FROM NEW.category_id)
     EXECUTE FUNCTION chunks_follow_category();
 `);
+
+// saifsys's employee documents, copied onto the Shelf (server/saifsysDocSync.js): which
+// saifsys document became which file, when saifsys last changed it, and whether its file
+// has come yet (saifsys may hold the row before the file).
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS saifsys_doc_links (
+    saifsys_id INTEGER PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    changed_at TEXT,
+    has_file BOOLEAN NOT NULL DEFAULT false,
+    synced_at BIGINT DEFAULT ${NOW}
+  );
+`);

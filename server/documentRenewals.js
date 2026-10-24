@@ -5,6 +5,7 @@ import { retrievalScope } from './knowledge.js';
 import { needsModule } from './modules.js';
 import { listCategories } from './docCategories.js';
 import { askSaifsys, dubaiDate } from './saifsys/client.js';
+import { syncNow } from './saifsysDocSync.js';
 
 // Document Renewals, the screen (client/src/components/DocumentRenewals.jsx): every
 // categorised Shelf file this person may read, by the employee or the company it is for,
@@ -31,7 +32,7 @@ export function docState(d, today = dubaiDate()) {
 }
 
 // The files, as the screen gets them: never where a file sits on disk.
-const out = ({ path, hash, ...d }, today) => ({ ...d, tags: undefined, state: docState(d, today) });
+const out = ({ path, hash, ...d }, today) => ({ ...d, tags: undefined, has_file: !!path, state: docState(d, today) });
 
 async function readableFiles(user, where = 'TRUE', params = []) {
   const scope = isMaster(user) ? masterReach('t') : retrievalScope(user.id, 't');
@@ -150,6 +151,10 @@ documentRenewalRoutes.get('/employees/:code', wrap(async (req, res) => {
 }));
 documentRenewalRoutes.get('/subjects', wrap(async (req, res) => {
   res.json(await subjectData(req.user, req.query.name));
+}));
+// The master brings saifsys's employee documents across now, rather than waiting for the night.
+documentRenewalRoutes.post('/sync', wrap(async (req, res) => {
+  res.json(await syncNow(req.user));
 }));
 documentRenewalRoutes.get('/unlinked', wrap(async (req, res) => {
   res.json(await unlinkedData(req.user));
