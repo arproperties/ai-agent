@@ -1805,3 +1805,77 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_document_copies_same ON document_copies(same_as);
 `);
+
+// Document Renewals (server/docCategories.js, 2026-10-24): a Shelf file can belong to a
+// category (Employee Documents, Company Documents, any the master adds) and a type in it.
+//   document_categories: the master's list. private: hidden from shared and file_access,
+//     seen only by its uploader, the master and Document Renewals holders (retrievalScope).
+//     links_to: what a file in it is for - 'employee' (a saifsys employee, by code) or
+//     'subject' (free text: the company, a plate, a policy). Never deleted, only retired
+//     (active false), so the files that have it keep it.
+//   document_types: the types in a category. opens_case: an expiring file of this type
+//     opens an Employee Renewals case (the labour contract).
+//   documents: category_id/type_id (NULL = a personal file); employee_code/employee_name or
+//     subject; who confirmed the expiry and the employee link (an AI read is unconfirmed);
+//     superseded_by the renewed file; not_renewing_* when nobody will renew it.
+//   chunks.category_id is denormalised off documents, as shared is, because recall() reads
+//     chunks without joining documents. The triggers keep it right on every write path.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS document_categories (
+    id SERIAL PRIMARY KEY,
+    label TEXT NOT NULL,
+    private BOOLEAN NOT NULL DEFAULT false,
+    links_to TEXT NOT NULL CHECK (links_to IN ('employee', 'subject')),
+    active BOOLEAN NOT NULL DEFAULT true,
+    sort INTEGER NOT NULL DEFAULT 0,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_document_categories_label ON document_categories(lower(label));
+  CREATE TABLE IF NOT EXISTS document_types (
+    id SERIAL PRIMARY KEY,
+    category_id INTEGER NOT NULL REFERENCES document_categories(id),
+    label TEXT NOT NULL,
+    opens_case BOOLEAN NOT NULL DEFAULT false,
+    active BOOLEAN NOT NULL DEFAULT true,
+    sort INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_document_types_label ON document_types(category_id, lower(label));
+
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES document_categories(id);
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS type_id INTEGER REFERENCES document_types(id);
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS employee_code TEXT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS employee_name TEXT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS subject TEXT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS expiry_confirmed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS expiry_confirmed_at BIGINT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS link_confirmed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS link_confirmed_at BIGINT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS superseded_by INTEGER REFERENCES documents(id) ON DELETE SET NULL;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS not_renewing_at BIGINT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS not_renewing_note TEXT;
+  CREATE INDEX IF NOT EXISTS idx_docs_category ON documents(category_id, expires_on) WHERE category_id IS NOT NULL;
+
+  ALTER TABLE chunks ADD COLUMN IF NOT EXISTS category_id INTEGER;
+  CREATE INDEX IF NOT EXISTS idx_chunks_category ON chunks(category_id) WHERE category_id IS NOT NULL;
+
+  CREATE OR REPLACE FUNCTION chunk_takes_category() RETURNS trigger AS $$
+  BEGIN
+    NEW.category_id := (SELECT category_id FROM documents WHERE id = NEW.document_id);
+    RETURN NEW;
+  END $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_chunk_takes_category ON chunks;
+  CREATE TRIGGER trg_chunk_takes_category
+    BEFORE INSERT OR UPDATE OF document_id, category_id ON chunks
+    FOR EACH ROW EXECUTE FUNCTION chunk_takes_category();
+
+  CREATE OR REPLACE FUNCTION chunks_follow_category() RETURNS trigger AS $$
+  BEGIN
+    UPDATE chunks SET category_id = NEW.category_id WHERE document_id = NEW.id;
+    RETURN NEW;
+  END $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_chunks_follow_category ON documents;
+  CREATE TRIGGER trg_chunks_follow_category
+    AFTER UPDATE OF category_id ON documents
+    FOR EACH ROW WHEN (OLD.category_id IS DISTINCT FROM NEW.category_id)
+    EXECUTE FUNCTION chunks_follow_category();
+`);

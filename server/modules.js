@@ -29,6 +29,7 @@ export const MODULES = [
   // company: the company's own work, never given to an external person (access.js).
   { key: 'renewals', label: 'Lease renewals', about: 'See the leases ending in the next 120 days, live from saifsys, with a link to the DLD Rental Index.', company: true },
   { key: 'notices', label: 'Tenant notices', about: 'Report something at a unit in a chat with Reem, with a photo. Reem writes the notice; it is emailed to the tenant when they tap Send.', company: true },
+  { key: 'document_renewals', label: 'Document Renewals', about: 'Employee and company documents (visas, contracts, trade licences, insurance): see them, get their expiry alerts, and renew or end employee contracts with approvals and the PRO.', company: true },
   { key: 'duties', label: 'My responsibilities', about: 'See what they look after, as you have written it.', everyone: true, company: true },
   { key: 'checklists', label: 'Checklists', about: 'The points of a job, ticked each time it is done.', everyone: true, company: true },
   { key: 'memory', label: 'Memory', about: 'See and remove what Reem remembers about them.', everyone: true },

@@ -25,6 +25,7 @@ import { responsibilityRoutes } from './responsibilities.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
+import { docCategoryRoutes, seedCategories } from './docCategories.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
@@ -97,6 +98,7 @@ app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and 
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
+app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -421,6 +423,8 @@ if (existsSync(dist)) {
 await giveToEveryoneOnce()
   .then((given) => given.length && console.log('[modules] given to everyone already here:', given.join(', ')))
   .catch((e) => console.error('[modules] could not give the new modules to everyone:', e.message));
+// The first two document categories (Employee / Company Documents), into an empty list only.
+await seedCategories().catch((e) => console.error('[doc-categories] could not seed the categories:', e.message));
 // Reminders sent before they landed as to-dos are put on each person's list. Once only.
 await bringOldRemindersIntoTodos()
   .then((n) => n && console.log(`[team-reminders] ${n} sent reminders put on people's to-do lists`))
