@@ -82,6 +82,16 @@ test('running it again adds nothing', async () => {
   assert.equal((await docs()).length, 2);
 });
 
+test('two runs at once add each document once', async () => {
+  await office();
+  const list = Array.from({ length: 30 }, (_, i) => row({ id: i + 1, employee_code: `E0${i}` }));
+  const a = saifsys(list);
+  const b = saifsys(list);
+  await Promise.all([syncSaifsysDocs({ lookup: a.lookup, fetchFile: a.fetchFile }), syncSaifsysDocs({ lookup: b.lookup, fetchFile: b.fetchFile })]);
+  assert.equal((await docs()).length, 30);
+  assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM saifsys_doc_links').get()).n, 30);
+});
+
 test('every page is read', async () => {
   await office();
   const s = saifsys(Array.from({ length: 5 }, (_, i) => row({ id: i + 1, employee_code: `E0${i}` })), { per: 2 });

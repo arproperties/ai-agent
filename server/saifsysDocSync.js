@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { createHash } from 'node:crypto';
-import { db } from './db.js';
+import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
 import { isMaster } from './access.js';
 import { askSaifsys, fileFromSaifsys, dubaiHour } from './saifsys/client.js';
@@ -48,7 +48,7 @@ async function attachFile(docId, ownerId, d, fetchFile) {
   const kind = mime.startsWith('image/') ? 'image' : 'doc';
   await db.prepare('UPDATE documents SET path = ?, name = ?, mime = ?, size = ?, hash = ?, kind = ? WHERE id = ?')
     .run(path, name, mime, buffer.length, createHash('sha256').update(buffer).digest('hex'), kind, docId);
-  await db.prepare('UPDATE saifsys_doc_links SET has_file = true WHERE saifsys_id = ?').run(d.id);
+
 }
 
 const summaryOf = (d) => [
@@ -77,31 +77,40 @@ export async function syncSaifsysDocs({ lookup = askSaifsys, fetchFile = saifsys
       try {
         const type = types.get(SAIFSYS_TYPES[d.type] || OTHER) || types.get(OTHER);
         if (!type) continue; // the master took the Employee Documents types away
-        const link = await db.prepare('SELECT * FROM saifsys_doc_links WHERE saifsys_id = ?').get(d.id);
-        let docId = link?.document_id;
-        if (!link) {
-          const title = `${type.label === OTHER ? d.type || 'Document' : type.label} – ${d.employee_name}`.slice(0, 120);
-          ({ id: docId } = await db.prepare(`INSERT INTO documents (user_id, name, title, folder, summary, kind, status, tags,
-              category_id, type_id, employee_code, employee_name, expires_on, expiry_confirmed_at, link_confirmed_at)
-            VALUES (?, ?, ?, 'HR & Employees', ?, 'doc', 'ready', '[]', ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
-            .run(owner.id, d.file_name || `${title}`, title, summaryOf(d), type.category_id, type.id, d.employee_code, d.employee_name,
-              d.expires_at, d.expires_at ? now : null, now));
-          await db.prepare('INSERT INTO saifsys_doc_links (saifsys_id, document_id, changed_at) VALUES (?, ?, ?)').run(d.id, docId, d.updated_at);
-          out.added++;
-        } else if (link.changed_at !== d.updated_at) {
-          // saifsys changed it. Its date wins, unless someone in Reem has set the date since.
-          await db.prepare(`UPDATE documents SET employee_name = ?, summary = ?,
-              expires_on = CASE WHEN expiry_confirmed_by IS NULL THEN ? ELSE expires_on END,
-              expiry_confirmed_at = CASE WHEN expiry_confirmed_by IS NULL THEN ? ELSE expiry_confirmed_at END
-            WHERE id = ?`).run(d.employee_name, summaryOf(d), d.expires_at, d.expires_at ? now : null, docId);
-          await db.prepare('UPDATE saifsys_doc_links SET changed_at = ?, synced_at = ? WHERE saifsys_id = ?').run(d.updated_at, now, d.id);
-          out.updated++;
-        }
-        if (d.has_file && !link?.has_file) {
+        // One saifsys document at a time, under a lock on its id: two runs at once (a restart,
+        // the master's button during the night's run, two servers) must not both add it.
+        const docId = await tx(async () => {
+          await db.prepare("SELECT pg_advisory_xact_lock(hashtext('saifsys_doc_links'), ?)").get(d.id);
+          const link = await db.prepare('SELECT * FROM saifsys_doc_links WHERE saifsys_id = ?').get(d.id);
+          if (!link) {
+            const title = `${type.label === OTHER ? d.type || 'Document' : type.label} – ${d.employee_name}`.slice(0, 120);
+            const { id } = await db.prepare(`INSERT INTO documents (user_id, name, title, folder, summary, kind, status, tags,
+                category_id, type_id, employee_code, employee_name, expires_on, expiry_confirmed_at, link_confirmed_at)
+              VALUES (?, ?, ?, 'HR & Employees', ?, 'doc', 'ready', '[]', ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+              .run(owner.id, d.file_name || title, title, summaryOf(d), type.category_id, type.id, d.employee_code, d.employee_name,
+                d.expires_at, d.expires_at ? now : null, now);
+            await db.prepare('INSERT INTO saifsys_doc_links (saifsys_id, document_id, changed_at) VALUES (?, ?, ?)').run(d.id, id, d.updated_at);
+            out.added++;
+            return id;
+          }
+          if (link.changed_at !== d.updated_at) {
+            // saifsys changed it. Its date wins, unless someone in Reem has set the date since.
+            await db.prepare(`UPDATE documents SET employee_name = ?, summary = ?,
+                expires_on = CASE WHEN expiry_confirmed_by IS NULL THEN ? ELSE expires_on END,
+                expiry_confirmed_at = CASE WHEN expiry_confirmed_by IS NULL THEN ? ELSE expiry_confirmed_at END
+              WHERE id = ?`).run(d.employee_name, summaryOf(d), d.expires_at, d.expires_at ? now : null, link.document_id);
+            await db.prepare('UPDATE saifsys_doc_links SET changed_at = ?, synced_at = ? WHERE saifsys_id = ?').run(d.updated_at, now, d.id);
+            out.updated++;
+          }
+          return link.document_id;
+        });
+        // The file, claimed first so two runs do not both fetch it; given back if saifsys cannot send it.
+        if (d.has_file && (await db.prepare('UPDATE saifsys_doc_links SET has_file = true WHERE saifsys_id = ? AND NOT has_file RETURNING saifsys_id').get(d.id))) {
           try {
             await attachFile(docId, owner.id, d, fetchFile);
             out.files++;
           } catch (e) {
+            await db.prepare('UPDATE saifsys_doc_links SET has_file = false WHERE saifsys_id = ?').run(d.id);
             console.error(`[saifsys-docs] no file yet for saifsys document #${d.id}:`, e.message); // tried again next run
           }
         }
