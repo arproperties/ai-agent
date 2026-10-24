@@ -26,6 +26,7 @@ import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
 import { docCategoryRoutes, seedCategories } from './docCategories.js';
+import { documentRenewalRoutes } from './documentRenewals.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
@@ -99,6 +100,7 @@ app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come 
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
 app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
+app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

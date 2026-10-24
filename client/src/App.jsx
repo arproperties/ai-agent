@@ -13,6 +13,7 @@ import ListsPage from './components/Lists';
 import MeetingsPage from './components/Meetings';
 import TranscribePage from './components/Transcribe';
 import LeaseRenewalsPage from './components/LeaseRenewals';
+import DocumentRenewalsPage from './components/DocumentRenewals';
 import TranslatePage from './components/Translate';
 import TenantCarePage from './components/TenantCare';
 import MailRoutingPage from './components/MailRouting';
@@ -44,7 +45,7 @@ if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || noti
 
 // The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
 const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
-  duties: 'duties', checklists: 'checklists', memory: 'memory', email: 'email', renewals: 'renewals' };
+  duties: 'duties', checklists: 'checklists', memory: 'memory', email: 'email', renewals: 'renewals', docrenewals: 'document_renewals' };
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -189,6 +190,7 @@ export default function App() {
           hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
           inventoryOpen={panel === 'inventory'} onInventory={() => { setPanel('inventory'); setDrawer(false); }}
           renewalsOpen={panel === 'renewals'} onRenewals={() => { setJumpToRenewal(null); setPanel('renewals'); setDrawer(false); }}
+          docRenewalsOpen={panel === 'docrenewals'} onDocRenewals={() => { setPanel('docrenewals'); setDrawer(false); }}
           modules={modules || []}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
@@ -240,6 +242,7 @@ export default function App() {
         {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'buildings' && <BuildingsPage me={me} start={jumpToBuilding} onBack={() => setPanel(null)} />}
         {panel === 'inventory' && <InventoryPage me={me} onBack={() => setPanel(null)} />}
+        {panel === 'docrenewals' && <DocumentRenewalsPage onBack={() => setPanel(null)} />}
         {panel === 'renewals' && <LeaseRenewalsPage key={jumpToRenewal || 'list'} open={jumpToRenewal} onBack={() => setPanel(null)} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
