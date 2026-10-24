@@ -35,8 +35,9 @@ function stub({ leases = [LEASE], replies = [], docs = [], files = {} } = {}) {
     act: async (module, action, body) => {
       assert.equal(module, 'realestate_renewal');
       world.acts.push({ action, ...body });
-      if (action === 'quote') return { quote: quoteOf(body.rent) };
-      if (action === 'start') return { renewal: { workflow_id: 117, status: 'notice_sent' } };
+      if (action === 'quote') return { quote: { ...quoteOf(body.rent), fees: { admin: body.admin_fees ?? 1500, chiller: 0, chiller_shown: false, parking: body.additional_parking_fee ?? 0, small_store: 0, big_store: 0 } } };
+      if (action === 'contract') return { contract: { name: 'contract_525.pdf', data: Buffer.from('%PDF-saifsys-contract').toString('base64') } };
+      if (action === 'start') return { renewal: { workflow_id: 117, status: 'notice_sent', notice: { name: 'renewal_notice_117.pdf', data: Buffer.from('%PDF-saifsys-notice!!').toString('base64') } } };
       if (action === 'convert') return { renewal: { workflow_id: 117, new_lease_id: 525, activate_now: false } };
       return { renewal: { workflow_id: body.workflow_id } };
     },
@@ -96,13 +97,13 @@ test('the offer is a draft first, at any rent we choose; nothing goes out until 
   const d = await R.draft(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000 });
   assert.equal(d.to, 'tenant@mail.com');
   assert.match(d.text, /Annual rent: AED 45,000/);
-  assert.deepEqual(d.attachments, ['Renewal offer - PARK PLACE 610.pdf']);
+  assert.deepEqual(d.attachments, ['Renewal notice - PARK PLACE 610.pdf']);
   assert.equal(world.sent.length, 0);
   assert.deepEqual(world.acts.map((a) => a.action), ['quote'], 'saifsys only priced it');
   assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_renewals').get()).n, 0);
 });
 
-test('Send: saifsys makes its renewal, the offer goes with its letter, and the timeline starts', async () => {
+test('Send: saifsys makes its renewal, the offer goes with saifsys\'s own notice, and the timeline starts', async () => {
   const boss = await setup();
   stub();
   const r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000, text: 'Dear Mohamed,\n\nOur offer, as we discussed.' });
@@ -111,9 +112,23 @@ test('Send: saifsys makes its renewal, the offer goes with its letter, and the t
   assert.equal(world.acts[1].email, 'care@company.com');
   assert.match(lastMail(), /Subject: Lease renewal: PARK PLACE, Unit 610/);
   assert.match(lastMail(), /Our offer, as we discussed/, 'the words the person approved, not the draft');
-  assert.match(lastMail(), /application\/pdf/);
+  assert.match(lastMail(), /Renewal notice - PARK PLACE 610\.pdf/);
+  assert.ok(lastMail().includes(Buffer.from('%PDF-saifsys-notice!!').toString('base64')), 'the PDF saifsys made, not one of ours');
   assert.deepEqual(await timeline(r.id), ['out: Offer sent · AED 45,000']);
   await assert.rejects(start(boss), /already started/, 'a second tap starts nothing');
+});
+
+test('Start: the admin fee the person types goes to saifsys and into the offer; later steps keep it', async () => {
+  const boss = await setup();
+  stub();
+  assert.deepEqual(await R.startFees(LEASE.lease_id), { admin: 1500, chiller: 0, chiller_shown: false, parking: 0, small_store: 0, big_store: 0 }, 'the old lease\'s, for the Start box');
+  const r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000, fees: { admin: 2000, parking: 1200 } });
+  const started = world.acts.find((a) => a.action === 'start');
+  assert.deepEqual([started.admin_fees, started.additional_parking_fee, started.chiller_charges], [2000, 1200, null], 'a charge left out keeps the old lease\'s');
+  assert.match(lastMail(), /Admin fee: AED 2,000 \+ VAT/);
+  assert.match(lastMail(), /Additional parking: AED 1,200 \+ VAT/);
+  await R.draft(boss, { id: r.id, action: 'counter', rent: 44000 });
+  assert.deepEqual([world.acts.at(-1).admin_fees, world.acts.at(-1).additional_parking_fee], [2000, 1200], 'a counter-offer is priced with the same charges');
 });
 
 test('a lease the staff started in saifsys, or with no email, cannot be started here', async () => {
@@ -183,6 +198,9 @@ test('negotiation: a counter, a dispute, the RERA index rent, agreement, papers,
   r = await R.send(boss, { id: r.id, action: 'accept' });
   assert.deepEqual([r.status, r.agreed], ['agreed', 37800]);
   assert.equal(world.acts.at(-1).status, 'accepted');
+  assert.deepEqual(world.acts.slice(-2).map((a) => a.action), ['contract', 'status'], 'the contract is made before the renewal moves on');
+  assert.match(lastMail(), /Tenancy contract - PARK PLACE 610\.pdf/);
+  assert.ok(lastMail().includes(Buffer.from('%PDF-saifsys-contract').toString('base64')), 'saifsys\'s contract, not one of ours');
   assert.match(lastMail(), /confirm the renewal of PARK PLACE, Unit 610 at AED 37,800/);
   assert.match(lastMail(), /payable to Saif Holding LLC/);
 
@@ -443,4 +461,47 @@ test('words typed inside the quoted email are still the tenant\'s', () => {
   assert.equal(R.tenantWords('I can pay 51,000\n\nOn Thu, 15 Oct 2026 at 15:40, Tenant Care <care@company.com> wrote:\n> Dear Test,\n> Our offer'), 'I can pay 51,000');
   assert.equal(R.tenantWords('On Thu, 15 Oct 2026 at 15:53, Tenant Care <care@company.com> wrote:\n> OK, I accept 53,000\n>\n> Dear Test Two Counter,\n> Thank you for your reply.'), 'OK, I accept 53,000');
   assert.equal(R.tenantWords('> OK, I accept\n> Dear Test,\n> offer'), 'OK, I accept');
+});
+
+// ---------- ask the boss (server/renewalAsks.js) ----------
+
+test('ask the boss: nothing goes until the boss OKs it; the boss may change it; staff cannot send it meanwhile', async () => {
+  const A = await import('../server/renewalAsks.js');
+  const boss = await setup();
+  const staff = { id: await makeUser('Rona'), role: 'member', name: 'Rona' };
+  stub();
+  const asked = await A.askBoss(staff, { lease_id: LEASE.lease_id, ask: { rent: 39600, cheques: 4, fees: { admin: 1500, parking: 1000 } }, text: 'Dear Mohamed,\n\nOur offer.' });
+  assert.equal(asked.status, 'waiting');
+  assert.equal(world.sent.length, 0, 'no email to the tenant');
+  assert.ok(!world.acts.some((a) => a.action === 'start'), 'nothing made in saifsys');
+  assert.match(world.pushes.at(-1), /Rona asks you to OK the renewal offer: AED 39,600/);
+  await assert.rejects(A.askBoss(staff, { lease_id: LEASE.lease_id, ask: { rent: 39600, cheques: 4 }, text: 'again' }), /already waiting/);
+  await assert.rejects(R.send(staff, { action: 'start', lease_id: LEASE.lease_id, rent: 39600, text: 'x' }), /waiting for the boss/);
+  await assert.rejects(A.approve(staff, asked.id, {}), /Only the boss/);
+  assert.deepEqual((await A.listAsks(staff)).map((a) => a.id), [asked.id]);
+
+  // The boss lowers the parking and sends it.
+  const r = await A.approve(boss, asked.id, { ask: { rent: 39000, cheques: 4, fees: { admin: 1500, parking: 500 } }, text: 'Dear Mohamed,\n\nOur offer, as the boss set it.' });
+  assert.deepEqual([r.status, r.offer], ['offer_sent', 39000]);
+  assert.equal(world.acts.find((a) => a.action === 'start').additional_parking_fee, 500);
+  assert.match(lastMail(), /as the boss set it/);
+  assert.match(world.pushes.at(-1), /The boss OK'd the renewal offer/);
+  assert.deepEqual(await A.listAsks(staff), [], 'nothing waits any more');
+});
+
+test('ask the boss: the boss says no with a note; the person sees it and takes it back to write a new one', async () => {
+  const A = await import('../server/renewalAsks.js');
+  const boss = await setup();
+  const staff = { id: await makeUser('Rona'), role: 'member', name: 'Rona' };
+  stub();
+  const asked = await A.askBoss(staff, { lease_id: LEASE.lease_id, ask: { rent: 45000, cheques: 4 }, text: 'Our offer.' });
+  const no = await A.decline(boss, asked.id, 'Too high, try 40,000');
+  assert.deepEqual([no.status, no.note], ['declined', 'Too high, try 40,000']);
+  assert.match(world.pushes.at(-1), /did not OK the renewal offer: Too high, try 40,000/);
+  assert.equal((await A.listAsks(staff))[0].status, 'declined', 'the person who asked sees the no');
+  assert.deepEqual(await A.listAsks(boss), [], 'the boss has nothing waiting');
+  await A.cancel(staff, asked.id);
+  assert.deepEqual(await A.listAsks(staff), []);
+  const again = await A.askBoss(staff, { lease_id: LEASE.lease_id, ask: { rent: 40000, cheques: 4 }, text: 'Our new offer.' });
+  assert.equal(again.status, 'waiting');
 });

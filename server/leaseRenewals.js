@@ -83,6 +83,8 @@ const D = {
   now: () => Date.now(),
 };
 export const useForTests = (over) => Object.assign(D, over);
+/** A buzz on people's phones, through the same hook the renewals use (stubbed in tests). */
+export const buzz = (ids, msg) => D.push(ids, msg)?.catch?.(() => {});
 
 // ---------- money and dates ----------
 
@@ -117,7 +119,7 @@ export async function settings() {
 export function checkPapers(r, received, payee) {
   const missing = [];
   const wrong = [];
-  if (received.agreement !== 'signed') missing.push(received.agreement === 'unsigned' ? 'your signature on the renewal agreement (the copy you sent is not signed)' : 'the signed renewal agreement');
+  if (received.agreement !== 'signed') missing.push(received.agreement === 'unsigned' ? 'your signature on the tenancy contract (the copy you sent is not signed)' : 'the signed tenancy contract');
   if (r.lease.payment_method === 'cheque' && r.quote) {
     const got = [...(received.cheques || [])];
     for (const want of r.quote.cheques) {
@@ -206,7 +208,12 @@ function offerLines(q, rent) {
     `- Annual rent: ${aed(rent)}`,
     `- Payment by ${q.cheques.length} cheque${q.cheques.length > 1 ? 's' : ''}:`,
     ...schedule(q),
-    ...(q.rera ? [`- RERA / registration charges: ${aed(q.rera)}, paid on registration`] : []),
+    ...(q.fees?.admin ? [`- Admin fee: ${aed(q.fees.admin)} + VAT`] : []),
+    ...(q.fees?.chiller ? [`- Chiller fee: ${aed(q.fees.chiller)} + VAT`] : []),
+    ...(q.fees?.parking ? [`- Additional parking: ${aed(q.fees.parking)} + VAT`] : []),
+    ...(q.fees?.small_store ? [`- Small store: ${aed(q.fees.small_store)} + VAT`] : []),
+    ...(q.fees?.big_store ? [`- Big store: ${aed(q.fees.big_store)} + VAT`] : []),
+    ...(q.rera ? [`- Ejari fee: ${aed(q.rera)}, paid on registration`] : []),
   ];
 }
 
@@ -233,7 +240,7 @@ const indexText = (r, q, rent) => [dear(r), '',
 const agreedText = (r, q, rent, payee) => [dear(r), '',
   `Thank you. We are pleased to confirm the renewal of ${r.lease.building}, Unit ${r.lease.unit} at ${aed(rent)} a year.`, '',
   'To complete it, please reply to this email with:',
-  '1. The attached renewal agreement, signed (a scan or a clear photo of each page is fine).',
+  '1. The attached tenancy contract, signed (a scan or a clear photo of each page is fine).',
   ...(r.lease.payment_method === 'cheque' ? [`2. Clear photos of the cheques below${payee ? `, payable to ${payee}` : ''}:`, ...schedule(q)] : []),
   ...(q.required_documents_text ? ['', 'And, if they have changed or expired since your last contract:', ...q.required_documents_text.split('\n').filter(Boolean).map((d) => `- ${d}`)] : []), '',
   ...(r.lease.payment_method === 'cheque' ? ['Please keep the original cheques ready: we will collect them before the new term starts.', ''] : []),
@@ -262,31 +269,6 @@ const reminderText = (r, payee) => (['agreed', 'papers_ok'].includes(r.status)
     ...checkPapers(r, r.received || {}, payee).missing.map((m) => `- ${m}`), '', 'Please reply to this email with them.', ...SIGN].join('\n')
   : [dear(r), '', `A reminder about the renewal of your tenancy of ${r.lease.building}, Unit ${r.lease.unit}, which ends on ${longDate(r.lease.end_date)}.`, '',
     `Our offer is ${aed(r.offer)} a year. Please reply to this email to accept, or tell us what you would like to propose.`, ...SIGN].join('\n'));
-
-function letterMarkdown(r, q, rent) {
-  return [
-    `**Tenant:** ${r.lease.tenant}  `, `**Premises:** ${r.lease.building}, Unit ${r.lease.unit}  `, `**Current contract ends:** ${longDate(r.lease.end_date)}`, '',
-    '## Renewal offer', '', ...offerLines(q, rent), '',
-    '## Terms', '', ...String(q.terms_text || '').split('\n').filter(Boolean).map((t) => `- ${t}`), '',
-    '## Documents we will need', '', ...String(q.required_documents_text || '').split('\n').filter(Boolean).map((t) => `- ${t}`),
-  ].join('\n');
-}
-
-function agreementMarkdown(r, q, rent, payee) {
-  return [
-    `This agreement renews the tenancy of **${r.lease.building}, Unit ${r.lease.unit}** (contract ${r.lease.lease_number}).`, '',
-    `**Landlord:** ${payee || 'The Landlord'}  `, `**Tenant:** ${r.lease.tenant}`, '',
-    '## Renewal terms', '', ...offerLines(q, rent), '',
-    'All other terms of the current tenancy contract remain the same, together with these:', '',
-    ...String(q.terms_text || '').split('\n').filter(Boolean).map((t) => `- ${t}`), '',
-    '## Signatures', '',
-    'Tenant: ______________________________   Date: ______________', '',
-    'Landlord: ____________________________   Date: ______________',
-  ].join('\n');
-}
-
-const pdf = async (title, markdown, name) => ({ filename: name, contentType: 'application/pdf',
-  content: Buffer.from(await renderPdf({ title, markdown, date: new Date(D.now()) })).toString('base64') });
 
 const keep = async (renewalId, eventId, { name, mime, buffer }) => {
   mkdirSync(DIR, { recursive: true });
@@ -372,9 +354,22 @@ async function mirror(r, message, { text = null, files = [] } = {}) {
 }
 
 /** saifsys's own cheques and charges for a renewal at this rent. Nothing is saved. */
-async function quoteFor(lease, rent, cheques) {
-  const { quote } = await saifsys('quote', { lease_id: lease.lease_id, end_date: lease.end_date, rent, cheques });
+/** The charges saifsys renewals have, by the name saifsys takes each in. */
+export const CHARGES = { admin: 'admin_fees', chiller: 'chiller_charges', parking: 'additional_parking_fee', small_store: 'small_store_fee', big_store: 'big_store_fee' };
+/** The charges to ask saifsys for: one left out (null) keeps the old lease's. */
+const feesOf = (f = {}) => Object.fromEntries(Object.entries(CHARGES).map(([k, key]) => [key, f[k] ?? null]));
+
+async function quoteFor(lease, rent, cheques, fees) {
+  const { quote } = await saifsys('quote', { lease_id: lease.lease_id, end_date: lease.end_date, rent, cheques, ...feesOf(fees) });
   return quote;
+}
+
+/** The fees a new renewal of this lease starts with (the old lease's), for the Start box. */
+export async function startFees(leaseId) {
+  const lease = (await dueLeases()).find((l) => l.lease_id === Number(leaseId));
+  if (!lease) throw bad('That lease is not in saifsys\'s list of leases ending within 120 days.', 404);
+  const q = await quoteFor(lease, Math.round(Number(lease.annual_rent)) || 1, lease.cheques || 4);
+  return q.fees || { admin: 0, chiller: 0, chiller_shown: false, parking: 0, small_store: 0, big_store: 0 };
 }
 
 // ---------- what a person does: a draft first, then Send ----------
@@ -402,7 +397,7 @@ const rentOf = (v) => {
 };
 
 /** The renewal (or, for start, the lease) a draft or a send is about, and the figures it needs. */
-async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, words }) {
+async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, words, fees: typed }) {
   const a = ACTIONS[action];
   if (!a) throw bad('Unknown step.');
   const s = await settings();
@@ -434,20 +429,27 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, word
   }
   if (action === 'accept') amount = rent ? rentOf(rent) : (r.tenant_offer ?? r.offer);
   if (action === 'convert') amount = r.agreed;
-  const quote = amount && action !== 'convert' ? (action !== 'accept' || amount !== r.offer || !r.quote ? await quoteFor(r.lease, amount, n) : r.quote) : r.quote;
+  // Start takes the fees the person typed; later steps keep the renewal's.
+  const fee = (v) => (v === undefined || v === null || v === '' ? null : Math.max(0, Math.round(Number(v) * 100) / 100));
+  const fees = action === 'start' ? Object.fromEntries(Object.keys(CHARGES).map((k) => [k, fee(typed?.[k])])) : r.quote?.fees;
+  const quote = amount && action !== 'convert' ? (action !== 'accept' || amount !== r.offer || !r.quote ? await quoteFor(r.lease, amount, n, fees) : r.quote) : r.quote;
 
   let text;
-  let files = [];
-  if (action === 'start') { text = offerText(r, quote, amount); files = [['Lease renewal offer', letterMarkdown(r, quote, amount), `Renewal offer - ${r.lease.building} ${r.lease.unit}.pdf`]]; }
+  // The offer carries saifsys's own renewal notice, made by saifsys when the renewal starts.
+  if (action === 'start') text = offerText(r, quote, amount);
   if (action === 'counter') text = counterText(r, quote, amount);
   if (action === 'index') text = indexText(r, quote, amount);
-  if (action === 'accept') { text = agreedText(r, quote, amount, s.payee); files = [['Lease renewal agreement', agreementMarkdown(r, quote, amount, s.payee), `Renewal agreement - ${r.lease.building} ${r.lease.unit}.pdf`]]; }
+  // The agreement is saifsys's own tenancy contract for the new lease, made when it is sent.
+  if (action === 'accept') text = agreedText(r, quote, amount, s.payee);
   if (action === 'not_renewing') text = notRenewingText(r);
   if (action === 'reply') text = replyText(r, words || '');
   if (action === 'fix') text = fixText(r, r.papers || checkPapers(r, r.received || {}, s.payee));
   if (action === 'convert') text = doneText(r);
-  return { r, a, s, amount, cheques: n, source, quote, text, files };
+  return { r, a, s, amount, cheques: n, source, quote, fees, text };
 }
+
+const contractName = (r) => `Tenancy contract - ${r.lease.building} ${r.lease.unit}.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
+const noticeName = (r) => `Renewal notice - ${r.lease.building} ${r.lease.unit}.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
 
 /** The email a step would send, for the person to read. Nothing is sent or saved. */
 export async function draft(user, body) {
@@ -458,7 +460,10 @@ export async function draft(user, body) {
   }
   return {
     to: p.r.lease.email, subject: subjectOf(p.r), text: p.text, rent: p.amount, cheques: p.cheques, source: p.source,
-    schedule: p.quote?.cheques || null, total: p.quote?.cheques_total ?? null, attachments: p.files.map((f) => f[2]),
+    schedule: p.quote?.cheques || null, total: p.quote?.cheques_total ?? null,
+    fees: p.quote?.fees || null,
+    lease: body.action === 'start' ? p.r.lease : undefined,
+    attachments: body.action === 'start' ? [noticeName(p.r)] : body.action === 'accept' ? [contractName(p.r)] : [],
   };
 }
 
@@ -468,19 +473,26 @@ export async function send(user, body) {
   const text = String(body.text || '').trim() || p.text;
   if (body.action === 'reply' && !String(body.text || '').trim()) throw bad('Write the reply first.');
   const attachments = [];
-  for (const [title, md, name] of p.files) attachments.push(await pdf(title, md, name));
   const title = p.a.title(p.amount);
   const { s } = p;
   let r = p.r;
 
   if (body.action === 'start') {
-    const { renewal } = await saifsys('start', { lease_id: r.lease.lease_id, end_date: r.lease.end_date, rent: p.amount, cheques: p.cheques });
+    // An offer waiting for the boss's OK is the boss's to send (server/renewalAsks.js).
+    const waiting = await db.prepare(`SELECT 1 FROM lease_renewal_asks WHERE lease_id = ? AND end_date = ? AND status = 'waiting'`).get(r.lease.lease_id, r.lease.end_date);
+    if (waiting && !isMaster(user)) throw bad('This offer is waiting for the boss\'s OK.', 409);
+    const { renewal } = await saifsys('start', { lease_id: r.lease.lease_id, end_date: r.lease.end_date, rent: p.amount, cheques: p.cheques, ...feesOf(p.fees) });
+    // Never an offer without saifsys's notice. Tapping Send again picks up the same saifsys renewal.
+    if (!renewal.notice?.data) throw bad('saifsys did not send its renewal notice PDF, so nothing was emailed. Check the latest realestate_renewal.php is uploaded to saifsys, then tap Send again.', 502);
     const made = await db.prepare(`INSERT INTO lease_renewals (lease_id, end_date, lease, workflow_id, status, offer, cheques, rent_source, quote, started_by)
       VALUES (?, ?, ?, ?, 'offer_sent', ?, ?, ?, ?, ?) ON CONFLICT (lease_id, end_date) DO NOTHING RETURNING id`)
       .get(r.lease.lease_id, r.lease.end_date, JSON.stringify(r.lease), renewal.workflow_id, p.amount, p.cheques,
         JSON.stringify(p.source), JSON.stringify(p.quote), user.id);
     if (!made) throw bad('This renewal has already started.', 409);
     r = await getRenewal(made.id);
+    await db.prepare(`UPDATE lease_renewal_asks SET status = 'sent', decided_by = ?, decided_at = ? WHERE lease_id = ? AND end_date = ? AND status = 'waiting'`)
+      .run(user.id, secs(), r.lease.lease_id, r.lease.end_date);
+    attachments.push({ filename: noticeName(r), contentType: 'application/pdf', content: renewal.notice.data });
     await mail(r, { title, text, attachments, user, data: { rent: p.amount, source: p.source } });
     return getRenewal(r.id);
   }
@@ -495,6 +507,10 @@ export async function send(user, body) {
 
   if (body.action === 'accept') {
     if (p.amount !== r.offer || p.cheques !== r.cheques) await saifsys('rent', { workflow_id: r.workflow_id, rent: p.amount, cheques: p.cheques, note: 'Agreed with the tenant' });
+    // Made after the rent is set, so the contract carries the agreed figures. Nothing goes without it.
+    const { contract } = await saifsys('contract', { workflow_id: r.workflow_id });
+    if (!contract?.data) throw bad('saifsys did not send the tenancy contract PDF, so nothing was emailed. Check the contract template in saifsys, then tap Send again.', 502);
+    attachments.push({ filename: contractName(r), contentType: 'application/pdf', content: contract.data });
     await saifsys('status', { workflow_id: r.workflow_id, status: 'accepted', note: `Agreed by email at ${aed(p.amount)} a year` });
     r = await update(r.id, { status: 'agreed', agreed: p.amount, offer: p.amount, cheques: p.cheques, quote: p.quote, received: {}, papers: null, waiting: null, reminders: 0 });
     await mail(r, { title, text, attachments, user, data: { rent: p.amount } });
@@ -604,7 +620,7 @@ const factsOf = (r, s) => [
   `Premises: ${r.lease.building}, Unit ${r.lease.unit} (${r.lease.unit_type || 'unit'}). Tenant: ${r.lease.tenant}.`,
   `Current contract: ${longDate(r.lease.start_date)} to ${longDate(r.lease.end_date)}, ${aed(r.lease.annual_rent)} a year, ${r.lease.cheques} cheques.`,
   r.quote ? `Renewal on offer: ${aed(r.agreed ?? r.offer)} a year from ${longDate(r.quote.start_date)} to ${longDate(r.quote.end_date)}, ${r.quote.cheques.length} cheques: ${r.quote.cheques.map((ch) => `${longDate(ch.date)} ${aed(ch.amount)}`).join('; ')}.` : '',
-  r.quote?.rera ? `RERA / registration charges: ${aed(r.quote.rera)}.` : '',
+  r.quote?.rera ? `Ejari fee: ${aed(r.quote.rera)}.` : '',
   s.payee ? `Cheques are payable to ${s.payee}.` : '',
   ['agreed', 'papers_ok'].includes(r.status) ? `The rent is agreed at ${aed(r.agreed)}; the tenant still has to send the signed agreement${r.lease.payment_method === 'cheque' ? ' and photos of the cheques' : ''}.` : '',
   r.quote?.terms_text ? `Terms: ${r.quote.terms_text.replace(/\n/g, ' ')}` : '',
@@ -888,6 +904,7 @@ leaseRenewalRoutes.get('/:id/files/:file', wrap(async (req, res) => {
     .set('Content-Disposition', `inline; filename="${encodeURIComponent(f.name)}"`).type(f.mime).send(await readFile(f.path));
 }));
 
+leaseRenewalRoutes.get('/fees/:leaseId', wrap(async (req, res) => { res.json(await startFees(req.params.leaseId)); }));
 leaseRenewalRoutes.post('/draft', wrap(async (req, res) => { res.json(await draft(req.user, req.body || {})); }));
 leaseRenewalRoutes.post('/send', wrap(async (req, res) => { res.json(out(await send(req.user, req.body || {}))); }));
 // "Check for replies": the Tenant care inbox now, then any new email read, instead of waiting for the clock.

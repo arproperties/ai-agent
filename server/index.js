@@ -45,6 +45,7 @@ import { moduleRoutes, needsModule, needsModuleUnless, userModules, giveToEveryo
 import { noticeRoutes } from './notices.js';
 import { pictureRoutes } from './pictures.js';
 import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
+import { renewalAskRoutes } from './renewalAsks.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -83,6 +84,7 @@ app.use('/api/tenant-care', tenantCareRoutes); // the shared tenant inbox: asks 
 app.use('/api/mail-routing', requireMaster, mailRoutingRoutes); // the shared mailbox: who each email is passed on to, and who sent what (master only)
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
+app.use('/api/lease-renewals/asks', renewalAskRoutes); // offers waiting for the boss's OK before they go
 app.use('/api/lease-renewals', leaseRenewalRoutes); // leases ending within 120 days, renewed with the tenant by email step by step (module renewals)
 app.use('/api/pictures', pictureRoutes); // the pictures a chat drew for /explain, /breakdown and /explore
 app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's

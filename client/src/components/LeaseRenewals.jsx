@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -33,13 +33,14 @@ const DONE = ['converted', 'not_renewing', 'closed'];
 /** What a lease's card says: its renewal's state, or how near the end is. */
 function chipOf(l) {
   const r = l.renewal;
+  if (!r && l.ask) return l.ask.status === 'declined' ? ['Boss said no', 'bad'] : ['Waiting for the boss', 'warn'];
   if (r?.dispute && !DONE.includes(r.status)) return ['Dispute', 'bad'];
   if (r?.waiting) return WAITING[r.waiting];
   if (r) return STATUS[r.status];
   if (l.saifsys_renewal) return ['Staff in saifsys', 'mute'];
   return [l.days_left < 0 ? 'Ended' : l.days_left === 0 ? 'Ends today' : `${l.days_left} days`, l.days_left <= 30 ? 'bad' : l.days_left <= 90 ? 'warn' : 'mute'];
 }
-const needsYou = (l) => !!(l.renewal?.waiting || (l.renewal?.dispute && !DONE.includes(l.renewal.status)) || l.renewal?.status === 'papers_ok');
+const needsYou = (l) => !!((!l.renewal && l.ask && (l.ask.status === 'declined' || l.master)) || l.renewal?.waiting || (l.renewal?.dispute && !DONE.includes(l.renewal.status)) || l.renewal?.status === 'papers_ok');
 
 const Chip = ({ c: [label, tone] }) => <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs ${CHIP[tone]}`}>{label}</span>;
 
@@ -59,21 +60,48 @@ const Money = ({ value, onChange, placeholder = 'AED a year', autoFocus }) => (
     className="w-full rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm outline-none focus:border-p1/60" />
 );
 
+/** A number to copy with one tap, e.g. the premises or Ejari number. */
+function CopyChip({ label, value }) {
+  const [done, setDone] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(String(value)).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }).catch(() => {});
+  };
+  return (
+    <button onClick={copy} title="Copy"
+      className="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-xs text-mute transition hover:text-txt">
+      {label} <span className="text-txt">{value}</span> {done ? <Check size={12} className="text-p1" /> : <Copy size={12} />}
+    </button>
+  );
+}
+
 // ---------- the list ----------
 
 export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('all');
+  const [building, setBuilding] = useState('');
+  const [q, setQ] = useState('');
   const [open, setOpen] = useState(openFirst || null); // a renewal's id
-  const [starting, setStarting] = useState(null); // a lease to start
+  const [starting, setStarting] = useState(null); // { lease, ask? }: a lease to start, or an offer the boss was asked about
+  const [asked, setAsked] = useState(null); // an offer the person asked the boss about
 
-  const load = useCallback(() => api.get('/lease-renewals').then(setData).catch((e) => setError(e.message)), []);
+  const load = useCallback(() => Promise.all([api.get('/lease-renewals'), api.get('/lease-renewals/asks').catch(() => [])])
+    .then(([d, asks]) => {
+      // Each lease carries the offer waiting for the boss (or the boss's no), and who is looking.
+      const askOf = (l) => asks.find((a) => a.lease_id === l.lease_id && a.end_date === l.end_date) || null;
+      setData({ ...d, leases: d.leases.map((l) => ({ ...l, ask: askOf(l), master: d.master })) });
+    }).catch((e) => setError(e.message)), []);
   useEffect(() => { load(); }, [load]);
 
   if (open) return <Renewal id={open} onBack={() => { setOpen(null); load(); }} />;
 
-  const leases = data?.leases || [];
+  const all = data?.leases || [];
+  const buildings = [...new Set(all.map((l) => l.building).filter(Boolean))].sort().map((b) => ({ value: b, label: b }));
+  const want = q.trim().toLowerCase();
+  // The building and the search narrow the list first, so the tab counts follow them.
+  const leases = all.filter((l) => (!building || l.building === building)
+    && (!want || [l.building, l.unit, l.tenant, l.premises_number, l.ejari].join(' ').toLowerCase().includes(want)));
   const tabs = [
     ['all', 'All', leases],
     ['you', 'Needs you', leases.filter(needsYou)],
@@ -97,6 +125,14 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
         <div className="space-y-4 pb-8">
           {!data.inbox && <Problem text="The Tenant care inbox is not connected, so no email can go to a tenant. Connect it under Tenant care." />}
           {!data.saifsys && <Problem text="saifsys is not connected for actions, so renewals cannot be priced or saved." />}
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="glass flex flex-1 items-center gap-2 rounded-xl px-3.5 py-2">
+              <Search size={15} className="shrink-0 text-mute" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search unit, tenant, premises, Ejari…" className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-mute/70" />
+              {q && <button onClick={() => setQ('')} aria-label="Clear" className="text-mute hover:text-txt"><X size={14} /></button>}
+            </div>
+            <Picker value={building} onChange={setBuilding} options={buildings} none="All buildings" placeholder="All buildings" searchPlaceholder="Search buildings" className="sm:w-64" />
+          </div>
           <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
             {tabs.map(([k, label, list]) => (
               <button key={k} onClick={() => setTab(k)}
@@ -108,13 +144,17 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
           </div>
           {shown.length === 0 ? <p className="pt-12 text-center text-sm text-mute">Nothing here.</p> : (
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.saifsys_renewal ? null : setStarting(l))} />)}
+              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.saifsys_renewal ? null
+                : l.ask && l.ask.status === 'waiting' && data.master ? setStarting({ lease: l, ask: l.ask })
+                  : l.ask ? setAsked(l.ask) : setStarting({ lease: l }))} />)}
             </ul>
           )}
           {data.master && <Settings s={data.settings} agents={data.agents} inbox={data.inbox} onSaved={load} />}
         </div>
       )}
-      {starting && <StartSheet lease={starting} onClose={() => setStarting(null)} onDone={(r) => { setStarting(null); load(); if (r?.id) setOpen(r.id); }} />}
+      {starting && <StartSheet lease={starting.lease} ask={starting.ask || null} master={!!data?.master} onClose={() => setStarting(null)}
+        onDone={(r) => { setStarting(null); load(); if (r?.id) setOpen(r.id); }} />}
+      {asked && <AskedSheet ask={asked} onClose={() => setAsked(null)} onDone={() => { setAsked(null); load(); }} />}
     </Page>
   );
 }
@@ -152,23 +192,118 @@ function LeaseCard({ l, onOpen }) {
 
 // ---------- writing and sending ----------
 
-/** Start: the rent we choose and the cheques, then the offer to read before it goes. */
-function StartSheet({ lease, onClose, onDone }) {
-  const [rent, setRent] = useState(String(Math.round(lease.annual_rent)));
-  const [cheques, setCheques] = useState(String(lease.cheques || 4));
+/** The charges a saifsys renewal can carry, as Reem names them (server CHARGES). */
+const CHARGES = [['admin', 'Admin fee'], ['chiller', 'Chiller fee'], ['parking', 'Additional parking'], ['small_store', 'Small store'], ['big_store', 'Big store']];
+
+/**
+ * Start: the rent we choose, the charges and the cheques, then the offer to read before it
+ * goes. A person can ask the boss to OK it in place of sending; the boss opens the same box
+ * with what was asked (ask) to change it or send it.
+ */
+function StartSheet({ lease, ask = null, master, onClose, onDone }) {
+  const current = Number(lease.annual_rent);
+  const pctOf = (v) => (v && current ? String(Math.round(((Number(v) - current) / current) * 1000) / 10) : '');
+  const [rent, setRent] = useState(String(Math.round(ask?.ask.rent ?? current)));
+  const [pct, setPct] = useState(ask ? pctOf(ask.ask.rent) : '0');
+  const [cheques, setCheques] = useState(String(ask?.ask.cheques || lease.cheques || 4));
   const [step, setStep] = useState(null);
-  if (step) return <Compose ask={step} onClose={onClose} onSent={onDone} />;
+  // The charges start as the old lease's (from saifsys), or as asked; the person can change them.
+  const [fees, setFees] = useState(null);
+  const [amounts, setAmounts] = useState({});
+  const [shown, setShown] = useState([]); // the charges with a box
+  useEffect(() => {
+    api.get(`/lease-renewals/fees/${lease.lease_id}`).then((f) => {
+      const start = { ...f, ...(ask?.ask.fees || {}) };
+      setFees(f);
+      setAmounts(Object.fromEntries(CHARGES.map(([k]) => [k, start[k] ? String(Math.round(start[k])) : ''])));
+      setShown(CHARGES.map(([k]) => k).filter((k) => k === 'admin' || (k === 'chiller' && f.chiller_shown) || Number(start[k]) > 0));
+    }).catch(() => setFees({ failed: true }));
+  }, [lease.lease_id, ask]);
+  // The % and the rent fill each other in, so either can be typed.
+  const fromPct = (v) => {
+    setPct(v);
+    const n = Number(v);
+    if (v !== '' && v !== '-' && v !== '.' && Number.isFinite(n)) setRent(String(Math.round(current * (1 + n / 100))));
+  };
+  const fromRent = (v) => { setRent(v); setPct(pctOf(v)); };
+  const more = CHARGES.filter(([k]) => !shown.includes(k) && k !== 'chiller');
+  // The boss says no, with a note for the person who asked.
+  const [declining, setDeclining] = useState(null);
+  const [noBusy, setNoBusy] = useState(false);
+  const [noError, setNoError] = useState('');
+  const sayNo = async () => {
+    setNoBusy(true); setNoError('');
+    try { await api.post(`/lease-renewals/asks/${ask.id}/decline`, { note: declining }); onDone(null); } catch (e) { setNoError(e.message); setNoBusy(false); }
+  };
+  const typed = fees && !fees.failed ? Object.fromEntries(shown.map((k) => [k, amounts[k] === '' ? 0 : Number(amounts[k])])) : null;
+  if (step) {
+    const asked = ask?.ask;
+    const same = asked && step.rent === asked.rent && step.cheques === asked.cheques
+      && CHARGES.every(([k]) => Number(step.fees?.[k] || 0) === Number(asked.fees?.[k] || 0));
+    return <Compose ask={step} onClose={onClose} onSent={onDone} askId={ask?.id || null} askedText={same ? ask.text : null}
+      canAsk={!master && !ask} />;
+  }
   return (
-    <Sheet title="Start the renewal" onClose={onClose}>
+    <Sheet title={ask ? 'Offer waiting for your OK' : 'Start the renewal'} onClose={onClose} action={(
+      <a href={DLD_RENTAL_INDEX} target="_blank" rel="noopener noreferrer"
+        className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-3 py-1.5 text-xs text-mute transition hover:text-txt">
+        Rental Index <ExternalLink size={12} />
+      </a>
+    )}>
       <div className="space-y-4">
         <p className="text-sm text-mute">{lease.building} · Unit {lease.unit} · {lease.tenant}<br />Now {aed(lease.annual_rent)} a year, ends {day(lease.end_date)}</p>
-        <label className="block space-y-1.5 text-sm">
-          <span>New yearly rent: your choice</span>
-          <Money value={rent} onChange={setRent} autoFocus />
-          {rent && Number(rent) !== Number(lease.annual_rent) && (
-            <span className="block text-xs text-mute">{Number(rent) > lease.annual_rent ? 'Up' : 'Down'} {Math.abs(((Number(rent) - lease.annual_rent) / lease.annual_rent) * 100).toFixed(1)}% on the current rent</span>
-          )}
-        </label>
+        {ask && <p className="rounded-2xl bg-p1/10 px-3 py-2 text-sm">{ask.asked_by_name || 'Someone'} asks you to OK this offer. Change anything you need, then write it and send.</p>}
+        {(lease.premises_number || lease.ejari) && (
+          <div className="flex flex-wrap gap-1.5">
+            {lease.premises_number && <CopyChip label="Premises" value={lease.premises_number} />}
+            {lease.ejari && <CopyChip label="Ejari" value={lease.ejari} />}
+          </div>
+        )}
+        <div className="grid grid-cols-[7rem_1fr] gap-2">
+          <label className="block space-y-1.5 text-sm">
+            <span>Increase %</span>
+            <div className="relative">
+              <input inputMode="decimal" value={pct} autoFocus onFocus={(e) => e.target.select()}
+                onChange={(e) => fromPct(e.target.value.replace(/[^\d.-]/g, ''))}
+                className="w-full rounded-2xl border border-stroke bg-black/20 py-2.5 pl-3 pr-7 text-sm outline-none focus:border-p1/60" />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-mute">%</span>
+            </div>
+          </label>
+          <label className="block space-y-1.5 text-sm">
+            <span>New yearly rent</span>
+            <Money value={rent} onChange={fromRent} />
+          </label>
+        </div>
+        <div className="-mt-2 flex flex-wrap gap-1.5">
+          {[0, 5, 10, 15, 20].map((p) => (
+            <button key={p} onClick={() => fromPct(String(p))}
+              className={`rounded-full px-3.5 py-1.5 text-sm ${pct === String(p) ? 'bg-p1/30 text-txt' : 'bg-white/5 text-mute'}`}>{p}%</button>
+          ))}
+        </div>
+        {!fees ? (
+          <p className="flex items-center gap-1.5 text-xs text-mute"><Loader2 size={12} className="animate-spin" /> Getting the charges from saifsys…</p>
+        ) : fees.failed ? (
+          <p className="text-xs text-mute">saifsys did not answer, so the charges stay as on the old lease.</p>
+        ) : (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              {CHARGES.filter(([k]) => shown.includes(k)).map(([k, label]) => (
+                <label key={k} className="block space-y-1.5 text-sm">
+                  <span>{label} <span className="text-mute">+ VAT</span></span>
+                  <Money value={amounts[k] ?? ''} onChange={(v) => setAmounts((a) => ({ ...a, [k]: v }))} placeholder="AED" />
+                </label>
+              ))}
+            </div>
+            {more.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 text-xs text-mute">
+                <span>Add a charge:</span>
+                {more.map(([k, label]) => (
+                  <button key={k} onClick={() => setShown((s) => [...s, k])} className="rounded-full bg-white/5 px-3 py-1.5 hover:text-txt">+ {label}</button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <label className="block space-y-1.5 text-sm">
           <span>Cheques</span>
           <div className="flex flex-wrap gap-1.5">
@@ -178,10 +313,53 @@ function StartSheet({ lease, onClose, onDone }) {
             ))}
           </div>
         </label>
-        <div className="flex justify-end">
-          <Btn primary disabled={!rent} onClick={() => setStep({ action: 'start', lease_id: lease.lease_id, rent: Number(rent), cheques: Number(cheques) })}>
+        {ask && declining !== null && (
+          <div className="space-y-2 rounded-2xl border border-stroke p-3">
+            <textarea value={declining} onChange={(e) => setDeclining(e.target.value)} rows={2} placeholder="A note for them (optional): what to change"
+              className="w-full rounded-xl border border-stroke bg-black/20 p-2.5 text-sm outline-none focus:border-p1/60" />
+            <Problem text={noError} />
+            <div className="flex justify-end gap-2">
+              <Btn onClick={() => setDeclining(null)}>Back</Btn>
+              <Btn busy={noBusy} onClick={sayNo}><X size={14} /> Say no</Btn>
+            </div>
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          {ask && declining === null && <Btn onClick={() => setDeclining('')}><X size={14} /> Say no</Btn>}
+          <Btn primary disabled={!rent || !fees} onClick={() => setStep({
+            action: 'start', lease_id: lease.lease_id, rent: Number(rent), cheques: Number(cheques), ...(typed ? { fees: typed } : {}),
+          })}>
             <Mail size={14} /> Write the offer
           </Btn>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+/** What a person sees on an offer they asked the boss about: waiting, or the boss's no. */
+function AskedSheet({ ask, onClose, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const takeBack = async () => {
+    setBusy(true); setError('');
+    try { await api.post(`/lease-renewals/asks/${ask.id}/cancel`); onDone(); } catch (e) { setError(e.message); setBusy(false); }
+  };
+  const declined = ask.status === 'declined';
+  return (
+    <Sheet title={declined ? 'The boss said no' : 'Waiting for the boss'} onClose={onClose}>
+      <div className="space-y-3">
+        <p className="text-sm text-mute">{ask.building} · Unit {ask.unit} · {ask.tenant}</p>
+        <div className="rounded-2xl border border-stroke bg-black/20 p-3 text-sm">
+          <p><span className="text-mute">Rent:</span> <b>{aed(ask.ask.rent)}</b> a year · {ask.ask.cheques} cheque{ask.ask.cheques > 1 ? 's' : ''}</p>
+          {ask.ask.fees && <p className="mt-1 text-xs text-mute">{CHARGES.filter(([k]) => Number(ask.ask.fees[k]) > 0).map(([k, l]) => `${l} ${aed(ask.ask.fees[k])}`).join(' · ')}</p>}
+        </div>
+        {declined ? <p className="text-sm">{ask.note ? `The boss's note: ${ask.note}` : 'The boss left no note.'} Take it back to write a new offer.</p>
+          : <p className="text-sm text-mute">The boss got a buzz. Nothing goes to the tenant until they OK it.</p>}
+        <Problem text={error} />
+        <div className="flex justify-end gap-2">
+          <Btn onClick={onClose}>Close</Btn>
+          <Btn busy={busy} onClick={takeBack}><X size={14} /> Take it back</Btn>
         </div>
       </div>
     </Sheet>
@@ -194,17 +372,24 @@ const TITLES = {
 };
 
 /** The email a step sends, written by Reem, read (and changed if need be) by the person, then sent. */
-function Compose({ ask, onClose, onSent }) {
+// For a start: canAsk offers "Ask the boss" in place of sending; askId sends an offer the boss
+// was asked to OK (askedText: the words as asked, kept when the figures did not change).
+function Compose({ ask, onClose, onSent, canAsk = false, askId = null, askedText = null }) {
   const [d, setD] = useState(null);
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   useEffect(() => {
-    api.post('/lease-renewals/draft', ask).then((x) => { setD(x); setText(x.text); }).catch((e) => setError(e.message));
-  }, [ask]);
-  const send = async () => {
-    setBusy(true); setError('');
-    try { onSent(await api.post('/lease-renewals/send', { ...ask, text })); } catch (e) { setError(e.message); setBusy(false); }
+    api.post('/lease-renewals/draft', ask).then((x) => { setD(x); setText(askedText || x.text); }).catch((e) => setError(e.message));
+  }, [ask, askedText]);
+  const figures = { rent: ask.rent, cheques: ask.cheques, ...(ask.fees ? { fees: ask.fees } : {}) };
+  const go = async (how) => {
+    setBusy(how); setError('');
+    try {
+      if (how === 'ask') { await api.post('/lease-renewals/asks', { lease_id: ask.lease_id, ask: figures, text }); onSent(null); }
+      else if (askId) onSent(await api.post(`/lease-renewals/asks/${askId}/approve`, { ask: figures, text }));
+      else onSent(await api.post('/lease-renewals/send', { ...ask, text }));
+    } catch (e) { setError(e.message); setBusy(''); }
   };
   return (
     <Sheet title={TITLES[ask.action]} onClose={onClose}>
@@ -214,6 +399,9 @@ function Compose({ ask, onClose, onSent }) {
           {d.rent && ask.action !== 'convert' && (
             <div className="rounded-2xl border border-stroke bg-black/20 p-3 text-sm">
               <p><span className="text-mute">Rent:</span> <b>{aed(d.rent)}</b> a year{d.source?.kind === 'rera_index' ? ` · RERA index${d.source.pct !== undefined ? ` (+${d.source.pct}%)` : ''}` : ''}</p>
+              {d.fees && CHARGES.some(([k]) => d.fees[k] > 0) && (
+                <p className="mt-1 text-xs text-mute">{CHARGES.filter(([k]) => d.fees[k] > 0).map(([k, l]) => `${l} ${aed(d.fees[k])}`).join(' · ')} + VAT</p>
+              )}
               {d.schedule && <p className="mt-1 text-xs text-mute">{d.schedule.length} cheques: {d.schedule.map((c) => `${day(c.date)} ${aed(c.amount)}`).join(' · ')}</p>}
             </div>
           )}
@@ -226,7 +414,8 @@ function Compose({ ask, onClose, onSent }) {
           <Problem text={error} />
           <div className="flex justify-end gap-2">
             <Btn onClick={onClose}>Cancel</Btn>
-            <Btn primary busy={busy} disabled={!text.trim()} onClick={send}><Send size={14} /> Send</Btn>
+            {canAsk && <Btn busy={busy === 'ask'} disabled={!text.trim() || !!busy} onClick={() => go('ask')}><Users size={14} /> Ask the boss</Btn>}
+            <Btn primary busy={busy === 'send'} disabled={!text.trim() || !!busy} onClick={() => go('send')}><Send size={14} /> {askId ? 'Approve & send' : 'Send'}</Btn>
           </div>
         </div>
       )}

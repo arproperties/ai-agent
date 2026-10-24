@@ -1765,4 +1765,20 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_lease_renewal_files ON lease_renewal_files(renewal_id);
+  -- A renewal offer a person asks the boss to OK before it goes (server/renewalAsks.js).
+  CREATE TABLE IF NOT EXISTS lease_renewal_asks (
+    id SERIAL PRIMARY KEY,
+    lease_id INTEGER NOT NULL,
+    end_date TEXT NOT NULL,
+    lease JSONB NOT NULL,
+    ask JSONB NOT NULL,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'sent', 'declined', 'cancelled')),
+    note TEXT,
+    asked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    asked_at BIGINT NOT NULL,
+    decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    decided_at BIGINT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_renewal_asks_waiting ON lease_renewal_asks(lease_id, end_date) WHERE status = 'waiting';
 `);
