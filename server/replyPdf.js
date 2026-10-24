@@ -18,7 +18,7 @@ async function build(userId, messageId) {
   if (!m) throw bad('That message was not found', 404);
   const part = documentPart(m.content, { own: m.role === 'user' });
   if (!part) throw bad('There is nothing in that message to put in a PDF');
-  if (unsupportedScript(part.markdown)) throw bad('PDFs can only be made from English text for now');
+  if (unsupportedScript(part.markdown)) throw bad('PDFs can only be made from English or Arabic text for now');
   const bytes = await renderPdf({ ...part, date: new Date(Number(m.created_at) * 1000) });
   return { m, part, bytes: Buffer.from(bytes) };
 }

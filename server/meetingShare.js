@@ -65,7 +65,7 @@ async function ready(userId, id) {
 
 async function buildPdf(m, transcript) {
   const markdown = meetingMarkdown(m, { transcript });
-  if (unsupportedScript(markdown)) throw bad('PDFs can only be made from English text for now');
+  if (unsupportedScript(markdown)) throw bad('PDFs can only be made from English or Arabic text for now');
   const bytes = Buffer.from(await renderPdf({ title: titleOf(m), markdown, date: new Date(m.created_at * 1000) }));
   return { markdown, bytes, name: pdfName(`${titleOf(m)}${transcript ? ' (with transcript)' : ''}`) };
 }
