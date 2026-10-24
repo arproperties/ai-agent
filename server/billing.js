@@ -23,7 +23,7 @@ export const CLAUDE_PRICES = [
   { id: 'claude-haiku-5-5', name: 'Haiku 5.5', about: 'The cheap one: Auto answers with it', input: 0.10, output: 0.50, read: 0.01,
     long: { over: 100_000, input: 0.50, output: 2.50, read: 0.05 } },
   { id: 'claude-haiku-4-5', name: 'Haiku 4.5', about: 'Quick small jobs: titles, sorting, short replies', input: 1, output: 5, read: 0.10 },
-  { id: 'claude-sonnet-5-5', name: 'Sonnet 5.5', about: 'The careful helper Auto asks when a question is hard', input: 2, output: 10, read: 0.20 },
+  { id: 'claude-sonnet-5-5', name: 'Sonnet 5.5', about: 'The careful helper Auto asks when a question is hard; it also writes the master\'s Auto answers', input: 2, output: 10, read: 0.20 },
   { id: 'claude-sonnet-5', name: 'Sonnet 5', about: 'Reading PDFs, renewals and other work kept as fact', input: 2, output: 10, read: 0.20 },
   { id: 'claude-opus-5-5', name: 'Opus 5.5', about: 'The smartest', input: 4, output: 20, read: 0.20 },
   { id: 'claude-opus-5', name: 'Opus 5', about: 'The smartest (older)', input: 5, output: 25, read: 0.50 },
