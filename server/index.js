@@ -53,6 +53,7 @@ import { noticeRoutes } from './notices.js';
 import { pictureRoutes } from './pictures.js';
 import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
 import { billingContext, billingRoutes, billAs } from './billing.js';
+import { legalCaseRoutes, startLegalCases } from './legalCases.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -95,6 +96,7 @@ app.use('/api/shared-inbox', sharedInboxRoutes); // the emails Mail routing pass
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
 app.use('/api/lease-renewals', leaseRenewalRoutes); // leases ending within 120 days, renewed with the tenant by email step by step (module renewals)
+app.use('/api/legal-cases', legalCaseRoutes); // legal cases step by step, cooling periods to closure (module legal)
 app.use('/api/pictures', pictureRoutes); // the pictures a chat drew for /explain, /breakdown and /explore
 app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's
 app.use('/api/address-book', addressRoutes); // company mailboxes the master added, next to the built-in ones (master only)
@@ -470,6 +472,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // Each timer keeps the job it was started as, so what it costs shows under that job in Billing.
   billAs({ userId: null, job: 'tenantcare' }, startTenantCare); // does nothing until the Tenant care inbox is connected
   billAs({ userId: null, job: 'renewals' }, startLeaseRenewals); // reads tenants' replies to renewals and sends the reminders
+  billAs({ userId: null, job: 'other' }, startLegalCases); // tells people when a cooling period is about to end, or has run over
   billAs({ userId: null, job: 'mail' }, startMailRouting); // does nothing until the shared mailbox is connected
   billAs({ userId: null, job: 'buildings' }, startBuildings); // buzzes a building's administrator when a staff job needs them
   billAs({ userId: null, job: 'other' }, startRecurringPayments); // creates each recurring payment's line on its day of the month

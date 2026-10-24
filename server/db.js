@@ -1990,6 +1990,98 @@ await db.exec(`
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS terms_flags JSONB;
 `);
 
+// Legal cases (server/legalCases.js): a legal case from its type to its end, step by step,
+// as Alreem's SRS draws it (docs/superpowers/specs/2026-10-24-legal-cases-design.md).
+//   legal_case_settings: one row. The two cooling periods in days, who besides the master
+//     may take the settlement and case-status decisions (deciders, user ids), how many days
+//     before a period ends the alert goes, and the largest file in MB.
+//   legal_case_types: Unauthorized Use, Rule Violation, ...; the master adds and retires them.
+//     A case keeps the type's name as it was (type_name), so retiring a type loses nothing.
+//   legal_cases: stage is where it is in the flow, status the business state - kept apart
+//     on purpose (SRS: "business status and process stage are distinguishable"). steps holds
+//     each stage's own fields once filled in, by stage key: {"legal_notice": {...}, ...}.
+//   legal_case_events: the timeline and the audit trail. data has before/after where a value changed.
+//   legal_case_files: the documents, by the stage they were added at; files under data/legal-cases.
+//   legal_case_alerts: which alert went for which case, so each goes once.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS legal_case_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    initial_days INTEGER NOT NULL DEFAULT 7,
+    legal_days INTEGER NOT NULL DEFAULT 30,
+    warn_days INTEGER NOT NULL DEFAULT 3,
+    max_file_mb INTEGER NOT NULL DEFAULT 15,
+    deciders JSONB NOT NULL DEFAULT '[]',
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS legal_case_types (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    active BOOLEAN NOT NULL DEFAULT true,
+    sort INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS legal_cases (
+    id SERIAL PRIMARY KEY,
+    number TEXT NOT NULL UNIQUE,
+    type_id INTEGER REFERENCES legal_case_types(id) ON DELETE SET NULL,
+    type_name TEXT NOT NULL,
+    title TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    status TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+    description TEXT,
+    incident_date TEXT,
+    building TEXT,
+    unit TEXT,
+    party_name TEXT,
+    party_phone TEXT,
+    party_email TEXT,
+    contract_ref TEXT,
+    remarks TEXT,
+    steps JSONB NOT NULL DEFAULT '{}',
+    assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    outcome TEXT,
+    closed_at BIGINT,
+    closed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_legal_cases_stage ON legal_cases(stage);
+  CREATE TABLE IF NOT EXISTS legal_case_events (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('created', 'stage', 'decision', 'update', 'assign', 'file', 'note', 'closed')),
+    stage TEXT,
+    title TEXT NOT NULL,
+    data JSONB,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_legal_case_events ON legal_case_events(case_id, id);
+  CREATE TABLE IF NOT EXISTS legal_case_files (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    doc_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_legal_case_files ON legal_case_files(case_id);
+  CREATE TABLE IF NOT EXISTS legal_case_alerts (
+    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (case_id, key)
+  );
+  INSERT INTO legal_case_types (name, sort) VALUES
+    ('Unauthorized Use', 1), ('Rule Violation', 2), ('Damage', 3), ('Complaint', 4), ('Cheque Bounce', 5), ('Other', 6)
+    ON CONFLICT (name) DO NOTHING;
+`);
+
 // Company mailboxes the master added to the address book (server/addressBook.js), next to
 // the ones written into the code. Only addresses on our own domains: anything else is
 // never checked, so it needs no entry.
