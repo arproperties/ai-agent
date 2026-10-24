@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { documentPart, parseInline, parseBlocks, renderPdf, unsupportedScript, pdfName, sanitize } from '../server/replyDoc.js';
+import { documentPart, parseInline, parseBlocks, renderPdf, unsupportedScript, pdfName, sanitize, visualOrder, isRtl } from '../server/replyDoc.js';
 import { documentPart as clientPart, hideMarkers } from '../client/src/lib/replyDoc.js';
 
 const marked = `Sure, here is the packet.
@@ -79,10 +79,37 @@ test('the same reply always makes the same file', async () => {
   assert.ok(a.equals(b));
 });
 
-test('symbols the fonts lack do not break the PDF; another script is refused', async () => {
+test('symbols the fonts lack do not break the PDF; a script with no font is refused', async () => {
   await renderPdf({ title: 'Checks ✓', markdown: '# Checks ✓\n\n- Done ✅ → next 🎉' });
-  assert.equal(unsupportedScript('عقد إيجار سكني لمدة سنة'), true);
+  assert.equal(unsupportedScript('किरायेदारी अनुबंध एक साल के लिए'), true);
+  assert.equal(unsupportedScript('عقد إيجار سكني لمدة سنة'), false);
   assert.equal(unsupportedScript('Tenancy contract, café résumé'), false);
+});
+
+test('an Arabic document makes a PDF, the same bytes every time, with the Arabic font only when needed', async () => {
+  const md = '# عقد إيجار سكني\n\nهذا العقد بين **شركة العين ريم** والمستأجر بقيمة 45,000 درهم (AED).\n\n- رسوم Ejari على المستأجر\n\n| البند | المبلغ |\n|---|---|\n| الإيجار | 45,000 |\n\n> ملاحظة (مهمة)\n\n```\nكود\n```';
+  const part = documentPart(md);
+  assert.equal(part.title, 'عقد إيجار سكني');
+  const date = new Date('2026-10-24T09:00:00Z');
+  const a = Buffer.from(await renderPdf({ ...part, date }));
+  const b = Buffer.from(await renderPdf({ ...part, date }));
+  assert.ok(a.equals(b));
+  const { PDFDocument, PDFName } = await import('pdf-lib');
+  const fonts = async (bytes) => (await PDFDocument.load(bytes)).context.enumerateIndirectObjects()
+    .map(([, o]) => o.get?.(PDFName.of('BaseFont'))?.toString()).filter(Boolean);
+  assert.ok((await fonts(a)).includes('/NotoSansArabic'));
+  const english = await renderPdf({ title: 'Lease', markdown: '# Lease\n\nOne year.', date });
+  assert.ok(!(await fonts(english)).some((f) => f.includes('NotoSansArabic')), 'an English PDF carries no Arabic font');
+});
+
+test('right-to-left lines run from the right, English words inside them stay the right way', () => {
+  const w = (text) => ({ text, w: 1 });
+  const words = (line) => line.map((s) => s.text).filter((t) => t.trim()).join('|');
+  const line = ['بقيمة', ' ', 'Ejari', ' ', 'fee', ' ', 'درهم'].map(w);
+  assert.equal(words(visualOrder(line, true)), 'درهم|Ejari|fee|بقيمة');
+  assert.equal(words(visualOrder(['Mr.', ' ', 'أحمد', ' ', 'علي', ' ', 'signed'].map(w), false)), 'Mr.|علي|أحمد|signed');
+  assert.equal(isRtl('**عقد** lease'), true);
+  assert.equal(isRtl('Lease عقد'), false);
 });
 
 test('file names are safe', () => {
