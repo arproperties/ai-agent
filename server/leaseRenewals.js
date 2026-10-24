@@ -274,7 +274,7 @@ export function chequeParts(q, rent, c = chargesOf(q)) {
   const firstBits = [
     `rent ${aed(firstRent)}`,
     ...(chiller ? [`chiller ${aed(firstCh)}`, ...(chiller.vat ? [`chiller VAT ${aed(chiller.vat)}`] : [])] : []),
-    ...fees.map((x) => `${x.label.toLowerCase()}${x.vat ? ' with VAT' : ''} ${aed(x.amount + x.vat)}`),
+    ...fees.map((x) => `${x.label.replace(/^[A-Z](?![A-Z])/, (c) => c.toLowerCase())}${x.vat ? ' with VAT' : ''} ${aed(x.amount + x.vat)}`),
     ...(rera ? [`Ejari fee ${aed(rera)}`] : []),
   ];
   const restBits = chiller ? ` (rent ${aed(rentPer)} + chiller ${aed(chPer)})` : '';
@@ -284,7 +284,7 @@ export function chequeParts(q, rent, c = chargesOf(q)) {
 }
 
 /** The renewal's charges one by one, as saifsys charges them. */
-const CHARGES = [['chiller', 'Chiller fee'], ['admin', 'Admin fee'], ['parking', 'Additional parking slot'], ['small_store', 'Small storeroom'], ['big_store', 'Big storeroom']];
+const CHARGES = [['chiller', 'Chiller fee'], ['admin', 'Admin fee'], ['parking', 'Additional parking slot'], ['small_store', 'Small storeroom'], ['big_store', 'Big storeroom'], ['ev', 'EV charger']];
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
 
 /**
@@ -451,6 +451,7 @@ async function mirror(r, message, { text = null, files = [] } = {}) {
 const feesOf = (f = {}) => ({
   admin_fees: f.admin ?? null, chiller_charges: f.chiller ?? null,
   additional_parking_fee: f.parking ?? null, small_store_fee: f.small_store ?? null, big_store_fee: f.big_store ?? null,
+  ev_fee: f.ev ?? null,
 });
 
 async function quoteFor(lease, rent, cheques, fees) {
@@ -496,7 +497,7 @@ const rentOf = (v) => {
 
 /** The renewal (or, for start, the lease) a draft or a send is about, and the figures it needs. */
 async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera_pct: rawPct, words, admin_fees: adminFee, chiller_charges: chillerFee,
-  additional_parking_fee: parkingFee, small_store_fee: smallFee, big_store_fee: bigFee }) {
+  additional_parking_fee: parkingFee, small_store_fee: smallFee, big_store_fee: bigFee, ev_fee: evFee }) {
   const a = ACTIONS[action];
   if (!a) throw bad('Unknown step.');
   const s = await settings();
@@ -530,7 +531,7 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera
   if (action === 'convert') amount = r.agreed;
   // Start takes the fees the person typed; later steps keep the renewal's.
   const fee = (v) => (v === undefined || v === null || v === '' ? null : Math.max(0, Math.round(Number(v) * 100) / 100));
-  const fees = action === 'start' ? { admin: fee(adminFee), chiller: fee(chillerFee), parking: fee(parkingFee), small_store: fee(smallFee), big_store: fee(bigFee) } : r.quote?.fees;
+  const fees = action === 'start' ? { admin: fee(adminFee), chiller: fee(chillerFee), parking: fee(parkingFee), small_store: fee(smallFee), big_store: fee(bigFee), ev: fee(evFee) } : r.quote?.fees;
   const quote = amount && action !== 'convert' ? (action !== 'accept' || amount !== r.offer || !r.quote ? await quoteFor(r.lease, amount, n, fees) : r.quote) : r.quote;
 
   let text;

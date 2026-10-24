@@ -734,3 +734,22 @@ test('Bcc: accounts@ is copied by default', async () => {
   stub();
   assert.equal((await R.settings()).bcc[0], 'accounts@ainalreempro.com', 'accounts@ by default');
 });
+
+test('EV charger: 700 + VAT on the offer and in cheque 1, and its fee goes to saifsys', async () => {
+  const boss = await setup();
+  stub();
+  R.useForTests({ act: async (m, action, body) => {
+    world.acts.push({ action, ...body });
+    return { quote: {
+      proposed_rent: 50000, rera: 300, grand_total: 50000 + 1575 + 3150 + 735 + 300, start_date: '2026-11-01', end_date: '2027-10-31', terms_text: '', required_documents_text: '',
+      fees: { chiller: 0, admin: 1500, parking: 3000, small_store: 0, big_store: 0, ev: 700, chiller_shown: false },
+      cheques: [{ date: '2026-11-01', amount: 12500 + 1575 + 3150 + 735 + 300, type: 'rent' }, ...['2027-02-01', '2027-05-01', '2027-08-01'].map((date) => ({ date, amount: 12500, type: 'rent' }))],
+      cheques_total: 55760,
+    } };
+  } });
+  const d = await R.draft(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 50000, cheques: 4, ev_fee: 700, additional_parking_fee: 3000 });
+  assert.equal(world.acts.at(-1).ev_fee, 700);
+  assert.match(d.text, /- EV charger: AED 700 \+ 5% VAT AED 35 = AED 735/);
+  assert.match(d.text, /- Total: AED 55,760/);
+  assert.match(d.text, /1\. 1 November 2026: AED 18,260 \(rent AED 12,500 \+ admin fee with VAT AED 1,575 \+ additional parking slot with VAT AED 3,150 \+ EV charger with VAT AED 735 \+ Ejari fee AED 300\)/);
+});

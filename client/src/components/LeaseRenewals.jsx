@@ -187,7 +187,8 @@ function LeaseCard({ l, onOpen }) {
 // ---------- writing and sending ----------
 
 /** The optional extra services saifsys renews with a lease: key, label, the field saifsys takes. */
-const EXTRAS = [['parking', 'Additional parking slot', 'additional_parking_fee'], ['small_store', 'Small storeroom', 'small_store_fee'], ['big_store', 'Big storeroom', 'big_store_fee']];
+const EXTRAS = [['parking', 'Additional parking slot', 'additional_parking_fee'], ['small_store', 'Small storeroom', 'small_store_fee'], ['big_store', 'Big storeroom', 'big_store_fee'], ['ev', 'EV charger', 'ev_fee']];
+const EV_FEE = 700; // a year, with VAT on top, in cheque 1
 
 /** Start: the rent we choose and the cheques, then the offer to read before it goes. */
 function StartSheet({ lease, onClose, onDone }) {
@@ -209,7 +210,7 @@ function StartSheet({ lease, onClose, onDone }) {
   useEffect(() => {
     api.get(`/lease-renewals/fees/${lease.lease_id}`).then((f) => {
       setFees(f); setAdmin(String(Math.round(f.admin || 0))); setChiller(String(Math.round(f.chiller || 0)));
-      setExtras(Object.fromEntries(EXTRAS.map(([k]) => [k, { on: Number(f[k]) > 0, fee: Number(f[k]) > 0 ? String(Math.round(f[k])) : '' }])));
+      setExtras(Object.fromEntries(EXTRAS.map(([k]) => [k, { on: Number(f[k]) > 0, fee: Number(f[k]) > 0 ? String(Math.round(f[k])) : k === 'ev' ? String(EV_FEE) : '' }])));
     }).catch(() => setFees({ failed: true }));
   }, [lease.lease_id]);
   // The % and the rent fill each other in, so either can be typed.
@@ -311,7 +312,7 @@ function StartSheet({ lease, onClose, onDone }) {
         {fees && !fees.failed && (
           <div className="space-y-2">
             <p className="text-sm">Optional Extra Services</p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {EXTRAS.map(([k, label]) => {
                 const x = extras[k] || { on: false, fee: '' };
                 const set = (v) => setExtras((e) => ({ ...e, [k]: { ...x, ...v } }));
