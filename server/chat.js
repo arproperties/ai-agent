@@ -17,11 +17,11 @@ import { shelfKit, splitParts } from './shelf.js';
 import { noticeKit } from './notices.js';
 import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
-import { chatAgents, privateAgents, isExternal } from './access.js';
+import { chatAgents, privateAgents, isExternal, isMaster } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
 import { userModules } from './modules.js';
 import { pictureTag, makePicture, pictureKit } from './pictures.js';
-import { AUTO_MODEL, ADVISOR_MODEL } from './config.js';
+import { AUTO_MODEL, ADVISOR_MODEL, MASTER_MODEL } from './config.js';
 import { addressPrompt, addressKit, loadAddresses } from './addressBook.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
@@ -47,6 +47,15 @@ const webSearch = (model) => ({
 const advisor = { type: 'advisor_20260301', name: 'advisor', model: ADVISOR_MODEL, max_uses: 3, caching: { type: 'ephemeral', ttl: '5m' } };
 const ADVISOR_RULE = 'You have an advisor, a stronger model. Consult it before answering when the question is hard: money or rent calculations, ' +
   'reading a contract or legal rule, a case history, a plan with several steps, or when you are unsure. Answer simple questions yourself without it.';
+
+// Which model writes the reply, and whether it has the advisor. Auto is the cheap model with
+// an advisor, except for the master: there the stronger model writes every answer itself.
+// A model picked by name on the agent is used as it is, for everyone.
+export function chatModel(user, agent) {
+  if (agent.model !== 'auto') return { model: agent.model, auto: false };
+  if (isMaster(user)) return { model: MASTER_MODEL, auto: false };
+  return { model: AUTO_MODEL, auto: true };
+}
 
 function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false, auto = false) {
   const others = team.filter((a) => a.id !== agent.id).map((a) => a.name);
@@ -558,8 +567,7 @@ export async function chat(req, res) {
 
   try {
     let prevType = null;
-    const auto = agent.model === 'auto';
-    const model = auto ? AUTO_MODEL : agent.model;
+    const { model, auto } = chatModel(user, agent);
     if (mailbox) await loadAddresses(); // the master may have added one since the last message
     const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto);
     for (let turn = 0; turn < MAX_ROUNDS; turn++) {
