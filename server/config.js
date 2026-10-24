@@ -31,6 +31,9 @@ export const AUTO_MODEL = 'claude-haiku-5-5';
 export const ADVISOR_MODEL = 'claude-sonnet-5-5';
 // For work printed or filed as fact (lease renewals, picture captions): always the careful model.
 export const CAREFUL_MODEL = 'claude-sonnet-5';
+// Document Renewals' emails and expiry alerts stay off until the master says it is ready:
+// DOC_RENEWALS_SEND=on in .env. Until then the screen works, but nothing reaches anyone.
+export const DOC_RENEWALS_SEND = process.env.DOC_RENEWALS_SEND === 'on';
 // OpenAI's image model, for the pictures a chat tag asks for (server/pictures.js).
 export const IMAGE_MODEL = process.env.IMAGE_MODEL || 'gpt-image-2.5-sunburst';
 export const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'];

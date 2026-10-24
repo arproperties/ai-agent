@@ -18,6 +18,7 @@ import { imapAccount } from './imap.js';
 import { createDraft, decideDraft, draftOut, getDraft } from './drafts.js';
 import { keepFiles } from './draftFiles.js';
 import { kick } from './outbox.js';
+import { DOC_RENEWALS_SEND } from './config.js';
 
 // Document Renewals, the screen (client/src/components/DocumentRenewals.jsx): every
 // categorised Shelf file this person may read, by the employee or the company it is for,
@@ -355,7 +356,8 @@ export async function caseEmail(user, caseId, { mailbox = imapAccount, lookup = 
  * in one go and the outbox sends it from their own mailbox. The ticked documents (the
  * employee's own, fetched from saifsys if not here yet) are attached; a termination has none.
  */
-export async function sendCaseEmail(user, caseId, { to, cc = [], subject, body, document_ids: ids = [] } = {}, { mailbox = imapAccount, fetch = fileFor, kick: go = kick } = {}) {
+export async function sendCaseEmail(user, caseId, { to, cc = [], subject, body, document_ids: ids = [] } = {}, { mailbox = imapAccount, fetch = fileFor, kick: go = kick, allowed = DOC_RENEWALS_SEND } = {}) {
+  if (!allowed) throw Object.assign(new Error('Sending is switched off for Document Renewals for now. Nothing was sent.'), { status: 403 });
   const c = await cases.getCase(user, caseId);
   const acc = await mailbox(user.id);
   if (!acc?.can_write || !acc.smtp_host) throw Object.assign(new Error('Connect your email with sending turned on first (Settings, Email)'), { status: 400 });

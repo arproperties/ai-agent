@@ -63,7 +63,7 @@ test('Send: an email from the user\'s mailbox, To and Cc, with the ticked docume
   const fetch = async (user, id) => db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
   const out = await sendCaseEmail(boss, caseId, {
     to: ['pro@example.com'], cc: 'boss@example.com; hr2@example.com', subject: 'Renewal', body: 'Please renew.', document_ids: [contract, passport],
-  }, { fetch, mailbox, kick: () => { kicked++; } });
+  }, { fetch, mailbox, kick: () => { kicked++; }, allowed: true });
   assert.equal(out.status, 'approved', 'the person pressed Send: it goes out');
   assert.deepEqual(out.to, ['pro@example.com']);
   assert.deepEqual(out.cc, ['boss@example.com', 'hr2@example.com']);
@@ -78,18 +78,26 @@ test('Send: an email from the user\'s mailbox, To and Cc, with the ticked docume
 test('a document of someone else cannot be attached', async () => {
   const { boss, caseId } = await office();
   const other = (await db.prepare(`SELECT id FROM documents WHERE employee_code = 'E-0077'`).get()).id;
-  await assert.rejects(sendCaseEmail(boss, caseId, { to: 'a@example.com', subject: 's', body: 'b', document_ids: [other] }, { mailbox, kick: () => {} }), /not one of/);
+  await assert.rejects(sendCaseEmail(boss, caseId, { to: 'a@example.com', subject: 's', body: 'b', document_ids: [other] }, { mailbox, kick: () => {}, allowed: true }), /not one of/);
 });
 
 test('no mailbox that can send: nothing is drafted', async () => {
   const { boss, caseId } = await office();
-  await assert.rejects(sendCaseEmail(boss, caseId, { to: 'a@example.com', subject: 's', body: 'b', document_ids: [] }, { mailbox: async () => null, kick: () => {} }), /Connect your email/);
+  await assert.rejects(sendCaseEmail(boss, caseId, { to: 'a@example.com', subject: 's', body: 'b', document_ids: [] }, { mailbox: async () => null, kick: () => {}, allowed: true }), /Connect your email/);
   assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM email_drafts').get()).n, 0);
 });
 
 test('nobody to send to is said', async () => {
   const { boss, caseId } = await office();
-  await assert.rejects(sendCaseEmail(boss, caseId, { to: '', subject: 's', body: 'b', document_ids: [] }, { mailbox, kick: () => {} }), /recipient/);
+  await assert.rejects(sendCaseEmail(boss, caseId, { to: '', subject: 's', body: 'b', document_ids: [] }, { mailbox, kick: () => {}, allowed: true }), /recipient/);
+});
+
+test('sending switched off (the default): nothing is drafted and nothing goes out', async () => {
+  const { boss, caseId, contract } = await office();
+  let kicked = 0;
+  await assert.rejects(sendCaseEmail(boss, caseId, { to: 'pro@example.com', subject: 's', body: 'b', document_ids: [contract] }, { mailbox, kick: () => { kicked++; } }), /switched off/);
+  assert.equal(kicked, 0);
+  assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM email_drafts').get()).n, 0);
 });
 
 test('a termination email has its reason and last day, and no documents', async () => {
@@ -106,7 +114,7 @@ test('a termination email has its reason and last day, and no documents', async 
   assert.match(d.body, /Your last working day: 9 Dec 2026/);
   assert.deepEqual(d.documents, []);
   const passport = (await db.prepare(`SELECT id FROM documents WHERE employee_code = 'E-0042' AND type_id = (SELECT id FROM document_types WHERE label = 'Passport')`).get()).id;
-  await assert.rejects(sendCaseEmail(boss, c.id, { to: 'a@example.com', subject: 's', body: 'b', document_ids: [passport] }, { mailbox, kick: () => {} }), /not one of/);
+  await assert.rejects(sendCaseEmail(boss, c.id, { to: 'a@example.com', subject: 's', body: 'b', document_ids: [passport] }, { mailbox, kick: () => {}, allowed: true }), /not one of/);
 });
 
 test('a termination email goes to the employee: their email in To, nothing to attach', async () => {

@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { existsSync } from 'node:fs';
-import { ROOT, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS } from './config.js';
+import { ROOT, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS, DOC_RENEWALS_SEND } from './config.js';
 import { db, tx } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo, timingsFor } from './tts.js';
@@ -457,8 +457,9 @@ app.listen(PORT, '0.0.0.0', () => {
   // saifsys's employee documents onto the Shelf, for Document Renewals: nightly, and once now
   startSaifsysDocSync();
   // Expiry alerts (pushes and to-dos) on the live server only, unless asked for: a local copy of
-  // the live database holds real people's phones, which a test run must not wake.
-  if (process.env.NODE_ENV === 'production' || process.env.DOCUMENT_ALERTS === 'on') startDocumentAlerts();
+  // the live database holds real people's phones, which a test run must not wake. And on live
+  // only once Document Renewals sending is switched on (DOC_RENEWALS_SEND).
+  if ((process.env.NODE_ENV === 'production' && DOC_RENEWALS_SEND) || process.env.DOCUMENT_ALERTS === 'on') startDocumentAlerts();
   // drafts approved while the rate limit was full go out when it clears
   startOutbox().catch((e) => console.error('[outbox]', e.message));
   // files from a folder or ZIP import that were still waiting when the server stopped
