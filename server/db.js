@@ -1887,6 +1887,22 @@ await db.exec(`
 // saifsys document became which file, when saifsys last changed it, and whether its file
 // has come yet (saifsys may hold the row before the file).
 await db.exec(`
+  -- Expiry alerts (server/documentAlerts.js): the master's alert days, and every alert sent,
+  -- one per file and step, so none is sent twice.
+  CREATE TABLE IF NOT EXISTS document_alert_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    days INTEGER[] NOT NULL DEFAULT '{60,30,14}',
+    overdue_every_days INTEGER NOT NULL DEFAULT 7,
+    hour INTEGER NOT NULL DEFAULT 8
+  );
+  CREATE TABLE IF NOT EXISTS document_alerts (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    step TEXT NOT NULL,
+    sent_to INTEGER[] NOT NULL DEFAULT '{}',
+    sent_at BIGINT DEFAULT ${NOW},
+    UNIQUE (document_id, step)
+  );
   CREATE TABLE IF NOT EXISTS saifsys_doc_links (
     saifsys_id INTEGER PRIMARY KEY,
     document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,

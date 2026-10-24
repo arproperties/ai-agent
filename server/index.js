@@ -28,6 +28,7 @@ import { fileAccessRoutes } from './fileAccess.js';
 import { docCategoryRoutes, seedCategories } from './docCategories.js';
 import { documentRenewalRoutes } from './documentRenewals.js';
 import { startSaifsysDocSync } from './saifsysDocSync.js';
+import { startDocumentAlerts } from './documentAlerts.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
@@ -449,6 +450,9 @@ await bringOldRemindersIntoTodos()
 app.listen(PORT, '0.0.0.0', () => {
   // saifsys's employee documents onto the Shelf, for Document Renewals: nightly, and once now
   startSaifsysDocSync();
+  // Expiry alerts (pushes and to-dos) on the live server only, unless asked for: a local copy of
+  // the live database holds real people's phones, which a test run must not wake.
+  if (process.env.NODE_ENV === 'production' || process.env.DOCUMENT_ALERTS === 'on') startDocumentAlerts();
   // drafts approved while the rate limit was full go out when it clears
   startOutbox().catch((e) => console.error('[outbox]', e.message));
   // files from a folder or ZIP import that were still waiting when the server stopped

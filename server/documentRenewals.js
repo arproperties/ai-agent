@@ -6,6 +6,7 @@ import { needsModule } from './modules.js';
 import { listCategories } from './docCategories.js';
 import { askSaifsys, dubaiDate } from './saifsys/client.js';
 import { syncNow, fileFor } from './saifsysDocSync.js';
+import { alertSettings, saveAlertSettings } from './documentAlerts.js';
 
 // Document Renewals, the screen (client/src/components/DocumentRenewals.jsx): every
 // categorised Shelf file this person may read, by the employee or the company it is for,
@@ -202,6 +203,9 @@ documentRenewalRoutes.post('/documents/:id/file', wrap(async (req, res) => {
   const doc = await fileFor(req.user, req.params.id);
   res.json({ id: doc.id, ready: true });
 }));
+// The alert days (60/30/14, every 7 after expiry): everyone with the module reads them, the master sets them.
+documentRenewalRoutes.get('/alert-settings', wrap(async (req, res) => { res.json(await alertSettings()); }));
+documentRenewalRoutes.put('/alert-settings', wrap(async (req, res) => { res.json(await saveAlertSettings(req.user, req.body || {})); }));
 documentRenewalRoutes.get('/unlinked', wrap(async (req, res) => {
   res.json(await unlinkedData(req.user));
 }));

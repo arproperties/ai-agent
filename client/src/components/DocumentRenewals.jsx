@@ -99,14 +99,15 @@ const matches = (row, alert) => {
 
 // ---------- the list ----------
 
-export default function DocumentRenewalsPage({ onBack }) {
+export default function DocumentRenewalsPage({ onBack, start = null }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('employees');
   const [q, setQ] = useState('');
   const [alert, setAlert] = useState(null);
   const [focus, setFocus] = useState(null); // a major case: the list shows only its people
-  const [open, setOpen] = useState(null); // { kind: 'employee', code } | { kind: 'subject', name } | { kind: 'unlinked' }
+  // { kind: 'employee', code } | { kind: 'subject', name } | { kind: 'unlinked' }; a notification may name an employee
+  const [open, setOpen] = useState(start && start !== '1' ? { kind: 'employee', code: start } : null);
 
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState('');
