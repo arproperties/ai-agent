@@ -234,6 +234,267 @@ test('master sees all', async () => {
   assert.match(await search(boss, 'Ahmed passport'), new RegExp(`#${passport} `));
 });
 
+// ---------- Task 3: AI fills category, type and employee on upload ----------
+
+const { classify, filingKinds, pickEmployee, fileAs } = await import('../server/files.js');
+
+const ROSTER = [
+  { id: 11, code: 'E-0042', name: 'Ahmed Khan', nickname: 'Ahmed' },
+  { id: 12, code: 'E-0077', name: 'Sara Lopez', nickname: '' },
+];
+const hrApi = (calls = { n: 0 }) => async (module, action, params) => {
+  calls.n++;
+  assert.equal(module, 'hr');
+  assert.equal(action, 'employees');
+  assert.equal(params.status, 'current');
+  return { ok: true, employees: ROSTER };
+};
+// The model's reply, as the classifier would get it.
+const model = (reply, seen = {}) => async (prompt, { system }) => {
+  seen.system = system;
+  return JSON.stringify({ title: 'T', folder: 'Other', summary: '', tags: [], company: null, date: null, expires: '2027-01-31', ...reply });
+};
+const typeId = async (label) => (await db.prepare('SELECT id FROM document_types WHERE label = ?').get(label)).id;
+
+test('visa photo gets Residence Visa and the employee code', async () => {
+  const { hr } = await office();
+  const kinds = await filingKinds(hr, hrApi());
+  const visa = await typeId('Residence Visa');
+  const c = await classify('visa.jpg', 'UAE residence visa Ahmed Khan', [], [], { kinds, ask: model({ type_id: visa, employee_code: 'E-0042' }) });
+  assert.equal(c.typeId, visa);
+  assert.equal(c.categoryId, (await db.prepare('SELECT category_id FROM document_types WHERE id = ?').get(visa)).category_id);
+  assert.deepEqual(c.employee, { code: 'E-0042', name: 'Ahmed Khan' });
+  assert.equal(c.subject, null, 'an employee category keeps no subject');
+});
+
+test('unknown code is dropped', async () => {
+  const { hr } = await office();
+  const kinds = await filingKinds(hr, hrApi());
+  const c = await classify('visa.jpg', 'visa', [], [], { kinds, ask: model({ type_id: await typeId('Residence Visa'), employee_code: 'E-9999' }) });
+  assert.equal(c.employee, null);
+  assert.equal(pickEmployee(' e-0042 ', ROSTER).code, 'E-0042', 'case and spaces do not matter');
+  assert.equal(pickEmployee('Ahmed Khan', ROSTER), null, 'a name is not a code');
+});
+
+test('unknown or retired type_id is dropped', async () => {
+  const { boss, hr } = await office();
+  const passport = await typeId('Passport');
+  await cats.updateType(boss, passport, { active: false });
+  const kinds = await filingKinds(hr, hrApi());
+  for (const raw of [passport, 9999, 'Passport', null]) {
+    const c = await classify('p.pdf', 'passport', [], [], { kinds, ask: model({ type_id: raw, employee_code: 'E-0042' }) });
+    assert.equal(c.typeId, null, `${raw} is not a type on offer`);
+    assert.equal(c.categoryId, null);
+    assert.equal(c.employee, null, 'no category, nothing to link');
+  }
+});
+
+test('category follows the type', async () => {
+  const { hr } = await office();
+  const kinds = await filingKinds(hr, hrApi());
+  const licence = await typeId('Trade Licence');
+  const c = await classify('tl.pdf', 'trade licence', [], [], {
+    kinds, ask: model({ type_id: String(licence), category_id: 1, employee_code: 'E-0042', subject: '  Ain Al Reem Properties LLC ' }),
+  });
+  const t = await cats.typeById(licence);
+  assert.equal(c.categoryId, t.category.id, 'from the type, not from what the model said');
+  assert.equal(c.employee, null, 'a subject category keeps no employee');
+  assert.equal(c.subject, 'Ain Al Reem Properties LLC');
+});
+
+test('a type added later is offered to the model', async () => {
+  const { boss, hr } = await office();
+  const vid = await cats.addCategory(boss, { label: 'Vehicle Documents', private: false, links_to: 'subject' });
+  const mulkiya = await cats.addType(boss, vid, { label: 'Car Mulkiya' });
+  const seen = {};
+  const kinds = await filingKinds(hr, hrApi());
+  const c = await classify('m.pdf', 'mulkiya', [], [], { kinds, ask: model({ type_id: mulkiya, subject: 'Dubai A 12345' }, seen) });
+  assert.match(seen.system, new RegExp(`${mulkiya} · Vehicle Documents › Car Mulkiya`));
+  assert.equal(c.categoryId, vid);
+  assert.equal(c.subject, 'Dubai A 12345');
+});
+
+test('the roster goes only to the master and module holders', async () => {
+  const { boss, hr, staff } = await office();
+  const calls = { n: 0 };
+  assert.equal((await filingKinds(staff, hrApi(calls))).roster, null, 'staff: no names of colleagues in their prompt');
+  assert.equal(calls.n, 0, 'saifsys is not even asked');
+  assert.ok((await filingKinds(staff, hrApi())).types.length, 'types are still offered');
+  assert.equal((await filingKinds(hr, hrApi())).roster.length, 2);
+  assert.equal((await filingKinds(boss, hrApi())).roster.length, 2);
+  const seen = {};
+  await classify('v.jpg', 'visa', [], [], { kinds: await filingKinds(staff, hrApi()), ask: model({}, seen) });
+  assert.doesNotMatch(seen.system, /E-0042|Ahmed Khan/);
+});
+
+test('an external person files nothing into a category', async () => {
+  await office();
+  const extId = await makeUser('Jeff');
+  await db.prepare('UPDATE users SET external = true WHERE id = ?').run(extId);
+  const kinds = await filingKinds(await userRow(extId), hrApi());
+  assert.deepEqual(kinds, { types: [], roster: null });
+  const c = await classify('p.pdf', 'passport', [], [], { kinds, ask: model({ type_id: await typeId('Passport') }) });
+  assert.equal(c.typeId, null);
+});
+
+test('employee link is unconfirmed until a person confirms', async () => {
+  const { hr, staff } = await office();
+  const kinds = await filingKinds(hr, hrApi());
+  const c = await classify('visa.jpg', 'visa', [], [], { kinds, ask: model({ type_id: await typeId('Residence Visa'), employee_code: 'E-0042' }) });
+  const doc = await makeDoc(staff.id, null, 'visa.jpg');
+  await fileAs(doc, c);
+  const row = await db.prepare('SELECT * FROM documents WHERE id = ?').get(doc);
+  assert.equal(row.type_id, c.typeId);
+  assert.equal(row.category_id, c.categoryId);
+  assert.equal(row.employee_code, 'E-0042');
+  assert.equal(row.employee_name, 'Ahmed Khan');
+  assert.equal(row.link_confirmed_at, null);
+  assert.equal(row.expiry_confirmed_at, null);
+});
+
+test('filing again does not undo what a person set', async () => {
+  const { hr, staff } = await office();
+  const kinds = await filingKinds(hr, hrApi());
+  const doc = await makeDoc(staff.id, null, 'visa.jpg');
+  const passport = await typeId('Passport');
+  await db.prepare(`UPDATE documents SET type_id = ?, category_id = (SELECT category_id FROM document_types WHERE id = ?),
+    employee_code = 'E-0077', employee_name = 'Sara Lopez', link_confirmed_at = 1 WHERE id = ?`).run(passport, passport, doc);
+  const c = await classify('visa.jpg', 'visa', [], [], { kinds, ask: model({ type_id: await typeId('Residence Visa'), employee_code: 'E-0042' }) });
+  await fileAs(doc, c);
+  const row = await db.prepare('SELECT type_id, employee_code FROM documents WHERE id = ?').get(doc);
+  assert.deepEqual(row, { type_id: passport, employee_code: 'E-0077' });
+});
+
+test('saifsys down still files the document', async () => {
+  const { hr } = await office();
+  const down = async () => { throw Object.assign(new Error('saifsys did not answer'), { status: 502 }); };
+  const kinds = await filingKinds(hr, down);
+  assert.equal(kinds.roster, null);
+  const c = await classify('visa.jpg', 'visa', [], [], { kinds, ask: model({ type_id: await typeId('Residence Visa'), employee_code: 'E-0042' }) });
+  assert.equal(c.typeId, await typeId('Residence Visa'));
+  assert.equal(c.employee, null);
+});
+
+// ---------- Task 4: correct and confirm on the Shelf ----------
+
+const { editDocumentKind } = await import('../server/files.js');
+// saifsys hr/employee, as lookupCode() asks it.
+const hrOne = async (module, action, { q }) => {
+  const e = ROSTER.find((r) => r.code === q);
+  return { ok: true, employee: e ? { ...e, position: 'Clerk', company: 'AAR', status: 'active' } : null };
+};
+async function passportOf(ownerId, { code = 'E-0042', expires = '2027-03-01' } = {}) {
+  const id = await makeDoc(ownerId, null, 'passport.pdf');
+  const t = await typeId('Passport');
+  await db.prepare(`UPDATE documents SET type_id = ?, category_id = (SELECT category_id FROM document_types WHERE id = ?),
+    employee_code = ?, employee_name = 'Ahmed Khan', expires_on = ? WHERE id = ?`).run(t, t, code, expires, id);
+  return id;
+}
+const row = (id) => db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+
+test('module holder confirms a date on someone else\'s file', async () => {
+  const { hr, staff } = await office();
+  const id = await passportOf(staff.id);
+  await editDocumentKind(hr, id, { confirm_expiry: true, confirm_link: true }, hrOne);
+  const r = await row(id);
+  assert.equal(r.expiry_confirmed_by, hr.id);
+  assert.ok(r.expiry_confirmed_at > 0);
+  assert.equal(r.link_confirmed_by, hr.id);
+});
+
+test('changing the date clears the confirmation', async () => {
+  const { hr, staff } = await office();
+  const id = await passportOf(staff.id);
+  await editDocumentKind(hr, id, { confirm_expiry: true }, hrOne);
+  await editDocumentKind(hr, id, { expires_on: '2028-03-01' }, hrOne);
+  const r = await row(id);
+  assert.equal(r.expires_on, '2028-03-01');
+  assert.equal(r.expiry_confirmed_at, null);
+  await editDocumentKind(hr, id, { expires_on: '2028-03-01', confirm_expiry: true }, hrOne);
+  assert.ok((await row(id)).expiry_confirmed_at, 'a corrected date can be confirmed in the same step');
+});
+
+test('a date that is not there cannot be confirmed', async () => {
+  const { hr, staff } = await office();
+  const id = await passportOf(staff.id, { expires: null });
+  await assert.rejects(editDocumentKind(hr, id, { confirm_expiry: true }, hrOne), (e) => e.status === 400);
+});
+
+test('a wrong employee code is refused with HR\'s message', async () => {
+  const { hr, staff } = await office();
+  const id = await passportOf(staff.id);
+  await editDocumentKind(hr, id, { confirm_link: true }, hrOne);
+  await assert.rejects(editDocumentKind(hr, id, { employee_code: 'E-9999' }, hrOne), /HR has no employee with code E-9999/);
+  await editDocumentKind(hr, id, { employee_code: 'E-0077' }, hrOne);
+  const r = await row(id);
+  assert.equal(r.employee_code, 'E-0077');
+  assert.equal(r.employee_name, 'Sara Lopez');
+  assert.equal(r.link_confirmed_at, null, 'a new employee is unconfirmed');
+});
+
+test('person without the module cannot change category fields', async () => {
+  const { staff, boss } = await office();
+  const other = await userRow(await makeUser('Other'));
+  const id = await passportOf(staff.id);
+  await setOwners(boss, other.id, [staff.id]); // even with file_access to the owner
+  await assert.rejects(editDocumentKind(other, id, { confirm_expiry: true }, hrOne), (e) => e.status === 404);
+  const licence = await makeDoc(boss.id, null, 'licence.pdf');
+  await assert.rejects(editDocumentKind(other, licence, { type_id: await typeId('Trade Licence') }, hrOne), (e) => e.status === 404);
+});
+
+test('a holder cannot file someone\'s personal file into a category', async () => {
+  const { hr, staff } = await office();
+  const personal = await makeDoc(staff.id, null, 'notes.pdf');
+  await assert.rejects(editDocumentKind(hr, personal, { type_id: await typeId('Passport') }, hrOne), (e) => e.status === 404);
+});
+
+test('the owner and the master set and clear the type', async () => {
+  const { boss, staff } = await office();
+  const id = await makeDoc(staff.id, null, 'tl.pdf');
+  const licence = await typeId('Trade Licence');
+  await editDocumentKind(staff, id, { type_id: licence, subject: ' Ain Al Reem LLC ' }, hrOne);
+  let r = await row(id);
+  assert.equal(r.type_id, licence);
+  assert.equal(r.category_id, (await cats.typeById(licence)).category.id);
+  assert.equal(r.subject, 'Ain Al Reem LLC');
+  // Moved to an employee type: the subject goes, and the link is now unconfirmed.
+  await editDocumentKind(boss, id, { type_id: await typeId('Passport'), employee_code: 'E-0042' }, hrOne);
+  r = await row(id);
+  assert.equal(r.subject, null);
+  assert.equal(r.employee_code, 'E-0042');
+  await editDocumentKind(boss, id, { type_id: null }, hrOne);
+  r = await row(id);
+  assert.deepEqual([r.type_id, r.category_id, r.employee_code, r.subject], [null, null, null, null]);
+});
+
+test('a retired type cannot be picked, but a file keeps the one it has', async () => {
+  const { boss, staff } = await office();
+  const id = await passportOf(staff.id);
+  await cats.updateType(boss, await typeId('Passport'), { active: false });
+  await editDocumentKind(boss, id, { type_id: await typeId('Passport'), confirm_expiry: true }, hrOne); // unchanged: fine
+  const other = await makeDoc(staff.id, null, 'p2.pdf');
+  await assert.rejects(editDocumentKind(boss, other, { type_id: await typeId('Passport') }, hrOne), (e) => e.status === 400);
+});
+
+test('an employee code on a company file is refused', async () => {
+  const { boss } = await office();
+  const id = await makeDoc(boss.id, null, 'tl.pdf');
+  await editDocumentKind(boss, id, { type_id: await typeId('Trade Licence') }, hrOne);
+  await assert.rejects(editDocumentKind(boss, id, { employee_code: 'E-0042' }, hrOne), (e) => e.status === 400);
+});
+
+test('not renewing is recorded and can be taken back', async () => {
+  const { hr, staff } = await office();
+  const id = await passportOf(staff.id);
+  await editDocumentKind(hr, id, { not_renewing: { note: 'Left the company' } }, hrOne);
+  let r = await row(id);
+  assert.ok(r.not_renewing_at > 0);
+  assert.equal(r.not_renewing_note, 'Left the company');
+  await editDocumentKind(hr, id, { not_renewing: null }, hrOne);
+  r = await row(id);
+  assert.equal(r.not_renewing_at, null);
+});
+
 test('the uploader still sees their own categorised file', async () => {
   const { staff } = await office();
   const passport = await fileWith(staff.id, 'Passport Ahmed Khan', 'Passport number P1234567 of Ahmed Khan');
