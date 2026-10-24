@@ -1825,3 +1825,27 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_document_copies_same ON document_copies(same_as);
 `);
+
+// Company mailboxes the master added to the address book (server/addressBook.js), next to
+// the ones written into the code. Only addresses on our own domains: anything else is
+// never checked, so it needs no entry.
+//   address_proposals: an address Reem got ready from the master's chat, waiting on a card
+//   for Add or Cancel. Nothing is added until Add.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS company_addresses (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    added_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS address_proposals (
+    id SERIAL PRIMARY KEY,
+    master_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    email  TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'added', 'cancelled')),
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_address_proposals_chat ON address_proposals(master_id, conversation_id, id);
+`);

@@ -910,8 +910,9 @@ async function autoPapers(r, check) {
   try {
     if (check.complete) {
       await mark(null, r.id, 'papers_ok');
-      await send(null, { id: r.id, action: 'convert' });
-      return tell(r, 'The papers match. Reem renewed it in saifsys and told the tenant.');
+      // The last step stays a person's for now (the user, 2026-10-24): Renew in saifsys makes
+      // the new lease and its invoices, and that is checked against accounts first.
+      return tell(r, 'The papers match. Check them and tap Renew in saifsys.');
     }
     const { n } = await db.prepare(`SELECT count(*)::int AS n FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'out' AND title = ? AND user_id IS NULL`)
       .get(r.id, ACTIONS.fix.title());

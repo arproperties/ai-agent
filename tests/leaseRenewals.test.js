@@ -492,7 +492,7 @@ test('charges: each extra listed, VAT taken from saifsys\'s own total, shown as 
 
 const autoStart = (boss, rent = 42000, rera = 5) => R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent, rera_pct: rera });
 
-test('automatic: a dispute gets the RERA index rent, an acceptance the contract, papers are sent back then renewed', async () => {
+test('automatic: a dispute gets the RERA index rent, an acceptance the contract, papers are sent back, then staff renew', async () => {
   const boss = await setup();
   const cheques = quoteOf(37800).cheques;
   const photo = (name) => ({ contentType: 'image/jpeg', filename: name, content: Buffer.from(name) });
@@ -531,10 +531,12 @@ test('automatic: a dispute gets the RERA index rent, an acceptance the contract,
   await arrives({ text: 'new cheques' });
   await R.readInbound();
   r = await R.getRenewal(r.id);
+  assert.equal(r.status, 'papers_ok', 'Renew in saifsys stays a person\'s step');
+  assert.ok(!world.acts.some((a) => a.action === 'convert'));
+  assert.match(world.pushes.at(-1), /tap Renew in saifsys/);
+  r = await R.send(boss, { id: r.id, action: 'convert' });
   assert.equal(r.status, 'converted');
-  assert.equal(world.acts.at(-1).action, 'convert');
-  assert.match(lastMail(), /is complete/);
-  assert.deepEqual(world.todos.map((t) => t.userId), [boss.id], 'the to-do goes to whoever started it');
+  assert.deepEqual(world.todos.map((t) => t.userId), [boss.id]);
   assert.deepEqual((await timeline(r.id)).filter((t) => t.startsWith('out')), [
     'out: Offer sent · AED 42,000', 'out: RERA index rent offered · AED 37,800', 'out: Agreed · AED 37,800',
     'out: Asked to fix the papers', 'out: Renewed in saifsys · AED 37,800',

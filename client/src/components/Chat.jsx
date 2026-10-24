@@ -10,6 +10,7 @@ import Message from './Message';
 import DraftCard from './DraftCard';
 import TeamReminderCard from './TeamReminderCard';
 import ResponsibilityCard from './ResponsibilityCard';
+import AddressCard from './AddressCard';
 import InventoryCard from './InventoryCard';
 import BookingCard from './BookingCard';
 import NoticeCard from './NoticeCard';
@@ -62,6 +63,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
   const [reminders, setReminders] = useState([]); // reminders for other people got ready in this chat
   const [duties, setDuties] = useState([]); // responsibility changes got ready in this chat (master only)
+  const [addresses, setAddresses] = useState([]); // company addresses waiting for Add (master only)
   const [stock, setStock] = useState([]); // inventory items got ready in this chat, waiting for Add
   const [bookings, setBookings] = useState([]); // ARS bookings got ready in this chat, waiting for Create
   const [notices, setNotices] = useState([]); // tenant notices got ready in this chat, waiting for Send
@@ -92,6 +94,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       api.get(`/email/drafts?conversation=${conversationId}`).then((r) => setDrafts(r.drafts.slice().reverse())).catch(() => {});
       api.get(`/team-reminders?conversation=${conversationId}`).then(setReminders).catch(() => {});
       if (user.role === 'master') api.get(`/responsibilities/proposals?conversation=${conversationId}`).then(setDuties).catch(() => {});
+      if (user.role === 'master') api.get(`/address-book/proposals?conversation=${conversationId}`).then(setAddresses).catch(() => {});
       api.get(`/saifsys/ars/bookings?conversation=${conversationId}`).then(setBookings).catch(() => {});
       api.get(`/inventory/proposals?conversation=${conversationId}`).then(setStock).catch(() => {});
       api.get(`/notices/chat?conversation=${conversationId}`).then(setNotices).catch(() => {});
@@ -185,6 +188,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           }
           else if (event === 'teamReminder') { acted = true; setReminders((rs) => [...rs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'responsibility') { acted = true; setDuties((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'companyAddress') { acted = true; setAddresses((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'inventoryAdd') { acted = true; setStock((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'tenantNotice') { acted = true; setNotices((ns) => [...ns.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'arsBooking') { acted = true; setBookings((bs) => [...bs.filter((x) => x.id !== d.id), d]); toBottom(); }
@@ -427,6 +431,11 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             {duties.map((p) => (
               <ResponsibilityCard key={p.id} proposal={p}
                 onChanged={(u) => setDuties((ps) => ps.map((x) => (x.id === u.id ? u : x)))} />
+            ))}
+            {addresses.map((p) => (
+              <AddressCard key={p.id} proposal={p}
+                onChanged={(u) => setAddresses((ps) => ps.map((x) => (x.id === u.id ? u : x)))}
+                onAdded={(email) => send(`I added ${email} to the address book. Carry on.`, [])} />
             ))}
             {stock.map((p) => (
               <InventoryCard key={p.id} proposal={p}

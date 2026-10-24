@@ -689,7 +689,7 @@ function nextStep(r) {
     const p = rn.papers;
     if (p && !p.complete) return { tone: 'you', icon: ShieldAlert, title: `Papers: ${p.missing.length + p.wrong.length} to fix`, sub: 'See what is wrong on the timeline, and ask the tenant to fix it.', main: ['fix', 'papers_ok'], more: ['reply', ...end] };
     if (p?.complete) return { tone: 'go', icon: ShieldCheck, title: 'The papers match', sub: 'The signed agreement and every cheque match saifsys. Have a look, then confirm.', main: ['papers_ok'], more: ['fix', 'reply', ...end] };
-    return { tone: 'wait', icon: Clock, title: 'Waiting for the papers', sub: rn.auto ? 'The signed agreement and the cheque photos. Reem checks them, and renews in saifsys when they match.' : 'The signed agreement and the cheque photos. Reem checks them when they arrive.', main: ['reply'], more: ['papers_ok', ...end] };
+    return { tone: 'wait', icon: Clock, title: 'Waiting for the papers', sub: rn.auto ? 'The signed agreement and the cheque photos. Reem checks them and asks for fixes; when they match, staff tap Renew in saifsys.' : 'The signed agreement and the cheque photos. Reem checks them when they arrive.', main: ['reply'], more: ['papers_ok', ...end] };
   }
   // offer_sent / negotiating
   const all = ['accept', 'counter', 'index', 'reply', 'not_renewing', 'close'];
@@ -882,7 +882,7 @@ function Settings({ s, agents, inbox, onSaved }) {
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <p className="text-sm">Reem runs renewals by itself</p>
-          <p className="text-xs text-mute">{running ? 'On: Reem answers tenants, checks the papers and renews.' : 'Off: Reem stops on every lease, and staff do each step by hand.'}</p>
+          <p className="text-xs text-mute">{running ? 'On: Reem answers tenants and checks the papers. Staff tap Renew in saifsys.' : 'Off: Reem stops on every lease, and staff do each step by hand.'}</p>
         </div>
         <button role="switch" aria-checked={running} aria-label="Reem runs renewals by itself" onClick={() => setRunning(!running)}
           className={`relative h-7 w-12 shrink-0 rounded-full transition ${running ? 'bg-p1' : 'bg-white/15'}`}>
