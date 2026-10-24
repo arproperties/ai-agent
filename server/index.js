@@ -10,7 +10,7 @@ import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
 import { deleteMessage, editReply, chat } from './chat.js';
 import { addMemory } from './knowledge.js';
-import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument } from './files.js';
+import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument, editDocumentKind, kindFieldsIn } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
@@ -315,17 +315,28 @@ app.post('/api/documents/share', needsModule('shelf'), wrap(async (req, res) => 
 // move to another folder or company, rename, or (master only) publish to the shelf
 app.patch('/api/documents/:id', needsModule('shelf'), wrap(async (req, res) => {
   const doc = await own('documents', req.params.id, req.user.id);
-  if (!doc) return notFound(res);
+  // Not theirs: only what a file is, who it is for and its dates, and only for the master
+  // or a Document Renewals holder (editDocumentKind decides; anyone else gets its 404).
+  if (!doc) {
+    if (!kindFieldsIn(req.body) && !('expires_on' in req.body)) return notFound(res);
+    const { type_id, employee_code, subject, expires_on, confirm_expiry, confirm_link, not_renewing } = req.body;
+    const kind = Object.fromEntries(Object.entries({ type_id, employee_code, subject, expires_on, confirm_expiry, confirm_link, not_renewing })
+      .filter(([k]) => k in req.body));
+    const edited = await editDocumentKind(req.user, req.params.id, kind);
+    return res.json(docOut(await db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(edited.id), req.user.id));
+  }
   const folder = FOLDERS.includes(req.body.folder) ? req.body.folder : doc.folder;
   const title = String(req.body.title || doc.title).slice(0, 120);
   // An empty company means "Other"; a typed one is matched to an existing spelling.
   const company = 'company' in req.body ? pickCompany(req.body.company, await userCompanies(req.user.id)) : doc.company;
+  await db.prepare('UPDATE documents SET folder = ?, title = ?, company = ? WHERE id = ?').run(folder, title, company, doc.id);
   // A read expiry is a guess, and one nobody can correct is worse than none at all.
-  // Anything that is not a date clears it, which is how the field is emptied.
-  const expires = 'expires_on' in req.body
-    ? (/^\d{4}-\d{2}-\d{2}$/.test(req.body.expires_on) ? req.body.expires_on : null)
-    : doc.expires_on;
-  await db.prepare('UPDATE documents SET folder = ?, title = ?, company = ?, expires_on = ? WHERE id = ?').run(folder, title, company, expires, doc.id);
+  // Anything that is not a date clears it, which is how the field is emptied. A changed
+  // date is no longer the one somebody confirmed: editDocumentKind clears that.
+  if (kindFieldsIn(req.body) || 'expires_on' in req.body) {
+    const { title: _t, folder: _f, company: _c, shared: _s, ...kind } = req.body;
+    await editDocumentKind(req.user, doc.id, kind);
+  }
   // A field-level permission, not a route-level one: everyone renames and refiles here,
   // but only the master may publish. A user sending `shared` simply does not get it.
   if ('shared' in req.body && isMaster(req.user)) await setShared(req.user, doc.id, req.body.shared);
