@@ -360,3 +360,23 @@ export async function verify(user, id, { document_id } = {}) {
   }
   await closeCase(c.id, user.id, c.kind === 'renew' ? `Renewed: runs to ${d.expires_on}` : 'Cancelled');
 }
+
+/** The master's settings: when a contract opens a case, who approves, who the PROs are. */
+export async function saveCaseSettings(user, { open_days, approver_ids, pro_ids } = {}) {
+  if (!isMaster(user)) throw bad('Only the master changes these settings', 403);
+  const cur = await caseSettings();
+  const days = open_days === undefined ? cur.open_days : Number(open_days);
+  if (!Number.isInteger(days) || days < 1 || days > 365) throw bad('Days before the end must be between 1 and 365');
+  const known = async (ids, keep) => {
+    if (ids === undefined) return keep;
+    const want = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter(Number.isInteger))];
+    if (!want.length) return [];
+    const rows = await db.prepare('SELECT id FROM users WHERE id = ANY(?::int[]) AND NOT external').all(want);
+    return want.filter((id) => rows.some((r) => r.id === id));
+  };
+  const a = await known(approver_ids, cur.approver_ids);
+  const p = await known(pro_ids, cur.pro_ids);
+  await db.prepare(`INSERT INTO doc_renewal_case_settings (id, open_days, approver_ids, pro_ids) VALUES (1, ?, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET open_days = EXCLUDED.open_days, approver_ids = EXCLUDED.approver_ids, pro_ids = EXCLUDED.pro_ids`).run(days, a, p);
+  return caseSettings();
+}

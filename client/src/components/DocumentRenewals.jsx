@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Loader2, AlertTriangle, Search, X, ChevronRight, Check, FileText, Upload, Ban, Undo2, Building2, UserRound, Clock, HelpCircle, Link2Off, RefreshCw, ShieldAlert, Plane, FileSignature, BellRing, Siren,
+  Loader2, AlertTriangle, Search, X, ChevronRight, Check, FileText, Upload, Ban, Undo2, Building2, UserRound, Clock, HelpCircle, Link2Off, RefreshCw, ShieldAlert, Plane, FileSignature, BellRing, Siren, Settings2, Briefcase,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 import Picker from './Picker';
+import Sheet from './Sheet';
+import RenewalCasePage, { StatusChip } from './RenewalCase';
 
 // Document Renewals (server/documentRenewals.js): the company's and the staff's papers that
 // run out - passports, visas, contracts, trade licences. A strip of what needs someone on
@@ -107,12 +109,18 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
   const [alert, setAlert] = useState(null);
   const [focus, setFocus] = useState(null); // a major case: the list shows only its people
   // { kind: 'employee', code } | { kind: 'subject', name } | { kind: 'unlinked' }; a notification may name an employee
-  const [open, setOpen] = useState(start && start !== '1' ? { kind: 'employee', code: start } : null);
+  const [open, setOpen] = useState(!start || start === '1' ? null
+    : start.startsWith('case-') ? { kind: 'case', id: Number(start.slice(5)) } : { kind: 'employee', code: start });
+  const [cases, setCases] = useState([]);
+  const [settings, setSettings] = useState(false);
 
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState('');
 
-  const load = useCallback(() => api.get('/document-renewals').then(setData).catch((e) => setError(e.message)), []);
+  const load = useCallback(() => Promise.all([
+    api.get('/document-renewals').then(setData),
+    api.get('/document-renewals/cases').then((r) => setCases(r.cases)),
+  ]).catch((e) => setError(e.message)), []);
   useEffect(() => { load(); }, [load]);
 
   // The master brings saifsys's employee documents across now instead of waiting for the night.
@@ -126,13 +134,17 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
     setSyncing(false);
   };
   const syncButton = data?.master && (
+    <div className="flex gap-2">
+    <button onClick={() => setSettings(true)} title="Settings" className="grid size-9 shrink-0 place-items-center rounded-full border border-stroke text-mute transition hover:text-txt"><Settings2 size={15} /></button>
     <button onClick={sync} disabled={syncing}
       className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt disabled:opacity-50">
       <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Syncing…' : 'Sync from saifsys'}
     </button>
+    </div>
   );
 
-  if (open) return <Holder open={open} types={data?.types || []} onBack={() => { setOpen(null); load(); }} />;
+  if (open?.kind === 'case') return <RenewalCasePage id={open.id} onBack={() => { setOpen(open.from || null); load(); }} />;
+  if (open) return <Holder open={open} types={data?.types || []} onBack={() => { setOpen(null); load(); }} onCase={(id) => setOpen({ kind: 'case', id, from: open })} />;
 
   const want = q.trim().toLowerCase();
   const people = (data?.employees || []).filter((e) => matches(e, alert) && (!focus || focus.people.includes(e.code))
@@ -157,7 +169,7 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
             {q && <button onClick={() => setQ('')} aria-label="Clear" className="text-mute hover:text-txt"><X size={14} /></button>}
           </div>
           <div className="flex gap-1.5">
-            {[['employees', 'Employees', people.length], ['company', 'Company', subjects.length]].map(([k, label, n]) => (
+            {[['employees', 'Employees', people.length], ['company', 'Company', subjects.length], ['cases', 'Cases', cases.length]].map(([k, label, n]) => (
               <button key={k} onClick={() => setTab(k)}
                 className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm transition ${tab === k ? 'bg-white/15 text-txt' : 'text-mute hover:text-txt'}`}>
                 {label} <span className="rounded-full bg-white/10 px-1.5 text-xs">{n}</span>
@@ -169,7 +181,23 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
               </button>
             )}
           </div>
-          {tab === 'employees' ? (
+          {tab === 'cases' ? (
+            cases.length === 0 ? <p className="pt-12 text-center text-sm text-mute">No open cases. A contract opens one by itself 60 days before it ends; any document opens one with Renew or Cancel.</p> : (
+              <ul className="glass divide-y divide-stroke/60 overflow-hidden rounded-2xl">
+                {cases.map((c) => (
+                  <li key={c.id}>
+                    <button onClick={() => setOpen({ kind: 'case', id: c.id })} className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-white/[0.06]">
+                      <span className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-mute"><Briefcase size={16} /></span>
+                      <span className="min-w-0 flex-1"><span className="block truncate font-medium">{c.type} – {c.employee_name || c.subject}</span>
+                        <span className="block truncate text-xs text-mute">{c.kind === 'cancel' ? 'Cancellation' : c.kind === 'renew' ? 'Renewal' : 'Not decided'}{c.ends_on ? ` · ends ${day(c.ends_on)}` : ''}</span></span>
+                      <StatusChip status={c.status} />
+                      <ChevronRight size={16} className="shrink-0 text-mute" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : tab === 'employees' ? (
             people.length === 0 ? <p className="pt-12 text-center text-sm text-mute">Nobody here.</p> : (
               <ul className="glass divide-y divide-stroke/60 overflow-hidden rounded-2xl">
                 {people.map((e) => (
@@ -191,6 +219,7 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
           )}
         </div>
       )}
+      {settings && <SettingsSheet onClose={() => setSettings(false)} />}
     </Page>
   );
 }
@@ -215,7 +244,7 @@ function Row({ icon, title, sub, worst, documents, confirm, onClick }) {
 
 // ---------- one employee, company or the unlinked files ----------
 
-function Holder({ open, types, onBack }) {
+function Holder({ open, types, onBack, onCase }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
   const path = open.kind === 'employee' ? `/document-renewals/employees/${encodeURIComponent(open.code)}`
@@ -245,7 +274,7 @@ function Holder({ open, types, onBack }) {
           {offer.length > 0 && <AddDocument offer={offer} holder={open} onDone={load} />}
           {d.documents.length === 0 ? <p className="pt-8 text-center text-sm text-mute">No documents yet.</p> : (
             <ul className="space-y-2">
-              {d.documents.map((doc) => <DocRow key={doc.id} doc={doc} onChanged={load} />)}
+              {d.documents.map((doc) => <DocRow key={doc.id} doc={doc} onChanged={load} onCase={onCase} />)}
             </ul>
           )}
         </div>
@@ -254,7 +283,7 @@ function Holder({ open, types, onBack }) {
   );
 }
 
-function DocRow({ doc, onChanged }) {
+function DocRow({ doc, onChanged, onCase }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const s = doc.state;
@@ -276,6 +305,11 @@ function DocRow({ doc, onChanged }) {
     } catch (e) { tab?.close(); setError(e.message); }
     setBusy('');
   };
+  // Renew or Cancel opens a case and goes straight to it, where the proposal is written.
+  const startCase = async (kind) => {
+    setBusy(kind); setError('');
+    try { const c = await api.post(`/document-renewals/documents/${doc.id}/case`, { kind }); onCase(c.id); } catch (e) { setError(e.message); setBusy(''); }
+  };
   const notRenewing = () => {
     const note = window.prompt('Why is it not being renewed? (optional)', '');
     if (note !== null) act('not', { not_renewing: { note } });
@@ -296,6 +330,16 @@ function DocRow({ doc, onChanged }) {
         <Chip step={s.step}>{daysWord(s)}</Chip>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
+        {doc.open_case ? (
+          <button onClick={() => onCase(doc.open_case.id)} className="flex items-center gap-1.5 rounded-full border border-p1/40 px-3 py-1.5 text-xs transition hover:bg-p1/10">
+            Open case <StatusChip status={doc.open_case.status} />
+          </button>
+        ) : s.step !== 'not_renewing' && (
+          <>
+            <SmallBtn busy={busy === 'renew'} onClick={() => startCase('renew')} tone="p1"><RefreshCw size={13} /> Renew</SmallBtn>
+            <SmallBtn busy={busy === 'cancel'} onClick={() => startCase('cancel')}><Ban size={13} /> Cancel</SmallBtn>
+          </>
+        )}
         {s.confirm.includes('expiry') && (
           <SmallBtn busy={busy === 'exp'} onClick={() => act('exp', { confirm_expiry: true })} tone="warn">
             <Check size={13} /> Confirm {day(doc.expires_on)}
@@ -356,5 +400,57 @@ function AddDocument({ offer, holder, onDone }) {
       <p className="text-xs text-mute">Reem reads the expiry date from it; confirm the date once it shows.</p>
       <Problem text={error} />
     </div>
+  );
+}
+
+/** The master's settings: who approves, who the PROs are, when a contract opens a case, and the alert days. */
+function SettingsSheet({ onClose }) {
+  const [s, setS] = useState(null);
+  const [alerts, setAlerts] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    Promise.all([api.get('/document-renewals/case-settings'), api.get('/document-renewals/alert-settings')])
+      .then(([c, a]) => { setS({ ...c, approver_ids: c.approver_ids.map(String), pro_ids: c.pro_ids.map(String) }); setAlerts({ ...a, days: a.days.join(', ') }); })
+      .catch((e) => setError(e.message));
+  }, []);
+  const save = async () => {
+    setBusy(true); setError('');
+    try {
+      await api.put('/document-renewals/case-settings', { open_days: Number(s.open_days), approver_ids: s.approver_ids.map(Number), pro_ids: s.pro_ids.map(Number) });
+      await api.put('/document-renewals/alert-settings', { days: alerts.days.split(/[^\d]+/).filter(Boolean).map(Number), overdue_every_days: Number(alerts.overdue_every_days), hour: Number(alerts.hour) });
+      onClose();
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+  const staff = (s?.staff || []).map((u) => ({ value: String(u.id), label: u.name || u.email, hint: u.email }));
+  const field = 'w-full rounded-xl border border-stroke bg-black/10 px-3 py-2.5 text-sm outline-none focus:border-p1/60';
+  return (
+    <Sheet title="Document Renewals settings" onClose={onClose}>
+      <div className="space-y-4 px-5 pb-6">
+        {!s || !alerts ? (error ? <Problem text={error} /> : <Spinner />) : (
+          <>
+            <label className="block space-y-1"><span className="text-xs text-mute">Approvers (empty: only you)</span>
+              <Picker multi value={s.approver_ids} onChange={(v) => setS({ ...s, approver_ids: v })} options={staff} placeholder="Choose approvers" /></label>
+            <label className="block space-y-1"><span className="text-xs text-mute">PROs</span>
+              <Picker multi value={s.pro_ids} onChange={(v) => setS({ ...s, pro_ids: v })} options={staff} placeholder="Choose the PROs" /></label>
+            <label className="block space-y-1"><span className="text-xs text-mute">A contract opens a case this many days before it ends</span>
+              <input inputMode="numeric" value={s.open_days} onChange={(e) => setS({ ...s, open_days: e.target.value })} className={field} /></label>
+            <label className="block space-y-1"><span className="text-xs text-mute">Alerts this many days before expiry</span>
+              <input value={alerts.days} onChange={(e) => setAlerts({ ...alerts, days: e.target.value })} placeholder="60, 30, 14" className={field} /></label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block space-y-1"><span className="text-xs text-mute">After expiry, remind every (days)</span>
+                <input inputMode="numeric" value={alerts.overdue_every_days} onChange={(e) => setAlerts({ ...alerts, overdue_every_days: e.target.value })} className={field} /></label>
+              <label className="block space-y-1"><span className="text-xs text-mute">At this hour (Dubai)</span>
+                <input inputMode="numeric" value={alerts.hour} onChange={(e) => setAlerts({ ...alerts, hour: e.target.value })} className={field} /></label>
+            </div>
+            <Problem text={error} />
+            <button onClick={save} disabled={busy} className="flex w-full items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white disabled:opacity-50">
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save
+            </button>
+          </>
+        )}
+      </div>
+    </Sheet>
   );
 }

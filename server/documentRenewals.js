@@ -6,7 +6,11 @@ import { needsModule } from './modules.js';
 import { listCategories } from './docCategories.js';
 import { askSaifsys, dubaiDate } from './saifsys/client.js';
 import { syncNow, fileFor } from './saifsysDocSync.js';
+import multer from 'multer';
 import { alertSettings, saveAlertSettings } from './documentAlerts.js';
+import * as cases from './renewalCases.js';
+import * as proTasks from './renewalTasks.js';
+import { compareTerms } from './renewalCompare.js';
 
 // Document Renewals, the screen (client/src/components/DocumentRenewals.jsx): every
 // categorised Shelf file this person may read, by the employee or the company it is for,
@@ -37,7 +41,9 @@ const out = ({ path, hash, ...d }, today) => ({ ...d, tags: undefined, has_file:
 
 async function readableFiles(user, where = 'TRUE', params = []) {
   const scope = isMaster(user) ? masterReach('t') : retrievalScope(user.id, 't');
-  return db.prepare(`SELECT t.*, dt.label AS type, dt.required, dt.opens_case, dc.label AS category, dc.links_to, u.name AS owner_name
+  return db.prepare(`SELECT t.*, dt.label AS type, dt.required, dt.opens_case, dc.label AS category, dc.links_to, u.name AS owner_name,
+      (SELECT json_build_object('id', r.id, 'status', r.status, 'kind', r.kind) FROM doc_renewal_cases r
+        WHERE r.document_id = t.id AND r.closed_at IS NULL) AS open_case
     FROM documents t
     JOIN document_types dt ON dt.id = t.type_id
     JOIN document_categories dc ON dc.id = t.category_id
@@ -209,3 +215,81 @@ documentRenewalRoutes.put('/alert-settings', wrap(async (req, res) => { res.json
 documentRenewalRoutes.get('/unlinked', wrap(async (req, res) => {
   res.json(await unlinkedData(req.user));
 }));
+
+// ---------- renewal cases (server/renewalCases.js) ----------
+
+
+const caseUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+const people = async (ids) => (ids?.length
+  ? db.prepare('SELECT id, name, email FROM users WHERE id = ANY(?::int[]) ORDER BY lower(name)').all(ids)
+  : []);
+
+/** A case as its page shows it: the document, the employee from saifsys, pay against payroll, the timeline. */
+async function casePage(user, id) {
+  const c = await cases.getCase(user, id);
+  const doc = await db.prepare(`SELECT d.id, d.title, d.name, d.expires_on, d.path IS NOT NULL AS has_file, t.label AS type, t.opens_case
+    FROM documents d LEFT JOIN document_types t ON t.id = d.type_id WHERE d.id = ?`).get(c.document_id);
+  let employee = null;
+  let compare = null;
+  if (c.employee_code) {
+    employee = await askSaifsys('hr', 'employee', { q: c.employee_code }).then((r) => r.employee, () => null);
+    if (doc?.opens_case) {
+      const pay = await askSaifsys('hr_docs', 'payroll', { code: c.employee_code, months: 6 }).then((r) => r.items, () => []);
+      compare = compareTerms(employee, pay, dubaiDate());
+    }
+  }
+  const events = await db.prepare(`SELECT e.*, u.name AS user_name FROM doc_renewal_case_events e LEFT JOIN users u ON u.id = e.user_id
+    WHERE e.case_id = ? ORDER BY e.id DESC`).all(c.id);
+  const tasks = await db.prepare(`SELECT t.*, u.name AS assignee_name FROM doc_renewal_case_tasks t LEFT JOIN users u ON u.id = t.assignee_id
+    WHERE t.case_id = ? ORDER BY t.id`).all(c.id);
+  const files = tasks.flatMap((t) => t.evidence?.files || []);
+  const returned = files.length ? await db.prepare(`SELECT id, title, name, expires_on, path IS NOT NULL AS has_file FROM documents WHERE id = ANY(?::int[])`).all(files) : [];
+  const settings = await cases.caseSettings();
+  return { case: c, document: doc, employee, compare, events, tasks, returned, pros: await people(settings.pro_ids), master: isMaster(user) };
+}
+
+documentRenewalRoutes.get('/cases', wrap(async (req, res) => { res.json({ cases: await cases.listCases(req.user) }); }));
+documentRenewalRoutes.get('/cases/:id', wrap(async (req, res) => { res.json(await casePage(req.user, req.params.id)); }));
+documentRenewalRoutes.post('/documents/:id/case', wrap(async (req, res) => {
+  res.json(await cases.startCase(req.user, req.params.id, req.body?.kind));
+}));
+const step = (fn) => wrap(async (req, res) => { await fn(req); res.json(await casePage(req.user, req.params.id)); });
+documentRenewalRoutes.post('/cases/:id/decision', step((req) => cases.decide(req.user, req.params.id, req.body || {})));
+documentRenewalRoutes.post('/cases/:id/proposal', step((req) => cases.propose(req.user, req.params.id, req.body || {})));
+documentRenewalRoutes.post('/cases/:id/submit', step((req) => cases.submit(req.user, req.params.id)));
+documentRenewalRoutes.post('/cases/:id/approve', step((req) => cases.approve(req.user, req.params.id)));
+documentRenewalRoutes.post('/cases/:id/reject', step((req) => cases.reject(req.user, req.params.id, req.body || {})));
+documentRenewalRoutes.post('/cases/:id/pause', step((req) => cases.pause(req.user, req.params.id, req.body || {})));
+documentRenewalRoutes.post('/cases/:id/resume', step((req) => cases.resume(req.user, req.params.id)));
+documentRenewalRoutes.post('/cases/:id/out-of-scope', step((req) => cases.outOfScope(req.user, req.params.id, req.body || {})));
+documentRenewalRoutes.post('/cases/:id/tasks', step((req) => proTasks.createTask(req.user, req.params.id, req.body || {})));
+documentRenewalRoutes.post('/cases/:id/papers/:docId/check', step((req) => cases.checkPapers(req.user, req.params.id, req.params.docId)));
+documentRenewalRoutes.post('/cases/:id/verify', step((req) => cases.verify(req.user, req.params.id, req.body || {})));
+
+// The case settings: approvers, PROs, when a contract opens a case. The master sets them.
+documentRenewalRoutes.get('/case-settings', wrap(async (req, res) => {
+  const s = await cases.caseSettings();
+  const staff = isMaster(req.user) ? await db.prepare('SELECT id, name, email FROM users WHERE NOT external ORDER BY lower(name)').all() : [];
+  res.json({ ...s, staff });
+}));
+documentRenewalRoutes.put('/case-settings', wrap(async (req, res) => {
+  res.json(await cases.saveCaseSettings(req.user, req.body || {}));
+}));
+
+// ---------- the PRO's tasks: their own, nothing else (no module needed) ----------
+
+export const proTaskRoutes = Router();
+proTaskRoutes.get('/', wrap(async (req, res) => { res.json({ tasks: await proTasks.myTasks(req.user) }); }));
+proTaskRoutes.get('/:id', wrap(async (req, res) => { res.json(await proTasks.taskView(req.user, req.params.id)); }));
+proTaskRoutes.get('/:id/files/:docId', wrap(async (req, res) => {
+  const d = await proTasks.taskFile(req.user, req.params.id, req.params.docId);
+  if (!d.path) return res.status(404).json({ error: 'This paper has no file yet' });
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.type(d.mime || 'application/octet-stream').sendFile(d.path, { dotfiles: 'allow' });
+}));
+proTaskRoutes.post('/:id/files', caseUpload.single('file'), wrap(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Choose a file' });
+  res.json(await proTasks.taskUpload(req.user, req.params.id, req.file));
+}));
+proTaskRoutes.post('/:id/done', wrap(async (req, res) => { await proTasks.finishTask(req.user, req.params.id, req.body || {}); res.json({ ok: true }); }));
+proTaskRoutes.post('/:id/blocked', wrap(async (req, res) => { await proTasks.blockTask(req.user, req.params.id, req.body || {}); res.json({ ok: true }); }));

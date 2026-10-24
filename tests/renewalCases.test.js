@@ -296,3 +296,12 @@ test('the proposal cannot change once it is waiting for approval', async () => {
   await rc.submit(hrUser, c.id, { push: async () => {} });
   await assert.rejects(rc.propose(hrUser, c.id, { mode: 'keep' }, { ask: hr }), (e) => e.status === 400);
 });
+
+test('case settings: only the master sets approvers, PROs and the opening days', async () => {
+  const { boss, hrUser } = await office();
+  const pro = await makeUser('Pro');
+  await assert.rejects(rc.saveCaseSettings(hrUser, { pro_ids: [pro] }), (e) => e.status === 403);
+  const s = await rc.saveCaseSettings(boss, { open_days: 45, approver_ids: [boss.id, 99999], pro_ids: [pro, 'x'] });
+  assert.deepEqual(s, { open_days: 45, approver_ids: [boss.id], pro_ids: [pro] }, 'unknown people are dropped');
+  await assert.rejects(rc.saveCaseSettings(boss, { open_days: 0 }), (e) => e.status === 400);
+});

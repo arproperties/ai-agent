@@ -26,7 +26,7 @@ import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
 import { docCategoryRoutes, seedCategories } from './docCategories.js';
-import { documentRenewalRoutes } from './documentRenewals.js';
+import { documentRenewalRoutes, proTaskRoutes } from './documentRenewals.js';
 import { startSaifsysDocSync } from './saifsysDocSync.js';
 import { startDocumentAlerts } from './documentAlerts.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
@@ -103,6 +103,7 @@ app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by 
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
 app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
+app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
