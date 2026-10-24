@@ -256,6 +256,11 @@ const SILENCE_MS = 1500;   // quiet after speech that ends the turn. Every extra
 const MIN_SPEECH_MS = 350; // shorter than this is a cough, not a question
 const MAX_TURN_MS = 60000; // hard stop, so a hot mic can never run forever
 
+// Tap the mic, talk, tap stop. People stop to think mid-sentence, and a 1.5 s pause sent
+// "No, first of all, that is the email from" on its own, four times in one chat. With a
+// stop button in reach, only a long quiet ends it: the phone put down, not a pause.
+export const TAP_TO_STOP = { silenceMs: 12000, maxMs: 5 * 60000 };
+
 let listening = null;
 
 /** Give up on the turn entirely — nothing is sent. */
@@ -275,7 +280,7 @@ export function finishListening() {
  * raw: hand back the recording itself (a Blob, or null if nothing was said) and leave
  * the transcribing to the caller — Live Translator sends it with the language attached.
  */
-export function listenUntilSilence({ onLevel, onCaptured, raw = false } = {}) {
+export function listenUntilSilence({ onLevel, onCaptured, raw = false, silenceMs = SILENCE_MS, maxMs = MAX_TURN_MS } = {}) {
   stopListening();
   return new Promise((resolve, reject) => {
     let stream, ctx, rec, raf, done = false, spoke = false;
@@ -364,9 +369,9 @@ export function listenUntilSilence({ onLevel, onCaptured, raw = false } = {}) {
             if (Date.now() - speechAt > MIN_SPEECH_MS) spoke = true;
           } else if (spoke) {
             quietAt ??= Date.now();
-            if (Date.now() - quietAt > SILENCE_MS) { done = true; rec.stop(); return; }
+            if (Date.now() - quietAt > silenceMs) { done = true; rec.stop(); return; }
           }
-          if (elapsed > MAX_TURN_MS) { done = true; rec.stop(); return; }
+          if (elapsed > maxMs) { done = true; rec.stop(); return; }
           raf = requestAnimationFrame(tick);
         };
         raf = requestAnimationFrame(tick);

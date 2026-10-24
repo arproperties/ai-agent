@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { onLive } from '../lib/live';
-import { listenUntilSilence, finishListening, stopListening } from '../lib/voice';
+import { listenUntilSilence, finishListening, stopListening, TAP_TO_STOP } from '../lib/voice';
 import Sheet from './Sheet';
 
 // ---------- small shared helpers (also used by Messenger.jsx) ----------
@@ -291,7 +291,7 @@ export function Composer({ chatId, reply, onCancelReply, replyName, onSend, voic
     setMicErr('');
     setRec('recording');
     try {
-      const said = await listenUntilSilence({ onCaptured: () => setRec('transcribing') });
+      const said = await listenUntilSilence({ ...TAP_TO_STOP, onCaptured: () => setRec('transcribing') });
       if (said) change([text.trim(), said].filter(Boolean).join(' '));
     } catch (e) {
       setMicErr(e.message);
@@ -392,7 +392,7 @@ export function Composer({ chatId, reply, onCancelReply, replyName, onSend, voic
             <Smile size={22} />
           </button>
           <textarea ref={box} rows={1} value={text}
-            placeholder={rec === 'recording' ? 'Listening… pause when you are done' : rec ? 'Writing down what you said…' : tidying ? (text.trim() ? 'Tidying it up…' : 'Writing a reply…') : placeholder}
+            placeholder={rec === 'recording' ? 'Listening… tap ■ to send' : rec ? 'Writing down what you said…' : tidying ? (text.trim() ? 'Tidying it up…' : 'Writing a reply…') : placeholder}
             onChange={(e) => change(e.target.value)}
             onPaste={(e) => { const f = e.clipboardData?.files?.[0]; if (f) { e.preventDefault(); setFile(f); } }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
