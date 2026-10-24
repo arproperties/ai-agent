@@ -52,6 +52,15 @@ export async function gather(userId, items) {
   for (const it of list) {
     files.push(it?.email_id ? await emailFile(userId, { id: it.email_id, name: it.name }) : await shelfFile(userId, it?.name));
   }
+  return keepFiles(userId, files);
+}
+
+/**
+ * Files to go on a draft ([{ name, mimetype, buffer }]), copied for it as the rows a draft
+ * keeps. Throws when there are too many or they are too big together for one email.
+ */
+export function keepFiles(userId, files) {
+  if (files.length > MAX_FILES) throw new Error(`Too many attachments (at most ${MAX_FILES} on one email).`);
   const total = files.reduce((n, f) => n + f.buffer.length, 0);
   if (total > MAX_TOTAL) throw new Error(`These attachments are ${mb(total)} together; an email can carry ${mb(MAX_TOTAL)}.`);
 

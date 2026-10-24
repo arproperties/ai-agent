@@ -10,7 +10,7 @@ import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
 import { deleteMessage, editReply, chat } from './chat.js';
 import { addMemory } from './knowledge.js';
-import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument } from './files.js';
+import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument, editDocumentKind, kindFieldsIn } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
@@ -25,6 +25,10 @@ import { responsibilityRoutes } from './responsibilities.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
+import { docCategoryRoutes, seedCategories } from './docCategories.js';
+import { documentRenewalRoutes, proTaskRoutes } from './documentRenewals.js';
+import { startSaifsysDocSync } from './saifsysDocSync.js';
+import { startDocumentAlerts } from './documentAlerts.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
@@ -97,6 +101,9 @@ app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and 
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
+app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
+app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
+app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -297,7 +304,9 @@ app.get('/api/documents/:id/file', wrap(async (req, res) => {
   const inline = !req.query.download && inlineType(doc);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(doc.name)}`);
-  res.type(inline || 'application/octet-stream').sendFile(doc.path);
+  // dotfiles: the path is the one stored for this file, never the visitor's; a data folder
+  // under a dot-named folder (a git worktree under .claude) must not turn every file into a 404.
+  res.type(inline || 'application/octet-stream').sendFile(doc.path, { dotfiles: 'allow' });
 }));
 // Word documents rendered as HTML for the in-app viewer
 app.get('/api/documents/:id/preview', wrap(async (req, res) => {
@@ -313,17 +322,28 @@ app.post('/api/documents/share', needsModule('shelf'), wrap(async (req, res) => 
 // move to another folder or company, rename, or (master only) publish to the shelf
 app.patch('/api/documents/:id', needsModule('shelf'), wrap(async (req, res) => {
   const doc = await own('documents', req.params.id, req.user.id);
-  if (!doc) return notFound(res);
+  // Not theirs: only what a file is, who it is for and its dates, and only for the master
+  // or a Document Renewals holder (editDocumentKind decides; anyone else gets its 404).
+  if (!doc) {
+    if (!kindFieldsIn(req.body) && !('expires_on' in req.body)) return notFound(res);
+    const { type_id, employee_code, subject, expires_on, confirm_expiry, confirm_link, not_renewing } = req.body;
+    const kind = Object.fromEntries(Object.entries({ type_id, employee_code, subject, expires_on, confirm_expiry, confirm_link, not_renewing })
+      .filter(([k]) => k in req.body));
+    const edited = await editDocumentKind(req.user, req.params.id, kind);
+    return res.json(docOut(await db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(edited.id), req.user.id));
+  }
   const folder = FOLDERS.includes(req.body.folder) ? req.body.folder : doc.folder;
   const title = String(req.body.title || doc.title).slice(0, 120);
   // An empty company means "Other"; a typed one is matched to an existing spelling.
   const company = 'company' in req.body ? pickCompany(req.body.company, await userCompanies(req.user.id)) : doc.company;
+  await db.prepare('UPDATE documents SET folder = ?, title = ?, company = ? WHERE id = ?').run(folder, title, company, doc.id);
   // A read expiry is a guess, and one nobody can correct is worse than none at all.
-  // Anything that is not a date clears it, which is how the field is emptied.
-  const expires = 'expires_on' in req.body
-    ? (/^\d{4}-\d{2}-\d{2}$/.test(req.body.expires_on) ? req.body.expires_on : null)
-    : doc.expires_on;
-  await db.prepare('UPDATE documents SET folder = ?, title = ?, company = ?, expires_on = ? WHERE id = ?').run(folder, title, company, expires, doc.id);
+  // Anything that is not a date clears it, which is how the field is emptied. A changed
+  // date is no longer the one somebody confirmed: editDocumentKind clears that.
+  if (kindFieldsIn(req.body) || 'expires_on' in req.body) {
+    const { title: _t, folder: _f, company: _c, shared: _s, ...kind } = req.body;
+    await editDocumentKind(req.user, doc.id, kind);
+  }
   // A field-level permission, not a route-level one: everyone renames and refiles here,
   // but only the master may publish. A user sending `shared` simply does not get it.
   if ('shared' in req.body && isMaster(req.user)) await setShared(req.user, doc.id, req.body.shared);
@@ -421,12 +441,19 @@ if (existsSync(dist)) {
 await giveToEveryoneOnce()
   .then((given) => given.length && console.log('[modules] given to everyone already here:', given.join(', ')))
   .catch((e) => console.error('[modules] could not give the new modules to everyone:', e.message));
+// The first two document categories (Employee / Company Documents), into an empty list only.
+await seedCategories().catch((e) => console.error('[doc-categories] could not seed the categories:', e.message));
 // Reminders sent before they landed as to-dos are put on each person's list. Once only.
 await bringOldRemindersIntoTodos()
   .then((n) => n && console.log(`[team-reminders] ${n} sent reminders put on people's to-do lists`))
   .catch((e) => console.error('[team-reminders] could not bring old reminders into to-dos:', e.message));
 
 app.listen(PORT, '0.0.0.0', () => {
+  // saifsys's employee documents onto the Shelf, for Document Renewals: nightly, and once now
+  startSaifsysDocSync();
+  // Expiry alerts (pushes and to-dos) on the live server only, unless asked for: a local copy of
+  // the live database holds real people's phones, which a test run must not wake.
+  if (process.env.NODE_ENV === 'production' || process.env.DOCUMENT_ALERTS === 'on') startDocumentAlerts();
   // drafts approved while the rate limit was full go out when it clears
   startOutbox().catch((e) => console.error('[outbox]', e.message));
   // files from a folder or ZIP import that were still waiting when the server stopped
