@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { billNote } from './billing.js';
 import { claude } from './ai.js';
 import { pickAgent } from './router.js';
 import { extractText, readVideo, recall, learn } from './knowledge.js';
@@ -539,6 +540,7 @@ export async function chat(req, res) {
   const { chats: carried, added } = await carry(user, convId, picked);
   if (carried.length) send('carried', carried.map(({ id, title }) => ({ id, title })));
   const { id: userMessageId, repeat } = await saveQuestion(convId, text, savedFiles);
+  billNote(text || meta.map((f) => f.name).join(', ')); // shown beside this answer's price in Billing
   if (repeat) send('repeat', { userMessageId }); // the app shows it once too
   if (added.length) await noteCarried(userMessageId, added);
 

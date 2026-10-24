@@ -7,6 +7,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { db } from './db.js';
+import { billAs } from './billing.js';
 import { DATA_DIR } from './config.js';
 import { transcribe } from './ai.js';
 
@@ -96,8 +97,13 @@ export function kick(id) {
 export const settled = () => Promise.all([...jobs.values()]);
 
 async function work(id) {
-  const t = await db.prepare('SELECT id, path FROM transcripts WHERE id = ?').get(id);
+  const t = await db.prepare('SELECT id, path, user_id FROM transcripts WHERE id = ?').get(id);
   if (!t) return;
+  return billAs({ userId: t.user_id, job: 'transcribe' }, () => write(t));
+}
+
+async function write(t) {
+  const { id } = t;
   try {
     const { text, seconds } = await audioToText(t.path);
     await db.prepare(`UPDATE transcripts SET status = 'ready', text = ?, error = ?, duration_s = ? WHERE id = ?`)

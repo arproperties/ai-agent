@@ -1849,3 +1849,27 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_address_proposals_chat ON address_proposals(master_id, conversation_id, id);
 `);
+
+// What each AI call cost, one row per model per call (server/billing.js). Written as the
+// answer comes back, so the Billing screen shows money by person, by job and by model.
+// user_id is empty for work nobody asked for in person (renewals, the shared inboxes).
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS ai_costs (
+    id SERIAL PRIMARY KEY,
+    at BIGINT NOT NULL DEFAULT ${NOW},
+    user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    job      TEXT NOT NULL,
+    note     TEXT,
+    provider TEXT NOT NULL,
+    model    TEXT NOT NULL,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read    INTEGER NOT NULL DEFAULT 0,
+    cache_write   INTEGER NOT NULL DEFAULT 0,
+    searches      INTEGER NOT NULL DEFAULT 0,
+    units    REAL NOT NULL DEFAULT 0,
+    usd      DOUBLE PRECISION NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_costs_at ON ai_costs(at);
+  CREATE INDEX IF NOT EXISTS idx_ai_costs_user ON ai_costs(user_id, at);
+`);

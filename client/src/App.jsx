@@ -17,6 +17,7 @@ import TranslatePage from './components/Translate';
 import TenantCarePage from './components/TenantCare';
 import MailRoutingPage from './components/MailRouting';
 import AddressBookPage from './components/AddressBook';
+import BillingPage from './components/Billing';
 import SharedInboxPage from './components/SharedInbox';
 import ResponsibilitiesPage from './components/Responsibilities';
 import ChecklistsPage from './components/Checklists';
@@ -186,6 +187,7 @@ export default function App() {
           tenantCare={tenantCare} tenantCareOpen={panel === 'tenantcare'} onTenantCare={() => { setPanel('tenantcare'); setDrawer(false); }}
           mailRoutingOpen={panel === 'mailrouting'} onMailRouting={() => { setPanel('mailrouting'); setDrawer(false); }}
           addressBookOpen={panel === 'addressbook'} onAddressBook={() => { setPanel('addressbook'); setDrawer(false); }}
+          billingOpen={panel === 'billing'} onBilling={() => { setPanel('billing'); setDrawer(false); }}
           sharedInbox={sharedInbox} sharedInboxOpen={panel === 'sharedinbox'} onSharedInbox={() => { setPanel('sharedinbox'); setDrawer(false); }}
           dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
@@ -239,6 +241,7 @@ export default function App() {
         {panel === 'tenantcare' && <TenantCarePage me={me} onBack={() => setPanel(null)} onChanged={loadTenantCare} />}
         {panel === 'mailrouting' && me.role === 'master' && <MailRoutingPage onBack={() => setPanel(null)} />}
         {panel === 'addressbook' && me.role === 'master' && <AddressBookPage onBack={() => setPanel(null)} />}
+        {panel === 'billing' && me.role === 'master' && <BillingPage onBack={() => setPanel(null)} />}
         {panel === 'sharedinbox' && <SharedInboxPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
         {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}

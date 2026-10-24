@@ -1,9 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI, { toFile } from 'openai';
 import { DATA_DIR, FAST_MODEL, IMAGE_MODEL } from './config.js';
+import { watch, recordOpenAI } from './billing.js';
 
-// Claude: chat, reading attachments, learning memories
-export const claude = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY });
+// Claude: chat, reading attachments, learning memories. Every call is priced (server/billing.js).
+export const claude = watch(new Anthropic({ apiKey: process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY }));
 
 // OpenAI: voice (speech-to-text and text-to-speech) and drawing pictures
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
@@ -19,8 +20,12 @@ export async function transcribe(buffer, mimetype, { language, prompt } = {}) {
     ...(language ? { language } : {}),
     ...(prompt ? { prompt } : {}),
   });
+  recordOpenAI('gpt-4o-mini-transcribe', { minutes: audioMinutes(res) });
   return res.text;
 }
+
+// How long the audio was, from what the answer says: seconds, or audio tokens (about 600 a minute).
+const audioMinutes = (res) => (res.usage?.seconds ?? res.duration ?? (res.usage?.input_token_details?.audio_tokens || 0) / 10) / 60;
 
 /** When each word is said in a spoken reply: [{ w, s, e }] in seconds, for the read-aloud highlighter. */
 export async function wordTimings(buffer) {
@@ -31,6 +36,7 @@ export async function wordTimings(buffer) {
     response_format: 'verbose_json',
     timestamp_granularities: ['word'],
   });
+  recordOpenAI('whisper-1', { minutes: audioMinutes(res) });
   return (res.words || []).map((x) => ({ w: x.word, s: x.start, e: x.end }));
 }
 
@@ -55,6 +61,7 @@ export async function transcribeSpeakers(buffer, mimetype, speakers = []) {
       known_speaker_references: known.map((s) => s.sample),
     } : {}),
   });
+  recordOpenAI('gpt-4o-transcribe-diarize', { minutes: audioMinutes(res) });
   const names = new Set(known.map((s) => s.name));
   return {
     duration: res.duration || 0,
@@ -68,6 +75,7 @@ export async function transcribeSpeakers(buffer, mimetype, speakers = []) {
 // as it is generated — playback starts on the first chunk instead of the last.
 export async function speakStream(text, voice, tone, signal) {
   if (!openai) throw new Error('Voice is not configured (OPENAI_API_KEY missing)');
+  recordOpenAI('gpt-4o-mini-tts', { chars: Math.min(text.length, 4000) });
   return openai.audio.speech.create({
     model: 'gpt-4o-mini-tts',
     voice,
@@ -85,6 +93,7 @@ export async function drawPicture(prompt) {
   const res = await openai.images.generate({
     model: IMAGE_MODEL, prompt, size: '1536x1024', quality: 'medium', output_format: 'jpeg', output_compression: 85, n: 1,
   });
+  recordOpenAI('gpt-image', { pictures: 1 });
   return Buffer.from(res.data[0].b64_json, 'base64');
 }
 

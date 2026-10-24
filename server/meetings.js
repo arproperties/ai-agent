@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { readFile, writeFile, rename } from 'node:fs/promises';
 import { db } from './db.js';
+import { billAs } from './billing.js';
 import { DATA_DIR } from './config.js';
 import { transcribeSpeakers, ask, audioExt } from './ai.js';
 import { isMaster } from './access.js';
@@ -244,15 +245,15 @@ export const settled = () => running ?? Promise.resolve();
 
 async function drain() {
   for (;;) {
-    const part = await db.prepare(`SELECT p.*, m.speakers FROM meeting_parts p JOIN meetings m ON m.id = p.meeting_id
+    const part = await db.prepare(`SELECT p.*, m.speakers, m.user_id AS owner, m.title FROM meeting_parts p JOIN meetings m ON m.id = p.meeting_id
       WHERE p.status = 'waiting' ORDER BY p.id LIMIT 1`).get();
     if (!part) break;
-    await transcribePart(part);
+    await billAs({ userId: part.owner, job: 'meetings', note: part.title }, () => transcribePart(part));
   }
   // Everything transcribed that was asked for: summarise the meetings whose pieces are all in.
   const ready = await db.prepare(`SELECT * FROM meetings m WHERE m.status = 'processing'
     AND NOT EXISTS (SELECT 1 FROM meeting_parts p WHERE p.meeting_id = m.id AND p.status IN ('waiting', 'retry'))`).all();
-  for (const m of ready) await summarizeMeeting(m);
+  for (const m of ready) await billAs({ userId: m.user_id, job: 'meetings', note: m.title }, () => summarizeMeeting(m));
 }
 
 async function voicesFor(speakersJson) {
