@@ -231,6 +231,19 @@ function DocRow({ doc, onChanged }) {
     try { await api.patch(`/documents/${doc.id}`, body); await onChanged(); } catch (e) { setError(e.message); }
     setBusy('');
   };
+  // The document itself, in a new tab. The tab opens at once (a browser blocks one opened
+  // after waiting); the file is fetched from saifsys first if Reem does not have it yet.
+  const view = async () => {
+    setError('');
+    const tab = window.open('', '_blank');
+    try {
+      if (!doc.has_file) { setBusy('file'); await api.post(`/document-renewals/documents/${doc.id}/file`); }
+      if (tab) tab.location = `/api/documents/${doc.id}/file`;
+      else window.location.href = `/api/documents/${doc.id}/file`;
+      if (!doc.has_file) onChanged();
+    } catch (e) { tab?.close(); setError(e.message); }
+    setBusy('');
+  };
   const notRenewing = () => {
     const note = window.prompt('Why is it not being renewed? (optional)', '');
     if (note !== null) act('not', { not_renewing: { note } });
@@ -238,12 +251,12 @@ function DocRow({ doc, onChanged }) {
   return (
     <li className={`glass rounded-2xl p-4 ${s.step === 'expired' || s.step === 'd14' ? 'border border-bad/40' : ''}`}>
       <div className="flex items-start gap-3">
-        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-mute"><FileText size={16} /></span>
+        <button onClick={view} title="Open the document" className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-mute transition hover:bg-p1/30 hover:text-txt">
+          {busy === 'file' ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+        </button>
         <div className="min-w-0 flex-1">
-          <p className="font-medium">{doc.type}</p>
-          {doc.has_file
-            ? <a href={`/api/documents/${doc.id}/file`} target="_blank" rel="noreferrer" className="block truncate text-xs text-mute hover:text-txt hover:underline">{doc.title || doc.name}</a>
-            : <p className="truncate text-xs text-mute">{doc.title || doc.name} · no file yet</p>}
+          <button onClick={view} className="text-left font-medium hover:underline">{doc.type}</button>
+          <p className="truncate text-xs text-mute">{doc.title || doc.name}{doc.has_file ? '' : ' · file not in Reem yet: tap to fetch from saifsys'}</p>
           {doc.summary && <p className="mt-0.5 text-xs text-mute/80">{doc.summary}</p>}
           <p className="mt-1 text-sm">{doc.expires_on ? <>Expires {day(doc.expires_on)}</> : <span className="text-mute">No expiry date read</span>}</p>
           {doc.not_renewing_note && <p className="text-xs text-mute">Not renewing: {doc.not_renewing_note}</p>}

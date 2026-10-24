@@ -5,7 +5,7 @@ import { retrievalScope } from './knowledge.js';
 import { needsModule } from './modules.js';
 import { listCategories } from './docCategories.js';
 import { askSaifsys, dubaiDate } from './saifsys/client.js';
-import { syncNow } from './saifsysDocSync.js';
+import { syncNow, fileFor } from './saifsysDocSync.js';
 
 // Document Renewals, the screen (client/src/components/DocumentRenewals.jsx): every
 // categorised Shelf file this person may read, by the employee or the company it is for,
@@ -155,6 +155,12 @@ documentRenewalRoutes.get('/subjects', wrap(async (req, res) => {
 // The master brings saifsys's employee documents across now, rather than waiting for the night.
 documentRenewalRoutes.post('/sync', wrap(async (req, res) => {
   res.json(await syncNow(req.user));
+}));
+// Before a document is opened: makes sure its file is here, asking saifsys for it if it was
+// copied before its file came. Then the screen opens /api/documents/:id/file as any file.
+documentRenewalRoutes.post('/documents/:id/file', wrap(async (req, res) => {
+  const doc = await fileFor(req.user, req.params.id);
+  res.json({ id: doc.id, ready: true });
 }));
 documentRenewalRoutes.get('/unlinked', wrap(async (req, res) => {
   res.json(await unlinkedData(req.user));

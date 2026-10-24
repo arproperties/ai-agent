@@ -1,9 +1,10 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
 import { isMaster } from './access.js';
+import { readableDocument } from './files.js';
 import { askSaifsys, fileFromSaifsys, dubaiHour } from './saifsys/client.js';
 
 // saifsys's employee documents (passports, visas, Emirates IDs, labour cards, contracts),
@@ -140,6 +141,27 @@ async function supersedeOlder() {
       AND d.expiry_confirmed_at IS NOT NULL AND d.link_confirmed_at IS NOT NULL
     RETURNING d.id`).all();
   return rows.length;
+}
+
+/**
+ * A document to open, with its file: when it was copied from saifsys before its file came,
+ * saifsys is asked for the file there and then, and it is kept. Only for someone who may
+ * read the document at all; anyone else gets the same 404 as a file that is not there.
+ */
+export async function fileFor(user, docId, { fetchFile = saifsysFile } = {}) {
+  const missing = (m = 'Not found') => Object.assign(new Error(m), { status: 404 });
+  const doc = await readableDocument(user, docId);
+  if (!doc) throw missing();
+  if (doc.path && existsSync(doc.path)) return doc;
+  const link = await db.prepare('SELECT * FROM saifsys_doc_links WHERE document_id = ?').get(doc.id);
+  if (!link) throw missing('This document has no file');
+  try {
+    await attachFile(doc.id, doc.user_id, { id: link.saifsys_id, file_name: null }, fetchFile);
+  } catch {
+    throw missing('saifsys has no file for this document yet');
+  }
+  await db.prepare('UPDATE saifsys_doc_links SET has_file = true WHERE saifsys_id = ?').run(link.saifsys_id);
+  return readableDocument(user, doc.id);
 }
 
 /** The master's "Sync now" on the Document Renewals screen. */

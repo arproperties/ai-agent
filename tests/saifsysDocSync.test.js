@@ -161,6 +161,32 @@ test('an older document of the same kind for the same person stops alerting', as
   assert.equal(other.superseded_by, null, 'another person\'s is not either');
 });
 
+test('opening a document fetches its file from saifsys there and then', async () => {
+  const { boss } = await office();
+  const { fileFor } = await import('../server/saifsysDocSync.js');
+  const s = saifsys([row()], { files: {} });
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  const [p] = await docs();
+  const master = { id: boss, role: 'master' };
+  await assert.rejects(fileFor(master, p.id, { fetchFile: s.fetchFile }), (e) => e.status === 404 && /saifsys has no file/.test(e.message));
+  const now = saifsys([row()], { files: { 1: '%PDF arrived' } });
+  const got = await fileFor(master, p.id, { fetchFile: now.fetchFile });
+  assert.equal(readFileSync(got.path, 'utf8'), '%PDF arrived');
+  await fileFor(master, p.id, { fetchFile: now.fetchFile });
+  assert.deepEqual(now.calls.files, [1], 'kept: the second open does not ask saifsys again');
+});
+
+test('nobody fetches a file they may not read', async () => {
+  await office();
+  const { fileFor } = await import('../server/saifsysDocSync.js');
+  const staff = await makeUser('Staff');
+  const s = saifsys([row()], { files: { 1: 'x' } });
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  const [p] = await docs();
+  await assert.rejects(fileFor({ id: staff, role: 'user' }, p.id, { fetchFile: s.fetchFile }), (e) => e.status === 404);
+  assert.deepEqual(s.calls.files, [], 'saifsys is not even asked');
+});
+
 test('no master: nothing to file it under, nothing done', async () => {
   await reset();
   await cats.seedCategories();
