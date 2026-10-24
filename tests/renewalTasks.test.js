@@ -123,3 +123,80 @@ test('overdue task reminds the PRO, then the owner', async () => {
   await tasks.remindOverdue({ today: plus(5), push: o.push });
   assert.equal(o.sent.length, 0, 'done: no more');
 });
+
+// ---------- the papers that come back (Task 13) ----------
+
+const pdf = (name = 'new-visa.pdf') => ({ originalname: name, mimetype: 'application/pdf', size: 9, buffer: Buffer.from(`%PDF ${name}`) });
+async function papersBack() {
+  const who = await approvedCase();
+  const t = await newTask(who.hr, who.c, who.pro);
+  const d = await tasks.taskUpload(who.pro, t.id, pdf());
+  // What reading the new visa would have set, unconfirmed.
+  await db.prepare('UPDATE documents SET expires_on = ? WHERE id = ?').run(plus(750), d.id);
+  await tasks.finishTask(who.pro, t.id, {}, { push: quiet });
+  return { ...who, t, d };
+}
+const fakeRead = (over = {}) => async () => ({ name: 'Ahmed Khan', employee_code: null, passport_no: null, start: null, end: plus(750),
+  basic: null, allowance: null, total: null, signed: null, confidence: 'high', ...over });
+
+test('Reem reads a returned paper and puts what it found on the case', async () => {
+  const { hr, c, d } = await papersBack();
+  const r = await rc.checkPapers(hr, c.id, d.id, { read: fakeRead({ end: plus(700) }) });
+  assert.equal(r.ok, false);
+  assert.match(r.problems.join(' '), /approved/);
+  const ev = await db.prepare("SELECT * FROM doc_renewal_case_events WHERE case_id = ? AND kind = 'papers'").get(c.id);
+  assert.equal(ev.detail.document_id, d.id);
+  assert.equal(ev.detail.read.end, plus(700));
+});
+
+test('verified renewal: the new paper is confirmed, the old one replaced, the case closes', async () => {
+  const { hr, c, d, visa } = await papersBack();
+  await rc.verify(hr, c.id, { document_id: d.id });
+  const fresh = await db.prepare('SELECT * FROM documents WHERE id = ?').get(d.id);
+  assert.equal(fresh.expiry_confirmed_by, hr.id, 'HR\'s tick confirms the date');
+  assert.equal(fresh.link_confirmed_by, hr.id);
+  assert.equal((await db.prepare('SELECT superseded_by FROM documents WHERE id = ?').get(visa)).superseded_by, d.id);
+  const now = await db.prepare('SELECT * FROM doc_renewal_cases WHERE id = ?').get(c.id);
+  assert.ok(now.closed_at);
+  assert.match(now.closed_note, /Renewed/);
+});
+
+test('verify needs a date on the paper and a paper the PRO brought for this case', async () => {
+  const { hr, c, other, d } = await papersBack();
+  await assert.rejects(rc.verify(hr, c.id, { document_id: other }), (e) => e.status === 400);
+  await db.prepare('UPDATE documents SET expires_on = NULL WHERE id = ?').run(d.id);
+  await assert.rejects(rc.verify(hr, c.id, { document_id: d.id }), (e) => e.status === 400 && /expiry/.test(e.message));
+});
+
+test('verify only once the PRO has finished', async () => {
+  const { hr, pro, c } = await approvedCase();
+  const t = await newTask(hr, c, pro);
+  const d = await tasks.taskUpload(pro, t.id, pdf());
+  await db.prepare('UPDATE documents SET expires_on = ? WHERE id = ?').run(plus(750), d.id);
+  await assert.rejects(rc.verify(hr, c.id, { document_id: d.id }), (e) => e.status === 400);
+});
+
+test('a verified cancellation marks the document not renewing and closes', async () => {
+  await reset();
+  const boss = { id: await makeUser('Boss'), role: 'master' };
+  await db.prepare(`UPDATE users SET role = 'master' WHERE id = ?`).run(boss.id);
+  const pro = { id: await makeUser('Pro'), role: 'user' };
+  await cats.seedCategories();
+  await db.prepare('INSERT INTO doc_renewal_case_settings (id, pro_ids) VALUES (1, ?)').run([pro.id]);
+  const t = (await db.prepare("SELECT id FROM document_types WHERE label = 'Residence Visa'").get()).id;
+  const visa = await makeDoc(boss.id, null, 'visa.pdf');
+  await db.prepare(`UPDATE documents SET type_id = ?, category_id = (SELECT category_id FROM document_types WHERE id = ?),
+    employee_code = 'E-0500', employee_name = 'Old Hand', expires_on = ?, expiry_confirmed_at = 1, link_confirmed_at = 1 WHERE id = ?`).run(t, t, plus(200), visa);
+  const c = await rc.startCase(boss, visa, 'cancel');
+  await rc.propose(boss, c.id, { mode: 'cancel', terms: { reason: 'Left the company' } });
+  await rc.submit(boss, c.id, { push: quiet });
+  await rc.approve(boss, c.id);
+  const task = await tasks.createTask(boss, c.id, { assignee_id: pro.id, kind: 'visa_cancellation', due_date: plus(5) }, { push: quiet });
+  const proof = await tasks.taskUpload(pro, task.id, pdf('cancellation.pdf'));
+  await tasks.finishTask(pro, task.id, {}, { push: quiet });
+  await rc.verify(boss, c.id, { document_id: proof.id });
+  const old = await db.prepare('SELECT * FROM documents WHERE id = ?').get(visa);
+  assert.ok(old.not_renewing_at);
+  assert.match(old.not_renewing_note, /Cancelled/);
+  assert.match((await db.prepare('SELECT closed_note FROM doc_renewal_cases WHERE id = ?').get(c.id)).closed_note, /Cancelled/);
+});

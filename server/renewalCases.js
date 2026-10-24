@@ -298,3 +298,65 @@ export async function reject(user, id, { note } = {}) {
   await db.prepare('UPDATE doc_renewal_cases SET status = ?, updated_at = ? WHERE id = ?').run(c.kind === 'cancel' ? 'cancel_review' : 'renew_review', now(), c.id);
   await event(c.id, user.id, 'rejected', { note: why });
 }
+
+// ---------- the papers that come back ----------
+
+/** The papers the PRO brought for this case. */
+async function caseFiles(caseId) {
+  const rows = await db.prepare('SELECT evidence FROM doc_renewal_case_tasks WHERE case_id = ?').all(caseId);
+  return rows.flatMap((r) => r.evidence?.files || []);
+}
+
+/**
+ * Reem reads one returned paper and checks it against what was approved; the result goes on
+ * the case's timeline for HR. `read` is the reader (renewalAi.js readReturnedDoc on the file).
+ */
+export async function checkPapers(user, id, docId, { read } = {}) {
+  const c = await getCase(user, id);
+  if (!(await caseFiles(c.id)).includes(Number(docId))) throw bad('That paper was not brought for this case');
+  const { readReturnedDoc, checkAgainstCase } = await import('./renewalAi.js');
+  const doc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(Number(docId));
+  const got = read ? await read(doc) : await readReturnedDoc(await fileBytes(doc));
+  const result = checkAgainstCase(got, c, { contract: await isContract(c) });
+  await event(c.id, user.id, 'papers', { document_id: doc.id, read: got, ...result });
+  return result;
+}
+
+async function fileBytes(doc) {
+  const { readFileSync } = await import('node:fs');
+  if (!doc.path) throw bad('That paper has no file yet');
+  return { mime: doc.mime || 'application/pdf', data: readFileSync(doc.path).toString('base64') };
+}
+
+/**
+ * HR's Verified on a returned paper: its date and person are confirmed, it replaces the case's
+ * document, and the case closes - or, for a contract whose terms changed, goes on to be written
+ * back to saifsys. A verified cancellation marks the document not renewing.
+ */
+export async function verify(user, id, { document_id } = {}) {
+  const c = await getCase(user, id);
+  if (c.status !== 'checking_documents') throw bad('The papers are checked once the PRO has finished');
+  const docId = Number(document_id);
+  if (!(await caseFiles(c.id)).includes(docId)) throw bad('Verify a paper that was brought for this case');
+  const d = await db.prepare('SELECT * FROM documents WHERE id = ?').get(docId);
+  const t = now();
+  if (c.kind === 'renew') {
+    if (!d.expires_on) throw bad('Put the new expiry date on the paper first');
+    await db.prepare(`UPDATE documents SET expiry_confirmed_by = ?, expiry_confirmed_at = ?, link_confirmed_by = ?, link_confirmed_at = ? WHERE id = ?`)
+      .run(user.id, t, user.id, t, d.id);
+    await db.prepare('UPDATE documents SET superseded_by = ? WHERE id = ?').run(d.id, c.document_id);
+  } else {
+    await db.prepare('UPDATE documents SET not_renewing_at = ?, not_renewing_note = ? WHERE id = ?')
+      .run(t, `Cancelled (case #${c.id})`, c.document_id);
+  }
+  await event(c.id, user.id, 'verified', { document_id: d.id });
+  if (c.kind === 'renew' && (await isContract(c)) && c.proposal?.mode === 'update') {
+    await db.prepare("UPDATE doc_renewal_cases SET status = 'writing_back', updated_at = ? WHERE id = ?").run(t, c.id);
+    return;
+  }
+  if (c.kind === 'cancel' && (await isContract(c))) {
+    await db.prepare("UPDATE doc_renewal_cases SET status = 'writing_back', updated_at = ? WHERE id = ?").run(t, c.id);
+    return;
+  }
+  await closeCase(c.id, user.id, c.kind === 'renew' ? `Renewed: runs to ${d.expires_on}` : 'Cancelled');
+}
