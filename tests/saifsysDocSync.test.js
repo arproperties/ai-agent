@@ -53,7 +53,7 @@ test('each saifsys document becomes a Shelf file filed under its employee', asyn
   const { boss } = await office();
   const s = saifsys([row(), row({ id: 2, type: 'National ID', number: '784-1990', expires_at: '2027-02-01' }), row({ id: 3, type: 'Something odd', expires_at: null })]);
   const r = await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
-  assert.deepEqual(r, { added: 3, updated: 0, files: 0, superseded: 0 });
+  assert.deepEqual(r, { added: 3, updated: 0, superseded: 0 });
   const [p, eid, odd] = await docs();
   assert.equal(p.user_id, boss, 'the master\'s file');
   assert.equal(p.type, 'Passport');
@@ -78,7 +78,7 @@ test('running it again adds nothing', async () => {
   const s = saifsys([row(), row({ id: 2 })]);
   await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
   const again = await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
-  assert.deepEqual(again, { added: 0, updated: 0, files: 0, superseded: 0 });
+  assert.deepEqual(again, { added: 0, updated: 0, superseded: 0 });
   assert.equal((await docs()).length, 2);
 });
 
@@ -100,34 +100,23 @@ test('every page is read', async () => {
   assert.equal(s.calls.pages, 3);
 });
 
-test('the file comes along when saifsys has it, and later if it arrives later', async () => {
+test('the sync brings only the details: no file is fetched until someone opens it', async () => {
   await office();
-  const first = saifsys([row({ has_file: true, file_name: 'passport.pdf' }), row({ id: 2, type: 'Visa' })], { files: { 1: '%PDF passport' } });
-  const r = await syncSaifsysDocs({ lookup: first.lookup, fetchFile: first.fetchFile });
-  assert.equal(r.files, 1);
-  let [p, v] = await docs();
-  assert.ok(existsSync(p.path));
-  assert.equal(readFileSync(p.path, 'utf8'), '%PDF passport');
-  assert.equal(p.name, 'passport.pdf');
-  assert.equal(p.mime, 'application/pdf');
-  assert.equal(v.path, null);
-  // The visa's file is uploaded in saifsys afterwards.
-  const later = saifsys([row({ has_file: true, file_name: 'passport.pdf' }), row({ id: 2, type: 'Visa', has_file: true, file_name: 'visa.jpg', updated_at: '2026-10-24 09:00:00' })], { files: { 1: '%PDF passport', 2: 'visa' } });
-  const r2 = await syncSaifsysDocs({ lookup: later.lookup, fetchFile: later.fetchFile });
-  assert.equal(r2.files, 1);
-  assert.deepEqual(later.calls.files, [2], 'a file already brought is not fetched again');
-  [p, v] = await docs();
-  assert.equal(readFileSync(v.path, 'utf8'), 'visa');
+  const s = saifsys([row({ has_file: true, file_name: 'passport.pdf' }), row({ id: 2, type: 'Visa' })], { files: { 1: '%PDF passport' } });
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  assert.deepEqual(s.calls.files, []);
+  assert.ok((await docs()).every((d) => d.path === null));
 });
 
-test('a file saifsys cannot give is tried again next time, without failing the rest', async () => {
+test('whether saifsys holds a file is kept, and follows saifsys when that changes', async () => {
   await office();
-  const s = saifsys([row({ has_file: true }), row({ id: 2 })], { files: {} });
-  const r = await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
-  assert.equal(r.added, 2);
-  assert.equal(r.files, 0);
-  const s2 = saifsys([row({ has_file: true }), row({ id: 2 })], { files: { 1: 'ok now' } });
-  assert.equal((await syncSaifsysDocs({ lookup: s2.lookup, fetchFile: s2.fetchFile })).files, 1);
+  const has = async () => (await db.prepare('SELECT saifsys_id, saifsys_has_file FROM saifsys_doc_links ORDER BY saifsys_id').all()).map((l) => l.saifsys_has_file);
+  const s = saifsys([row({ has_file: true }), row({ id: 2 })], { files: { 1: 'x' } });
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  assert.deepEqual(await has(), [true, false]);
+  const s2 = saifsys([row({ has_file: true }), row({ id: 2, has_file: true })], { files: { 1: 'x', 2: 'y' } });
+  await syncSaifsysDocs({ lookup: s2.lookup, fetchFile: s2.fetchFile });
+  assert.deepEqual(await has(), [true, true], 'the file uploaded in saifsys later');
 });
 
 test('a date changed in saifsys is taken, unless someone in Reem has set it since', async () => {

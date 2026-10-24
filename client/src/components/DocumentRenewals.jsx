@@ -1,19 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Loader2, AlertTriangle, Search, X, ChevronRight, Check, FileText, Upload, Ban, Undo2, Building2, UserRound, Clock, HelpCircle, Link2Off, RefreshCw, ShieldAlert, Plane, FileSignature, BellRing, Siren, Settings2, Briefcase,
+  Loader2, AlertTriangle, Search, X, ChevronRight, Check, FileText, Ban, Undo2, Building2, UserRound, RefreshCw, Settings2, Send, Paperclip, Bell as BellIcon, Briefcase,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 import Picker from './Picker';
 import Sheet from './Sheet';
-import RenewalCasePage, { StatusChip } from './RenewalCase';
+import RenewalCasePage, { StatusChip, ContractSalary, ProposalForm, ProposalView } from './RenewalCase';
 
-// Document Renewals (server/documentRenewals.js): the company's and the staff's papers that
-// run out - passports, visas, contracts, trade licences. A strip of what needs someone on
-// top, the employees (and the companies, vehicles, policies) underneath; tap one to see
-// their documents, confirm what the AI read, upload the renewed one or mark it not renewing.
+// Document Renewals (server/documentRenewals.js): the employees whose labour contract runs
+// out within 60 days, to renew or terminate (the contract is the one paper the company
+// renews), and the company's own papers. Tap a person to see their saifsys record and all
+// their documents, which come from saifsys.
 
-const day = (d) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDateString([], { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
+const day = (d) => (d && d >= '1900' ? new Date(`${d}T00:00:00Z`).toLocaleDateString([], { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const TONE = { bad: 'bg-bad/15 text-bad', warn: 'bg-warn/15 text-warn', p1: 'bg-p1/20 text-txt', ok: 'bg-ok/15 text-ok', mute: 'bg-white/10 text-mute' };
 
 // One document's (or one person's worst) state, as words and a colour.
@@ -31,74 +31,12 @@ const Chip = ({ step, children }) => {
 const Problem = ({ text }) => (text ? <p className="flex items-start gap-1.5 text-sm text-bad"><AlertTriangle size={15} className="mt-0.5 shrink-0" /> {text}</p> : null);
 const Spinner = () => <div className="grid place-items-center pt-16 text-mute"><Loader2 className="animate-spin" /></div>;
 
-// The strip on top: each count filters the list below to the people it is about.
-const ALERTS = [
-  // Each count is of documents, not people: one person often has a visa, ID and labour card ending together.
-  ['expired', 'expired', AlertTriangle, 'bad'],
-  ['d14', 'due within 14 days', Clock, 'bad'],
-  ['d30', 'due in 15–30 days', Clock, 'warn'],
-  ['d60', 'due in 31–60 days', Clock, 'p1'],
-  ['confirm', 'with a date to confirm', HelpCircle, 'warn'],
-  ['unlinked', 'not linked to anyone', Link2Off, 'mute'],
-];
-
-function AlertStrip({ alerts, active, onPick }) {
-  return (
-    <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-      {ALERTS.map(([key, label, Ico, tone]) => {
-        const n = alerts?.[key] || 0;
-        const on = active === key;
-        return (
-          <button key={key} onClick={() => onPick(on ? null : key)} disabled={!n && !on}
-            className={`flex shrink-0 items-center gap-2 rounded-2xl border px-3.5 py-2.5 text-left transition disabled:opacity-40 ${on ? 'border-p1/60 bg-white/10' : 'border-stroke bg-white/[0.04] hover:bg-white/[0.07]'}`}>
-            <span className={`grid size-8 place-items-center rounded-full ${TONE[tone]}`}><Ico size={15} /></span>
-            <span>
-              <span className="block text-lg font-medium leading-none">{n}</span>
-              <span className="text-xs text-mute">{n === 1 ? 'document' : 'documents'} {label}</span>
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// The major cases on top (server/documentRenewals.js majorCases), worst first: what the boss
-// should know before anything else. Tapping one narrows the list to the people in it.
-const CASE_ICON = { working_expired: Siren, left_valid: Plane, contracts_60: FileSignature, due_14: BellRing, to_confirm: HelpCircle, missing: ShieldAlert };
-
-function NeedsAttention({ cases, active, onPick }) {
-  if (!cases?.length) return null;
-  return (
-    <div className="glass overflow-hidden rounded-2xl">
-      <p className="px-4 pb-1 pt-3 text-xs font-medium uppercase tracking-wider text-mute">Needs attention</p>
-      <ul className="divide-y divide-stroke/60">
-        {cases.map((c) => {
-          const Ico = CASE_ICON[c.key] || AlertTriangle;
-          const on = active?.key === c.key;
-          return (
-            <li key={c.key}>
-              <button onClick={() => onPick(on ? null : c)}
-                className={`flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-white/[0.06] ${on ? 'bg-white/10' : ''}`}>
-                <span className={`grid size-8 shrink-0 place-items-center rounded-full ${TONE[c.tone]}`}><Ico size={15} /></span>
-                <span className="min-w-0 flex-1 text-sm">{c.label}</span>
-                <ChevronRight size={16} className="shrink-0 text-mute" />
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
-// Which rows an alert in the strip is about.
-const matches = (row, alert) => {
-  if (!alert) return true;
-  if (alert === 'confirm') return row.confirm > 0;
-  if (alert === 'unlinked') return false;
-  return row.steps?.[alert] > 0;
-};
+// The list shows only whose labour contract (the one paper the company renews) ends between
+// today and 60 days from now, soonest first; a search looks through everyone. Company papers: any due.
+const DUE = ['expired', 'd14', 'd30', 'd60'];
+const due = (row) => DUE.some((s) => row.steps?.[s] > 0);
+const contractDue = (e) => ['d14', 'd30', 'd60'].includes(e.contract?.step);
+const contractWord = (c) => (c ? `Contract: ${daysWord(c).replace(/^Valid$/, `ends ${day(c.expires_on)}`)}` : 'No labour contract');
 
 // ---------- the list ----------
 
@@ -107,21 +45,17 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
   const [error, setError] = useState('');
   const [tab, setTab] = useState('employees');
   const [q, setQ] = useState('');
-  const [alert, setAlert] = useState(null);
-  const [focus, setFocus] = useState(null); // a major case: the list shows only its people
   // { kind: 'employee', code } | { kind: 'subject', name } | { kind: 'unlinked' }; a notification may name an employee
   const [open, setOpen] = useState(!start || start === '1' ? null
     : start.startsWith('case-') ? { kind: 'case', id: Number(start.slice(5)) } : { kind: 'employee', code: start });
-  const [cases, setCases] = useState([]);
   const [settings, setSettings] = useState(false);
+  const [rowError, setRowError] = useState('');
+  const [modal, setModal] = useState(null); // { code, name, kind }: Renew or Terminate, in a pop-up on this page
 
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState('');
 
-  const load = useCallback(() => Promise.all([
-    api.get('/document-renewals').then(setData),
-    api.get('/document-renewals/cases').then((r) => setCases(r.cases)),
-  ]).catch((e) => setError(e.message)), []);
+  const load = useCallback(() => api.get('/document-renewals').then(setData).catch((e) => setError(e.message)), []);
   useEffect(() => { load(); }, [load]);
 
   // The master brings saifsys's employee documents across now instead of waiting for the night.
@@ -129,32 +63,31 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
     setSyncing(true); setSynced(''); setError('');
     try {
       const r = await api.post('/document-renewals/sync');
-      setSynced(r.skipped ? r.skipped : `From saifsys: ${r.added} new, ${r.updated} changed, ${r.files} files brought, ${r.superseded} replaced by a newer one.`);
+      setSynced(r.skipped ? r.skipped : `From saifsys: ${r.added} new, ${r.updated} changed, ${r.superseded} replaced by a newer one.`);
       await load();
     } catch (e) { setError(e.message); }
     setSyncing(false);
   };
-  const syncButton = data?.master && (
+  const syncButton = data && (
     <div className="flex gap-2">
+    <Bell onPick={(i) => setOpen(i.case_id ? { kind: 'case', id: i.case_id } : { kind: 'employee', code: i.employee_code })} />
+    {data.master && <>
     <button onClick={() => setSettings(true)} title="Settings" className="grid size-9 shrink-0 place-items-center rounded-full border border-stroke text-mute transition hover:text-txt"><Settings2 size={15} /></button>
     <button onClick={sync} disabled={syncing}
       className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt disabled:opacity-50">
       <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Syncing…' : 'Sync from saifsys'}
     </button>
+    </>}
     </div>
   );
 
   if (open?.kind === 'case') return <RenewalCasePage id={open.id} onBack={() => { setOpen(open.from || null); load(); }} />;
-  if (open) return <Holder open={open} types={data?.types || []} onBack={() => { setOpen(null); load(); }} onCase={(id) => setOpen({ kind: 'case', id, from: open })} />;
+  if (open) return <Holder open={open} onBack={() => { setOpen(null); load(); }} onCase={(id) => setOpen({ kind: 'case', id, from: open })} />;
 
   const want = q.trim().toLowerCase();
-  const people = (data?.employees || []).filter((e) => matches(e, alert) && (!focus || focus.people.includes(e.code))
-    && (!want || [e.name, e.code, e.position, e.department, e.company].join(' ').toLowerCase().includes(want)));
-  const subjects = (data?.subjects || []).filter((s) => matches(s, alert) && (!want || s.name.toLowerCase().includes(want)));
-  const pickAlert = (a) => {
-    if (a === 'unlinked') return setOpen({ kind: 'unlinked' });
-    setAlert(a);
-  };
+  const people = (data?.employees || []).filter((e) => (want ? [e.name, e.code, e.position, e.department, e.company].join(' ').toLowerCase().includes(want) : contractDue(e)))
+    .sort((a, b) => (a.contract?.days ?? 1e9) - (b.contract?.days ?? 1e9) || a.name.localeCompare(b.name));
+  const subjects = (data?.subjects || []).filter((s) => (want ? s.name.toLowerCase().includes(want) : due(s)));
 
   return (
     <Page title="Document Renewals" onBack={onBack} action={syncButton}>
@@ -162,61 +95,41 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
         <div className="space-y-4 pb-8">
           {synced && <p className="flex items-center gap-1.5 text-sm text-ok"><Check size={15} /> {synced}</p>}
           {!data.saifsys && <Problem text="saifsys did not answer, so only the employees who already have documents are listed." />}
-          <NeedsAttention cases={data.cases} active={focus} onPick={(c) => { setFocus(c); setAlert(null); setTab('employees'); }} />
-          <AlertStrip alerts={data.alerts} active={alert} onPick={(a) => { setFocus(null); pickAlert(a); }} />
           <div className="glass flex items-center gap-2 rounded-xl px-3.5 py-2">
             <Search size={15} className="shrink-0 text-mute" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, code, position…" className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-mute/70" />
             {q && <button onClick={() => setQ('')} aria-label="Clear" className="text-mute hover:text-txt"><X size={14} /></button>}
           </div>
           <div className="flex gap-1.5">
-            {[['employees', 'Employees', people.length], ['company', 'Company', subjects.length], ['cases', 'Cases', cases.length]].map(([k, label, n]) => (
+            {[['employees', 'Employees', people.length], ['company', 'Company', subjects.length]].map(([k, label, n]) => (
               <button key={k} onClick={() => setTab(k)}
                 className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm transition ${tab === k ? 'bg-white/15 text-txt' : 'text-mute hover:text-txt'}`}>
                 {label} <span className="rounded-full bg-white/10 px-1.5 text-xs">{n}</span>
               </button>
             ))}
-            {(alert || focus) && (
-              <button onClick={() => { setAlert(null); setFocus(null); }} className="ml-auto flex items-center gap-1 rounded-full px-3 py-1.5 text-xs text-mute hover:text-txt">
-                <X size={13} /> Show everyone
-              </button>
-            )}
           </div>
-          {/* Says what the list is narrowed to, so its count is not read against the card's. */}
-          {tab === 'employees' && (alert || focus) && (
-            <p className="-mt-2 text-xs text-mute">
-              Showing {people.length} {people.length === 1 ? 'person' : 'people'} {focus ? `in: ${focus.label}` : `with documents ${ALERTS.find((a) => a[0] === alert)?.[1]}`}
-              {alert && data.alerts[alert] !== people.length ? ` (${data.alerts[alert]} documents between them)` : ''}
-            </p>
+          {!want && (
+            <p className="-mt-2 text-xs text-mute">{tab === 'employees' ? 'Labour contracts ending within the next 60 days. Search to find anyone else.' : 'Expired or ending within 60 days.'}</p>
           )}
-          {tab === 'cases' ? (
-            cases.length === 0 ? <p className="pt-12 text-center text-sm text-mute">No open cases. A contract opens one by itself 60 days before it ends; any document opens one with Renew or Cancel.</p> : (
-              <ul className="glass divide-y divide-stroke/60 overflow-hidden rounded-2xl">
-                {cases.map((c) => (
-                  <li key={c.id}>
-                    <button onClick={() => setOpen({ kind: 'case', id: c.id })} className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-white/[0.06]">
-                      <span className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-mute"><Briefcase size={16} /></span>
-                      <span className="min-w-0 flex-1"><span className="block truncate font-medium">{c.type} – {c.employee_name || c.subject}</span>
-                        <span className="block truncate text-xs text-mute">{c.kind === 'cancel' ? 'Cancellation' : c.kind === 'renew' ? 'Renewal' : 'Not decided'}{c.ends_on ? ` · ends ${day(c.ends_on)}` : ''}</span></span>
-                      <StatusChip status={c.status} />
-                      <ChevronRight size={16} className="shrink-0 text-mute" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )
-          ) : tab === 'employees' ? (
-            people.length === 0 ? <p className="pt-12 text-center text-sm text-mute">Nobody here.</p> : (
+          <Problem text={rowError} />
+          {tab === 'employees' ? (
+            people.length === 0 ? <p className="pt-12 text-center text-sm text-mute">{want ? 'Nobody found.' : 'No labour contract ends within the next 60 days.'}</p> : (
               <ul className="glass divide-y divide-stroke/60 overflow-hidden rounded-2xl">
                 {people.map((e) => (
-                  <Row key={e.code} icon={<UserRound size={17} />} title={e.name} worst={e.worst} documents={e.documents} confirm={e.confirm}
+                  <Row key={e.code} icon={<UserRound size={17} />} title={e.name} worst={e.contract?.step || 'none'} label={contractWord(e.contract)}
                     sub={[e.code, e.position, e.department, e.company, e.current === false ? 'Not current in saifsys' : null].filter(Boolean).join(' · ')}
-                    onClick={() => setOpen({ kind: 'employee', code: e.code })} />
+                    onClick={() => setOpen({ kind: 'employee', code: e.code })}
+                    actions={e.contract && (
+                      <>
+                        <SmallBtn onClick={() => setModal({ code: e.code, name: e.name, kind: 'renew' })} tone="p1"><RefreshCw size={13} /> Renew</SmallBtn>
+                        <SmallBtn onClick={() => setModal({ code: e.code, name: e.name, kind: 'cancel' })}><Ban size={13} /> Terminate</SmallBtn>
+                      </>
+                    )} />
                 ))}
               </ul>
             )
           ) : (
-            subjects.length === 0 ? <p className="pt-12 text-center text-sm text-mute">No company documents yet. File a trade licence, insurance policy or Mulkiya on the Shelf and it appears here.</p> : (
+            subjects.length === 0 ? <p className="pt-12 text-center text-sm text-mute">{want ? 'Nothing found.' : 'No company document expired or ending within 60 days.'}</p> : (
               <ul className="glass divide-y divide-stroke/60 overflow-hidden rounded-2xl">
                 {subjects.map((s) => (
                   <Row key={s.name} icon={<Building2 size={17} />} title={s.name} worst={s.worst} documents={s.documents} confirm={s.confirm}
@@ -228,31 +141,234 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
         </div>
       )}
       {settings && <SettingsSheet onClose={() => setSettings(false)} />}
+      {modal && <ContractModal {...modal} onClose={() => { setModal(null); load(); }} onError={setRowError} />}
     </Page>
   );
 }
 
-function Row({ icon, title, sub, worst, documents, confirm, onClick }) {
+// ---------- the bell ----------
+
+const FEED_SEEN = 'documentRenewals.feedSeen';
+const ago = (secs) => {
+  if (!secs) return '';
+  const m = Math.round((Date.now() / 1000 - secs) / 60);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+};
+
+/**
+ * Who sent what on the labour contracts, and when: the renewal and termination emails and
+ * the hand-offs to the PRO. A bell with a count of what is new since it was last opened.
+ */
+function Bell({ onPick }) {
+  const [items, setItems] = useState(null);
+  const [shown, setShown] = useState(false);
+  const [seen, setSeen] = useState(() => Number(localStorage.getItem(FEED_SEEN)) || 0);
+  const [newSince, setNewSince] = useState(0); // the dots stay on what was new when the panel opened
+  useEffect(() => { api.get('/document-renewals/feed').then((r) => setItems(r.items)).catch(() => setItems([])); }, [shown]);
+  const list = items || [];
+  const count = list.filter((i) => i.at > seen).length;
+  const show = () => {
+    setShown(true); setNewSince(seen);
+    const latest = Math.max(0, ...list.map((i) => i.at || 0));
+    if (latest) { localStorage.setItem(FEED_SEEN, String(latest)); setSeen(latest); }
+  };
   return (
-    <li>
-      <button onClick={onClick} className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-white/[0.06]">
+    <>
+      <button onClick={show} title="Notifications" className="relative grid size-9 shrink-0 place-items-center rounded-full border border-stroke text-mute transition hover:text-txt">
+        <BellIcon size={15} />
+        {count > 0 && <span className="absolute -right-1 -top-1 grid min-w-[1.1rem] place-items-center rounded-full bg-bad px-1 text-[10px] font-medium leading-[1.1rem] text-white">{count > 99 ? '99+' : count}</span>}
+      </button>
+      {shown && (
+        <Sheet title="Notifications" onClose={() => setShown(false)}>
+          {!items ? <Spinner /> : list.length === 0 ? <p className="py-10 text-center text-sm text-mute">No email sent yet.</p> : (
+            <ul className="divide-y divide-stroke/60">
+              {list.map((i) => {
+                const Ico = /PRO/.test(i.title) ? Briefcase : Send;
+                return (
+                  <li key={i.key}>
+                    <button onClick={() => { setShown(false); onPick(i); }} disabled={!i.case_id && !i.employee_code}
+                      className="flex w-full items-start gap-3 py-3 text-left transition hover:bg-white/[0.04]">
+                      <span className={`mt-0.5 grid size-8 shrink-0 place-items-center rounded-full ${/^Termination/.test(i.title) ? TONE.bad : TONE.p1}`}><Ico size={14} /></span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm">{i.title}</span>
+                        <span className="block text-xs text-mute">{[i.employee_name, i.by && `by ${i.by}`, ago(i.at)].filter(Boolean).join(' · ')}</span>
+                      </span>
+                      {i.at > newSince && <span className="mt-2 size-2 shrink-0 rounded-full bg-p1" />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Sheet>
+      )}
+    </>
+  );
+}
+
+// A light wash on the whole row, in the colour of its state.
+const WASH = { expired: 'bg-bad/[0.07]', d14: 'bg-bad/[0.07]', d30: 'bg-warn/[0.07]', d60: 'bg-p1/[0.08]' };
+
+function Row({ icon, title, sub, worst, label, documents, confirm, onClick, actions }) {
+  return (
+    <li className={`flex items-center ${WASH[worst] || ''}`}>
+      <button onClick={onClick} className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left transition hover:bg-white/[0.06]">
         <span className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-mute">{icon}</span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium">{title}</span>
-          {sub && <span className="block truncate text-xs text-mute">{sub}</span>}
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate font-medium">{title}</span>
+            <Chip step={worst}>{label}</Chip>
+            {documents != null && <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs text-mute">{documents} doc{documents === 1 ? '' : 's'}</span>}
+            {confirm > 0 && <span className={`rounded-full px-2.5 py-0.5 text-xs ${TONE.warn}`}>{confirm} to confirm</span>}
+          </span>
+          {sub && <span className="mt-0.5 block truncate text-xs text-mute">{sub}</span>}
         </span>
-        {confirm > 0 && <span className={`hidden shrink-0 rounded-full px-2.5 py-0.5 text-xs sm:inline ${TONE.warn}`}>{confirm} to confirm</span>}
-        <span className="hidden shrink-0 text-xs text-mute sm:inline">{documents} doc{documents === 1 ? '' : 's'}</span>
-        <Chip step={worst} />
-        <ChevronRight size={16} className="shrink-0 text-mute" />
+        {!actions && <ChevronRight size={16} className="shrink-0 text-mute" />}
       </button>
+      {actions && <div className="flex shrink-0 gap-1.5 pr-4">{actions}</div>}
     </li>
+  );
+}
+
+/**
+ * Renew or Terminate on an employee's row, in a pop-up: their labour contract's case is opened
+ * (or the one already there taken up), and its form is filled in and sent for approval here.
+ */
+function ContractModal({ code, name, kind, onClose, onError }) {
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.post(`/document-renewals/employees/${encodeURIComponent(code)}/cases`, { kind })
+      .then((r) => api.get(`/document-renewals/cases/${r.case_id}`)).then(setD)
+      .catch((e) => { onError(`${name}: ${e.message}`); onClose(); });
+  }, [code, kind]); // eslint-disable-line react-hooks/exhaustive-deps
+  const act = async (what, path, body) => {
+    setBusy(what); setError('');
+    try { setD(await api.post(`/document-renewals/cases/${d.case.id}/${path}`, body)); } catch (e) { setError(e.message); }
+    setBusy('');
+  };
+  const c = d?.case;
+  const title = `${kind === 'renew' ? 'Renew' : 'Terminate'} the labour contract – ${name}`;
+  return (
+    <Sheet title={title} onClose={onClose} wide="text">
+      {!d ? <Spinner /> : (
+        <div className="space-y-4">
+          <p className="text-sm text-mute">Ends {day(c.ends_on)}. {c.status === 'awaiting_approval' ? 'Sent for approval.' : ''}</p>
+          {kind === 'renew' && <ContractSalary code={code} />}
+          {['renew_review', 'cancel_review'].includes(c.status) ? (
+            <ProposalForm c={c} contract employee={d.employee} busy={busy}
+              onSave={(body) => act('save', 'proposal', body)} onSubmit={() => act('submit', 'submit')} />
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-sm">Where it stands: <StatusChip status={c.status} /></div>
+              {c.proposal && <ProposalView p={c.proposal} />}
+              <button onClick={onClose} className="w-full rounded-full border border-stroke py-2.5 text-sm text-mute hover:text-txt">Close</button>
+            </>
+          )}
+          <Problem text={error} />
+          {c.proposal && <CaseEmail key={c.proposal.at} caseId={c.id} renew={c.kind === 'renew'} />}
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+// Addresses typed one at a time: Enter, comma or leaving the box adds one; × takes it off.
+function Addresses({ label, value, onChange }) {
+  const [text, setText] = useState('');
+  const add = () => {
+    const more = text.split(/[,;\s]+/).map((a) => a.trim()).filter(Boolean);
+    if (more.length) onChange([...new Set([...value, ...more])]);
+    setText('');
+  };
+  return (
+    <label className="block space-y-1">
+      <span className="text-xs text-mute">{label}</span>
+      <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-stroke bg-black/10 px-2 py-1.5 focus-within:border-p1/60">
+        {value.map((a) => (
+          <span key={a} className="flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-0.5 text-xs">
+            {a}<button type="button" onClick={() => onChange(value.filter((x) => x !== a))} aria-label={`Remove ${a}`} className="text-mute hover:text-txt"><X size={12} /></button>
+          </span>
+        ))}
+        <input value={text} onChange={(e) => setText(e.target.value)} onBlur={add} type="email"
+          onKeyDown={(e) => { if (['Enter', ',', ';'].includes(e.key)) { e.preventDefault(); add(); } else if (e.key === 'Backspace' && !text && value.length) onChange(value.slice(0, -1)); }}
+          placeholder={value.length ? '' : 'name@company.com'} className="min-w-[10rem] flex-1 bg-transparent px-1 py-1 text-sm outline-none placeholder:text-mute/70" />
+      </div>
+    </label>
+  );
+}
+
+/**
+ * After the proposal is saved: the email to send about it. The person types who it goes to
+ * and who is copied; a renewal attaches the employee's documents (ticked ones only), a
+ * termination none. Send sends it from their own mailbox.
+ */
+function CaseEmail({ caseId, renew }) {
+  const [d, setD] = useState(null);
+  const [to, setTo] = useState([]);
+  const [cc, setCc] = useState([]);
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [picked, setPicked] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [sent, setSent] = useState(null);
+  useEffect(() => {
+    api.get(`/document-renewals/cases/${caseId}/email`).then((r) => {
+      setD(r); setTo(r.to || []); setSubject(r.subject); setBody(r.body);
+      setPicked(r.documents.filter((x) => x.available).map((x) => x.id));
+    }).catch((e) => setError(e.message));
+  }, [caseId]);
+  const send = async () => {
+    setBusy(true); setError('');
+    try { setSent(await api.post(`/document-renewals/cases/${caseId}/email`, { to, cc, subject, body, document_ids: picked })); } catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+  const field = 'w-full rounded-xl border border-stroke bg-black/10 px-3 py-2.5 text-sm outline-none focus:border-p1/60';
+  if (sent) {
+    return <p className="flex items-start gap-1.5 rounded-xl bg-ok/10 p-3 text-sm text-ok"><Check size={15} className="mt-0.5 shrink-0" /> Sent to {[...sent.to, ...sent.cc].join(', ')}{sent.files.length ? `, with ${sent.files.length} document${sent.files.length === 1 ? '' : 's'}` : ''}. It is going out from your mailbox now.</p>;
+  }
+  return (
+    <section className="glass space-y-3 rounded-2xl p-4">
+      <h3 className="flex items-center gap-2 text-sm font-medium"><Send size={15} /> {renew ? 'Email to the PRO' : 'Email to the employee'}</h3>
+      {!d ? (error ? <Problem text={error} /> : <Spinner />) : (
+        <>
+          {renew && !d.to.length && <p className="text-xs text-warn">No PRO with an email is set yet: the master adds the PROs under Settings on this screen, or type the address below.</p>}
+          {!renew && !d.to.length && <p className="text-xs text-warn">saifsys has no email for this employee: type it below.</p>}
+          {!d.from && <Problem text="Your email is not connected with sending turned on, so this cannot be sent yet (Settings, Email)." />}
+          {d.from && <p className="text-xs text-mute">From {d.from}</p>}
+          <Addresses label="To" value={to} onChange={setTo} />
+          <Addresses label="Cc" value={cc} onChange={setCc} />
+          <label className="block space-y-1"><span className="text-xs text-mute">Subject</span><input value={subject} onChange={(e) => setSubject(e.target.value)} className={field} /></label>
+          <label className="block space-y-1"><span className="text-xs text-mute">Message</span><textarea value={body} onChange={(e) => setBody(e.target.value)} rows={10} className={field} /></label>
+          {renew && d.documents.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs text-mute">Attach their documents</p>
+              {d.documents.map((x) => (
+                <label key={x.id} className={`flex items-center gap-2 text-sm ${x.available ? '' : 'opacity-50'}`}>
+                  <input type="checkbox" disabled={!x.available} checked={picked.includes(x.id)}
+                    onChange={(e) => setPicked(e.target.checked ? [...picked, x.id] : picked.filter((p) => p !== x.id))} />
+                  <Paperclip size={13} className="text-mute" /> {x.type}{x.expires_on ? <span className="text-xs text-mute">· expires {day(x.expires_on)}</span> : null}
+                  {!x.available && <span className="text-xs text-mute">· no file in saifsys</span>}
+                </label>
+              ))}
+            </div>
+          )}
+          <Problem text={error} />
+          <button onClick={send} disabled={busy || !to.length || !d.from}
+            className="flex w-full items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white disabled:opacity-40">
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} {busy ? (picked.length ? 'Fetching the documents and sending…' : 'Sending…') : 'Send'}
+          </button>
+        </>
+      )}
+    </section>
   );
 }
 
 // ---------- one employee, company or the unlinked files ----------
 
-function Holder({ open, types, onBack, onCase }) {
+function Holder({ open, onBack, onCase }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
   const path = open.kind === 'employee' ? `/document-renewals/employees/${encodeURIComponent(open.code)}`
@@ -263,9 +379,6 @@ function Holder({ open, types, onBack, onCase }) {
 
   const e = d?.employee;
   const title = open.kind === 'employee' ? (e?.name || open.code) : open.kind === 'subject' ? open.name : 'Not linked to anyone';
-  // The types a new document here can be: the employee ones for a person, the others for a company.
-  const offer = types.filter((c) => (open.kind === 'employee' ? c.links_to === 'employee' : open.kind === 'subject' ? c.links_to === 'subject' : false))
-    .flatMap((c) => c.types.map((t) => ({ value: String(t.id), label: t.label, group: c.label })));
 
   return (
     <Page title={title} onBack={onBack}>
@@ -273,13 +386,15 @@ function Holder({ open, types, onBack, onCase }) {
         <div className="space-y-4 pb-8">
           {e && (
             <div className="glass grid grid-cols-2 gap-x-6 gap-y-2 rounded-2xl p-4 text-sm sm:grid-cols-4">
-              {[['Code', e.code], ['Position', e.position], ['Department', e.department], ['Company', e.company], ['Joined', day(e.joined)], ['Status', e.current === false ? 'Not current in saifsys' : e.status]]
+              {[['Code', e.code], ['Position', e.position], ['Department', e.department], ['Work location', e.location], ['Company', e.company],
+                ['Manager', e.manager], ['Joined', day(e.joined)], ['Status', e.current === false ? 'Not current in saifsys' : e.status],
+                ['Salary', e.salary?.total ? `AED ${Number(e.salary.total).toLocaleString('en-US')} (${e.salary.paid_by || '—'})` : null]]
                 .filter(([, v]) => v).map(([k, v]) => (
                   <div key={k}><p className="text-xs text-mute">{k}</p><p className="truncate">{v}</p></div>
                 ))}
             </div>
           )}
-          {offer.length > 0 && <AddDocument offer={offer} holder={open} onDone={load} />}
+          {open.kind === 'employee' && d.documents.some((x) => x.opens_case) && <ContractSalary code={open.code} />}
           {d.documents.length === 0 ? <p className="pt-8 text-center text-sm text-mute">No documents yet.</p> : (
             <ul className="space-y-2">
               {d.documents.map((doc) => <DocRow key={doc.id} doc={doc} onChanged={load} onCase={onCase} />)}
@@ -295,6 +410,8 @@ function DocRow({ doc, onChanged, onCase }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const s = doc.state;
+  // saifsys has the details but nothing scanned: there is nothing to open.
+  const noFile = !doc.has_file && doc.saifsys_has_file === false;
   const act = async (what, body) => {
     setBusy(what); setError('');
     try { await api.patch(`/documents/${doc.id}`, body); await onChanged(); } catch (e) { setError(e.message); }
@@ -313,24 +430,20 @@ function DocRow({ doc, onChanged, onCase }) {
     } catch (e) { tab?.close(); setError(e.message); }
     setBusy('');
   };
-  // Renew or Cancel opens a case and goes straight to it, where the proposal is written.
+  // Renew or Terminate opens a case and goes straight to it, where the proposal is written.
   const startCase = async (kind) => {
     setBusy(kind); setError('');
     try { const c = await api.post(`/document-renewals/documents/${doc.id}/case`, { kind }); onCase(c.id); } catch (e) { setError(e.message); setBusy(''); }
   };
-  const notRenewing = () => {
-    const note = window.prompt('Why is it not being renewed? (optional)', '');
-    if (note !== null) act('not', { not_renewing: { note } });
-  };
   return (
     <li className={`glass rounded-2xl p-4 ${s.step === 'expired' || s.step === 'd14' ? 'border border-bad/40' : ''}`}>
       <div className="flex items-start gap-3">
-        <button onClick={view} title="Open the document" className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-mute transition hover:bg-p1/30 hover:text-txt">
+        <button onClick={view} disabled={noFile} title={noFile ? 'No file in saifsys' : 'Open the document'} className="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-mute transition hover:bg-p1/30 hover:text-txt disabled:opacity-40 disabled:hover:bg-white/10">
           {busy === 'file' ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
         </button>
         <div className="min-w-0 flex-1">
-          <button onClick={view} className="text-left font-medium hover:underline">{doc.type}</button>
-          <p className="truncate text-xs text-mute">{doc.title || doc.name}{doc.has_file ? '' : ' · file not in Reem yet: tap to fetch from saifsys'}</p>
+          {noFile ? <p className="font-medium">{doc.type}</p> : <button onClick={view} className="text-left font-medium hover:underline">{doc.type}</button>}
+          <p className="truncate text-xs text-mute">{doc.title || doc.name}{noFile ? ' · no file in saifsys' : ''}</p>
           {doc.summary && <p className="mt-0.5 text-xs text-mute/80">{doc.summary}</p>}
           <p className="mt-1 text-sm">{doc.expires_on ? <>Expires {day(doc.expires_on)}</> : <span className="text-mute">No expiry date read</span>}</p>
           {doc.not_renewing_note && <p className="text-xs text-mute">Not renewing: {doc.not_renewing_note}</p>}
@@ -342,10 +455,10 @@ function DocRow({ doc, onChanged, onCase }) {
           <button onClick={() => onCase(doc.open_case.id)} className="flex items-center gap-1.5 rounded-full border border-p1/40 px-3 py-1.5 text-xs transition hover:bg-p1/10">
             Open case <StatusChip status={doc.open_case.status} />
           </button>
-        ) : s.step !== 'not_renewing' && (
+        ) : doc.opens_case && s.step !== 'not_renewing' && ( // only the labour contract: the company renews that, not the passport or ID
           <>
             <SmallBtn busy={busy === 'renew'} onClick={() => startCase('renew')} tone="p1"><RefreshCw size={13} /> Renew</SmallBtn>
-            <SmallBtn busy={busy === 'cancel'} onClick={() => startCase('cancel')}><Ban size={13} /> Cancel</SmallBtn>
+            <SmallBtn busy={busy === 'cancel'} onClick={() => startCase('cancel')}><Ban size={13} /> Terminate</SmallBtn>
           </>
         )}
         {s.confirm.includes('expiry') && (
@@ -358,9 +471,7 @@ function DocRow({ doc, onChanged, onCase }) {
             <Check size={13} /> Confirm it is {doc.employee_name || doc.subject}'s
           </SmallBtn>
         )}
-        {s.step === 'not_renewing'
-          ? <SmallBtn busy={busy === 'undo'} onClick={() => act('undo', { not_renewing: null })}><Undo2 size={13} /> Renewing after all</SmallBtn>
-          : ['expired', 'd14', 'd30', 'd60'].includes(s.step) && <SmallBtn busy={busy === 'not'} onClick={notRenewing}><Ban size={13} /> Not renewing</SmallBtn>}
+        {s.step === 'not_renewing' && <SmallBtn busy={busy === 'undo'} onClick={() => act('undo', { not_renewing: null })}><Undo2 size={13} /> Renewing after all</SmallBtn>}
       </div>
       <Problem text={error} />
     </li>
@@ -373,43 +484,6 @@ const SmallBtn = ({ busy, tone, children, ...p }) => (
     {busy && <Loader2 size={12} className="animate-spin" />} {children}
   </button>
 );
-
-/** Upload a document for this person or company: it lands on the Shelf already filed as the chosen type. */
-function AddDocument({ offer, holder, onDone }) {
-  const [type, setType] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const input = useRef(null);
-  const send = async (file) => {
-    if (!file) return;
-    setBusy(true); setError('');
-    try {
-      const form = new FormData();
-      form.append('files', file);
-      const [r] = await api.upload('/documents', form);
-      await api.patch(`/documents/${r.id}`, holder.kind === 'employee'
-        ? { type_id: Number(type), employee_code: holder.code, confirm_link: true }
-        : { type_id: Number(type), subject: holder.name, confirm_link: true });
-      setType('');
-      await onDone();
-    } catch (e) { setError(e.message); }
-    setBusy(false);
-  };
-  return (
-    <div className="glass space-y-2 rounded-2xl p-3">
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <Picker value={type} onChange={setType} options={offer} placeholder="Add a document: pick its kind" searchPlaceholder="Search kinds" className="flex-1" />
-        <button onClick={() => input.current?.click()} disabled={!type || busy}
-          className="flex items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98] disabled:opacity-40">
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />} Upload
-        </button>
-        <input ref={input} type="file" hidden accept="image/*,application/pdf" onChange={(e) => { send(e.target.files[0]); e.target.value = ''; }} />
-      </div>
-      <p className="text-xs text-mute">Reem reads the expiry date from it; confirm the date once it shows.</p>
-      <Problem text={error} />
-    </div>
-  );
-}
 
 /** The master's settings: who approves, who the PROs are, when a contract opens a case, and the alert days. */
 function SettingsSheet({ onClose }) {

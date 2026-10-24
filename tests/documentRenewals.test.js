@@ -95,6 +95,20 @@ test('every current employee is listed, with their documents and the worst of th
   assert.equal(o.employees.find((e) => e.code === 'E-0077').worst, 'expired');
 });
 
+test('each person carries their labour contract\'s state, the newest contract when there are two', async () => {
+  const { hrUser, staff } = await office();
+  await doc(staff.id, 'Passport', { code: 'E-0042', name: 'Ahmed Khan', expires: '2026-10-01' }); // not the contract
+  await doc(staff.id, 'Labour Contract', { code: 'E-0042', name: 'Ahmed Khan', expires: '2026-12-01' });
+  await doc(staff.id, 'Labour Contract', { code: 'E-0077', name: 'Sara Lopez', expires: '2024-12-01' });
+  await doc(staff.id, 'Labour Contract', { code: 'E-0077', name: 'Sara Lopez', expires: '2028-12-01' });
+  const o = await overview(hrUser, { lookup: hr, today: TODAY });
+  const of = (code) => o.employees.find((e) => e.code === code).contract;
+  assert.equal(of('E-0042').step, 'd60');
+  assert.equal(of('E-0042').expires_on, '2026-12-01');
+  assert.equal(of('E-0077').step, 'later', 'the newer contract counts');
+  assert.equal(of('E-0101'), null, 'no contract on file');
+});
+
 test('the alerts on top count what needs someone', async () => {
   const { hrUser, staff, boss } = await office();
   await doc(staff.id, 'Passport', { code: 'E-0077', name: 'Sara Lopez', expires: '2026-10-01' }); // expired

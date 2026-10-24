@@ -31,7 +31,7 @@ export const event = (caseId, userId, kind, detail = {}) =>
   db.prepare('INSERT INTO doc_renewal_case_events (case_id, user_id, kind, detail) VALUES (?, ?, ?, ?)').run(caseId, userId, kind, JSON.stringify(detail));
 
 /** May this person work cases at all? The master, and Document Renewals holders who are not external. */
-async function worker(user) {
+export async function worker(user) {
   if (isMaster(user)) return true;
   return !isExternal(user) && (await userModules(user)).includes('document_renewals');
 }
@@ -79,14 +79,20 @@ export async function startCase(user, docId, kind) {
   return getCase(user, id);
 }
 
-/** Renew, cancel (for a contract: start a termination review) or needs review. Only before approval. */
+/**
+ * Renew, cancel (for a contract: start a termination review) or needs review. Only before
+ * approval, or while waiting for it when the mind changes the other way (a renewal sent for
+ * approval becomes a termination): the old proposal goes with it, a new one is written.
+ */
 export async function decide(user, id, { choice, note } = {}) {
   const c = await getCase(user, id);
   if (!AFTER[choice]) throw bad('Choose renew, cancel or needs review');
-  if (!DECIDING.includes(c.status)) throw bad('This case is past its decision');
+  const turned = choice !== 'needs_review' && c.kind && choice !== c.kind;
+  if (!DECIDING.includes(c.status) && !(c.status === 'awaiting_approval' && turned)) throw bad('This case is past its decision');
   const kind = choice === 'needs_review' ? c.kind : choice;
-  await db.prepare(`UPDATE doc_renewal_cases SET status = ?, kind = ?, owner_id = COALESCE(owner_id, ?), updated_at = ${'extract(epoch from now())::bigint'} WHERE id = ?`)
-    .run(AFTER[choice], kind, user.id, c.id);
+  await db.prepare(`UPDATE doc_renewal_cases SET status = ?, kind = ?, owner_id = COALESCE(owner_id, ?),
+      proposal = CASE WHEN ? THEN NULL ELSE proposal END, updated_at = ${'extract(epoch from now())::bigint'} WHERE id = ?`)
+    .run(AFTER[choice], kind, user.id, !!turned, c.id);
   await event(c.id, user.id, 'decision', { choice, note: String(note || '').trim().slice(0, 500) || null });
   return getCase(user, c.id);
 }

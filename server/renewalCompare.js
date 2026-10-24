@@ -57,3 +57,25 @@ export function compareTerms(detail, payrollItems = [], today) {
   if (!detail) flags.unshift('saifsys has no record for this employee');
   return { rows, flags };
 }
+
+/**
+ * The company salary (saifsys's HR API) beside what the labour contract says (as Reem read it
+ * from the paper), basic, allowance and total. A total the contract does not print is its
+ * basic plus allowance. Flagged where they differ; nothing the paper does not show is guessed.
+ */
+export function compareWithContract(salary, read) {
+  const s = salary || {};
+  const paper = { basic: num(read?.basic), allowance: num(read?.allowance), total: num(read?.total) };
+  if (paper.total === null && paper.basic !== null && paper.allowance !== null) paper.total = paper.basic + paper.allowance;
+  const flags = [];
+  if (read?.confidence !== 'high') flags.push('Reem is not sure of what it read: check the contract yourself');
+  const rows = ['basic', 'allowance', 'total'].map((field) => {
+    const r = num(s[field]);
+    const c = paper[field];
+    let flag = null;
+    if (c === null) flag = 'missing';
+    else if (r !== null && r !== c) { flag = 'differs'; flags.push(`${field}: company salary ${r}, contract ${c}`); }
+    return { field, company: r, contract: c, flag };
+  });
+  return { rows, flags };
+}

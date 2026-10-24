@@ -79,6 +79,21 @@ export function hrApiSource({ base, key, fetch: get = globalThis.fetch }) {
   };
 }
 
+/**
+ * One employee's company salary from saifsys's HR API (action=salaries): basic, allowance,
+ * bonus, total and how it is paid, or null when it does not know them. Left staff included.
+ */
+export async function hrSalary(code, { base = process.env.SAIFSYS_HR_URL, key = process.env.SAIFSYS_HR_KEY, fetch: get = globalThis.fetch } = {}) {
+  if (!base || !key) throw Object.assign(new Error('Reem has no key for the saifsys HR API'), { status: 502 });
+  const url = new URL(base);
+  for (const [k, v] of Object.entries({ action: 'salaries', code, status: 'all' })) url.searchParams.set(k, v);
+  const res = await get(url, { headers: { 'X-HR-Key': key, Accept: 'application/json' }, signal: AbortSignal.timeout(30_000) });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.ok) throw Object.assign(new Error(`saifsys HR API said: ${body?.error?.message || `HTTP ${res.status}`}`), { status: 502 });
+  const e = (body.employees || []).find((x) => String(x.code).toLowerCase() === String(code).toLowerCase());
+  return e ? { basic: e.basic, allowance: e.allowance, bonus: e.bonus, total: e.total, paid_by: e.payment_label } : null;
+}
+
 /** Where saifsys's documents come from: its HR API when Reem has its key, else the Jarvis door. */
 function source() {
   const base = process.env.SAIFSYS_HR_URL;
@@ -116,12 +131,13 @@ const summaryOf = (d) => [
 
 /**
  * Bring saifsys's employee documents up to date on the Shelf. Returns what it did:
- * { added, updated, files, superseded } (or { skipped } when there is no master to own them).
- * One document going wrong is logged and skipped, never the whole run.
+ * { added, updated, superseded } (or { skipped } when there is no master to own them). Only the
+ * details come across; a file is fetched when it is opened. One document going wrong is logged
+ * and skipped, never the whole run.
  */
 export async function syncSaifsysDocs(deps = {}) {
-  const { lookup, fetchFile } = { ...source(), ...deps };
-  const out = { added: 0, updated: 0, files: 0, superseded: 0 };
+  const { lookup } = { ...source(), ...deps };
+  const out = { added: 0, updated: 0, superseded: 0 };
   const owner = await db.prepare("SELECT id FROM users WHERE role = 'master' ORDER BY id LIMIT 1").get();
   if (!owner) return { ...out, skipped: 'no master account' };
   const types = await employeeTypes();
@@ -136,7 +152,7 @@ export async function syncSaifsysDocs(deps = {}) {
         if (!type) continue; // the master took the Employee Documents types away
         // One saifsys document at a time, under a lock on its id: two runs at once (a restart,
         // the master's button during the night's run, two servers) must not both add it.
-        const docId = await tx(async () => {
+        await tx(async () => {
           await db.prepare("SELECT pg_advisory_xact_lock(hashtext('saifsys_doc_links'), ?)").get(d.id);
           const link = await db.prepare('SELECT * FROM saifsys_doc_links WHERE saifsys_id = ?').get(d.id);
           if (!link) {
@@ -146,7 +162,7 @@ export async function syncSaifsysDocs(deps = {}) {
               VALUES (?, ?, ?, 'HR & Employees', ?, 'doc', 'ready', '[]', ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
               .run(owner.id, d.file_name || title, title, summaryOf(d), type.category_id, type.id, d.employee_code, d.employee_name,
                 d.expires_at, d.expires_at ? now : null, now);
-            await db.prepare('INSERT INTO saifsys_doc_links (saifsys_id, document_id, changed_at) VALUES (?, ?, ?)').run(d.id, id, d.updated_at);
+            await db.prepare('INSERT INTO saifsys_doc_links (saifsys_id, document_id, changed_at, saifsys_has_file) VALUES (?, ?, ?, ?)').run(d.id, id, d.updated_at, !!d.has_file);
             out.added++;
             return id;
           }
@@ -159,18 +175,11 @@ export async function syncSaifsysDocs(deps = {}) {
             await db.prepare('UPDATE saifsys_doc_links SET changed_at = ?, synced_at = ? WHERE saifsys_id = ?').run(d.updated_at, now, d.id);
             out.updated++;
           }
+          if (link.saifsys_has_file !== !!d.has_file) {
+            await db.prepare('UPDATE saifsys_doc_links SET saifsys_has_file = ? WHERE saifsys_id = ?').run(!!d.has_file, d.id);
+          }
           return link.document_id;
         });
-        // The file, claimed first so two runs do not both fetch it; given back if saifsys cannot send it.
-        if (d.has_file && (await db.prepare('UPDATE saifsys_doc_links SET has_file = true WHERE saifsys_id = ? AND NOT has_file RETURNING saifsys_id').get(d.id))) {
-          try {
-            await attachFile(docId, owner.id, d, fetchFile);
-            out.files++;
-          } catch (e) {
-            await db.prepare('UPDATE saifsys_doc_links SET has_file = false WHERE saifsys_id = ?').run(d.id);
-            console.error(`[saifsys-docs] no file yet for saifsys document #${d.id}:`, e.message); // tried again next run
-          }
-        }
       } catch (e) {
         console.error(`[saifsys-docs] saifsys document #${d.id} skipped:`, e.message);
       }

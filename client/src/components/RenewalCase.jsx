@@ -9,7 +9,8 @@ import Picker from './Picker';
 // every step; Reem compares and flags. Like Lease renewals' "Start the renewal", the proposal
 // is a form with quick picks.
 
-const day = (d) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDateString([], { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
+// saifsys keeps 0001-01-01 for a date nobody filled in: shown as nothing.
+const day = (d) => (d && d >= '1900' ? new Date(`${d}T00:00:00Z`).toLocaleDateString([], { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const when = (secs) => new Date(secs * 1000).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const aed = (n) => (n === null || n === undefined ? '—' : `AED ${Number(n).toLocaleString('en-US')}`);
 const addYears = (s, n) => {
@@ -19,7 +20,7 @@ const addYears = (s, n) => {
 };
 const TONE = { bad: 'bg-bad/15 text-bad', warn: 'bg-warn/15 text-warn', p1: 'bg-p1/20 text-txt', ok: 'bg-ok/15 text-ok', mute: 'bg-white/10 text-mute' };
 export const CASE_STATUS = {
-  open: ['Needs a decision', 'warn'], renew_review: ['Renewal: proposal', 'p1'], cancel_review: ['Cancellation: proposal', 'p1'],
+  open: ['Needs a decision', 'warn'], renew_review: ['Renewal: proposal', 'p1'], cancel_review: ['Termination: proposal', 'p1'],
   needs_review: ['Needs review', 'warn'], awaiting_approval: ['Waiting for approval', 'warn'], approved: ['Approved: give it to the PRO', 'p1'],
   with_pro: ['With the PRO', 'p1'], checking_documents: ['Check the papers', 'warn'], writing_back: ['Update saifsys', 'p1'],
   paused: ['Paused', 'mute'], closed: ['Closed', 'ok'],
@@ -76,7 +77,7 @@ export default function RenewalCasePage({ id, onBack }) {
       <div className="space-y-4 pb-10">
         <div className="flex flex-wrap items-center gap-2">
           <StatusChip status={c.status} />
-          {c.kind && <span className="text-xs text-mute">{c.kind === 'renew' ? 'Renewal' : contract ? 'Termination review' : 'Cancellation'}</span>}
+          {c.kind && <span className="text-xs text-mute">{c.kind === 'renew' ? 'Renewal' : contract ? 'Termination review' : 'Termination'}</span>}
           {c.ends_on && <span className="text-xs text-mute">· ends {day(c.ends_on)}</span>}
           <a href={`/api/documents/${c.document_id}/file`} target="_blank" rel="noreferrer" className="ml-auto flex items-center gap-1 text-xs text-mute hover:text-txt"><FileText size={13} /> Open the document</a>
         </div>
@@ -94,14 +95,14 @@ export default function RenewalCasePage({ id, onBack }) {
           </Box>
         )}
 
-        {d.compare && <Compare compare={d.compare} />}
+        {contract && c.employee_code && <ContractSalary code={c.employee_code} />}
 
         {['open', 'needs_review'].includes(c.status) && (
           <Box title="What should happen?">
-            <p className="text-sm text-mute">{contract ? 'The contract ends soon. Renew it, start a termination review, or put it aside for review.' : 'Renew this document, cancel it, or put it aside for review.'}</p>
+            <p className="text-sm text-mute">{contract ? 'The contract ends soon. Renew it, start a termination review, or put it aside for review.' : 'Renew this document, terminate it, or put it aside for review.'}</p>
             <div className="flex flex-wrap gap-2">
               <Btn primary busy={busy === 'renew'} onClick={() => act('renew', 'decision', { choice: 'renew' })}><RefreshCw size={14} /> Renew</Btn>
-              <Btn danger busy={busy === 'cancel'} onClick={() => act('cancel', 'decision', { choice: 'cancel' })}><Ban size={14} /> {contract ? 'Terminate (start review)' : 'Cancel'}</Btn>
+              <Btn danger busy={busy === 'cancel'} onClick={() => act('cancel', 'decision', { choice: 'cancel' })}><Ban size={14} /> {contract ? 'Terminate (start review)' : 'Terminate'}</Btn>
               {c.status === 'open' && <Btn busy={busy === 'review'} onClick={() => act('review', 'decision', { choice: 'needs_review' })}>Needs review</Btn>}
             </div>
           </Box>
@@ -141,7 +142,48 @@ export default function RenewalCasePage({ id, onBack }) {
   );
 }
 
-function Compare({ compare }) {
+/**
+ * The company salary (saifsys HR) beside what the employee's labour contract says, read by
+ * Reem off the contract itself (the first time takes a few seconds; then it is kept).
+ */
+export function ContractSalary({ code }) {
+  const [d, setD] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get(`/document-renewals/employees/${encodeURIComponent(code)}/contract-salary`).then(setD).catch((e) => setError(e.message));
+  }, [code]);
+  const label = { basic: 'Basic', allowance: 'Allowance', total: 'Total' };
+  const flag = { differs: ['Differs', 'bad'], missing: ['Not on the contract', 'warn'] };
+  return (
+    <Box title="Contract salary" icon={<Sparkles size={15} />}>
+      {error ? <p className="text-sm text-mute">{error}</p> : !d ? (
+        <p className="flex items-center gap-2 text-sm text-mute"><Loader2 size={14} className="animate-spin" /> Reading the labour contract…</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-xs text-mute"><th className="py-1 pr-3 font-normal">Item</th><th className="pr-3 font-normal">Company salary</th><th className="pr-3 font-normal">Contract</th><th className="font-normal" /></tr></thead>
+              <tbody>
+                {d.rows.map((r) => (
+                  <tr key={r.field} className="border-t border-stroke/50">
+                    <td className="py-1.5 pr-3">{label[r.field]}</td>
+                    <td className="pr-3">{aed(r.company)}</td>
+                    <td className="pr-3">{aed(r.contract)}</td>
+                    <td>{r.flag && <span className={`rounded-full px-2 py-0.5 text-xs ${TONE[flag[r.flag][1]]}`}>{flag[r.flag][0]}</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-mute">Company salary from saifsys HR{d.paid_by ? ` · paid by ${d.paid_by}` : ''} · Contract: {d.document.name}{d.document.expires_on ? ` · ends ${day(d.document.expires_on)}` : ''}</p>
+          {d.flags.map((f) => <p key={f} className="flex items-start gap-1.5 text-xs text-warn"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> {f}</p>)}
+        </>
+      )}
+    </Box>
+  );
+}
+
+export function Compare({ compare }) {
   const label = { basic: 'Basic', allowance: 'Allowance', bonus: 'Bonus', total: 'Total', paid_by: 'Paid by' };
   const flag = { differs: ['Differs', 'bad'], missing: ['Missing', 'warn'], outdated: ['Old payroll', 'warn'], total_mismatch: ['Total ≠ sum', 'bad'] };
   return (
@@ -168,7 +210,7 @@ function Compare({ compare }) {
 }
 
 /** The "Start the renewal" form: keep or update the terms with quick picks, or the cancellation's details. */
-function ProposalForm({ c, contract, employee, busy, onSave, onSubmit }) {
+export function ProposalForm({ c, contract, employee, busy, onSave, onSubmit }) {
   const s = employee?.salary || {};
   const old = c.proposal?.terms || {};
   const [mode, setMode] = useState(c.proposal?.mode || (c.kind === 'cancel' ? 'cancel' : contract ? 'keep' : 'renew_document'));
@@ -185,12 +227,18 @@ function ProposalForm({ c, contract, employee, busy, onSave, onSubmit }) {
   const base = Number(s.basic) || 0;
   const raise = (p) => { setPct(p); setT((x) => ({ ...x, basic: Math.round(base * (1 + p / 100)) })); };
   const total = (Number(t.basic) || 0) + (Number(t.allowance) || 0) + (Number(t.bonus) || 0);
-  const save = () => onSave({ mode, terms: t, note });
+  // A labour contract is always for two years: it ends on the same date two years on, and the new terms start with it.
+  const twoYears = (x) => (contract && c.kind === 'renew' ? { ...x, new_end: x.new_start ? addYears(x.new_start, 2) : '', effective_date: x.new_start } : x);
+  // Only the fields of what is proposed: a renewal's terms, or a termination's reason and dates.
+  const ENDING = ['reason', 'last_working_day', 'notice_days', 'notice_given_on'];
+  const only = (x) => Object.fromEntries(Object.entries(x).filter(([k]) => (c.kind === 'cancel') === ENDING.includes(k)
+    && (c.kind === 'cancel' || contract === (k !== 'expected_expiry'))));
+  const save = () => onSave({ mode, terms: only(twoYears(t)), note });
 
   return (
-    <Box title={c.kind === 'cancel' ? (contract ? 'Start the termination review' : 'Start the cancellation') : 'Start the renewal'} icon={<ClipboardList size={15} />}>
+    <Box title={c.kind === 'cancel' ? (contract ? 'Start the termination review' : 'Start the termination') : 'Start the renewal'} icon={<ClipboardList size={15} />}>
       {c.kind === 'renew' && contract && (
-        <Chips items={[['Keep the terms', 'keep'], ['Update the terms', 'update'], ['Resolve the differences first', 'resolve_first']]} active={mode} onPick={setMode} />
+        <Chips items={[['Keep the terms', 'keep'], ['Update the terms', 'update']]} active={mode} onPick={setMode} />
       )}
 
       {c.kind === 'renew' && contract && mode === 'update' && (
@@ -216,13 +264,8 @@ function ProposalForm({ c, contract, employee, busy, onSave, onSubmit }) {
 
       {c.kind === 'renew' && contract && mode !== 'resolve_first' && (
         <div className="space-y-2">
-          <p className="text-xs text-mute">New contract period</p>
-          <Chips items={[['1 year', 1], ['2 years', 2], ['3 years', 3]]} onPick={(n) => setT((x) => ({ ...x, new_end: addYears(x.new_start || c.ends_on, n) }))} />
-          <div className="grid grid-cols-3 gap-2">
-            <Field label="Starts"><input type="date" value={t.new_start} onChange={set('new_start')} className={input} /></Field>
-            <Field label="Ends"><input type="date" value={t.new_end} onChange={set('new_end')} className={input} /></Field>
-            <Field label="New terms from"><input type="date" value={t.effective_date} onChange={set('effective_date')} className={input} /></Field>
-          </div>
+          <Field label="New contract starts"><input type="date" value={t.new_start} onChange={set('new_start')} className={input} /></Field>
+          {t.new_start && <p className="rounded-xl bg-white/5 px-3 py-2 text-sm">2-year contract: <b>{day(t.new_start)}</b> to <b>{day(addYears(t.new_start, 2))}</b></p>}
         </div>
       )}
 
@@ -256,13 +299,13 @@ function ProposalForm({ c, contract, employee, busy, onSave, onSubmit }) {
   );
 }
 
-function ProposalView({ p }) {
+export function ProposalView({ p }) {
   const t = p.terms || {};
   const rows = [['Basic', t.basic != null && aed(t.basic)], ['Allowance', t.allowance != null && aed(t.allowance)], ['Bonus', t.bonus != null && aed(t.bonus)],
     ['Job title', t.position], ['Work location', t.location], ['Hours', t.hours], ['Benefits', t.benefits], ['Starts', day(t.new_start)], ['Ends', day(t.new_end)],
-    ['New terms from', day(t.effective_date)], ['Expected new expiry', day(t.expected_expiry)], ['Reason', t.reason], ['Last working day', day(t.last_working_day)],
+    ['Expected new expiry', day(t.expected_expiry)], ['Reason', t.reason], ['Last working day', day(t.last_working_day)],
     ['Notice', t.notice_days ? `${t.notice_days} days` : null], ['Notice given on', day(t.notice_given_on)]].filter(([, v]) => v);
-  const mode = { keep: 'Keep the terms', update: 'Update the terms', renew_document: 'Renew', cancel: 'Cancel' }[p.mode] || p.mode;
+  const mode = { keep: 'Keep the terms', update: 'Update the terms', renew_document: 'Renew', cancel: 'Terminate' }[p.mode] || p.mode;
   return (
     <Box title={`Proposal: ${mode}`}>
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
@@ -294,7 +337,7 @@ function TaskForm({ pros, c, busy, onCreate }) {
     <Box title="Give it to the PRO" icon={<Send size={15} />}>
       <Picker value={pro} onChange={setPro} options={pros.map((p) => ({ value: String(p.id), label: p.name || p.email }))} placeholder="Choose the PRO" />
       <Field label="Instructions"><textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={3} className={input}
-        placeholder={c.kind === 'cancel' ? 'Cancel the visa and labour card…' : 'Renew the visa at ICP, bring back the new visa page…'} /></Field>
+        placeholder={c.kind === 'cancel' ? 'Terminate the visa and labour card…' : 'Renew the visa at ICP, bring back the new visa page…'} /></Field>
       <Field label="Due"><input type="date" value={due} onChange={(e) => setDue(e.target.value)} className={input} /></Field>
       <Btn primary disabled={!pro} busy={busy === 'task'} onClick={() => onCreate({ assignee_id: Number(pro), kind: c.kind === 'cancel' ? 'cancellation' : 'renewal', instructions, due_date: due })}>
         <Send size={14} /> Send the task

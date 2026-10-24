@@ -1962,4 +1962,10 @@ await db.exec(`
     has_file BOOLEAN NOT NULL DEFAULT false,
     synced_at BIGINT DEFAULT ${NOW}
   );
+  -- Whether saifsys itself holds a file for it (null: not known yet), so a document with none is not offered for fetching.
+  ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS saifsys_has_file BOOLEAN;
+  -- What Reem read off a labour contract (its pay), with the file's hash: read again only for a new file.
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS terms_read JSONB;
+  -- Where that pay differs from the company salary, as last checked: a flag on Document Renewals' bell.
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS terms_flags JSONB;
 `);

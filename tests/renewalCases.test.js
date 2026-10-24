@@ -305,3 +305,56 @@ test('case settings: only the master sets approvers, PROs and the opening days',
   assert.deepEqual(s, { open_days: 45, approver_ids: [boss.id], pro_ids: [pro] }, 'unknown people are dropped');
   await assert.rejects(rc.saveCaseSettings(boss, { open_days: 0 }), (e) => e.status === 400);
 });
+
+// ---------- Renew / Terminate on an employee's row ----------
+
+test('Renew on a person opens a renewal of their labour contract only', async () => {
+  const { hrUser, staff } = await office();
+  const { startEmployeeCases } = await import('../server/documentRenewals.js');
+  const contract = await doc(staff.id, { expires: plus(200) });
+  await doc(staff.id, { type: 'Residence Visa', expires: plus(-5) }); // the company does not renew it here
+  await doc(staff.id, { code: 'E-0077', name: 'Sara', expires: plus(3) }); // someone else's contract
+  const r = await startEmployeeCases(hrUser, 'E-0042', 'renew');
+  assert.equal(r.opened.length, 1);
+  const cs = await open();
+  assert.deepEqual(cs.map((c) => c.document_id), [contract]);
+  assert.equal(r.case_id, cs[0].id, 'the case the pop-up opens');
+  assert.equal(cs[0].kind, 'renew');
+  assert.equal(cs[0].status, 'renew_review');
+});
+
+test('Terminate on a person turns a renewal not yet sent into a termination', async () => {
+  const { hrUser, staff } = await office();
+  const { startEmployeeCases } = await import('../server/documentRenewals.js');
+  const contract = await doc(staff.id);
+  await rc.startCase(hrUser, contract, 'renew');
+  const r = await startEmployeeCases(hrUser, 'E-0042', 'cancel');
+  assert.equal(r.switched.length, 1);
+  assert.ok(r.case_id);
+  const [c] = await open();
+  assert.equal(c.kind, 'cancel');
+  assert.equal(c.status, 'cancel_review');
+});
+
+test('Renew on a person with no labour contract says so', async () => {
+  const { hrUser, staff } = await office();
+  const { startEmployeeCases } = await import('../server/documentRenewals.js');
+  await doc(staff.id, { type: 'Passport', expires: plus(10) });
+  await assert.rejects(startEmployeeCases(hrUser, 'E-0042', 'renew'), /no labour contract/);
+});
+
+test('a renewal waiting for approval can still be turned into a termination; its proposal goes', async () => {
+  const { hrUser, staff } = await office();
+  const { startEmployeeCases } = await import('../server/documentRenewals.js');
+  const contract = await doc(staff.id);
+  const c = await rc.startCase(hrUser, contract, 'renew');
+  await rc.propose(hrUser, c.id, { mode: 'keep', terms: { new_start: plus(50), new_end: plus(780), effective_date: plus(50) } }, { ask: hr });
+  await rc.submit(hrUser, c.id);
+  assert.equal((await open())[0].status, 'awaiting_approval');
+  const r = await startEmployeeCases(hrUser, 'E-0042', 'cancel');
+  assert.deepEqual(r.switched, [c.id]);
+  const [now] = await open();
+  assert.equal(now.kind, 'cancel');
+  assert.equal(now.status, 'cancel_review');
+  assert.equal(now.proposal, null);
+});
