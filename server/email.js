@@ -238,7 +238,7 @@ function writeTools(ctx) {
     },
 
     reply_email: async (userId, { message_id, body, cc, attachments, replaces }) => {
-      await checkAddresses(cc, { canAdd: ctx.canAddAddress });
+      if (!await externalId(userId)) await checkAddresses(cc, { canAdd: ctx.canAddAddress });
       const o = await imapActions.original(userId, message_id);
       const acc = await imapAccount(userId);
       const to = replyRecipients(o, acc.email);
