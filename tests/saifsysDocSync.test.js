@@ -187,6 +187,69 @@ test('nobody fetches a file they may not read', async () => {
   assert.deepEqual(s.calls.files, [], 'saifsys is not even asked');
 });
 
+// ---------- saifsys's HR API (api/hr/v1), the other way in ----------
+
+const hrPage = (page, pages, docs) => ({ ok: true, page, pages, limit: 100, documents: docs });
+const hrDoc = (over = {}) => ({
+  employee: { id: 56, code: 'E00056', name: 'Abdul Karim Jan Khan', status: 'Active', company: 'Madar' },
+  id: 226, type: 'Passport', number: 'BS4951402', issued_at: '2021-12-21', expires_at: '2026-12-20', days_left: 57, notes: null,
+  has_file: true, file_name: 'doc_56_1775644097.pdf', file_url: 'x', uploaded_at: '2026-04-08 10:28:17', updated_at: null, ...over,
+});
+// A fake fetch for the HR API and the address it sends a file on to.
+function hrServer({ pages, file = null }) {
+  const seen = [];
+  const fetch = async (url, opts = {}) => {
+    const u = new URL(url);
+    seen.push({ url: String(url), key: opts.headers?.['X-HR-Key'] ?? null, redirect: opts.redirect });
+    if (u.hostname === 'files.example') {
+      return new Response(file, { status: file ? 200 : 404, headers: { 'Content-Type': 'application/pdf' } });
+    }
+    if (opts.headers?.['X-HR-Key'] !== 'k') return new Response('{"ok":false}', { status: 401 });
+    if (u.searchParams.get('action') === 'documents') {
+      return Response.json(pages[Number(u.searchParams.get('page') || 1) - 1]);
+    }
+    if (u.searchParams.get('action') === 'document_file') {
+      return new Response(null, { status: 302, headers: { Location: `https://files.example/docs/${u.searchParams.get('id')}.pdf` } });
+    }
+    return new Response('', { status: 404 });
+  };
+  return { fetch, seen };
+}
+
+test('the HR API\'s pages read as saifsys documents', async () => {
+  const { hrApiSource } = await import('../server/saifsysDocSync.js');
+  const server = hrServer({ pages: [hrPage(1, 2, [hrDoc()]), hrPage(2, 2, [hrDoc({ id: 227, type: 'LaborCard', employee: { code: 'E00018', name: 'Sohaib', status: 'Terminated' }, has_file: false, file_name: null })])] });
+  const src = hrApiSource({ base: 'http://hr.example/api/hr/v1/index.php', key: 'k', fetch: server.fetch });
+  const first = await src.lookup('hr_docs', 'documents', { after_id: 0 });
+  assert.deepEqual(first.documents[0], {
+    id: 226, employee_code: 'E00056', employee_name: 'Abdul Karim Jan Khan', employee_left: false, type: 'Passport', number: 'BS4951402',
+    issued_at: '2021-12-21', expires_at: '2026-12-20', notes: null, has_file: true, file_name: 'doc_56_1775644097.pdf', updated_at: '2026-04-08 10:28:17',
+  });
+  assert.equal(first.next_after_id, 1);
+  const second = await src.lookup('hr_docs', 'documents', { after_id: first.next_after_id });
+  assert.equal(second.documents[0].employee_left, true);
+  assert.equal(second.next_after_id, null, 'the last page');
+});
+
+test('a file the HR API sends on elsewhere is fetched there, without the key', async () => {
+  const { hrApiSource } = await import('../server/saifsysDocSync.js');
+  const server = hrServer({ pages: [], file: '%PDF scan' });
+  const src = hrApiSource({ base: 'http://hr.example/api/hr/v1/index.php', key: 'k', fetch: server.fetch });
+  const f = await src.fetchFile(226);
+  assert.equal(f.buffer.toString(), '%PDF scan');
+  assert.equal(f.mime, 'application/pdf');
+  const onward = server.seen.find((s) => s.url.startsWith('https://files.example'));
+  assert.equal(onward.key, null, 'the HR key never goes to the file\'s address');
+  assert.equal(server.seen[0].redirect, 'manual');
+});
+
+test('a file the HR API cannot give is an error, not an empty file', async () => {
+  const { hrApiSource } = await import('../server/saifsysDocSync.js');
+  const server = hrServer({ pages: [], file: null });
+  const src = hrApiSource({ base: 'http://hr.example/api/hr/v1/index.php', key: 'k', fetch: server.fetch });
+  await assert.rejects(src.fetchFile(226));
+});
+
 test('no master: nothing to file it under, nothing done', async () => {
   await reset();
   await cats.seedCategories();

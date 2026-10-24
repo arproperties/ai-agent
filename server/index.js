@@ -302,7 +302,9 @@ app.get('/api/documents/:id/file', wrap(async (req, res) => {
   const inline = !req.query.download && inlineType(doc);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(doc.name)}`);
-  res.type(inline || 'application/octet-stream').sendFile(doc.path);
+  // dotfiles: the path is the one stored for this file, never the visitor's; a data folder
+  // under a dot-named folder (a git worktree under .claude) must not turn every file into a 404.
+  res.type(inline || 'application/octet-stream').sendFile(doc.path, { dotfiles: 'allow' });
 }));
 // Word documents rendered as HTML for the in-app viewer
 app.get('/api/documents/:id/preview', wrap(async (req, res) => {

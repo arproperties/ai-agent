@@ -31,6 +31,60 @@ async function saifsysFile(id) {
   return { buffer: Buffer.from(await res.arrayBuffer()), mime: (res.headers.get('content-type') || 'application/octet-stream').split(';')[0] };
 }
 
+// ---------- saifsys's HR API (api/hr/v1, its own X-HR-Key), the other way in ----------
+
+const LEFT = ['resigned', 'terminated', 'not_renewed', 'inactive']; // saifsys hr_employee_left_statuses()
+
+/**
+ * The same two questions asked of saifsys's HR API: its pages (100 at a time, by page
+ * number - carried here as the cursor) and a document's file. That API answers a file
+ * by sending the browser on to where saifsys keeps it; the file is fetched there, and
+ * the HR key goes only to the API itself.
+ */
+export function hrApiSource({ base, key, fetch: get = globalThis.fetch }) {
+  const call = (params) => {
+    const url = new URL(base);
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+    return get(url, { headers: { 'X-HR-Key': key, Accept: 'application/json' }, redirect: 'manual', signal: AbortSignal.timeout(60_000) });
+  };
+  const bad = (m) => Object.assign(new Error(m), { status: 502 });
+  return {
+    lookup: async (_module, _action, { after_id = 0 } = {}) => {
+      const page = Number(after_id) + 1;
+      const res = await call({ action: 'documents', page });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.ok) throw bad(`saifsys HR API said: ${body?.error?.message || `HTTP ${res.status}`}`);
+      return {
+        documents: (body.documents || []).map((d) => ({
+          id: d.id,
+          employee_code: d.employee?.code,
+          employee_name: d.employee?.name,
+          employee_left: LEFT.includes(String(d.employee?.status || '').toLowerCase()),
+          type: d.type, number: d.number ?? null, issued_at: d.issued_at ?? null, expires_at: d.expires_at ?? null,
+          notes: d.notes ?? null, has_file: !!d.has_file, file_name: d.file_name ?? null,
+          updated_at: d.updated_at || d.uploaded_at || null,
+        })),
+        next_after_id: page < Number(body.pages || 1) ? page : null,
+      };
+    },
+    fetchFile: async (id) => {
+      let res = await call({ action: 'document_file', id });
+      if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+        res = await get(new URL(res.headers.get('location'), base), { signal: AbortSignal.timeout(60_000) });
+      }
+      if (!res.ok) throw Object.assign(new Error('That file could not be found.'), { status: 404 });
+      return { buffer: Buffer.from(await res.arrayBuffer()), mime: (res.headers.get('content-type') || 'application/octet-stream').split(';')[0] };
+    },
+  };
+}
+
+/** Where saifsys's documents come from: its HR API when Reem has its key, else the Jarvis door. */
+function source() {
+  const base = process.env.SAIFSYS_HR_URL;
+  const key = process.env.SAIFSYS_HR_KEY;
+  return base && key ? hrApiSource({ base, key }) : { lookup: askSaifsys, fetchFile: saifsysFile };
+}
+
 // The Employee Documents types by label, retired ones too: a copied file keeps its kind.
 async function employeeTypes() {
   const rows = await db.prepare(`SELECT t.id, t.label, t.category_id FROM document_types t
@@ -64,7 +118,8 @@ const summaryOf = (d) => [
  * { added, updated, files, superseded } (or { skipped } when there is no master to own them).
  * One document going wrong is logged and skipped, never the whole run.
  */
-export async function syncSaifsysDocs({ lookup = askSaifsys, fetchFile = saifsysFile } = {}) {
+export async function syncSaifsysDocs(deps = {}) {
+  const { lookup, fetchFile } = { ...source(), ...deps };
   const out = { added: 0, updated: 0, files: 0, superseded: 0 };
   const owner = await db.prepare("SELECT id FROM users WHERE role = 'master' ORDER BY id LIMIT 1").get();
   if (!owner) return { ...out, skipped: 'no master account' };
@@ -148,7 +203,8 @@ async function supersedeOlder() {
  * saifsys is asked for the file there and then, and it is kept. Only for someone who may
  * read the document at all; anyone else gets the same 404 as a file that is not there.
  */
-export async function fileFor(user, docId, { fetchFile = saifsysFile } = {}) {
+export async function fileFor(user, docId, deps = {}) {
+  const { fetchFile } = { ...source(), ...deps };
   const missing = (m = 'Not found') => Object.assign(new Error(m), { status: 404 });
   const doc = await readableDocument(user, docId);
   if (!doc) throw missing();
