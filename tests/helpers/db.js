@@ -45,6 +45,7 @@ const TABLES = [
   'mail_front', 'mail_route_rules', 'mail_people', 'mail_log',
   'lease_renewal_settings', 'lease_renewals', 'lease_renewal_events', 'lease_renewal_files',
   'document_texts', 'document_copies',
+  'legal_case_settings', 'legal_cases', 'legal_case_events', 'legal_case_files', 'legal_case_alerts',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

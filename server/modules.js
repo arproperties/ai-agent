@@ -22,6 +22,7 @@ import { isMaster, isExternal } from './access.js';
 
 export const MODULES = [
   { key: 'shelf', label: 'Shelf', about: 'Their files and the ones shared with them: upload, sort, search and open.', everyone: true },
+  { key: 'legal', label: 'Legal cases', about: 'Legal cases from the case type to the end: cooling periods, legal notice, settlement, proceedings, appeal and vouchers, with every document and step kept.', company: true },
   { key: 'todos', label: 'To-do', about: 'Their to-do list and the things that come back, with reminders.', everyone: true },
   { key: 'translate', label: 'Live Translator', about: 'Two people, two languages, one phone.', everyone: true },
   { key: 'meetings', label: 'Meetings', about: 'Record a meeting and get who said what, with a summary.', everyone: true },
