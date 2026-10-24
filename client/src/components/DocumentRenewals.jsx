@@ -33,12 +33,13 @@ const Spinner = () => <div className="grid place-items-center pt-16 text-mute"><
 
 // The strip on top: each count filters the list below to the people it is about.
 const ALERTS = [
-  ['expired', 'Expired', AlertTriangle, 'bad'],
-  ['d14', 'Due in 14 days', Clock, 'bad'],
-  ['d30', 'Due in 30 days', Clock, 'warn'],
-  ['d60', 'Due in 60 days', Clock, 'p1'],
-  ['confirm', 'To confirm', HelpCircle, 'warn'],
-  ['unlinked', 'Not linked to anyone', Link2Off, 'mute'],
+  // Each count is of documents, not people: one person often has a visa, ID and labour card ending together.
+  ['expired', 'expired', AlertTriangle, 'bad'],
+  ['d14', 'due within 14 days', Clock, 'bad'],
+  ['d30', 'due in 15–30 days', Clock, 'warn'],
+  ['d60', 'due in 31–60 days', Clock, 'p1'],
+  ['confirm', 'with a date to confirm', HelpCircle, 'warn'],
+  ['unlinked', 'not linked to anyone', Link2Off, 'mute'],
 ];
 
 function AlertStrip({ alerts, active, onPick }) {
@@ -53,7 +54,7 @@ function AlertStrip({ alerts, active, onPick }) {
             <span className={`grid size-8 place-items-center rounded-full ${TONE[tone]}`}><Ico size={15} /></span>
             <span>
               <span className="block text-lg font-medium leading-none">{n}</span>
-              <span className="text-xs text-mute">{label}</span>
+              <span className="text-xs text-mute">{n === 1 ? 'document' : 'documents'} {label}</span>
             </span>
           </button>
         );
@@ -181,6 +182,13 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
               </button>
             )}
           </div>
+          {/* Says what the list is narrowed to, so its count is not read against the card's. */}
+          {tab === 'employees' && (alert || focus) && (
+            <p className="-mt-2 text-xs text-mute">
+              Showing {people.length} {people.length === 1 ? 'person' : 'people'} {focus ? `in: ${focus.label}` : `with documents ${ALERTS.find((a) => a[0] === alert)?.[1]}`}
+              {alert && data.alerts[alert] !== people.length ? ` (${data.alerts[alert]} documents between them)` : ''}
+            </p>
+          )}
           {tab === 'cases' ? (
             cases.length === 0 ? <p className="pt-12 text-center text-sm text-mute">No open cases. A contract opens one by itself 60 days before it ends; any document opens one with Renew or Cancel.</p> : (
               <ul className="glass divide-y divide-stroke/60 overflow-hidden rounded-2xl">
