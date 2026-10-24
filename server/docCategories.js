@@ -10,6 +10,7 @@ import { requireMaster } from './auth.js';
 //   private    - hidden from shared and file_access (knowledge.js retrievalScope)
 //   links_to   - 'employee' (a saifsys employee) or 'subject' (free text)
 //   opens_case - on a type: an expiring file of it opens an Employee Renewals case
+//   required   - on a type: every current employee should have one; who has not is listed
 // Nothing is deleted. Retiring one (active false) hides it from new files; the files
 // that have it keep it, and its alerts.
 
@@ -18,7 +19,7 @@ const LINKS = ['employee', 'subject'];
 
 const SEED = [
   { label: 'Employee Documents', private: true, links_to: 'employee', types: [
-    'Passport', 'Residence Visa', 'Emirates ID', ['Labour Contract', true], 'Labour Card', 'Health Card', 'Driving Licence', 'Other employee document',
+    ['Passport', false, true], ['Residence Visa', false, true], ['Emirates ID', false, true], ['Labour Contract', true], 'Labour Card', 'Health Card', 'Driving Licence', 'Other employee document',
   ] },
   { label: 'Company Documents', private: false, links_to: 'subject', types: [
     'Trade Licence', 'Establishment Card', 'Insurance Policy', 'Vehicle Registration (Mulkiya)', 'Tenancy Contract (Ejari)', 'Other company document',
@@ -29,13 +30,22 @@ const SEED = [
 export async function seedCategories() {
   await tx(async () => {
     await db.exec('LOCK TABLE document_categories IN EXCLUSIVE MODE');
-    if (await db.prepare('SELECT 1 FROM document_categories LIMIT 1').get()) return;
+    if (await db.prepare('SELECT 1 FROM document_categories LIMIT 1').get()) {
+      // A list seeded before "required" existed (2026-10-24) gets its first must-haves once.
+      if (await db.prepare("SELECT 1 FROM module_rollouts WHERE module = 'doc_types_required'").get()) return;
+      const must = SEED.flatMap((c) => c.types.filter((t) => Array.isArray(t) && t[2]).map((t) => t[0]));
+      await db.prepare(`UPDATE document_types t SET required = true FROM document_categories c
+        WHERE c.id = t.category_id AND c.links_to = 'employee' AND t.label = ANY(?::text[])`).run(must);
+      await db.prepare("INSERT INTO module_rollouts (module) VALUES ('doc_types_required')").run();
+      return;
+    }
+    await db.prepare("INSERT INTO module_rollouts (module) VALUES ('doc_types_required') ON CONFLICT DO NOTHING").run();
     for (const [i, c] of SEED.entries()) {
       const { id } = await db.prepare('INSERT INTO document_categories (label, private, links_to, sort) VALUES (?, ?, ?, ?) RETURNING id')
         .run(c.label, c.private, c.links_to, i);
       for (const [j, t] of c.types.entries()) {
-        const [label, opensCase] = Array.isArray(t) ? t : [t, false];
-        await db.prepare('INSERT INTO document_types (category_id, label, opens_case, sort) VALUES (?, ?, ?, ?)').run(id, label, opensCase, j);
+        const [label, opensCase = false, required = false] = Array.isArray(t) ? t : [t];
+        await db.prepare('INSERT INTO document_types (category_id, label, opens_case, required, sort) VALUES (?, ?, ?, ?, ?)').run(id, label, opensCase, required, j);
       }
     }
   });
@@ -45,7 +55,7 @@ export async function seedCategories() {
 export async function listCategories({ includeRetired = false } = {}) {
   const cats = await db.prepare(`SELECT id, label, private, links_to, active, sort FROM document_categories
     WHERE ? OR active ORDER BY sort, id`).all(includeRetired);
-  const types = await db.prepare(`SELECT id, category_id, label, opens_case, active, sort FROM document_types
+  const types = await db.prepare(`SELECT id, category_id, label, opens_case, required, active, sort FROM document_types
     WHERE ? OR active ORDER BY sort, id`).all(includeRetired);
   return cats.map((c) => ({
     ...c,
@@ -127,7 +137,8 @@ export async function updateType(user, id, changes = {}) {
   const label = 'label' in changes ? cleanLabel(changes.label) : t.label;
   const active = 'active' in changes ? !!changes.active : t.active;
   const opensCase = 'opens_case' in changes ? !!changes.opens_case : t.opens_case;
-  await named(() => db.prepare('UPDATE document_types SET label = ?, active = ?, opens_case = ? WHERE id = ?').run(label, active, opensCase, t.id));
+  const required = 'required' in changes ? !!changes.required : t.required;
+  await named(() => db.prepare('UPDATE document_types SET label = ?, active = ?, opens_case = ?, required = ? WHERE id = ?').run(label, active, opensCase, required, t.id));
 }
 
 // ---------- routes ----------

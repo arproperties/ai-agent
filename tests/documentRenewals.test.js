@@ -125,6 +125,66 @@ test('the files nobody is linked to are listed on their own', async () => {
   assert.deepEqual(d.documents.map((x) => x.id), [loose]);
 });
 
+// ---------- the major cases on top ----------
+
+const caseOf = (o, key) => o.cases.find((c) => c.key === key);
+
+test('the must-have papers are passport, visa and Emirates ID to start', async () => {
+  await office();
+  const [emp] = await cats.listCategories();
+  assert.deepEqual(emp.types.filter((t) => t.required).map((t) => t.label), ['Passport', 'Residence Visa', 'Emirates ID']);
+});
+
+test('someone still working with an expired must-have paper or contract is a major case', async () => {
+  const { hrUser, staff } = await office();
+  await doc(staff.id, 'Residence Visa', { code: 'E-0042', name: 'Ahmed Khan', expires: '2026-10-01' });
+  await doc(staff.id, 'Labour Contract', { code: 'E-0077', name: 'Sara Lopez', expires: '2026-09-01' });
+  await doc(staff.id, 'Health Card', { code: 'E-0101', name: 'Ravi Nair', expires: '2026-09-01' }); // not a must-have
+  await doc(staff.id, 'Passport', { code: 'E-0500', name: 'Old Hand', expires: '2026-09-01' }); // has left
+  const c = caseOf(await overview(hrUser, { lookup: hr, today: TODAY }), 'working_expired');
+  assert.deepEqual(c.people.sort(), ['E-0042', 'E-0077']);
+  assert.equal(c.tone, 'bad');
+});
+
+test('someone who has left with a visa or ID still valid is a major case', async () => {
+  const { hrUser, staff } = await office();
+  await doc(staff.id, 'Residence Visa', { code: 'E-0500', name: 'Old Hand', expires: '2027-06-01' });
+  await doc(staff.id, 'Residence Visa', { code: 'E-0600', name: 'Gone Too', expires: '2027-06-01' });
+  await db.prepare('UPDATE documents SET not_renewing_at = 1 WHERE employee_code = ?').run('E-0600'); // already dealt with
+  await doc(staff.id, 'Residence Visa', { code: 'E-0042', name: 'Ahmed Khan', expires: '2027-06-01' }); // still here
+  const c = caseOf(await overview(hrUser, { lookup: hr, today: TODAY }), 'left_valid');
+  assert.deepEqual(c.people, ['E-0500']);
+});
+
+test('a contract ending within 60 days is a major case, until someone deals with it', async () => {
+  const { hrUser, staff } = await office();
+  await doc(staff.id, 'Labour Contract', { code: 'E-0042', name: 'Ahmed Khan', expires: '2026-12-01' });
+  await doc(staff.id, 'Labour Contract', { code: 'E-0077', name: 'Sara Lopez', expires: '2027-12-01' });
+  const c = caseOf(await overview(hrUser, { lookup: hr, today: TODAY }), 'contracts_60');
+  assert.deepEqual(c.people, ['E-0042']);
+});
+
+test('current staff missing a must-have paper are listed', async () => {
+  const { hrUser, staff } = await office();
+  for (const t of ['Passport', 'Residence Visa', 'Emirates ID']) await doc(staff.id, t, { code: 'E-0042', name: 'Ahmed Khan', expires: '2028-01-01' });
+  await doc(staff.id, 'Passport', { code: 'E-0077', name: 'Sara Lopez', expires: '2028-01-01' });
+  const c = caseOf(await overview(hrUser, { lookup: hr, today: TODAY }), 'missing');
+  assert.deepEqual(c.people.sort(), ['E-0077', 'E-0101'], 'Sara has no visa or ID, Ravi has nothing');
+  assert.match(c.label, /3 current staff|2 current staff/);
+});
+
+test('a case with nobody in it is left out, and the worst come first', async () => {
+  const { hrUser, staff } = await office();
+  for (const code of ['E-0042', 'E-0077', 'E-0101']) {
+    for (const t of ['Passport', 'Residence Visa', 'Emirates ID']) await doc(staff.id, t, { code, name: code, expires: '2028-01-01' });
+  }
+  assert.deepEqual((await overview(hrUser, { lookup: hr, today: TODAY })).cases, []);
+  await doc(staff.id, 'Labour Contract', { code: 'E-0042', name: 'Ahmed Khan', expires: '2026-12-01' });
+  await doc(staff.id, 'Emirates ID', { code: 'E-0077', name: 'Sara Lopez', expires: '2026-10-01', title: 'old eid' });
+  const keys = (await overview(hrUser, { lookup: hr, today: TODAY })).cases.map((c) => c.key);
+  assert.deepEqual(keys, ['working_expired', 'contracts_60']);
+});
+
 test('a renewed document stops counting', async () => {
   const { hrUser, staff } = await office();
   const old = await doc(staff.id, 'Passport', { code: 'E-0077', name: 'Sara Lopez', expires: '2026-10-01' });

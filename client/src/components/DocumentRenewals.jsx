@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Loader2, AlertTriangle, Search, X, ChevronRight, Check, FileText, Upload, Ban, Undo2, Building2, UserRound, Clock, HelpCircle, Link2Off, RefreshCw,
+  Loader2, AlertTriangle, Search, X, ChevronRight, Check, FileText, Upload, Ban, Undo2, Building2, UserRound, Clock, HelpCircle, Link2Off, RefreshCw, ShieldAlert, Plane, FileSignature, BellRing, Siren,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -60,6 +60,35 @@ function AlertStrip({ alerts, active, onPick }) {
   );
 }
 
+// The major cases on top (server/documentRenewals.js majorCases), worst first: what the boss
+// should know before anything else. Tapping one narrows the list to the people in it.
+const CASE_ICON = { working_expired: Siren, left_valid: Plane, contracts_60: FileSignature, due_14: BellRing, to_confirm: HelpCircle, missing: ShieldAlert };
+
+function NeedsAttention({ cases, active, onPick }) {
+  if (!cases?.length) return null;
+  return (
+    <div className="glass overflow-hidden rounded-2xl">
+      <p className="px-4 pb-1 pt-3 text-xs font-medium uppercase tracking-wider text-mute">Needs attention</p>
+      <ul className="divide-y divide-stroke/60">
+        {cases.map((c) => {
+          const Ico = CASE_ICON[c.key] || AlertTriangle;
+          const on = active?.key === c.key;
+          return (
+            <li key={c.key}>
+              <button onClick={() => onPick(on ? null : c)}
+                className={`flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-white/[0.06] ${on ? 'bg-white/10' : ''}`}>
+                <span className={`grid size-8 shrink-0 place-items-center rounded-full ${TONE[c.tone]}`}><Ico size={15} /></span>
+                <span className="min-w-0 flex-1 text-sm">{c.label}</span>
+                <ChevronRight size={16} className="shrink-0 text-mute" />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 // Which rows an alert in the strip is about.
 const matches = (row, alert) => {
   if (!alert) return true;
@@ -76,6 +105,7 @@ export default function DocumentRenewalsPage({ onBack }) {
   const [tab, setTab] = useState('employees');
   const [q, setQ] = useState('');
   const [alert, setAlert] = useState(null);
+  const [focus, setFocus] = useState(null); // a major case: the list shows only its people
   const [open, setOpen] = useState(null); // { kind: 'employee', code } | { kind: 'subject', name } | { kind: 'unlinked' }
 
   const [syncing, setSyncing] = useState(false);
@@ -104,7 +134,7 @@ export default function DocumentRenewalsPage({ onBack }) {
   if (open) return <Holder open={open} types={data?.types || []} onBack={() => { setOpen(null); load(); }} />;
 
   const want = q.trim().toLowerCase();
-  const people = (data?.employees || []).filter((e) => matches(e, alert)
+  const people = (data?.employees || []).filter((e) => matches(e, alert) && (!focus || focus.people.includes(e.code))
     && (!want || [e.name, e.code, e.position, e.department, e.company].join(' ').toLowerCase().includes(want)));
   const subjects = (data?.subjects || []).filter((s) => matches(s, alert) && (!want || s.name.toLowerCase().includes(want)));
   const pickAlert = (a) => {
@@ -118,7 +148,8 @@ export default function DocumentRenewalsPage({ onBack }) {
         <div className="space-y-4 pb-8">
           {synced && <p className="flex items-center gap-1.5 text-sm text-ok"><Check size={15} /> {synced}</p>}
           {!data.saifsys && <Problem text="saifsys did not answer, so only the employees who already have documents are listed." />}
-          <AlertStrip alerts={data.alerts} active={alert} onPick={pickAlert} />
+          <NeedsAttention cases={data.cases} active={focus} onPick={(c) => { setFocus(c); setAlert(null); setTab('employees'); }} />
+          <AlertStrip alerts={data.alerts} active={alert} onPick={(a) => { setFocus(null); pickAlert(a); }} />
           <div className="glass flex items-center gap-2 rounded-xl px-3.5 py-2">
             <Search size={15} className="shrink-0 text-mute" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, code, position…" className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-mute/70" />
@@ -131,8 +162,8 @@ export default function DocumentRenewalsPage({ onBack }) {
                 {label} <span className="rounded-full bg-white/10 px-1.5 text-xs">{n}</span>
               </button>
             ))}
-            {alert && (
-              <button onClick={() => setAlert(null)} className="ml-auto flex items-center gap-1 rounded-full px-3 py-1.5 text-xs text-mute hover:text-txt">
+            {(alert || focus) && (
+              <button onClick={() => { setAlert(null); setFocus(null); }} className="ml-auto flex items-center gap-1 rounded-full px-3 py-1.5 text-xs text-mute hover:text-txt">
                 <X size={13} /> Show everyone
               </button>
             )}

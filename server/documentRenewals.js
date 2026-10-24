@@ -36,7 +36,7 @@ const out = ({ path, hash, ...d }, today) => ({ ...d, tags: undefined, has_file:
 
 async function readableFiles(user, where = 'TRUE', params = []) {
   const scope = isMaster(user) ? masterReach('t') : retrievalScope(user.id, 't');
-  return db.prepare(`SELECT t.*, dt.label AS type, dc.label AS category, dc.links_to, u.name AS owner_name
+  return db.prepare(`SELECT t.*, dt.label AS type, dt.required, dt.opens_case, dc.label AS category, dc.links_to, u.name AS owner_name
     FROM documents t
     JOIN document_types dt ON dt.id = t.type_id
     JOIN document_categories dc ON dc.id = t.category_id
@@ -100,7 +100,47 @@ export async function overview(user, { lookup = askSaifsys, today = dubaiDate() 
     if (s.confirm.length) alerts.confirm++;
     if (!f.employee_code && !f.subject) alerts.unlinked++;
   }
-  return { saifsys: !!roster, alerts, employees, subjects };
+  return { saifsys: !!roster, alerts, cases: await majorCases(employees, files, today), employees, subjects };
+}
+
+/**
+ * What the boss should know about first, worst first, each with the people in it so the
+ * screen can narrow the list to them. A case nobody is in is left out. "Must-have" and
+ * "contract" are the master's ticks on the document types (required, opens_case).
+ */
+async function majorCases(employees, files, today) {
+  const staff = files.filter((f) => f.links_to === 'employee' && f.employee_code);
+  const filesOf = new Map();
+  for (const f of staff) filesOf.set(f.employee_code, [...(filesOf.get(f.employee_code) || []), f]);
+  const current = employees.filter((e) => e.current !== false);
+  const left = employees.filter((e) => e.current === false);
+  const who = (list, test) => list.filter((e) => (filesOf.get(e.code) || []).some((f) => test(f, docState(f, today)))).map((e) => e.code);
+  const VALID = ['d14', 'd30', 'd60', 'later'];
+
+  const must = (await listCategories()).filter((c) => c.links_to === 'employee').flatMap((c) => c.types.filter((t) => t.required));
+  const missing = employees.some((e) => e.current === true) && must.length
+    ? current.filter((e) => e.current === true && must.some((t) => !(filesOf.get(e.code) || []).some((f) => f.type_id === t.id))).map((e) => e.code)
+    : [];
+  const mustWords = must.map((t) => t.label).join(', ').replace(/, ([^,]*)$/, ' or $1');
+
+  const n = (list, one, many) => `${list.length} ${list.length === 1 ? one : many}`;
+  const cases = [
+    { key: 'working_expired', tone: 'bad', people: who(current, (f, s) => s.step === 'expired' && (f.required || f.opens_case)) },
+    { key: 'left_valid', tone: 'bad', people: who(left, (f, s) => f.required && VALID.includes(s.step)) },
+    { key: 'contracts_60', tone: 'warn', people: who(current, (f, s) => f.opens_case && ['d14', 'd30', 'd60'].includes(s.step)) },
+    { key: 'due_14', tone: 'warn', people: who(current, (f, s) => s.step === 'd14') },
+    { key: 'to_confirm', tone: 'p1', people: who(employees, (f, s) => s.step !== 'not_renewing' && s.confirm.length > 0) },
+    { key: 'missing', tone: 'mute', people: missing },
+  ];
+  const label = {
+    working_expired: (p) => `${n(p, 'person is', 'people are')} still working with an expired must-have paper or contract`,
+    left_valid: (p) => `${n(p, 'person has', 'people have')} left the company with a visa or ID still valid: cancel it?`,
+    contracts_60: (p) => `${n(p, 'contract ends', 'contracts end')} within 60 days: renew or not?`,
+    due_14: (p) => `${n(p, 'person has', 'people have')} a paper running out within 14 days`,
+    to_confirm: (p) => `${n(p, 'person has', 'people have')} a date or name to confirm`,
+    missing: (p) => `${n(p, 'current staff member is', 'current staff are')} missing a ${mustWords} on file`,
+  };
+  return cases.filter((c) => c.people.length).map((c) => ({ ...c, label: label[c.key](c.people) }));
 }
 
 /** One employee: their saifsys profile (or what their files say, if saifsys cannot) and their files. */

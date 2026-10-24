@@ -1840,6 +1840,9 @@ await db.exec(`
     sort INTEGER NOT NULL DEFAULT 0
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_document_types_label ON document_types(category_id, lower(label));
+  -- required: every current employee should have one (passport, visa, Emirates ID); Document
+  -- Renewals lists who is missing it. The master ticks it per type.
+  ALTER TABLE document_types ADD COLUMN IF NOT EXISTS required BOOLEAN NOT NULL DEFAULT false;
 
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES document_categories(id);
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS type_id INTEGER REFERENCES document_types(id);
