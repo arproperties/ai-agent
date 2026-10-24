@@ -17,6 +17,8 @@ import DocumentRenewalsPage from './components/DocumentRenewals';
 import TranslatePage from './components/Translate';
 import TenantCarePage from './components/TenantCare';
 import MailRoutingPage from './components/MailRouting';
+import AddressBookPage from './components/AddressBook';
+import BillingPage from './components/Billing';
 import SharedInboxPage from './components/SharedInbox';
 import ResponsibilitiesPage from './components/Responsibilities';
 import ChecklistsPage from './components/Checklists';
@@ -41,9 +43,10 @@ const notifiedDuties = params.get('responsibilities') === '1'; // the master gav
 const notifiedRenewal = Number(params.get('renewals')) || null; // a lease renewal needs them: /?renewals=12
 // a document runs out: /?docrenewals=E00056 opens that employee in Document Renewals, =1 the list
 const notifiedDocRenewal = params.get('docrenewals') || null;
+const notifiedRenewals = params.has('renewals'); // that one, or the list: /?renewals=list
 // a staff job in one of their buildings needs them: /?building=2&job=41
 const notifiedBuilding = Number(params.get('building')) ? { building: Number(params.get('building')), job: Number(params.get('job')) || null } : null;
-if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedMailRouting || notifiedSharedInbox || notifiedDuties || notifiedRenewal || notifiedBuilding) window.history.replaceState(null, '', '/');
+if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedMailRouting || notifiedSharedInbox || notifiedDuties || notifiedRenewals || notifiedBuilding) window.history.replaceState(null, '', '/');
 
 // The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
 const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
@@ -62,7 +65,7 @@ export default function App() {
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewal ? 'renewals' : notifiedDocRenewal ? 'docrenewals' : notifiedBuilding ? 'buildings' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewals ? 'renewals' : notifiedDocRenewal ? 'docrenewals' : notifiedBuilding ? 'buildings' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const [jumpToRenewal, setJumpToRenewal] = useState(notifiedRenewal); // a lease renewal a notification asked for
   const [jumpToDocRenewal, setJumpToDocRenewal] = useState(notifiedDocRenewal); // a document a notification asked for
@@ -111,7 +114,7 @@ export default function App() {
       if (where.get('mailrouting') === '1') { setPanel('mailrouting'); return; }
       if (where.get('sharedinbox') === '1') { setPanel('sharedinbox'); return; }
       if (where.get('responsibilities') === '1') { setPanel('duties'); return; }
-      if (Number(where.get('renewals'))) { setJumpToRenewal(Number(where.get('renewals'))); setPanel('renewals'); return; }
+      if (where.has('renewals')) { setJumpToRenewal(Number(where.get('renewals')) || null); setPanel('renewals'); return; }
       if (where.get('docrenewals')) { setJumpToDocRenewal(where.get('docrenewals')); setPanel('docrenewals'); return; }
       if (Number(where.get('building'))) {
         setJumpToBuilding({ building: Number(where.get('building')), job: Number(where.get('job')) || null });
@@ -188,6 +191,8 @@ export default function App() {
           transcribeOpen={panel === 'transcribe'} onTranscribe={() => { setPanel('transcribe'); setDrawer(false); }}
           tenantCare={tenantCare} tenantCareOpen={panel === 'tenantcare'} onTenantCare={() => { setPanel('tenantcare'); setDrawer(false); }}
           mailRoutingOpen={panel === 'mailrouting'} onMailRouting={() => { setPanel('mailrouting'); setDrawer(false); }}
+          addressBookOpen={panel === 'addressbook'} onAddressBook={() => { setPanel('addressbook'); setDrawer(false); }}
+          billingOpen={panel === 'billing'} onBilling={() => { setPanel('billing'); setDrawer(false); }}
           sharedInbox={sharedInbox} sharedInboxOpen={panel === 'sharedinbox'} onSharedInbox={() => { setPanel('sharedinbox'); setDrawer(false); }}
           dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
@@ -241,6 +246,8 @@ export default function App() {
         {panel === 'translate' && <TranslatePage onBack={() => setPanel(null)} />}
         {panel === 'tenantcare' && <TenantCarePage me={me} onBack={() => setPanel(null)} onChanged={loadTenantCare} />}
         {panel === 'mailrouting' && me.role === 'master' && <MailRoutingPage onBack={() => setPanel(null)} />}
+        {panel === 'addressbook' && me.role === 'master' && <AddressBookPage onBack={() => setPanel(null)} />}
+        {panel === 'billing' && me.role === 'master' && <BillingPage onBack={() => setPanel(null)} />}
         {panel === 'sharedinbox' && <SharedInboxPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
         {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}

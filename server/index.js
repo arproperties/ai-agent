@@ -22,6 +22,7 @@ import { todoRoutes } from './todos.js';
 import { routineRoutes } from './routines.js';
 import { teamReminderRoutes, bringOldRemindersIntoTodos } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
+import { addressRoutes } from './addressBook.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
@@ -51,6 +52,7 @@ import { moduleRoutes, needsModule, needsModuleUnless, userModules, giveToEveryo
 import { noticeRoutes } from './notices.js';
 import { pictureRoutes } from './pictures.js';
 import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
+import { billingContext, billingRoutes, billAs } from './billing.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -65,6 +67,7 @@ app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the sai
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api', externalFence); // someone from outside the company reaches only their own things (access.js)
+app.use('/api', billingContext); // every AI call made for this request is priced to this person (billing.js)
 // Reem's own modules (server/modules.js) stand in front of each screen's routes. Where a
 // chat reads the same data, only what the screen alone does is closed.
 const glance = (req) => req.method === 'GET' && req.path === '/'; // which mailbox is connected: a chat asks too
@@ -94,6 +97,7 @@ app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed
 app.use('/api/lease-renewals', leaseRenewalRoutes); // leases ending within 120 days, renewed with the tenant by email step by step (module renewals)
 app.use('/api/pictures', pictureRoutes); // the pictures a chat drew for /explain, /breakdown and /explore
 app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's
+app.use('/api/address-book', addressRoutes); // company mailboxes the master added, next to the built-in ones (master only)
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/checklists', needsModule('checklists'), checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
@@ -104,6 +108,7 @@ app.use('/api/file-access', fileAccessRoutes); // whose files a person may read 
 app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
 app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
+app.use('/api/billing', requireMaster, billingRoutes); // what the AI cost: by person, job and model (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -461,11 +466,12 @@ app.listen(PORT, '0.0.0.0', () => {
   // The buzz when a to-do or a routine falls due. The badge and the first screen are
   // unchanged and keep working on their own if this timer ever stops.
   startReminders();
-  startTenantCare(); // does nothing until the Tenant care inbox is connected
-  startLeaseRenewals(); // reads tenants' replies to renewals and sends the reminders
-  startMailRouting(); // does nothing until the shared mailbox is connected
-  startBuildings(); // buzzes a building's administrator when a staff job needs them
-  startRecurringPayments(); // creates each recurring payment's line on its day of the month
+  // Each timer keeps the job it was started as, so what it costs shows under that job in Billing.
+  billAs({ userId: null, job: 'tenantcare' }, startTenantCare); // does nothing until the Tenant care inbox is connected
+  billAs({ userId: null, job: 'renewals' }, startLeaseRenewals); // reads tenants' replies to renewals and sends the reminders
+  billAs({ userId: null, job: 'mail' }, startMailRouting); // does nothing until the shared mailbox is connected
+  billAs({ userId: null, job: 'buildings' }, startBuildings); // buzzes a building's administrator when a staff job needs them
+  billAs({ userId: null, job: 'other' }, startRecurringPayments); // creates each recurring payment's line on its day of the month
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));

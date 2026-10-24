@@ -40,7 +40,7 @@ export function transportFor(acc, password) {
 // threads against it. A second compile would generate a second Message-ID and break that.
 const composer = nodemailer.createTransport({ streamTransport: true, buffer: true });
 
-export async function compose({ from, to, cc = [], subject = '', text = '', inReplyTo, references, attachments = [], replyTo }) {
+export async function compose({ from, to, cc = [], bcc = [], subject = '', text = '', inReplyTo, references, attachments = [], replyTo }) {
   const info = await composer.sendMail({
     from, to, subject, text,
     ...(replyTo ? { replyTo } : {}),
@@ -49,7 +49,10 @@ export async function compose({ from, to, cc = [], subject = '', text = '', inRe
     ...(inReplyTo ? { inReplyTo } : {}),
     ...(references ? { references } : {}),
   });
-  return { raw: info.message, messageId: info.messageId, envelope: info.envelope };
+  // Bcc travels on the envelope only, never in the message, so no recipient sees it (a
+  // stream transport would keep a Bcc header in the bytes).
+  const envelope = bcc.length ? { ...info.envelope, to: [...info.envelope.to, ...bcc] } : info.envelope;
+  return { raw: info.message, messageId: info.messageId, envelope };
 }
 
 export async function sendRaw(acc, password, { raw, envelope }) {

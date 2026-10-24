@@ -1786,6 +1786,26 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_lease_renewal_files ON lease_renewal_files(renewal_id);
+  -- Automatic renewals (2026-10-23): a person checks the RERA index once (rera_pct, the
+  -- increase it allows) and Reem does the rest when auto is on. A renewal started more than
+  -- 120 days before the end is 'scheduled': plan holds the offer's words and fees until then.
+  ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS rera_pct NUMERIC;
+  ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS auto BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS plan JSONB;
+  ALTER TABLE lease_renewals DROP CONSTRAINT IF EXISTS lease_renewals_status_check;
+  ALTER TABLE lease_renewals ADD CONSTRAINT lease_renewals_status_check
+    CHECK (status IN ('scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'converted', 'not_renewing', 'closed'));
+  -- paused: the master stops Reem on every renewal at once; each waits for staff.
+  ALTER TABLE lease_renewal_settings ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT false;
+  -- bcc: addresses copied silently (Bcc) on every renewal email to a tenant, e.g. accounts.
+  ALTER TABLE lease_renewal_settings ADD COLUMN IF NOT EXISTS bcc JSONB NOT NULL DEFAULT '["accounts@ainalreempro.com"]';
+  -- Leases the renewals people were told need the RERA check, so each is told once.
+  CREATE TABLE IF NOT EXISTS lease_renewal_nudges (
+    lease_id INTEGER NOT NULL,
+    end_date TEXT NOT NULL,
+    at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (lease_id, end_date)
+  );
 `);
 
 // Reading a file in full (2026-10-20). The chunks are cut to overlap for search, so stitched
@@ -1968,4 +1988,52 @@ await db.exec(`
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS terms_read JSONB;
   -- Where that pay differs from the company salary, as last checked: a flag on Document Renewals' bell.
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS terms_flags JSONB;
+`);
+
+// Company mailboxes the master added to the address book (server/addressBook.js), next to
+// the ones written into the code. Only addresses on our own domains: anything else is
+// never checked, so it needs no entry.
+//   address_proposals: an address Reem got ready from the master's chat, waiting on a card
+//   for Add or Cancel. Nothing is added until Add.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS company_addresses (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    added_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS address_proposals (
+    id SERIAL PRIMARY KEY,
+    master_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    email  TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'added', 'cancelled')),
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_address_proposals_chat ON address_proposals(master_id, conversation_id, id);
+`);
+
+// What each AI call cost, one row per model per call (server/billing.js). Written as the
+// answer comes back, so the Billing screen shows money by person, by job and by model.
+// user_id is empty for work nobody asked for in person (renewals, the shared inboxes).
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS ai_costs (
+    id SERIAL PRIMARY KEY,
+    at BIGINT NOT NULL DEFAULT ${NOW},
+    user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    job      TEXT NOT NULL,
+    note     TEXT,
+    provider TEXT NOT NULL,
+    model    TEXT NOT NULL,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read    INTEGER NOT NULL DEFAULT 0,
+    cache_write   INTEGER NOT NULL DEFAULT 0,
+    searches      INTEGER NOT NULL DEFAULT 0,
+    units    REAL NOT NULL DEFAULT 0,
+    usd      DOUBLE PRECISION NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_costs_at ON ai_costs(at);
+  CREATE INDEX IF NOT EXISTS idx_ai_costs_user ON ai_costs(user_id, at);
 `);

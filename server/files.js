@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { extname } from 'node:path';
 import { db, tx } from './db.js';
 import { ask } from './ai.js';
+import { billAs } from './billing.js';
 import { DATA_DIR, FOLDERS } from './config.js';
 import { IMAGE_TYPES, VIDEO_TYPES, VIDEO_EXT, extractText, describeImage, readVideo, indexChunks, retrievalScope, agentScope } from './knowledge.js';
 import { isMaster, isExternal, masterReach } from './access.js';
@@ -338,7 +339,12 @@ ${EXPIRY_GUIDE}${knownCompanies(companies)}${team}${kindsPrompt(kinds || {})}`,
  * `said` is what the person wrote as they sent it in a chat ("this is for the school
  * project"). It is filed with the file, so the Shelf can find the bill by what it was for.
  */
-export async function processDocument(doc, f, text, agents = [], said = '') {
+export function processDocument(doc, f, text, agents = [], said = '') {
+  // Priced as reading this file, under whatever job brought it in (a chat, the Shelf, an import).
+  return billAs({ note: doc.name }, () => fileDocument(doc, f, text, agents, said));
+}
+
+async function fileDocument(doc, f, text, agents, said) {
   try {
     // A video is read off disk rather than out of the buffer: ffmpeg needs a file, and
     // saveUpload has already written one.

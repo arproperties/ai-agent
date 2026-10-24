@@ -9,9 +9,12 @@ import Sheet from './Sheet';
 import Picker from './Picker';
 import Avatar from './Avatar';
 
-// Lease renewals (server/leaseRenewals.js): saifsys's leases ending within 120 days, and each
-// renewal run with its tenant by email from here, step by step. Every email is shown to the
-// person before it goes; the renewal's timeline has the newest at the top.
+// Lease renewals (server/leaseRenewals.js): saifsys's leases ending within 150 days, and each
+// renewal run with its tenant by email from here. The person's step is Start, with the
+// increase the RERA index allows; Reem then sends the offer 120 days before the end and
+// answers by itself. Staff can Take over a lease and do it by hand; Reem stops by itself
+// when something breaks; the master can Pause it on every lease. What it cannot answer
+// comes back to a person. The renewal's timeline has the newest at the top.
 
 const DLD_RENTAL_INDEX = 'https://dubailand.gov.ae/en/eservices/rental-index/rental-index/#/';
 const aed = (n) => (n === null || n === undefined ? '' : `AED ${Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 })}`);
@@ -23,7 +26,7 @@ const when = (secs) => {
 };
 
 const STATUS = {
-  offer_sent: ['Offer sent', 'p1'], negotiating: ['Negotiating', 'p1'], agreed: ['Waiting for papers', 'p1'], papers_ok: ['Ready to convert', 'ok'],
+  scheduled: ['Offer ready', 'p1'], offer_sent: ['Offer sent', 'p1'], negotiating: ['Negotiating', 'p1'], agreed: ['Waiting for papers', 'p1'], papers_ok: ['Ready to convert', 'ok'],
   converted: ['Renewed', 'ok'], not_renewing: ['Not renewing', 'mute'], closed: ['Closed', 'mute'],
 };
 const WAITING = { reply: ['Tenant replied', 'warn'], papers: ['Papers to check', 'warn'], no_answer: ['No answer', 'bad'], error: ['Problem', 'bad'] };
@@ -35,6 +38,7 @@ function chipOf(l) {
   const r = l.renewal;
   if (r?.dispute && !DONE.includes(r.status)) return ['Dispute', 'bad'];
   if (r?.waiting) return WAITING[r.waiting];
+  if (r?.status === 'scheduled') return [`Sends ${day(r.sendOn)}`, 'p1'];
   if (r) return STATUS[r.status];
   if (l.saifsys_renewal) return ['Staff in saifsys', 'mute'];
   return [l.days_left < 0 ? 'Ended' : l.days_left === 0 ? 'Ends today' : `${l.days_left} days`, l.days_left <= 30 ? 'bad' : l.days_left <= 90 ? 'warn' : 'mute'];
@@ -118,6 +122,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
         <div className="space-y-4 pb-8">
           {!data.inbox && <Problem text="The Tenant care inbox is not connected, so no email can go to a tenant. Connect it under Tenant care." />}
           {!data.saifsys && <Problem text="saifsys is not connected for actions, so renewals cannot be priced or saved." />}
+          {data.settings?.paused && <Problem text="Reem is paused on every lease: staff do each step by hand. The master can turn it back on in Settings below." />}
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="glass flex flex-1 items-center gap-2 rounded-xl px-3.5 py-2">
               <Search size={15} className="shrink-0 text-mute" />
@@ -173,7 +178,7 @@ function LeaseCard({ l, onOpen }) {
         {!r && (l.premises_number || l.ejari) && (
           <p className="truncate text-xs text-mute">{[l.premises_number && `Premises ${l.premises_number}`, l.ejari && `Ejari ${l.ejari}`].filter(Boolean).join(' · ')}</p>
         )}
-        {!r && !l.saifsys_renewal && <p className="text-xs text-p1">Tap to start the renewal</p>}
+        {!r && !l.saifsys_renewal && <p className="text-xs text-p1">{l.days_left <= 120 ? 'Check the RERA index to start' : 'Tap to start the renewal'}</p>}
       </button>
     </li>
   );
@@ -182,13 +187,18 @@ function LeaseCard({ l, onOpen }) {
 // ---------- writing and sending ----------
 
 /** The optional extra services saifsys renews with a lease: key, label, the field saifsys takes. */
-const EXTRAS = [['parking', 'Additional parking slot', 'additional_parking_fee'], ['small_store', 'Small storeroom', 'small_store_fee'], ['big_store', 'Big storeroom', 'big_store_fee']];
+const EXTRAS = [['parking', 'Additional parking slot', 'additional_parking_fee'], ['small_store', 'Small storeroom', 'small_store_fee'], ['big_store', 'Big storeroom', 'big_store_fee'], ['ev', 'EV charger', 'ev_fee']];
+const EV_FEE = 700; // a year, with VAT on top, in cheque 1
 
 /** Start: the rent we choose and the cheques, then the offer to read before it goes. */
 function StartSheet({ lease, onClose, onDone }) {
   const current = Number(lease.annual_rent);
   const [rent, setRent] = useState(String(Math.round(current)));
   const [pct, setPct] = useState('0');
+  // The person's one step: the increase the RERA index allows. Reem falls back to it by itself.
+  const [rera, setRera] = useState('');
+  const [touched, setTouched] = useState(false); // the offer typed by hand: the RERA % no longer moves it
+  const indexRent = rera === '' ? null : Math.max(current, Math.floor((current * (1 + Number(rera) / 100)) / 100) * 100);
   const [cheques, setCheques] = useState(String(lease.cheques || 4));
   const [step, setStep] = useState(null);
   // The fees start as the old lease's (from saifsys); the person can change them.
@@ -200,16 +210,18 @@ function StartSheet({ lease, onClose, onDone }) {
   useEffect(() => {
     api.get(`/lease-renewals/fees/${lease.lease_id}`).then((f) => {
       setFees(f); setAdmin(String(Math.round(f.admin || 0))); setChiller(String(Math.round(f.chiller || 0)));
-      setExtras(Object.fromEntries(EXTRAS.map(([k]) => [k, { on: Number(f[k]) > 0, fee: Number(f[k]) > 0 ? String(Math.round(f[k])) : '' }])));
+      setExtras(Object.fromEntries(EXTRAS.map(([k]) => [k, { on: Number(f[k]) > 0, fee: Number(f[k]) > 0 ? String(Math.round(f[k])) : k === 'ev' ? String(EV_FEE) : '' }])));
     }).catch(() => setFees({ failed: true }));
   }, [lease.lease_id]);
   // The % and the rent fill each other in, so either can be typed.
   const fromPct = (v) => {
+    setTouched(true);
     setPct(v);
     const n = Number(v);
     if (v !== '' && v !== '-' && v !== '.' && Number.isFinite(n)) setRent(String(Math.round(current * (1 + n / 100))));
   };
   const fromRent = (v) => {
+    setTouched(true);
     setRent(v);
     setPct(v && current ? String(Math.round(((Number(v) - current) / current) * 1000) / 10) : '');
   };
@@ -217,6 +229,21 @@ function StartSheet({ lease, onClose, onDone }) {
   const chargeBase = (Number(admin) || 0) + (fees?.chiller_shown ? Number(chiller) || 0 : 0)
     + EXTRAS.reduce((t, [k]) => t + (extras[k]?.on ? Number(extras[k].fee) || 0 : 0), 0);
   const vat = Math.round(chargeBase * (fees?.vat_rate ?? 5)) / 100;
+  // What the offer will add up to, cheque by cheque, as saifsys lays out Reem's renewals:
+  // rent and chiller split in whole dirhams, the rest (fees, VAT, Ejari) in cheque 1.
+  const n = Number(cheques) || 1;
+  const chillerFee = fees?.chiller_shown ? Number(chiller) || 0 : 0;
+  const total = (Number(rent) || 0) + chargeBase + vat + (Number(fees?.rera) || 0);
+  const others = Math.floor((Number(rent) || 0) / n) + Math.floor(chillerFee / n);
+  const first = Math.round((total - others * (n - 1)) * 100) / 100;
+  const pickRera = (v) => {
+    setRera(v);
+    // Until the offer is typed by hand, it starts at the index rent.
+    if (!touched) {
+      const n = Math.max(current, Math.floor((current * (1 + Number(v) / 100)) / 100) * 100);
+      setRent(String(n)); setPct(current ? String(Math.round(((n - current) / current) * 1000) / 10) : '');
+    }
+  };
   if (step) return <Compose ask={step} onClose={onClose} onSent={onDone} />;
   return (
     <Sheet title="Start the renewal" onClose={onClose} action={(
@@ -233,6 +260,18 @@ function StartSheet({ lease, onClose, onDone }) {
             {lease.ejari && <CopyChip label="Ejari" value={lease.ejari} />}
           </div>
         )}
+        <div className="space-y-2 rounded-2xl border border-p1/40 bg-p1/[0.06] p-3">
+          <p className="text-sm">The increase the RERA index allows</p>
+          <p className="text-xs text-mute">Check this unit on the <a href={DLD_RENTAL_INDEX} target="_blank" rel="noopener noreferrer" className="text-p1 underline">Rental Index calculator</a>. If the tenant pushes back, Reem offers this rent by itself.</p>
+          <div className="flex flex-wrap gap-1.5">
+            {[0, 5, 10, 15, 20].map((p) => (
+              <button key={p} onClick={() => pickRera(String(p))}
+                className={`rounded-full px-3.5 py-1.5 text-sm ${rera === String(p) ? 'bg-p1/30 text-txt' : 'bg-white/5 text-mute'}`}>{p}%</button>
+            ))}
+          </div>
+          {indexRent !== null && <p className="text-sm">RERA index rent: <b>{aed(indexRent)}</b> a year</p>}
+        </div>
+        <p className="-mb-2 text-sm text-mute">Our offer</p>
         <div className="grid grid-cols-[7rem_1fr] gap-2">
           <label className="block space-y-1.5 text-sm">
             <span>Increase %</span>
@@ -273,7 +312,7 @@ function StartSheet({ lease, onClose, onDone }) {
         {fees && !fees.failed && (
           <div className="space-y-2">
             <p className="text-sm">Optional Extra Services</p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {EXTRAS.map(([k, label]) => {
                 const x = extras[k] || { on: false, fee: '' };
                 const set = (v) => setExtras((e) => ({ ...e, [k]: { ...x, ...v } }));
@@ -292,6 +331,14 @@ function StartSheet({ lease, onClose, onDone }) {
               <span>{fees.vat_rate ?? 5}% VAT on Extra Charges</span>
               <b>{aed(vat)}</b>
             </div>
+            {Number(rent) > 0 && (
+              <div className="space-y-1 rounded-2xl border border-p1/30 bg-p1/[0.06] px-3 py-2.5 text-sm">
+                {Number(fees.rera) > 0 && <div className="flex justify-between text-mute"><span>Ejari fee</span><span>{aed(fees.rera)}</span></div>}
+                <div className="flex justify-between"><span>Total</span><b>{aed(total)}</b></div>
+                <div className="flex justify-between text-mute"><span>Cheque 1 (with all fees, VAT and Ejari)</span><span className="text-txt">{aed(first)}</span></div>
+                {n > 1 && <div className="flex justify-between text-mute"><span>{n === 2 ? 'Cheque 2' : `Cheques 2–${n}, each`}</span><span className="text-txt">{aed(others)}</span></div>}
+              </div>
+            )}
           </div>
         )}
         <label className="block space-y-1.5 text-sm">
@@ -304,8 +351,8 @@ function StartSheet({ lease, onClose, onDone }) {
           </div>
         </label>
         <div className="flex justify-end">
-          <Btn primary disabled={!rent || EXTRAS.some(([k]) => extras[k]?.on && !(Number(extras[k].fee) > 0))} onClick={() => setStep({
-            action: 'start', lease_id: lease.lease_id, rent: Number(rent), cheques: Number(cheques),
+          <Btn primary disabled={!rent || rera === '' || EXTRAS.some(([k]) => extras[k]?.on && !(Number(extras[k].fee) > 0))} onClick={() => setStep({
+            action: 'start', lease_id: lease.lease_id, rent: Number(rent), cheques: Number(cheques), rera_pct: Number(rera),
             ...(fees && !fees.failed ? {
               admin_fees: admin === '' ? null : Number(admin), ...(fees.chiller_shown ? { chiller_charges: chiller === '' ? null : Number(chiller) } : {}),
               ...Object.fromEntries(EXTRAS.map(([k, , field]) => [field, extras[k]?.on ? Number(extras[k].fee) || 0 : 0])),
@@ -355,7 +402,7 @@ function Compose({ ask, onClose, onSent }) {
                 <>
                   <p className="mt-1 text-xs text-mute">{d.charges.items.map((c) => `${c.label} ${aed(c.amount)}`).join(' · ')}</p>
                   {d.charges.vat > 0 && <p className="mt-1 text-xs text-mute">VAT{d.charges.onCharges ? ' (5%) on these charges' : ''}: {aed(d.charges.vat)}</p>}
-                  <p className="mt-1 text-xs">Total with charges and VAT: <b>{aed(d.charges.total)}</b></p>
+                  <p className="mt-1 text-xs">Total with charges, VAT and Ejari: <b>{aed(d.total ?? d.charges.total)}</b></p>
                 </>
               )}
               {d.schedule && <p className="mt-1 text-xs text-mute">{d.schedule.length} cheques: {d.schedule.map((c) => `${day(c.date)} ${aed(c.amount)}`).join(' · ')}</p>}
@@ -366,12 +413,13 @@ function Compose({ ask, onClose, onSent }) {
           {d.attachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5">{d.attachments.map((a) => <span key={a} className="flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1 text-xs text-mute"><Paperclip size={12} /> {a}</span>)}</div>
           )}
+          {d.sendOn && <p className="text-xs text-mute">It is too early for the offer: Reem sends it by itself on {day(d.sendOn)}, 120 days before the lease ends.</p>}
           {ask.action === 'convert' && <p className="text-xs text-mute">saifsys makes the new lease and its cheques now, then this email goes to the tenant.</p>}
           <Problem text={error} />
           <div className="flex flex-wrap justify-end gap-2">
             {ask.action === 'reply' && <Btn busy={rewriting} disabled={!text.trim() || busy} onClick={rewrite}><Sparkles size={14} /> Rewrite with Reem</Btn>}
             <Btn onClick={onClose}>Cancel</Btn>
-            <Btn primary busy={busy} disabled={!text.trim() || rewriting} onClick={send}><Send size={14} /> Send</Btn>
+            <Btn primary busy={busy} disabled={!text.trim() || rewriting} onClick={send}>{d.sendOn ? <><Clock size={14} /> Send on {day(d.sendOn)}</> : <><Send size={14} /> Send</>}</Btn>
           </div>
         </div>
       )}
@@ -451,8 +499,14 @@ function Renewal({ id, onBack }) {
 
   const mark = async (what) => {
     if (what === 'close' && !confirm('Take this renewal out of Reem? No more emails or reminders go to the tenant, and you handle it yourself.')) return;
+    if (what === 'auto_off' && !confirm('Take over this lease? Reem stops answering the tenant, and you do each step by hand. You can hand it back later.')) return;
+    if (what === 'unschedule' && !confirm('Cancel this offer? Nothing has gone to the tenant; you can start it again.')) return;
     setBusy(what);
-    try { await api.post(`/lease-renewals/${id}/mark`, { what }); await load(); } catch (e) { setError(e.message); }
+    try {
+      await api.post(`/lease-renewals/${id}/mark`, { what });
+      if (what === 'unschedule') { onBack(); return; }
+      await load();
+    } catch (e) { setError(e.message); }
     setBusy('');
   };
   const done = () => { setSheet(null); load(); };
@@ -477,6 +531,8 @@ function Renewal({ id, onBack }) {
     convert: { label: 'Renew in saifsys', icon: FileText, run: () => setSheet({ compose: { id, action: 'convert' } }) },
     not_renewing: { label: 'Not renewing', icon: Ban, run: () => setSheet({ compose: { id, action: 'not_renewing' } }) },
     close: { label: 'Handle outside Reem', icon: X, run: () => mark('close'), busy: busy === 'close' },
+    send_now: { label: 'Send now', icon: Send, run: () => mark('send_now'), busy: busy === 'send_now' },
+    unschedule: { label: 'Cancel the offer', icon: X, run: () => mark('unschedule'), busy: busy === 'unschedule' },
   };
   const step = nextStep(r);
   const rise = rn.offer && r.annual_rent ? ((Number(rn.agreed ?? rn.offer) - r.annual_rent) / r.annual_rent) * 100 : null;
@@ -527,6 +583,19 @@ function Renewal({ id, onBack }) {
               {rn.dispute && !DONE.includes(s) && (
                 <p className="mt-3 flex items-start gap-2 border-t border-bad/30 pt-3 text-sm"><Scale size={15} className="mt-0.5 shrink-0 text-bad" /><span><b className="text-bad">The tenant disputes it:</b> <span className="text-mute">{rn.dispute}</span></span></p>
               )}
+              {!DONE.includes(s) && (rn.auto || rn.reraPct !== null) && (
+                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-stroke pt-3">
+                  <p className="min-w-0 flex-1 basis-56 text-sm text-mute">{r.paused
+                    ? 'Reem is paused on every lease (Settings): staff do each step by hand.'
+                    : rn.auto
+                    ? 'Reem is running this lease by itself.'
+                    : 'Staff are running this lease by hand. Reem only reads the emails and checks the papers.'}</p>
+                  {rn.auto
+                    ? <Btn busy={busy === 'auto_off'} onClick={() => mark('auto_off')}><HandCoins size={14} /> Take over</Btn>
+                    : <Btn busy={busy === 'auto_on'} onClick={() => mark('auto_on')}><Sparkles size={14} /> Hand back to Reem</Btn>}
+                </div>
+              )}
+              {rn.error && rn.waiting && <div className="mt-3"><Problem text={rn.error} /></div>}
               {error && <div className="mt-3"><Problem text={error} /></div>}
             </div>
 
@@ -611,6 +680,8 @@ function nextStep(r) {
   const rn = r.renewal;
   const s = rn.status;
   const end = ['not_renewing', 'close'];
+  if (s === 'scheduled' && (!rn.auto || r.paused)) return { tone: 'you', icon: Send, title: 'The offer is ready: send it', sub: `Reem will not send it by itself. It was due on ${day(rn.sendOn)}.`, main: ['send_now'], more: ['unschedule'] };
+  if (s === 'scheduled') return { tone: 'wait', icon: Clock, title: `Reem sends the offer on ${day(rn.sendOn)}`, sub: '120 days before the lease ends. Nothing has gone to the tenant yet.', main: ['send_now'], more: ['unschedule'] };
   if (s === 'converted') return { tone: 'done', icon: Check, title: 'Renewed', sub: 'saifsys has the new lease, and the tenant was told.', main: [], more: [] };
   if (s === 'not_renewing') return { tone: 'done', icon: Ban, title: 'Not renewing', sub: 'The tenant was told what happens next.', main: [], more: [] };
   if (s === 'closed') return { tone: 'done', icon: X, title: 'Handled outside Reem', sub: 'No more emails or reminders go to the tenant.', main: [], more: [] };
@@ -619,7 +690,7 @@ function nextStep(r) {
     const p = rn.papers;
     if (p && !p.complete) return { tone: 'you', icon: ShieldAlert, title: `Papers: ${p.missing.length + p.wrong.length} to fix`, sub: 'See what is wrong on the timeline, and ask the tenant to fix it.', main: ['fix', 'papers_ok'], more: ['reply', ...end] };
     if (p?.complete) return { tone: 'go', icon: ShieldCheck, title: 'The papers match', sub: 'The signed agreement and every cheque match saifsys. Have a look, then confirm.', main: ['papers_ok'], more: ['fix', 'reply', ...end] };
-    return { tone: 'wait', icon: Clock, title: 'Waiting for the papers', sub: 'The signed agreement and the cheque photos. Reem checks them when they arrive.', main: ['reply'], more: ['papers_ok', ...end] };
+    return { tone: 'wait', icon: Clock, title: 'Waiting for the papers', sub: rn.auto ? 'The signed agreement and the cheque photos. Reem checks them and asks for fixes; when they match, staff tap Renew in saifsys.' : 'The signed agreement and the cheque photos. Reem checks them when they arrive.', main: ['reply'], more: ['papers_ok', ...end] };
   }
   // offer_sent / negotiating
   const all = ['accept', 'counter', 'index', 'reply', 'not_renewing', 'close'];
@@ -638,7 +709,7 @@ function nextStep(r) {
   }
   const main = ['reply'];
   return { tone: 'wait', icon: Clock, title: "Waiting for the tenant's reply",
-    sub: rn.lastOutAt ? `Last email ${when(rn.lastOutAt)}. Reem reminds them after a week of silence.` : 'Reem reminds them after a week of silence.', main, more: rest(main) };
+    sub: `${rn.lastOutAt ? `Last email ${when(rn.lastOutAt)}. ` : ''}Reem reminds them after a week of silence${rn.auto ? ' and answers their reply by itself' : ''}.`, main, more: rest(main) };
 }
 
 /** The steps that do not fit the moment, one tap away. */
@@ -788,17 +859,37 @@ function Event({ e, r, newest }) {
 function Settings({ s, agents, inbox, onSaved }) {
   const [payee, setPayee] = useState(s.payee);
   const [reminders, setReminders] = useState(s.reminders);
+  const [running, setRunning] = useState(!s.paused);
+  // Silent copies (Bcc) of every renewal email to a tenant, e.g. the accountant.
+  const [bcc, setBcc] = useState(s.bcc || []);
+  const [typed, setTyped] = useState('');
+  const addBcc = () => {
+    const add = typed.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+    if (add.length) setBcc((b) => [...new Set([...b, ...add])]);
+    setTyped('');
+  };
   const [advisors, setAdvisors] = useState(s.advisors || []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const save = async () => {
     setBusy(true); setError('');
-    try { await api.put('/lease-renewals/settings', { payee, reminders, advisors }); onSaved(); } catch (e) { setError(e.message); }
+    const all = typed.trim() ? [...new Set([...bcc, ...typed.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean)])] : bcc;
+    try { await api.put('/lease-renewals/settings', { payee, reminders, advisors, paused: !running, bcc: all }); setBcc(all); setTyped(''); onSaved(); } catch (e) { setError(e.message); }
     setBusy(false);
   };
   return (
     <div className="mt-6 space-y-3 rounded-3xl border border-stroke bg-white/[0.04] p-4">
       <p className="font-medium">Settings</p>
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm">Reem runs renewals by itself</p>
+          <p className="text-xs text-mute">{running ? 'On: Reem answers tenants and checks the papers. Staff tap Renew in saifsys.' : 'Off: Reem stops on every lease, and staff do each step by hand.'}</p>
+        </div>
+        <button role="switch" aria-checked={running} aria-label="Reem runs renewals by itself" onClick={() => setRunning(!running)}
+          className={`relative h-7 w-12 shrink-0 rounded-full transition ${running ? 'bg-p1' : 'bg-white/15'}`}>
+          <span className={`absolute top-1 size-5 rounded-full bg-white transition-all ${running ? 'left-6' : 'left-1'}`} />
+        </button>
+      </div>
       <label className="block space-y-1.5 text-sm">
         <span className="text-mute">Cheques are payable to</span>
         <input value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="The landlord company's name"
@@ -813,6 +904,22 @@ function Settings({ s, agents, inbox, onSaved }) {
           className={`relative h-7 w-12 shrink-0 rounded-full transition ${reminders ? 'bg-p1' : 'bg-white/15'}`}>
           <span className={`absolute top-1 size-5 rounded-full bg-white transition-all ${reminders ? 'left-6' : 'left-1'}`} />
         </button>
+      </div>
+      <div className="space-y-1.5 text-sm">
+        <span className="text-mute">Copy every renewal email to (Bcc)</span>
+        <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-stroke bg-black/20 p-2">
+          {bcc.map((x) => (
+            <span key={x} className="flex items-center gap-1 rounded-full bg-white/10 py-1 pl-3 pr-1.5 text-xs">
+              {x}
+              <button onClick={() => setBcc(bcc.filter((y) => y !== x))} aria-label={`Remove ${x}`} className="text-mute hover:text-txt"><X size={13} /></button>
+            </span>
+          ))}
+          <input value={typed} onChange={(e) => setTyped(e.target.value)} onBlur={addBcc}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addBcc(); } }}
+            placeholder={bcc.length ? 'Add another email' : 'e.g. accounts@ainalreempro.com'} inputMode="email"
+            className="min-w-48 flex-1 bg-transparent px-1.5 py-1 text-sm outline-none placeholder:text-mute/70" />
+        </div>
+        <p className="text-xs text-mute">They get a silent copy of every email Reem sends to a tenant. The tenant does not see them.</p>
       </div>
       <div className="space-y-1.5 text-sm">
         <span className="text-mute">Advisors</span>
