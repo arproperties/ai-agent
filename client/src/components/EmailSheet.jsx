@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, CheckCircle2, AlertCircle, AtSign } from 'lucide-react';
 import { api } from '../lib/api';
+import { cleanEmail } from '../lib/email';
 import Icon from './Icon';
 import Page from './Page';
 import DraftCard from './DraftCard';
@@ -20,7 +21,7 @@ function ImapCard({ account, onChange }) {
   const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: k === 'email' ? cleanEmail(e.target.value) : e.target.value }));
 
   // The mail server is found from the address's MX record, which the browser cannot do.
   // Asking on blur means both servers are visible under Advanced before anything is saved.
