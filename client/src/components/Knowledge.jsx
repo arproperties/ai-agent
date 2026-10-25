@@ -8,6 +8,7 @@ import {
 import { api } from '../lib/api';
 import { startImport, importState, onImport, clearImportError } from '../lib/importer';
 import { describeIgnored } from '../lib/zip';
+import { sendToShelf } from '../lib/shelf';
 import Icon from './Icon';
 import Sheet from './Sheet';
 import Page from './Page';
@@ -83,17 +84,8 @@ function useFiles(agentId) {
   const upload = async (files) => {
     if (!files?.length) return;
     setUploading(true);
-    // Ten to a request, the server's limit: a folder of forty court files is four uploads,
-    // and the queue files them all whichever request brought them.
-    const all = [...files];
-    const res = [];
     try {
-      for (let i = 0; i < all.length; i += 10) {
-        const form = new FormData();
-        if (agentId) form.append('agent', agentId);
-        all.slice(i, i + 10).forEach((f) => form.append('files', f));
-        res.push(...await api.upload('/documents', form));
-      }
+      const res = await sendToShelf(files, agentId);
       setNotes(res.filter((r) => r.duplicate).map((r) => `${r.name} is already in your files${r.shelf ? `, filed under ${r.shelf}` : ''}`));
     } catch (e) { setNotes([e.message]); }
     setUploading(false);

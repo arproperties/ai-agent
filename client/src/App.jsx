@@ -29,6 +29,7 @@ import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { NotifyPrompt } from './components/Notifications';
 import MessageToast from './components/MessageToast';
+import Pet from './components/Pet';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
@@ -277,6 +278,10 @@ export default function App() {
       )}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
       <NotifyPrompt />
+      {!me.external && (
+        <Pet me={me} due={due} expiring={expiring} unread={dm.unread} canShelf={!modules || modules.includes('shelf')}
+          onOpen={(p) => { setPanel(p); setDrawer(false); }} />
+      )}
       <MessageToast toast={dm.toast} onClose={dm.dismissToast}
         onOpen={(id) => { dm.dismissToast(); setJumpToChat(id); setPanel('messages'); setDrawer(false); }} />
     </div>
