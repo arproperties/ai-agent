@@ -8,6 +8,9 @@ import { propose, findFolder, refresh } from './caseFolders.js';
 const PULL = {
   name: 'pull_case',
   description: 'Use when the user asks to pull, collect or organise emails about a case from their inbox; the case number is optional. ' +
+    'Also use it when they ask to save, keep, file or put a case, its emails, its information or "this" on their Shelf, as a PDF or in a folder, ' +
+    'while the conversation is about a case: pass the case number from the conversation. This is the only way case information gets onto the Shelf - ' +
+    'never tell them you cannot save it there. ' +
     'With a case number it finds every email about that case; without one it looks at the last 30 days and gets up to 5 cases ready. ' +
     'This only shows a card for each case: nothing is saved until the user taps Save on it, so never say it was saved. ' +
     'A case that already has a folder is brought up to date instead of getting a card.',
