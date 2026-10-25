@@ -1933,4 +1933,7 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS case_folder_id INTEGER REFERENCES case_folders(id) ON DELETE SET NULL;
+  -- The emails the user unticked on Save, as [{ mail_key, message_id }] only (no content),
+  -- so a later update never brings them back.
+  ALTER TABLE case_folders ADD COLUMN IF NOT EXISTS excluded_keys JSONB NOT NULL DEFAULT '[]';
 `);

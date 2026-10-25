@@ -81,7 +81,7 @@ Reply with ONLY JSON: {"case_number": "<the case number as the email writes it, 
 Give the parties' names exactly as written, in the order the email writes them.`;
 
 /** The case number and the parties, from the oldest email of the case. */
-export async function identify(mails, { ask = claude } = {}) {
+async function identify(mails, { ask = claude } = {}) {
   const first = [...mails].sort((a, b) => a.at - b.at)[0];
   if (!first) throw bad('Could not read the case from the email', 422);
   const prompt = `<email>\nSubject: ${inert(first.subject)}\n\n${inert(String(first.text ?? '').slice(0, PROMPT_BODY))}\n</email>`;
@@ -210,62 +210,69 @@ export async function propose(user, input = {}, { conversationId = null } = {}, 
 
 // ---------- saving files ----------
 
+// What a save did to the Shelf, so a save that fails part way can take it all back and the
+// next try starts clean: new rows to delete, rows the user already had to take out again.
+const ledger = () => ({ created: [], linked: [] });
+async function undo(userId, made) {
+  for (const id of made.created) await deleteDocument(userId, id);
+  if (made.linked.length) await db.prepare('UPDATE documents SET case_folder_id = NULL WHERE id = ANY(?::int[])').run(made.linked);
+}
+
 /**
  * One file into the case folder, on the user's own Shelf (no agent), read and indexed but
  * never re-filed: it keeps its name as title. A file the user already has (same bytes) is
- * not copied: it is put in this case only if it is in no case yet. `created` says whether
- * a new row was made, so a failed save can take back what it added.
+ * not copied: it is put in this case only if it is in no case yet.
  */
-async function saveFile(userId, folderId, { buffer, name, mimetype }, text) {
+async function saveFile(userId, folderId, { buffer, name, mimetype }, text, made) {
   const f = { buffer, originalname: Buffer.from(name, 'utf8').toString('latin1'), mimetype, size: buffer.length };
   const { doc, duplicate } = await saveUpload(userId, null, f);
   if (duplicate) {
-    await db.prepare('UPDATE documents SET case_folder_id = ? WHERE id = ? AND case_folder_id IS NULL').run(folderId, doc.id);
-    return { doc, created: false };
+    const { changes } = await db.prepare('UPDATE documents SET case_folder_id = ? WHERE id = ? AND case_folder_id IS NULL').run(folderId, doc.id);
+    if (changes) made.linked.push(doc.id);
+    return doc;
   }
+  made.created.push(doc.id);
   await db.prepare('UPDATE documents SET case_folder_id = ? WHERE id = ?').run(folderId, doc.id);
   await processDocument(doc, f, text, [], '', { classify: false });
-  return { doc, created: true };
+  return doc;
 }
 
 const emailPdfName = (row) => pdfName(`${new Date(row.at * 1000).toISOString().slice(0, 10)} ${row.subject || 'Email'}`);
 
-/** The per-email PDFs and original attachments of these emails; returns the new document ids. */
-async function saveEmailFiles(userId, folder, rows, mails) {
-  const made = [];
+/** The per-email PDFs and original attachments of these emails. */
+async function saveEmailFiles(userId, folder, rows, mails, made) {
   const byKey = new Map(mails.map((m) => [m.key, m]));
   for (const row of rows) {
     if (folder.per_email) {
       const markdown = emailMarkdown(row);
       const bytes = Buffer.from(await renderPdf({ title: row.subject || 'Email', markdown }));
-      const { doc, created } = await saveFile(userId, folder.id, { buffer: bytes, name: emailPdfName(row), mimetype: 'application/pdf' }, markdown);
-      if (created) made.push(doc.id);
+      const doc = await saveFile(userId, folder.id, { buffer: bytes, name: emailPdfName(row), mimetype: 'application/pdf' }, markdown, made);
       await db.prepare('UPDATE case_emails SET doc_id = ? WHERE folder_id = ? AND mail_key = ?').run(doc.id, folder.id, row.mail_key);
     }
     for (const a of byKey.get(row.mail_key)?.attachments || []) {
-      if (!a?.buffer?.length) continue;
-      const { doc, created } = await saveFile(userId, folder.id, { buffer: a.buffer, name: a.name || 'attachment', mimetype: a.mimetype || 'application/octet-stream' });
-      if (created) made.push(doc.id);
+      const buffer = a?.buffer;
+      if (!buffer?.length) continue;
+      await saveFile(userId, folder.id, { buffer, name: a.name || 'attachment', mimetype: a.mimetype || 'application/octet-stream' }, undefined, made);
     }
   }
-  return made;
 }
 
-const insertEmails = async (folderId, rows) => {
-  let n = 0;
+/** The rows that were really new (not already in the folder), as inserted. */
+async function insertEmails(folderId, rows) {
+  const added = [];
   for (const r of rows) {
     const { changes } = await db.prepare(`INSERT INTO case_emails (folder_id, mail_key, message_id, at, sender, recipients, subject, body)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (folder_id, mail_key) DO NOTHING`)
       .run(folderId, r.mail_key, r.message_id, r.at, r.sender, r.recipients, r.subject, r.body);
-    n += changes;
+    if (changes) added.push(r);
   }
-  return n;
-};
+  return added;
+}
 
 const folderEmails = (folderId) => db.prepare('SELECT * FROM case_emails WHERE folder_id = ? ORDER BY at, id').all(folderId);
 
 /** Writes new bytes over a stored file: same row, same title, folder and case; re-indexed. */
-export async function replaceFile(doc, { buffer, text }) {
+async function replaceFile(doc, { buffer, text }) {
   if (!doc?.path) throw bad('That file has nothing on disk to replace', 409);
   writeFileSync(doc.path, buffer);
   const hash = createHash('sha256').update(buffer).digest('hex');
@@ -276,16 +283,19 @@ export async function replaceFile(doc, { buffer, text }) {
 }
 
 /** The full case PDF, made new, or written over the one the folder already has. */
-async function writeCasePdf(userId, folder, deps) {
+async function writeCasePdf(userId, folder, deps, made) {
   const { bytes, name, markdown } = await buildCasePdf(folder, await folderEmails(folder.id), { ask: deps.ask || claude });
   const old = folder.summary_doc_id && await db.prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?').get(folder.summary_doc_id, userId);
-  if (old) { await replaceFile(old, { buffer: bytes, text: markdown }); return null; }
-  const { doc, created } = await saveFile(userId, folder.id, { buffer: bytes, name, mimetype: 'application/pdf' }, markdown);
+  if (old) return replaceFile(old, { buffer: bytes, text: markdown });
+  const doc = await saveFile(userId, folder.id, { buffer: bytes, name, mimetype: 'application/pdf' }, markdown, made);
   const linked = await db.prepare('SELECT case_folder_id FROM documents WHERE id = ?').get(doc.id);
   // Only a PDF that sits in this case is ever written over by it.
   if (linked?.case_folder_id === folder.id) await db.prepare('UPDATE case_folders SET summary_doc_id = ? WHERE id = ?').run(doc.id, folder.id);
-  return created ? doc.id : null;
 }
+
+// An edited name is used as typed, only made safe as a folder name.
+const literalName = (s) => String(s ?? '').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120).trim();
+const ALREADY = () => bad('This case already has a folder', 409);
 
 // ---------- Save / Cancel ----------
 
@@ -296,7 +306,8 @@ export async function decide(user, id, { save, name, full_pdf: fullPdf = true, p
   if (!p) throw notFound();
   if (p.status !== 'pending') throw bad(`This was already ${p.status}.`, 409);
   const skip = new Set((Array.isArray(exclude) ? exclude : []).map(String));
-  const keep = new Set(p.emails.map((e) => e.mail_key).filter((k) => !skip.has(k)));
+  const onCard = p.emails.map((e) => e.mail_key);
+  const keep = new Set(onCard.filter((k) => !skip.has(k)));
   if (save) {
     if (!fullPdf && !perEmail) throw bad('Pick the full case PDF, a PDF per email, or both');
     if (!keep.size) throw bad('Tick at least one email');
@@ -307,31 +318,35 @@ export async function decide(user, id, { save, name, full_pdf: fullPdf = true, p
   if (!save) return getCard(user, id);
 
   let folderId = null;
-  const made = [];
+  const made = ledger();
   try {
     const box = await (deps.mailbox || caseMailbox)(user.id);
     if (!box) throw bad('Connect your mailbox first');
     // The mailbox is read again for the bodies and attachments; only the ticked emails are kept.
-    const mails = (await collectCase(box, p.case_number)).filter((m) => keep.has(m.key));
+    const all = await collectCase(box, p.case_number);
+    const mails = all.filter((m) => keep.has(m.key));
     if (!mails.length) throw bad(`No emails mention ${p.case_number}`, 404);
+    // The unticked ones are remembered by key and Message-ID only, so an update skips them.
+    const excluded = onCard.filter((k) => skip.has(k))
+      .map((k) => ({ mail_key: k, message_id: all.find((m) => m.key === k)?.messageId || null }));
     const rows = mails.map(toRow);
     const key = caseKey(p.case_number);
     const folder = await tx(async () => {
-      if (await folderOf(user.id, key)) throw bad(`You already have a folder for ${p.case_number}`, 409);
-      const { id: fid } = await db.prepare(`INSERT INTO case_folders (user_id, name, case_number, case_key, party_a, party_b, full_pdf, per_email, last_checked_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${NOW}, ${NOW}) RETURNING id`)
-        .run(user.id, folderName(clean(name) || p.name, p), p.case_number, key, p.party_a, p.party_b, !!fullPdf, !!perEmail);
+      if (await folderOf(user.id, key)) throw ALREADY();
+      const { id: fid } = await db.prepare(`INSERT INTO case_folders (user_id, name, case_number, case_key, party_a, party_b, full_pdf, per_email, excluded_keys, last_checked_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ${NOW}, ${NOW}) RETURNING id`)
+        .run(user.id, literalName(name) || p.name, p.case_number, key, p.party_a, p.party_b, !!fullPdf, !!perEmail, JSON.stringify(excluded));
       await insertEmails(fid, rows);
       return db.prepare('SELECT * FROM case_folders WHERE id = ?').get(fid);
-    });
+    }).catch((e) => { throw e.code === '23505' ? ALREADY() : e; }); // another card of the same case saved first
     folderId = folder.id;
-    if (folder.full_pdf) { const d = await writeCasePdf(user.id, folder, deps); if (d) made.push(d); }
-    made.push(...await saveEmailFiles(user.id, folder, rows, mails));
-    // The card keeps only what was saved: an unticked email is stored nowhere.
+    if (folder.full_pdf) await writeCasePdf(user.id, folder, deps, made);
+    await saveEmailFiles(user.id, folder, rows, mails, made);
+    // The card keeps only what was saved.
     await db.prepare('UPDATE case_proposals SET folder_id = ?, emails = ?::jsonb WHERE id = ?')
       .run(folder.id, JSON.stringify(p.emails.filter((e) => keep.has(e.mail_key))), p.id);
   } catch (e) {
-    for (const d of made) await deleteDocument(user.id, d);
+    await undo(user.id, made);
     if (folderId) await db.prepare('DELETE FROM case_folders WHERE id = ?').run(folderId);
     await db.prepare(`UPDATE case_proposals SET status = 'pending', decided_at = NULL WHERE id = ?`).run(p.id);
     throw e;
@@ -343,32 +358,39 @@ export async function decide(user, id, { save, name, full_pdf: fullPdf = true, p
 
 /**
  * The case's emails that came since the last check (a day's overlap, for mail that arrived
- * late), filed into the folder, and the case PDF rewritten in place if any came.
+ * late), filed into the folder, and the case PDF rewritten in place if any came. Emails the
+ * user unticked on Save never come back. If filing fails part way, what this run added is
+ * taken out again, so the next run tries those emails afresh.
  */
 export async function refresh(user, folderId, deps = {}) {
   mine(user);
   const folder = await db.prepare('SELECT * FROM case_folders WHERE id = ? AND user_id = ?').get(Number(folderId) || 0, user.id);
   if (!folder) throw notFound();
   if (!folder.tracking) return { added: 0 };
+  let added = [];
+  const made = ledger();
   try {
     const box = await (deps.mailbox || caseMailbox)(user.id);
     if (!box) throw bad('Connect your mailbox first');
     const since = folder.last_checked_at ? new Date((Number(folder.last_checked_at) - DAY) * 1000) : undefined;
-    const had = await folderEmails(folder.id);
-    const keys = new Set(had.map((r) => r.mail_key));
-    const ids = new Set(had.map((r) => r.message_id).filter(Boolean));
+    const skip = [...await folderEmails(folder.id), ...(folder.excluded_keys || [])];
+    const keys = new Set(skip.map((r) => r.mail_key));
+    const ids = new Set(skip.map((r) => r.message_id).filter(Boolean));
     // The same email under another key (Inbox and All Mail) is not new either.
     const mails = (await collectCase(box, folder.case_number, { since })).filter((m) => !keys.has(m.key) && !(m.messageId && ids.has(m.messageId)));
-    const rows = mails.map(toRow);
-    const added = await insertEmails(folder.id, rows);
-    if (added) {
-      await saveEmailFiles(user.id, folder, rows, mails);
-      if (folder.full_pdf) await writeCasePdf(user.id, folder, deps);
+    added = await insertEmails(folder.id, mails.map(toRow));
+    if (added.length) {
+      await saveEmailFiles(user.id, folder, added, mails, made);
+      if (folder.full_pdf) await writeCasePdf(user.id, folder, deps, made);
     }
     await db.prepare(`UPDATE case_folders SET new_count = new_count + ?, last_checked_at = ${NOW}, last_error = NULL,
-      updated_at = CASE WHEN ? > 0 THEN ${NOW} ELSE updated_at END WHERE id = ?`).run(added, added, folder.id);
-    return { added };
+      updated_at = CASE WHEN ? > 0 THEN ${NOW} ELSE updated_at END WHERE id = ?`).run(added.length, added.length, folder.id);
+    return { added: added.length };
   } catch (e) {
+    await undo(user.id, made);
+    if (added.length) {
+      await db.prepare('DELETE FROM case_emails WHERE folder_id = ? AND mail_key = ANY(?::text[])').run(folder.id, added.map((r) => r.mail_key));
+    }
     await db.prepare('UPDATE case_folders SET last_error = ? WHERE id = ?').run(String(e.message).slice(0, 500), folder.id);
     throw e;
   }

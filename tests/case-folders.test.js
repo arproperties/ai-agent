@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { DEFAULT_PATTERN } from '../server/caseMatch.js';
 import { saveUpload } from '../server/files.js';
 import {
-  getPattern, setPattern, identify, discover, propose, getCard, cardsFor, decide, refresh,
+  getPattern, setPattern, discover, propose, getCard, cardsFor, decide, refresh,
 } from '../server/caseFolders.js';
 
 // Case folders: an external user's case emails become one folder on their Shelf. Stub
@@ -256,15 +256,74 @@ test('the name pattern is per user and needs the case number', async () => {
   assert.equal(await getPattern(jeff.id), DEFAULT_PATTERN);
 });
 
-test('identify reads the oldest mail, its subject and the first 6,000 characters', async () => {
-  const ask = stubAsk();
-  const late = mail({ key: 'k2', at: '2026-10-09', subject: 'later', text: 'later' });
-  const early = mail({ key: 'k1', at: '2026-10-01', subject: 'first one', text: 'y'.repeat(7000) });
-  const got = await identify([late, early], { ask });
-  assert.deepEqual(got, { case_number: 'Soutex E - 205791', party_a: 'Ahmed Ali', party_b: 'Gulf Trading LLC' });
-  const { prompt } = ask.prompts[0];
+test('the AI reads the oldest mail, its subject and the first 6,000 characters', async () => {
+  box.mails = [
+    mail({ key: 'k2', at: '2026-10-09', subject: 'later 205791', text: 'later' }),
+    mail({ key: 'k1', at: '2026-10-01', subject: 'first one 205791', text: 'y'.repeat(7000) }),
+  ];
+  await propose(jeff, { case_number: '205791' }, { conversationId: conv }, deps);
+  const { prompt } = deps.ask.prompts[0];
   assert.ok(prompt.includes('first one') && !prompt.includes('later'));
   assert.ok(prompt.includes('y'.repeat(6000)) && !prompt.includes('y'.repeat(6001)));
+});
+
+test('an unticked email never comes back, not even under another key', async () => {
+  const [card] = await propose(jeff, { case_number: '205791' }, { conversationId: conv }, deps);
+  await decide(jeff, card.id, { save: true, exclude: ['Sent:2'] }, deps);
+  const folder = await db.prepare('SELECT * FROM case_folders').get();
+  assert.deepEqual(folder.excluded_keys, [{ mail_key: 'Sent:2', message_id: '<2@x>' }]);
+  assert.deepEqual(await refresh(jeff, folder.id, deps), { added: 0 });
+  box.mails.push({ ...CASE[1], key: 'All:2' }); // the same email seen in All Mail
+  assert.deepEqual(await refresh(jeff, folder.id, deps), { added: 0 });
+  assert.equal(await count('SELECT COUNT(*)::int n FROM case_emails'), 1);
+});
+
+test('a refresh that fails part way takes back what it added, and the next one files it all', async () => {
+  const [card] = await propose(jeff, { case_number: '205791' }, { conversationId: conv }, deps);
+  await decide(jeff, card.id, { save: true, per_email: true }, deps);
+  const folder = await db.prepare('SELECT * FROM case_folders').get();
+  const docsBefore = await count('SELECT COUNT(*)::int n FROM documents WHERE case_folder_id = ?', folder.id);
+  let reads = 0;
+  const flaky = { name: 'judgment.txt', mimetype: 'text/plain', get buffer() { if (!reads++) throw new Error('attachment unreadable'); return Buffer.from('Judgment text'); } };
+  box.mails.push(mail({ key: 'INBOX:7', messageId: '<7@x>', at: '2026-10-10T09:00:00Z', subject: 'Soutex E 205791 judgment', text: 'Judgment.', attachments: [flaky] }));
+
+  await assert.rejects(refresh(jeff, folder.id, deps), /attachment unreadable/);
+  assert.equal(await count('SELECT COUNT(*)::int n FROM case_emails'), 2);
+  assert.equal(await count('SELECT COUNT(*)::int n FROM documents WHERE case_folder_id = ?', folder.id), docsBefore);
+  assert.equal(await count('SELECT COUNT(*)::int n FROM documents'), docsBefore); // the per-email PDF it made is gone too
+  assert.equal((await db.prepare('SELECT new_count FROM case_folders').get()).new_count, 0);
+
+  assert.deepEqual(await refresh(jeff, folder.id, deps), { added: 1 });
+  assert.equal(await count('SELECT COUNT(*)::int n FROM documents WHERE case_folder_id = ?', folder.id), docsBefore + 2); // its PDF and the attachment
+  assert.ok(await db.prepare("SELECT 1 FROM documents WHERE title = 'judgment.txt' AND case_folder_id = ?").get(folder.id));
+  assert.equal((await db.prepare('SELECT last_error FROM case_folders').get()).last_error, null);
+});
+
+test('a double tap on Save makes one folder', async () => {
+  const [card] = await propose(jeff, { case_number: '205791' }, { conversationId: conv }, deps);
+  const got = await Promise.allSettled([decide(jeff, card.id, { save: true }, deps), decide(jeff, card.id, { save: true }, deps)]);
+  assert.deepEqual(got.map((g) => g.status).sort(), ['fulfilled', 'rejected']);
+  assert.equal(got.find((g) => g.status === 'rejected').reason.status, 409);
+  assert.equal(await count('SELECT COUNT(*)::int n FROM case_folders'), 1);
+});
+
+test('two cards of the same case: the second Save is told the case has a folder', async () => {
+  const [one] = await propose(jeff, { case_number: '205791' }, { conversationId: conv }, deps);
+  const [two] = await propose(jeff, { case_number: '205791' }, { conversationId: conv }, deps);
+  const got = await Promise.allSettled([decide(jeff, one.id, { save: true }, deps), decide(jeff, two.id, { save: true }, deps)]);
+  const lost = got.find((g) => g.status === 'rejected');
+  assert.ok(lost, 'one Save must lose');
+  assert.equal(lost.reason.status, 409);
+  assert.equal(lost.reason.message, 'This case already has a folder');
+  assert.equal(await count('SELECT COUNT(*)::int n FROM case_folders'), 1);
+  assert.equal(await count("SELECT COUNT(*)::int n FROM case_proposals WHERE status = 'pending'"), 1);
+  await assert.rejects(decide(jeff, (got[0].status === 'rejected' ? one : two).id, { save: true }, deps), { status: 409, message: 'This case already has a folder' });
+});
+
+test('an edited name is taken as typed, not as a pattern', async () => {
+  const [card] = await propose(jeff, { case_number: '205791' }, { conversationId: conv }, deps);
+  await decide(jeff, card.id, { save: true, name: 'Soutex: [Party A]\n/ urgent' }, deps);
+  assert.equal((await db.prepare('SELECT name FROM case_folders').get()).name, 'Soutex [Party A] urgent');
 });
 
 test('someone who is not external gets nothing', async () => {
