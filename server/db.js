@@ -2140,3 +2140,68 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ai_costs_at ON ai_costs(at);
   CREATE INDEX IF NOT EXISTS idx_ai_costs_user ON ai_costs(user_id, at);
 `);
+
+// Case folders for an external user (server/caseFolders.js): their inbox sorted by case number.
+//   case_settings:  the user's own case-number pattern (empty = the built-in ones)
+//   case_folders:   one folder per case; case_key is the number in a form that matches across spellings
+//   case_emails:    the mails filed in a folder; body is kept so the PDF can be rebuilt without the mailbox
+//   case_proposals: a folder Reem got ready from the chat, waiting on a card for Create or Cancel
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS case_settings (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    pattern TEXT
+  );
+  CREATE TABLE IF NOT EXISTS case_folders (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    case_number TEXT NOT NULL,
+    case_key TEXT NOT NULL,
+    party_a TEXT,
+    party_b TEXT,
+    full_pdf BOOLEAN NOT NULL DEFAULT true,
+    per_email BOOLEAN NOT NULL DEFAULT false,
+    tracking BOOLEAN NOT NULL DEFAULT true,
+    summary_doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    share_token TEXT UNIQUE,
+    share_on BOOLEAN NOT NULL DEFAULT false,
+    last_checked_at BIGINT,
+    last_error TEXT,
+    new_count INTEGER NOT NULL DEFAULT 0,
+    updated_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW},
+    UNIQUE (user_id, case_key)
+  );
+  CREATE TABLE IF NOT EXISTS case_emails (
+    id SERIAL PRIMARY KEY,
+    folder_id INTEGER NOT NULL REFERENCES case_folders(id) ON DELETE CASCADE,
+    mail_key TEXT NOT NULL,
+    message_id TEXT,
+    at BIGINT,
+    sender TEXT,
+    recipients TEXT,
+    subject TEXT,
+    body TEXT,
+    doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    UNIQUE (folder_id, mail_key)
+  );
+  CREATE TABLE IF NOT EXISTS case_proposals (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    case_number TEXT NOT NULL,
+    party_a TEXT,
+    party_b TEXT,
+    name TEXT NOT NULL,
+    emails JSONB NOT NULL,
+    folder_id INTEGER REFERENCES case_folders(id) ON DELETE SET NULL,
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS case_folder_id INTEGER REFERENCES case_folders(id) ON DELETE SET NULL;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS case_made BOOLEAN NOT NULL DEFAULT false;
+  -- The emails the user unticked on Save, as [{ mail_key, message_id }] only (no content),
+  -- so a later update never brings them back.
+  ALTER TABLE case_folders ADD COLUMN IF NOT EXISTS excluded_keys JSONB NOT NULL DEFAULT '[]';
+`);

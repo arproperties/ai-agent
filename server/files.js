@@ -338,13 +338,16 @@ ${EXPIRY_GUIDE}${knownCompanies(companies)}${team}${kindsPrompt(kinds || {})}`,
  *
  * `said` is what the person wrote as they sent it in a chat ("this is for the school
  * project"). It is filed with the file, so the Shelf can find the bill by what it was for.
+ *
+ * `classify: false` only reads and indexes it: the title, folder and shelf it already has
+ * stay (a case file keeps its own name and its case folder).
  */
-export function processDocument(doc, f, text, agents = [], said = '') {
+export function processDocument(doc, f, text, agents = [], said = '', { classify: sort = true } = {}) {
   // Priced as reading this file, under whatever job brought it in (a chat, the Shelf, an import).
-  return billAs({ note: doc.name }, () => fileDocument(doc, f, text, agents, said));
+  return billAs({ note: doc.name }, () => fileDocument(doc, f, text, agents, said, sort));
 }
 
-async function fileDocument(doc, f, text, agents, said) {
+async function fileDocument(doc, f, text, agents, said, sort = true) {
   try {
     // A video is read off disk rather than out of the buffer: ffmpeg needs a file, and
     // saveUpload has already written one.
@@ -359,12 +362,14 @@ async function fileDocument(doc, f, text, agents, said) {
     const own = content; // the file's own words, without what was said with it
     const words = String(said || '').replace(/[\u0000\s]+/g, ' ').trim().slice(0, 300);
     if (words) content = `Sent with the words: "${words}"\n\n${content}`;
-    const owner = await db.prepare('SELECT * FROM users WHERE id = ?').get(doc.user_id);
-    const kinds = owner ? await filingKinds(owner) : null;
-    const c = await classify(doc.name, content, doc.agent_id ? [] : agents, await userCompanies(doc.user_id), { kinds });
-    await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, expires_on = ?, company = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
-      .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, c.expires, c.company, c.agentId, doc.id);
-    await fileAs(doc.id, c);
+    if (sort) {
+      const owner = await db.prepare('SELECT * FROM users WHERE id = ?').get(doc.user_id);
+      const kinds = owner ? await filingKinds(owner) : null;
+      const c = await classify(doc.name, content, doc.agent_id ? [] : agents, await userCompanies(doc.user_id), { kinds });
+      await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, expires_on = ?, company = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
+        .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, c.expires, c.company, c.agentId, doc.id);
+      await fileAs(doc.id, c);
+    }
     // Re-read rather than spreading over the copy we were handed: `doc` predates the
     // UPDATE, and chunks carry agent_id and shared of their own. Indexing from a stale
     // copy would file the chunks on the shelf the document just left, leaving the file

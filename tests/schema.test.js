@@ -72,3 +72,17 @@ test('deleting a user removes their assignments but not the agent', async () => 
   assert.equal(n, 0, 'the assignment should have been cascaded away');
   assert.ok(await db.prepare('SELECT 1 FROM agents WHERE id = ?').get(hr), 'the agent must survive');
 });
+
+test('a user cannot have two case folders with the same case key; deleting a folder removes its emails', async () => {
+  await reset();
+  const u = await makeUser('Jeff');
+  const add = () => db.prepare(
+    `INSERT INTO case_folders (user_id, name, case_number, case_key) VALUES (?, 'Smith', '123/2025', '123-2025') RETURNING id`
+  ).run(u);
+  const { id } = await add();
+  await assert.rejects(add());
+  await db.prepare(`INSERT INTO case_emails (folder_id, mail_key, recipients) VALUES (?, 'k1', 'a@b.com')`).run(id);
+  await db.prepare('DELETE FROM case_folders WHERE id = ?').run(id);
+  const { n } = await db.prepare('SELECT COUNT(*)::int n FROM case_emails').get();
+  assert.equal(n, 0);
+});

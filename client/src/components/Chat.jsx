@@ -12,6 +12,7 @@ import TeamReminderCard from './TeamReminderCard';
 import ResponsibilityCard from './ResponsibilityCard';
 import AddressCard from './AddressCard';
 import InventoryCard from './InventoryCard';
+import CaseCard from './CaseCard';
 import BookingCard from './BookingCard';
 import NoticeCard from './NoticeCard';
 import { usePush } from './Notifications';
@@ -65,6 +66,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [duties, setDuties] = useState([]); // responsibility changes got ready in this chat (master only)
   const [addresses, setAddresses] = useState([]); // company addresses waiting for Add (master only)
   const [stock, setStock] = useState([]); // inventory items got ready in this chat, waiting for Add
+  const [cases, setCases] = useState([]); // case folders got ready from the inbox, waiting for Save (external only)
   const [bookings, setBookings] = useState([]); // ARS bookings got ready in this chat, waiting for Create
   const [notices, setNotices] = useState([]); // tenant notices got ready in this chat, waiting for Send
   const [suggested, setSuggested] = useState([]); // reminders Reem spotted, waiting for a yes or no
@@ -97,6 +99,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       if (user.role === 'master') api.get(`/address-book/proposals?conversation=${conversationId}`).then(setAddresses).catch(() => {});
       api.get(`/saifsys/ars/bookings?conversation=${conversationId}`).then(setBookings).catch(() => {});
       api.get(`/inventory/proposals?conversation=${conversationId}`).then(setStock).catch(() => {});
+      if (user.external) api.get(`/cases/proposals?conversation=${conversationId}`).then(setCases).catch(() => {});
       api.get(`/notices/chat?conversation=${conversationId}`).then(setNotices).catch(() => {});
     }
     api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
@@ -190,6 +193,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           else if (event === 'responsibility') { acted = true; setDuties((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'companyAddress') { acted = true; setAddresses((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'inventoryAdd') { acted = true; setStock((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'caseFolder') { acted = true; setCases((cs) => [...cs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'tenantNotice') { acted = true; setNotices((ns) => [...ns.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'arsBooking') { acted = true; setBookings((bs) => [...bs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'draft') { acted = true; setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
@@ -440,6 +444,10 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             {stock.map((p) => (
               <InventoryCard key={p.id} proposal={p}
                 onChanged={(u) => setStock((ps) => ps.map((x) => (x.id === u.id ? u : x)))} />
+            ))}
+            {cases.map((c) => (
+              <CaseCard key={c.id} card={c} onOpenShelf={onOpenFiles}
+                onChanged={(u) => setCases((cs) => cs.map((x) => (x.id === u.id ? u : x)))} />
             ))}
             {notices.map((n) => (
               <NoticeCard key={n.id} notice={n}

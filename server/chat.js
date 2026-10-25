@@ -11,6 +11,7 @@ import { teamReminderKit } from './teamReminders.js';
 import { responsibilityKit } from './responsibilities.js';
 import { buildingKit } from './buildings.js';
 import { inventoryKit } from './inventory.js';
+import { caseKit } from './caseKit.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
 import { shelfKit, splitParts } from './shelf.js';
@@ -527,6 +528,8 @@ export async function chat(req, res) {
       addressKit(user, { conversationId: convId, onCard: (p) => send('companyAddress', p) }),
       await buildingKit(user),
       await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) })]),
+    // Their own case folders, from their own inbox: for someone from outside the company only.
+    ...(external ? [await caseKit(user, { conversationId: convId, onCard: (c) => send('caseFolder', c) })] : []),
     await noticeKit(user, { conversationId: convId, onCard: (c) => send('tenantNotice', c) }), // only with Tenant notices
     ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
   // A picture asked for in their own words. It is hung on this reply; its own words are
