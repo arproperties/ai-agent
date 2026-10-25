@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An Express 5 API (`server/`, plain ESM JavaScript, no build step) and a React 19 + Vite + Tailwind v4 PWA (`client/`). The app was renamed from Jarvis to **Reem**; the old name survives only in live identifiers that must not change without coordinated work: the deploy host `jarvis.eloquentservice.com`, `/var/www/jarvis` and the pm2 process `jarvis`, the session cookie `jarvis_sid`, the `jarvis:*` localStorage keys and `jarvis:signedout` event, and the saifsys door `api/jarvis/v1` with its `X-Jarvis-Key` / `X-Jarvis-Action-Key` headers. Use "Reem" for anything new. It is an AI assistant for a UAE property company (Saif Holding): chats with agents, a document Shelf with RAG, email, to-dos, lease renewals, legal cases, Document Renewals, case folders for external users, and live reads from the company system **saifsys**. README.md describes each feature and lists the `.env` keys.
+An Express 5 API (`server/`, plain ESM JavaScript, no build step) and a React 19 + Vite + Tailwind v4 PWA (`client/`). The app was renamed from Jarvis to **Reem**; the old name survives only in live identifiers that must not change without coordinated work: `/var/www/jarvis` and the pm2 process `jarvis`, the session cookie `jarvis_sid`, the `jarvis:*` localStorage keys and `jarvis:signedout` event, and the saifsys door `api/jarvis/v1` with its `X-Jarvis-Key` / `X-Jarvis-Action-Key` headers. Use "Reem" for anything new. It is an AI assistant for a UAE property company (Saif Holding): chats with agents, a document Shelf with RAG, email, to-dos, lease renewals, legal cases, Document Renewals, case folders for external users, and live reads from the company system **saifsys**. README.md describes each feature and lists the `.env` keys.
 
 ## Commands
 
@@ -13,8 +13,9 @@ npm run setup          # first time: installs root and client deps
 npm run dev            # API on :3001 (node --watch) + Vite on :5173 (proxies /api)
 npm run build          # builds client/dist
 npm start              # production: serves client/dist + API on :3001 (sets NODE_ENV inline, so run it from bash, not PowerShell)
-./deploy.ps1           # build, tar, scp to the droplet, npm install, pm2 restart jarvis, then curls the site
 ```
+
+Live is https://ainalreemproaiagent.fun on EC2 (ssh host `reem-live`, `/var/www/jarvis`, pm2 `jarvis`). There is no deploy script: deploy by hand, and only when Francis says so — `pg_dump` the live DB first, build, ship `server scripts package.json package-lock.json client/dist`, then `pm2 restart jarvis --update-env`. The old droplet (jarvis.eloquentservice.com) is no longer used.
 
 There is no linter or type checker.
 
@@ -72,7 +73,7 @@ Each feature is usually one server file exporting `xxxRoutes` (an Express Router
 `client/src/App.jsx` is the shell; screens and sheets are in `client/src/components/`, API wrapper and helpers in `client/src/lib/` (`api.js`, `push.js`, `voice.js`, …). `client/src/sw.js` is the custom service worker (vite-plugin-pwa injectManifest) handling web push. Arabic content is common: PDFs use the bundled fonts in `server/fonts/` with RTL handling.
 
 ### Data on disk
-`data/` holds uploaded originals (`data/uploads/`) and the embedding model cache; it is never deployed or overwritten. The server's `.env` is likewise never shipped by `deploy.ps1`.
+`data/` holds uploaded originals (`data/uploads/`) and the embedding model cache; it is never deployed or overwritten. The server's `.env` is likewise never shipped.
 
 ## Conventions
 

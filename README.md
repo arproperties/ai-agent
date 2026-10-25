@@ -67,7 +67,7 @@ Never point `TEST_DATABASE_URL` at the live database.
 
 ## Deploy
 
-`./deploy.ps1` builds the client and ships it to jarvis.eloquentservice.com (nginx serves `client/dist`, pm2 runs the API on 127.0.0.1:3001). The server's own `.env` is never overwritten.
+Reem is live at https://ainalreemproaiagent.fun (EC2, ssh host `reem-live`, app in `/var/www/jarvis`, pm2 process `jarvis`; nginx serves `client/dist`, pm2 runs the API on 127.0.0.1:3001). Deploys are done by hand: back up the database with `pg_dump`, build, copy `server scripts package.json package-lock.json client/dist` across, then `pm2 restart jarvis --update-env`. The server's own `.env` and `data/` are never overwritten.
 
 ## Outlook setup (once)
 
