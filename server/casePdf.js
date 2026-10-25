@@ -14,7 +14,9 @@ const day = (secs) => new Date(secs * 1000).toLocaleDateString('en-GB', {
 });
 
 // One line of plain text: a subject or an address must never run into the next line.
-const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+// Prompt fields: a '<' becomes '&lt;', so no field can close or open an <email> block.
+const inert = (s) => String(s).replace(/</g, '&lt;');
+const oneLine =(s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
 // An email body is someone else's text. A line that starts "# ", "| a | b |", "```", "- " or ">"
 // would become a heading, table, code block or list in the PDF and could fake the next email's
@@ -60,7 +62,10 @@ function safeSummary(summary) {
   return String(summary ?? '').replace(/\r\n?/g, '\n').split('\n').map((line) => {
     const t = line.trim();
     const h = /^##\s+(.*?)\s*#*$/.exec(t);
-    const name = h && HEADINGS.find((x) => x.toLowerCase() === h[1].trim().toLowerCase());
+    // The AI may echo the prompt's hint, e.g. "What has happened (dated bullets...)": match by
+    // name and ignore a trailing parenthetical, colon or extra spaces.
+    const said = h && h[1].replace(/\s*\(.*\)\s*$/, '').replace(/:$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const name = h && HEADINGS.find((x) => x.toLowerCase() === said);
     if (name && !seen.has(name)) { seen.add(name); return `## ${name}`; }
     if (/^(#{1,6}(\s|$)|([-*_])(\s*\3){2,}$|\||```|~~~)/.test(t)) return `${ZWSP}${t}  `;
     return line;
@@ -74,7 +79,7 @@ export async function summarizeCase(folder, emails, { ask = claude } = {}) {
     `Case: ${oneLine(folder.name)}${folder.case_number ? `, number ${folder.case_number}` : ''}`,
     `Parties: ${oneLine(folder.party_a)} / ${oneLine(folder.party_b)}`,
     '',
-    ...sorted.map((e, i) => `<email n="${i + 1}" date="${when(e.at)}">\nFrom: ${oneLine(e.sender)}\nTo: ${oneLine(e.recipients)}\nSubject: ${oneLine(e.subject)}\n\n${String(e.body ?? '').slice(0, BODY_CUT)}\n</email>`),
+    ...sorted.map((e, i) => `<email n="${i + 1}" date="${when(e.at)}">\nFrom: ${inert(oneLine(e.sender))}\nTo: ${inert(oneLine(e.recipients))}\nSubject: ${inert(oneLine(e.subject))}\n\n${inert(String(e.body ?? '').slice(0, BODY_CUT))}\n</email>`),
   ].join('\n');
   try {
     const text = String(await ask(prompt, { system: SYSTEM, maxTokens: 2000 }) ?? '').trim();
