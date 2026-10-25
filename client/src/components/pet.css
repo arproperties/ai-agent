@@ -26,6 +26,17 @@
 @keyframes pet-breathe { 50% { transform: scaleY(.96); } }
 @keyframes pet-wiggle { 25% { transform: rotate(-6deg); } 75% { transform: rotate(6deg); } }
 @keyframes pet-chomp { 50% { transform: scale(1.08, .9); } }
+/* talking to Reem: ears up while listening, head tilted while thinking, mouth going while answering */
+.pet.listen .body-g { animation: pet-perk .9s ease-in-out infinite; }
+.pet.think .body-g { animation: pet-tilt 1.4s ease-in-out infinite; }
+.pet.talk .body-g { animation: pet-talk .22s ease-in-out infinite; }
+@keyframes pet-perk { 0%, 100% { transform: scale(1.08) translateY(-3px); } 50% { transform: scale(1.12) translateY(-6px); } }
+@keyframes pet-tilt { 50% { transform: rotate(-8deg) translateY(-2px); } }
+@keyframes pet-talk { 50% { transform: scale(1.03, .96); } }
+.pet-ear { position: absolute; left: 2px; bottom: 4px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--color-ok); box-shadow: 0 0 0 2px var(--color-bg); animation: pet-ear 2.4s ease-in-out infinite; }
+@keyframes pet-ear { 50% { opacity: .45; } }
+.pet.listen .pet-ear { animation: none; transform: scale(1.3); }
 .pet .lids { transform-box: fill-box; transform-origin: center; transform: scaleY(0); animation: pet-blink 4.5s infinite; }
 @keyframes pet-blink { 0%, 94%, 100% { transform: scaleY(0); } 97% { transform: scaleY(1); } }
 .pet.sleep .lids { animation: none; transform: scaleY(1); }

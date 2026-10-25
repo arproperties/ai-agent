@@ -2,14 +2,21 @@ import { useEffect, useRef, useState } from 'react';
 import { currentJobs, onJobs, dismissJob } from '../lib/jobs';
 import { importState, onImport } from '../lib/importer';
 import { sendToShelf } from '../lib/shelf';
+import { askReem, plainText } from '../lib/petChat';
+import { startWakeWord, withoutWakeWord } from '../lib/wakeword';
+import { listenUntilSilence, speakAsItArrives, stopListening, stopSpeaking, transcribeClip, unlockAudio } from '../lib/voice';
 import './pet.css';
 
 // The helper in the bottom-right corner. It says what needs the person (to-dos due, papers
 // running out, unread messages), shows long jobs while they run (the dog carries the file
 // across), takes files dropped on it to the Shelf, and dozes off when nobody is around.
+// Say "Hey Buddy, …" (once switched on in its menu), tap its mic or type to it, and the
+// question goes to Reem as an ordinary chat; the answer comes back in its bubble, read aloud.
 
 const CHAR_KEY = 'jarvis:pet';
 const HIDE_KEY = 'jarvis:pet-hidden';
+const LISTEN_KEY = 'jarvis:pet-listen';
+const BUBBLE_CHARS = 320; // past this the bubble says the rest is in the chat
 const SLEEP_AFTER = 2 * 60 * 1000;
 const read = (store, key) => { try { return store.getItem(key); } catch { return null; } };
 const write = (store, key, v) => { try { if (v == null) store.removeItem(key); else store.setItem(key, v); } catch { /* private mode */ } };
@@ -54,7 +61,7 @@ const CHARS = {
       <path d="M18 64h12M18 70l12-2M78 64H66M78 70l-12-2" stroke="#2b1d12" stroke-width="1.5" stroke-linecap="round"/></g>`,
   },
 };
-const MOUTH_FOR = { working: 'o', eat: 'o', alert: 'o', sleep: 'flat', happy: 'big' };
+const MOUTH_FOR = { working: 'o', eat: 'o', alert: 'o', sleep: 'flat', happy: 'big', listen: 'o', think: 'flat', talk: 'big' };
 function charSvg(id, mood) {
   const c = CHARS[id] || CHARS.buddy;
   const key = MOUTH_FOR[mood] || 'smile';
@@ -148,7 +155,7 @@ function JobCard({ job, onHide }) {
   );
 }
 
-export default function Pet({ me, due, expiring, unread, canShelf, onOpen }) {
+export default function Pet({ me, due, expiring, unread, canShelf, canTalk, voiceEnabled, onOpen, onOpenChat, onChatSaved }) {
   const [char, setChar] = useState(() => (CHARS[read(localStorage, CHAR_KEY)] ? read(localStorage, CHAR_KEY) : 'buddy'));
   const [hidden, setHidden] = useState(() => read(sessionStorage, HIDE_KEY) === '1');
   const [jobs, setJobs] = useState(currentJobs());
@@ -160,8 +167,15 @@ export default function Pet({ me, due, expiring, unread, canShelf, onOpen }) {
   const [dropping, setDropping] = useState(false);
   const [sparks, setSparks] = useState([]);
   const [hiddenCards, setHiddenCards] = useState([]); // job cards the person tucked away
+  const [listen, setListen] = useState(() => read(localStorage, LISTEN_KEY) === '1'); // "Hey Buddy" switched on
+  const [ears, setEars] = useState(null); // null | 'loading' | 'on': whether the wake word is being listened for
+  const [talk, setTalk] = useState(null); // null | 'listening' | 'hearing' | 'thinking' | 'speaking'
+  const [typed, setTyped] = useState('');
+  const talkRef = useRef(null);
+  talkRef.current = talk;
   const art = useRef(null);
   const lastActive = useRef(Date.now());
+  const canListen = canTalk && voiceEnabled;
 
   useEffect(() => onJobs(setJobs), []);
   useEffect(() => onImport(setImp), []);
@@ -178,7 +192,8 @@ export default function Pet({ me, due, expiring, unread, canShelf, onOpen }) {
   const allJobs = importJob ? [importJob, ...jobs] : jobs;
   const card = allJobs.find((j) => !hiddenCards.includes(j.id));
   const running = allJobs.some((j) => j.state === 'running');
-  const mood = flash || (running ? 'working' : sleeping ? 'sleep' : 'idle');
+  const TALK_MOOD = { listening: 'listen', hearing: 'think', thinking: 'think', speaking: 'talk' };
+  const mood = TALK_MOOD[talk] || flash || (running ? 'working' : sleeping ? 'sleep' : 'idle');
 
   const say = (text, actions = [], ms = 8000) => {
     setBubble({ text, actions, key: Date.now() });
@@ -200,7 +215,8 @@ export default function Pet({ me, due, expiring, unread, canShelf, onOpen }) {
       const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2), d = Math.hypot(dx, dy) || 1, k = Math.min(3, d / 60);
       art.current.querySelectorAll('.pupil').forEach((p) => p.setAttribute('transform', `translate(${(dx / d) * k} ${(dy / d) * k})`));
     };
-    const wake = () => { lastActive.current = Date.now(); setSleeping(false); };
+    // The first tap also unlocks sound, so an answer to "Hey Buddy" (which comes without a tap) can be heard.
+    const wake = () => { lastActive.current = Date.now(); setSleeping(false); unlockAudio(); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerdown', wake);
     window.addEventListener('keydown', wake);
@@ -255,6 +271,104 @@ export default function Pet({ me, due, expiring, unread, canShelf, onOpen }) {
     sendToShelf(files).catch(() => {}); // the job card and the bubble say how it went
   };
 
+  // ---------- talking to Reem through the pet ----------
+  // The answer streams into the bubble; asked out loud, it is read aloud too.
+  const ask = async (text, { aloud = false } = {}) => {
+    if (!text) return;
+    stopSpeaking(); setMenu(false);
+    setTalk('thinking');
+    const key = Date.now(); // one bubble for the whole turn, so it does not pop again on every word
+    const show = (t, actions = []) => setBubble({ text: t, actions, key });
+    const clip = (t) => (t.length > BUBBLE_CHARS ? `${t.slice(0, BUBBLE_CHARS).replace(/\s+\S*$/, '')}…` : t);
+    show(`“${text}”`);
+    let speech = null;
+    try {
+      const r = await askReem(text, {
+        onStatus: (label) => show(label),
+        onAgent: (id) => {
+          if (!aloud) return;
+          speech = speakAsItArrives(id, (s) => {
+            if (s === 'speaking') setTalk('speaking');
+            else if (s === 'idle' || s === 'error') setTalk((t) => (t === 'speaking' ? null : t));
+          });
+        },
+        onText: (all) => { show(clip(plainText(all))); speech?.feed(all); },
+      });
+      const said = plainText(r.reply);
+      const open = () => { setBubble(null); onOpenChat(r.conversationId); };
+      show(r.needsYou ? `${said ? `${clip(said)}\n\n` : ''}I need you to confirm something in the chat.`
+        : said ? clip(said) : 'No answer came through. Please ask again.',
+        r.conversationId ? [['Open in chat', open]] : []);
+      if (speech) speech.end(r.reply);
+      setTalk((t) => (t === 'thinking' ? (speech && r.reply ? 'speaking' : null) : t));
+      if (r.needsYou) doFlash('alert', 1900);
+      onChatSaved?.();
+    } catch (e) {
+      stopSpeaking();
+      setTalk(null);
+      show(e.message || 'Something went wrong.');
+    }
+  };
+
+  // Tapped the mic: listen until they stop talking, as the chat's own mic does.
+  const listenOnce = async () => {
+    unlockAudio(); stopSpeaking(); setMenu(false);
+    setTalk('listening');
+    say('I’m listening…', [], 0);
+    try {
+      const text = await listenUntilSilence({ maxMs: 30000, onCaptured: () => setTalk('hearing') });
+      if (talkRef.current !== 'hearing' && talkRef.current !== 'listening') return; // cancelled with a tap
+      if (text) ask(text, { aloud: true });
+      else { setTalk(null); say('I didn’t catch that.', [], 4000); }
+    } catch (e) { setTalk(null); say(e.message, [], 8000); }
+  };
+
+  // "Hey Buddy": on while switched on, the pet is showing and voice is set up.
+  useEffect(() => {
+    if (!listen || hidden || !canListen) return undefined;
+    let stop = null, dead = false;
+    const off = (msg) => { setListen(false); write(localStorage, LISTEN_KEY, null); if (msg) say(msg, [], 9000); };
+    setEars('loading');
+    startWakeWord({
+      onWake: () => {
+        if (talkRef.current) return; // busy answering, or already listening
+        lastActive.current = Date.now(); setSleeping(false); stopSpeaking(); setMenu(false);
+        setTalk('listening');
+        say('Yes? I’m listening…', [], 0);
+      },
+      onHeard: async (clip) => {
+        if (talkRef.current !== 'listening') return;
+        setTalk('hearing');
+        try {
+          const said = withoutWakeWord(await transcribeClip(clip));
+          if (said) return ask(said, { aloud: true });
+          // Only "Hey Buddy", then a pause: they are waiting for the pet. Listen for the question now.
+          setTalk('listening');
+          const text = await listenUntilSilence({ maxMs: 15000, onCaptured: () => setTalk('hearing') });
+          if (text) ask(text, { aloud: true });
+          else { setTalk(null); setBubble(null); }
+        } catch (e) { setTalk(null); say(e.message, [], 8000); }
+      },
+      onError: (e) => { if (!dead) off(e.message); },
+    }).then((s) => { if (dead) s(); else { stop = s; setEars('on'); } },
+      (e) => { if (!dead) { setEars(null); off(e.message); } });
+    return () => { dead = true; stop?.(); setEars(null); };
+  }, [listen, hidden, canListen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleListen = () => {
+    unlockAudio();
+    const next = !listen;
+    setListen(next); write(localStorage, LISTEN_KEY, next ? '1' : null);
+    if (next) say('Say “Hey Buddy” and then your question.', [], 6000);
+  };
+
+  // Tapping the pet while it talks or listens stops it; otherwise it opens the menu.
+  const tap = () => {
+    if (talk === 'speaking') { stopSpeaking(); setTalk(null); return; }
+    if (talk === 'listening') { stopListening(); setTalk(null); setBubble(null); return; }
+    setBubble(null); setMenu((m) => !m);
+  };
+
   if (hidden) {
     return (
       <div className="pet-dock">
@@ -299,6 +413,30 @@ export default function Pet({ me, due, expiring, unread, canShelf, onOpen }) {
               <span className="min-w-0 flex-1">Unread messages</span>
             </button>
           </div>
+          {canTalk && (
+            <div className="border-t border-stroke px-4 py-2.5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-mute">Ask me anything</p>
+              <form className="mt-1.5 flex gap-1.5" onSubmit={(e) => { e.preventDefault(); const t = typed.trim(); setTyped(''); ask(t); }}>
+                <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={`Type to ${name}…`} aria-label={`Type to ${name}`}
+                  className="min-w-0 flex-1 rounded-xl border border-stroke bg-white/5 px-3 py-1.5 text-sm text-txt placeholder:text-mute focus:border-p1 focus:outline-none" />
+                {canListen && (
+                  <button type="button" onClick={listenOnce} aria-label="Speak" title="Speak"
+                    className="grid size-8 shrink-0 place-items-center rounded-xl border border-stroke text-mute hover:text-txt">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+                  </button>
+                )}
+              </form>
+              {canListen && (
+                <button type="button" role="switch" aria-checked={listen} onClick={toggleListen}
+                  className="mt-2 flex w-full items-center justify-between gap-3 text-left text-xs text-mute hover:text-txt">
+                  <span>Listen for “Hey Buddy”{ears === 'loading' && ' · getting ready…'}</span>
+                  <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${listen ? 'bg-p1' : 'bg-white/15'}`}>
+                    <span className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-all ${listen ? 'left-[18px]' : 'left-0.5'}`} />
+                  </span>
+                </button>
+              )}
+            </div>
+          )}
           {canShelf && <p className="border-t border-stroke px-4 py-2.5 text-xs text-mute">Drop any file on me and I'll put it on your Shelf.</p>}
           <div className="border-t border-stroke px-4 py-2.5">
             <p className="text-xs font-semibold uppercase tracking-wide text-mute">Pick a friend</p>
@@ -317,16 +455,25 @@ export default function Pet({ me, due, expiring, unread, canShelf, onOpen }) {
       ) : bubble && (
         <div key={bubble.key} role="status" className="pet-pop pet-bubble border border-stroke bg-surface px-3.5 py-3 text-sm leading-snug text-txt shadow-xl shadow-black/30">
           <button onClick={() => setBubble(null)} aria-label="Dismiss" className="float-right -mr-1 -mt-1 ml-2 text-base leading-none text-mute hover:text-txt">×</button>
-          {bubble.text}
+          <span className="whitespace-pre-line">{bubble.text}</span>
+          {bubble.actions?.length > 0 && (
+            <span className="mt-2 flex gap-2">
+              {bubble.actions.map(([label, fn]) => (
+                <button key={label} onClick={fn} className="rounded-lg bg-p1/15 px-2.5 py-1 text-xs font-semibold text-p1 hover:bg-p1/25">{label}</button>
+              ))}
+            </span>
+          )}
         </div>
       )}
 
-      <button ref={art} onClick={() => { setBubble(null); setMenu((m) => !m); }}
+      <button ref={art} onClick={tap}
         onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDropping(true); }} onDragLeave={() => setDropping(false)} onDrop={drop}
         aria-label={attention ? `${name}: ${attention} things for you` : name} title={name}
         className={`pet ${mood} ${dropping ? 'dropping' : ''}`}>
         <svg viewBox="0 0 96 96" dangerouslySetInnerHTML={{ __html: charSvg(char, mood) }} />
         <span className="pet-zz">z</span>
+        {/* the microphone is open for "Hey Buddy": always shown, so nobody is listened to unawares */}
+        {ears === 'on' && <span className="pet-ear" title="Listening for “Hey Buddy”" />}
         {attention > 0 && !menu && <span className="pet-badge">{attention > 99 ? '99+' : attention}</span>}
         {sparks.map((s) => <span key={s.id} className="pet-spark" style={{ '--dx': `${s.dx}px`, '--dy': `${s.dy}px` }}>{s.ch}</span>)}
       </button>

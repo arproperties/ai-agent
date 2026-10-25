@@ -280,7 +280,9 @@ export default function App() {
       <NotifyPrompt />
       {!me.external && (
         <Pet me={me} due={due} expiring={expiring} unread={dm.unread} canShelf={!modules || modules.includes('shelf')}
-          onOpen={(p) => { setPanel(p); setDrawer(false); }} />
+          canTalk={agents.length > 0} voiceEnabled={config.voice}
+          onOpen={(p) => { setPanel(p); setDrawer(false); }} onOpenChat={openChat}
+          onChatSaved={() => { loadConvs(); loadDue(); }} />
       )}
       <MessageToast toast={dm.toast} onClose={dm.dismissToast}
         onOpen={(id) => { dm.dismissToast(); setJumpToChat(id); setPanel('messages'); setDrawer(false); }} />
