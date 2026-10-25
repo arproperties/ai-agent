@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, FileClock, Gavel, ChevronRight, Search } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, FileClock, Gavel, ChevronRight, Search, PawPrint } from 'lucide-react';
 import Icon from './Icon';
 import { Row, Count } from './NavRow';
 import { THEMES, currentTheme, setTheme } from '../lib/theme';
@@ -42,7 +42,7 @@ function Group({ title, open, onToggle, count = 0, q = '', children }) {
   );
 }
 
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, modules = [], renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, modules = [], petOn, onPet, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -133,6 +133,16 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
             {has('memory') && <Row role="menuitem" icon={<Icon name="brain" size={17} />} label="Memory" onClick={go(onMemory)} />}
             {/* What the AI cost, by person, job and model. The master's alone. */}
             {user.role === 'master' && <Row role="menuitem" icon={<Receipt size={17} strokeWidth={1.75} />} label="Billing" active={billingOpen} onClick={go(onBilling)} />}
+            {/* The pet is still being tried out: the master's alone, off until switched on here.
+                A switch, not a place, so the menu stays open. */}
+            {user.role === 'master' && onPet && (
+              <Row role="menuitemcheckbox" aria-checked={!!petOn} icon={<PawPrint size={17} strokeWidth={1.75} />} label="Buddy (pet)" onClick={onPet}
+                badge={(
+                  <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${petOn ? 'bg-p1' : 'bg-white/15'}`}>
+                    <span className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-all ${petOn ? 'left-[18px]' : 'left-0.5'}`} />
+                  </span>
+                )} />
+            )}
           </Group>
           <div className="mt-1 flex items-center gap-3 border-t border-stroke/60 px-3 pb-1.5 pt-2.5">
             <span className="flex-1 text-[11px] font-medium text-mute/80">Theme</span>

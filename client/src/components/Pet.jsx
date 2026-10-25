@@ -355,6 +355,9 @@ export default function Pet({ me, due, expiring, unread, canShelf, canTalk, voic
     return () => { dead = true; stop?.(); setEars(null); };
   }, [listen, hidden, canListen]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Switched off in the Tools menu while talking: nothing carries on without the pet on screen.
+  useEffect(() => () => { stopSpeaking(); stopListening(); }, []);
+
   const toggleListen = () => {
     unlockAudio();
     const next = !listen;

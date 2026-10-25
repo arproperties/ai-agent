@@ -76,6 +76,12 @@ export default function App() {
   const [hasBuildings, setHasBuildings] = useState(false); // the master, or someone who runs a building
   const [modules, setModules] = useState(null); // Reem's own modules the master has given this person; null until they are known
   const [jumpToBuilding, setJumpToBuilding] = useState(notifiedBuilding); // a building (and job) a notification asked for
+  // The pet is still being tried out: off until the master switches it on (Tools menu), on this device.
+  const [petOn, setPetOn] = useState(() => { try { return localStorage.getItem('jarvis:pet-on') === '1'; } catch { return false; } });
+  const togglePet = () => setPetOn((on) => {
+    try { if (on) localStorage.removeItem('jarvis:pet-on'); else localStorage.setItem('jarvis:pet-on', '1'); } catch { /* private mode */ }
+    return !on;
+  });
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
   const chatOpened = useCallback(() => setJumpToChat(null), []);
@@ -192,7 +198,7 @@ export default function App() {
       <aside className={`max-md:liquid-glass rail-wash fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'}`}>
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
-          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}
+          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} petOn={petOn} onPet={togglePet}
           expiring={expiring.length} dueTodos={due.todos.length + due.routines.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
           meetingsOpen={panel === 'meetings'} onMeetings={() => { setPanel('meetings'); setDrawer(false); }}
           translateOpen={panel === 'translate'} onTranslate={() => { setPanel('translate'); setDrawer(false); }}
@@ -278,7 +284,7 @@ export default function App() {
       )}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
       <NotifyPrompt />
-      {!me.external && (
+      {me.role === 'master' && petOn && (
         <Pet me={me} due={due} expiring={expiring} unread={dm.unread} canShelf={!modules || modules.includes('shelf')}
           canTalk={agents.length > 0} voiceEnabled={config.voice}
           onOpen={(p) => { setPanel(p); setDrawer(false); }} onOpenChat={openChat}
