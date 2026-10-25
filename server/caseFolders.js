@@ -163,6 +163,13 @@ async function folderFor(userId, number) {
   return all.find((f) => f.case_key === caseKey(number)) || all.find((f) => re.test(f.case_number)) || null;
 }
 
+/** This user's folder for a case number as typed, or null. */
+export async function findFolder(user, number) {
+  mine(user);
+  const n = clean(number);
+  return n ? folderFor(user.id, n) : null;
+}
+
 async function folderSummary(user, folderId, deps) {
   const { added } = await refresh(user, folderId, deps);
   const f = await db.prepare('SELECT * FROM case_folders WHERE id = ?').get(folderId);
@@ -342,9 +349,9 @@ export async function decide(user, id, { save, name, full_pdf: fullPdf = true, p
     folderId = folder.id;
     if (folder.full_pdf) await writeCasePdf(user.id, folder, deps, made);
     await saveEmailFiles(user.id, folder, rows, mails, made);
-    // The card keeps only what was saved.
-    await db.prepare('UPDATE case_proposals SET folder_id = ?, emails = ?::jsonb WHERE id = ?')
-      .run(folder.id, JSON.stringify(p.emails.filter((e) => keep.has(e.mail_key))), p.id);
+    // The card keeps only what was saved, under the name it was saved as.
+    await db.prepare('UPDATE case_proposals SET folder_id = ?, name = ?, emails = ?::jsonb WHERE id = ?')
+      .run(folder.id, folder.name, JSON.stringify(p.emails.filter((e) => keep.has(e.mail_key))), p.id);
   } catch (e) {
     await undo(user.id, made);
     if (folderId) await db.prepare('DELETE FROM case_folders WHERE id = ?').run(folderId);
