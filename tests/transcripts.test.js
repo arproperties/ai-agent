@@ -14,7 +14,7 @@ test.after(() => closeDb());
 // These drive the real ffmpeg, because turning a phone's audio into something the speech
 // API takes is the part that can break. They skip where ffmpeg is not installed.
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
-const tmp = mkdtempSync(join(tmpdir(), 'jarvis-transcripts-test-'));
+const tmp = mkdtempSync(join(tmpdir(), 'reem-transcripts-test-'));
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
 
 /** A few seconds of tone in the given container — what WhatsApp or a phone would hand over. */

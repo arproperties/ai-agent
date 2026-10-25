@@ -217,7 +217,7 @@ export async function readVideo(path) {
   const secs = await videoSeconds(path);
   if (secs > MAX_MINUTES * 60) throw new Error(`This video is ${Math.round(secs / 60)} minutes long; the limit is ${MAX_MINUTES}`);
 
-  const dir = mkdtempSync(join(tmpdir(), 'jarvis-video-'));
+  const dir = mkdtempSync(join(tmpdir(), 'reem-video-'));
   try {
     const audio = await videoAudio(path, dir);
     const shots = await videoFrames(path, dir, secs);

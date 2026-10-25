@@ -20,14 +20,14 @@ async function fixture() {
   await reset();
   const masterId = await makeUser('Master');
   await db.prepare("UPDATE users SET role = 'master' WHERE id = ?").run(masterId);
-  const jarvis = await makeAgent(masterId, 'Reem');
+  const reem = await makeAgent(masterId, 'Reem');
 
   // A normal account set up the way the People screen leaves one: a single agent they
   // talk to, everything else lending a shelf.
   const userId = await makeUser('Sara');
   await db.prepare(`INSERT INTO agent_assignments (agent_id, user_id, mode, is_primary)
-    VALUES (?, ?, 'chat', true)`).run(jarvis, userId);
-  return { masterId, userId, jarvis };
+    VALUES (?, ?, 'chat', true)`).run(reem, userId);
+  return { masterId, userId, reem };
 }
 
 const assignments = (userId) => db.prepare(`SELECT a.name, aa.mode, aa.is_primary

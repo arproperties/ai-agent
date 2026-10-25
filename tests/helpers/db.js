@@ -8,8 +8,8 @@ const url = process.env.TEST_DATABASE_URL;
 if (!url) {
   throw new Error(
     'TEST_DATABASE_URL is not set. Create a throwaway database and point at it:\n' +
-    '  createdb jarvis_test && psql -d jarvis_test -c "CREATE EXTENSION vector;"\n' +
-    '  TEST_DATABASE_URL=postgres://user:pass@localhost:5432/jarvis_test npm test'
+    '  createdb reem_test && psql -d reem_test -c "CREATE EXTENSION vector;"\n' +
+    '  TEST_DATABASE_URL=postgres://user:pass@localhost:5432/reem_test npm test'
   );
 }
 

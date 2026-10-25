@@ -10,7 +10,7 @@ import { scanCases } from './renewalCases.js';
 
 // saifsys's employee documents (passports, visas, Emirates IDs, labour cards, contracts),
 // copied onto the Shelf so Document Renewals, its alerts and its cases work on them like
-// on any file. Read through the Jarvis API (saifsys module hr_docs), never its database.
+// on any file. Read through saifsys's api/jarvis/v1 door (module hr_docs), never its database.
 // saifsys keeps its own copy: this only ever reads it. Run every night, and by the master
 // on the Document Renewals screen.
 //
@@ -94,7 +94,7 @@ export async function hrSalary(code, { base = process.env.SAIFSYS_HR_URL, key = 
   return e ? { basic: e.basic, allowance: e.allowance, bonus: e.bonus, total: e.total, paid_by: e.payment_label } : null;
 }
 
-/** Where saifsys's documents come from: its HR API when Reem has its key, else the Jarvis door. */
+/** Where saifsys's documents come from: its HR API when Reem has its key, else its api/jarvis/v1 door. */
 function source() {
   const base = process.env.SAIFSYS_HR_URL;
   const key = process.env.SAIFSYS_HR_KEY;

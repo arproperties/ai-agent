@@ -120,7 +120,7 @@ const NO_SPEECH = 'No speech was heard in this recording.';
 
 /** The words in an audio file on disk, as { text, seconds }. Errors come out in plain words. */
 async function audioToText(path) {
-  const dir = mkdtempSync(join(tmpdir(), 'jarvis-transcribe-'));
+  const dir = mkdtempSync(join(tmpdir(), 'reem-transcribe-'));
   try {
     const pieces = await toPieces(path, dir);
     let seconds = 0;
@@ -141,7 +141,7 @@ async function audioToText(path) {
  * page as well so it can be found again. name is the real (already decoded) filename.
  */
 export async function readAudio(userId, buffer, name) {
-  const dir = mkdtempSync(join(tmpdir(), 'jarvis-chat-audio-'));
+  const dir = mkdtempSync(join(tmpdir(), 'reem-chat-audio-'));
   try {
     const path = join(dir, `in.${(name.match(/\.([a-z0-9]{1,5})$/i)?.[1] || 'bin').toLowerCase()}`);
     await writeFile(path, buffer);

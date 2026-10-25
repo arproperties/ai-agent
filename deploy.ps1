@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Build and deploy Jarvis to jarvis.eloquentservice.com.
+# Build and deploy Reem to jarvis.eloquentservice.com (the host keeps its old name).
 # nginx serves client/dist from the webroot; pm2 runs the API on 127.0.0.1:3001.
 # Usage: ./deploy.ps1
 $ErrorActionPreference = "Stop"
@@ -25,7 +25,7 @@ if (-not (Test-Path "$root\client\dist\index.html")) { throw "Build output missi
 # same step, so a hung transfer can never leave a half-empty webroot behind.
 # node_modules, data/ and .env are deliberately excluded — the server owns those.
 Write-Host "==> Packaging" -ForegroundColor Cyan
-$tar = Join-Path $env:TEMP "jarvis-app.tar.gz"
+$tar = Join-Path $env:TEMP "reem-app.tar.gz"
 if (Test-Path $tar) { Remove-Item $tar -Force }
 Push-Location $root
 try {
@@ -34,15 +34,15 @@ try {
 } finally { Pop-Location }
 
 Write-Host "==> Uploading to $server`:$webroot" -ForegroundColor Cyan
-scp -i $key -o BatchMode=yes -o ConnectTimeout=15 $tar "$server`:/tmp/jarvis-app.tar.gz"
+scp -i $key -o BatchMode=yes -o ConnectTimeout=15 $tar "$server`:/tmp/reem-app.tar.gz"
 if ($LASTEXITCODE -ne 0) { throw "scp failed" }
 
 $remote = @'
 set -e
 cd /var/www/jarvis
 rm -rf server scripts tests client package.json package-lock.json README.md
-tar -xzf /tmp/jarvis-app.tar.gz -C /var/www/jarvis
-rm -f /tmp/jarvis-app.tar.gz
+tar -xzf /tmp/reem-app.tar.gz -C /var/www/jarvis
+rm -f /tmp/reem-app.tar.gz
 # onnxruntime otherwise pulls ~1GB of CUDA runtimes onto a droplet with no GPU
 export ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 npm install --omit=dev --no-audit --no-fund --onnxruntime-node-install-cuda=skip
@@ -53,11 +53,11 @@ pm2 restart jarvis --update-env
 '@
 # Shipped as a file rather than piped: Windows PowerShell would send it with a
 # UTF-8 BOM and CRLF line endings, both of which break bash on the first line.
-$sh = Join-Path $env:TEMP "jarvis-remote.sh"
+$sh = Join-Path $env:TEMP "reem-remote.sh"
 [System.IO.File]::WriteAllText($sh, $remote.Replace("`r`n", "`n"), (New-Object System.Text.UTF8Encoding $false))
-scp -i $key -o BatchMode=yes $sh "$server`:/tmp/jarvis-remote.sh"
+scp -i $key -o BatchMode=yes $sh "$server`:/tmp/reem-remote.sh"
 if ($LASTEXITCODE -ne 0) { throw "scp of deploy script failed" }
-ssh -i $key -o BatchMode=yes $server "bash /tmp/jarvis-remote.sh && rm -f /tmp/jarvis-remote.sh"
+ssh -i $key -o BatchMode=yes $server "bash /tmp/reem-remote.sh && rm -f /tmp/reem-remote.sh"
 if ($LASTEXITCODE -ne 0) { throw "remote deploy failed" }
 Remove-Item $tar, $sh -Force
 

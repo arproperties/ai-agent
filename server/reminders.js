@@ -80,7 +80,7 @@ function notify(userId, items) {
     url: '/?todos=1',
     // One tag for the lot: a later reminder replaces this notice rather than queueing
     // behind it, so the phone shows what is due now and not a history of the morning.
-    tag: 'jarvis-due',
+    tag: 'reem-due',
   });
 }
 
