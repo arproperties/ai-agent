@@ -30,6 +30,7 @@ import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
 import { caseRoutes } from './caseRoutes.js';
 import { startCaseFolders } from './caseWatch.js';
+import { caseShareRoutes, publicCaseRoutes } from './caseShare.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
 import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
@@ -63,6 +64,7 @@ app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; che
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
+app.use('/api/case-share', publicCaseRoutes); // a case folder shared by link: anyone with it, while it is on (caseShare.js)
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api', externalFence); // someone from outside the company reaches only their own things (access.js)
 app.use('/api', billingContext); // every AI call made for this request is priced to this person (billing.js)
@@ -100,6 +102,7 @@ app.use('/api/responsibilities', responsibilityRoutes); // who looks after what;
 app.use('/api/checklists', needsModule('checklists'), checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
+app.use('/api/cases', caseShareRoutes); // a case folder emailed, or its link turned on and off (external only)
 app.use('/api/cases', caseRoutes); // an external person's case folders, got ready from their inbox in chat (external only)
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)

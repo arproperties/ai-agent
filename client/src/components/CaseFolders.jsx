@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, Briefcase, Loader2, PenLine, RefreshCw, Trash2, Type, AlertCircle } from 'lucide-react';
+import { ChevronLeft, Briefcase, Loader2, PenLine, RefreshCw, Share2, Trash2, Type, AlertCircle } from 'lucide-react';
 import { api } from '../lib/api';
 import Sheet from './Sheet';
 import { FileCard } from './Knowledge';
+import CaseShareSheet from './CaseShareSheet';
 
 // An external person's case folders, first on their Shelf: each one a case's emails as PDFs
 // and attachments, kept up to date from their mailbox (server/caseRoutes.js).
@@ -136,6 +137,7 @@ export function CaseFolder({ folder: f, onBack, onOpenFile, onChanged }) {
         <button onClick={update} disabled={!!busy || !f.tracking} title={f.tracking ? '' : 'Keep updating is off'} className={btn}>
           <RefreshCw size={15} className={busy === 'update' ? 'animate-spin' : ''} /> {busy === 'update' ? 'Updating…' : 'Update now'}
         </button>
+        <button onClick={() => setSheet('share')} className={btn}><Share2 size={15} /> Share</button>
         <button onClick={() => setSheet('delete')} className={`${btn} text-bad`}><Trash2 size={15} /> Delete</button>
         <span className="ml-auto flex items-center gap-2.5 text-sm">
           Keep updating
@@ -162,6 +164,7 @@ export function CaseFolder({ folder: f, onBack, onOpenFile, onChanged }) {
           </form>
         </Sheet>
       )}
+      {sheet === 'share' && <CaseShareSheet folder={f} onClose={() => setSheet(null)} onChanged={onChanged} />}
       {sheet === 'delete' && (
         <Sheet title="Delete this folder?" onClose={() => setSheet(null)}>
           <div className="space-y-3">

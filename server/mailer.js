@@ -30,3 +30,12 @@ export async function sendPasswordReset(user, link) {
       <p style="color:#777;font-size:13px">If you didn't ask for this, you can ignore this email.</p></div>`,
   });
 }
+
+/**
+ * One email from the app's own address, for someone whose mailbox cannot send. replyTo is
+ * their own address, so the answer goes to them and not to the app.
+ */
+export async function sendMail({ to, cc, subject, text, replyTo, attachments }) {
+  if (!transport) throw Object.assign(new Error('Outgoing mail is not set up'), { status: 400 });
+  return transport.sendMail({ from: MAIL_FROM || SMTP_USER, to, cc, subject, text, replyTo, attachments });
+}
