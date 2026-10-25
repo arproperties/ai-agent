@@ -12,7 +12,9 @@ const RECENT_CAP = 200; // discovery reads the newest 200 mails only, newest kep
  * (or "All Mail"), so it is kept once, by Message-ID.
  */
 export async function collectCase(box, caseNumber, { since } = {}) {
-  const found = await box.matching({ term: searchTerm(caseNumber), since });
+  const term = searchTerm(caseNumber);
+  if (!term) return []; // no digits to look for: do not ask the mailbox for everything
+  const found = await box.matching({ term, since });
   const seen = new Set();
   const out = [];
   for (const m of found) {

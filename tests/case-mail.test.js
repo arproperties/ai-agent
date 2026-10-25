@@ -36,6 +36,12 @@ test('collectCase sorts oldest first and passes since on', async () => {
   assert.equal(box.calls[0].since, since);
 });
 
+test('collectCase with no digits in the case number does not ask the mailbox', async () => {
+  const box = stubBox([mail({ key: 'k', at: '2026-10-01', subject: 'anything' })]);
+  assert.deepEqual(await collectCase(box, 'no digits'), []);
+  assert.equal(box.calls.length, 0);
+});
+
 test('caseMailbox is null when no mailbox is connected', async () => {
   await reset();
   const id = await makeUser();

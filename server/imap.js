@@ -396,7 +396,8 @@ export async function imapMatching(userId, { term = '', since, limit = 500 } = {
           if (since && at < since) continue;
           out.push({
             key: `${path}:${m.uid}`, messageId: p.messageId || null, at,
-            from: p.from?.text || 'unknown', to: p.to?.text || '', subject: p.subject || '(no subject)',
+            from: [].concat(p.from || []).map((x) => x.text).filter(Boolean).join(', ') || 'unknown',
+            to: [].concat(p.to || []).map((x) => x.text).filter(Boolean).join(', '), subject: p.subject || '(no subject)',
             text: String(p.text || ''), attachments: attached(p),
           });
         }

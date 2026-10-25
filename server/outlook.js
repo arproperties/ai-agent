@@ -181,14 +181,13 @@ async function readAttachment(userId, { id, name }) {
  * Same Mail shape as imapMatching (key = the Outlook message id).
  */
 export async function outlookMatching(userId, { term = '', since, limit = 500 } = {}) {
-  const day = since ? new Date(since).toISOString().slice(0, 10) : null;
   const select = 'id,internetMessageId,subject,from,toRecipients,receivedDateTime,sentDateTime,body,hasAttachments';
   const text = { Prefer: 'outlook.body-content-type="text"' };
   const out = [];
   for (const folder of ['inbox', 'sentitems']) {
-    // Graph can't combine $search with $filter, so a term searches by day and the hours are checked below.
+    // Graph can't combine $search with $filter, so a term searches by term only and `since` is checked below.
     const params = term
-      ? { $search: `"${term.replace(/"/g, '')}${day ? ` received>=${day}` : ''}"`, $select: select, $top: '50' }
+      ? { $search: `"${term.replace(/"/g, '')}"`, $select: select, $top: '50' }
       : { $filter: `receivedDateTime ge ${(since ? new Date(since) : new Date(0)).toISOString()}`, $orderby: 'receivedDateTime desc', $select: select, $top: '50' };
     let next = `/me/mailFolders/${folder}/messages?${new URLSearchParams(params)}`;
     let got = 0;
@@ -203,8 +202,10 @@ export async function outlookMatching(userId, { term = '', since, limit = 500 } 
           const base = `/me/messages/${encodeURIComponent(m.id)}/attachments`;
           const { value = [] } = await graph(userId, `${base}?$select=id,name,contentType,size,isInline`);
           for (const a of value.filter((x) => !x.isInline && x.size <= MAX_BYTES)) {
-            const full = await graph(userId, `${base}/${encodeURIComponent(a.id)}`);
-            if (full.contentBytes) attachments.push({ name: a.name || 'unnamed', mimetype: a.contentType, buffer: Buffer.from(full.contentBytes, 'base64') });
+            try { // one bad attachment must not lose the whole case
+              const full = await graph(userId, `${base}/${encodeURIComponent(a.id)}`);
+              if (full.contentBytes) attachments.push({ name: a.name || 'unnamed', mimetype: a.contentType, buffer: Buffer.from(full.contentBytes, 'base64') });
+            } catch (e) { console.warn('[case-mail]', `skipped attachment ${a.name}: ${e.message}`); }
           }
         }
         out.push({
