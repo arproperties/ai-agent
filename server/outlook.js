@@ -175,4 +175,48 @@ async function readAttachment(userId, { id, name }) {
   return attachmentText({ name: pick.name, mimetype: pick.contentType, buffer: Buffer.from(a.contentBytes, 'base64') });
 }
 
+/**
+ * Every mail in the inbox and sent items that has `term` in it (no term: every mail), as
+ * full records, for case folders. Follows the paging links; newest `limit` kept.
+ * Same Mail shape as imapMatching (key = the Outlook message id).
+ */
+export async function outlookMatching(userId, { term = '', since, limit = 500 } = {}) {
+  const day = since ? new Date(since).toISOString().slice(0, 10) : null;
+  const select = 'id,internetMessageId,subject,from,toRecipients,receivedDateTime,sentDateTime,body,hasAttachments';
+  const text = { Prefer: 'outlook.body-content-type="text"' };
+  const out = [];
+  for (const folder of ['inbox', 'sentitems']) {
+    // Graph can't combine $search with $filter, so a term searches by day and the hours are checked below.
+    const params = term
+      ? { $search: `"${term.replace(/"/g, '')}${day ? ` received>=${day}` : ''}"`, $select: select, $top: '50' }
+      : { $filter: `receivedDateTime ge ${(since ? new Date(since) : new Date(0)).toISOString()}`, $orderby: 'receivedDateTime desc', $select: select, $top: '50' };
+    let next = `/me/mailFolders/${folder}/messages?${new URLSearchParams(params)}`;
+    let got = 0;
+    while (next && got < limit) {
+      const page = await graph(userId, next, text);
+      for (const m of page.value || []) {
+        got++;
+        const at = new Date(m.receivedDateTime || m.sentDateTime || 0);
+        if (since && at < since) continue;
+        const attachments = [];
+        if (m.hasAttachments) {
+          const base = `/me/messages/${encodeURIComponent(m.id)}/attachments`;
+          const { value = [] } = await graph(userId, `${base}?$select=id,name,contentType,size,isInline`);
+          for (const a of value.filter((x) => !x.isInline && x.size <= MAX_BYTES)) {
+            const full = await graph(userId, `${base}/${encodeURIComponent(a.id)}`);
+            if (full.contentBytes) attachments.push({ name: a.name || 'unnamed', mimetype: a.contentType, buffer: Buffer.from(full.contentBytes, 'base64') });
+          }
+        }
+        out.push({
+          key: m.id, messageId: m.internetMessageId || null, at,
+          from: person(m.from), to: (m.toRecipients || []).map(person).join(', '),
+          subject: m.subject || '(no subject)', text: String(m.body?.content || ''), attachments,
+        });
+      }
+      next = page['@odata.nextLink'] ? page['@odata.nextLink'].replace(GRAPH, '') : null;
+    }
+  }
+  return out.sort((a, b) => b.at - a.at).slice(0, limit);
+}
+
 export const outlookTools = { search_email: searchEmail, read_email: readEmail, read_attachment: readAttachment };
