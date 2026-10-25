@@ -316,8 +316,32 @@ test('two cards of the same case: the second Save is told the case has a folder'
   assert.equal(lost.reason.status, 409);
   assert.equal(lost.reason.message, 'This case already has a folder');
   assert.equal(await count('SELECT COUNT(*)::int n FROM case_folders'), 1);
-  assert.equal(await count("SELECT COUNT(*)::int n FROM case_proposals WHERE status = 'pending'"), 1);
-  await assert.rejects(decide(jeff, (got[0].status === 'rejected' ? one : two).id, { save: true }, deps), { status: 409, message: 'This case already has a folder' });
+  // The losing card is either back to waiting or already closed by the winner; either way it cannot save.
+  assert.equal(await count("SELECT COUNT(*)::int n FROM case_proposals WHERE status = 'saved'"), 1);
+  await assert.rejects(decide(jeff, (got[0].status === 'rejected' ? one : two).id, { save: true }, deps), { status: 409 });
+});
+
+test('saving one card of a case closes its other waiting cards', async () => {
+  const [one] = await propose(jeff, { case_number: '205791' }, { conversationId: conv }, deps);
+  const [two] = await propose(jeff, { case_number: 'Soutex E - 205791' }, { conversationId: conv }, deps);
+  await decide(jeff, two.id, { save: true }, deps);
+  assert.equal((await getCard(jeff, one.id)).status, 'cancelled');
+  assert.equal(await count("SELECT COUNT(*)::int n FROM case_proposals WHERE status = 'pending'"), 0);
+});
+
+test('calendar invites and winmail.dat are not kept', async () => {
+  const b = (s) => Buffer.from(s);
+  box.mails[0] = { ...CASE[0], attachments: [
+    { name: 'invite1.ics', mimetype: 'application/ics', buffer: b('BEGIN:VCALENDAR') },
+    { name: 'meeting', mimetype: 'text/calendar', buffer: b('BEGIN:VCALENDAR 2') },
+    { name: 'winmail.dat', mimetype: 'application/ms-tnef', buffer: b('tnef') },
+    { name: 'claim.txt', mimetype: 'text/plain', buffer: b('Statement of claim') },
+  ] };
+  const [card] = await propose(jeff, { case_number: '205791' }, { conversationId: conv }, deps);
+  await decide(jeff, card.id, { save: true }, deps);
+  const titles = (await db.prepare('SELECT title FROM documents WHERE case_folder_id IS NOT NULL ORDER BY id').all()).map((d) => d.title);
+  assert.ok(titles.includes('claim.txt'));
+  assert.ok(!titles.some((t) => /\.ics$|winmail|^meeting$/i.test(t)), titles.join(', '));
 });
 
 test('an edited name is taken as typed, not as a pattern', async () => {

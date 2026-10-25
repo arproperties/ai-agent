@@ -246,6 +246,11 @@ async function saveFile(userId, folderId, { buffer, name, mimetype }, text, made
 
 const emailPdfName = (row) => pdfName(`${new Date(row.at * 1000).toISOString().slice(0, 10)} ${row.subject || 'Email'}`);
 
+// Calendar invites and Outlook's winmail.dat wrappers say nothing a reader needs, and the
+// Shelf cannot open them: they would only sit in the folder as unreadable files.
+const notKept = (a) => /\.(ics|vcs)$/i.test(a.name || '') || /^(text\/calendar|application\/(ics|ms-tnef))$/i.test(a.mimetype || '')
+  || /^winmail\.dat$/i.test(a.name || '');
+
 /** The per-email PDFs and original attachments of these emails. */
 async function saveEmailFiles(userId, folder, rows, mails, made) {
   const byKey = new Map(mails.map((m) => [m.key, m]));
@@ -258,7 +263,7 @@ async function saveEmailFiles(userId, folder, rows, mails, made) {
     }
     for (const a of byKey.get(row.mail_key)?.attachments || []) {
       const buffer = a?.buffer;
-      if (!buffer?.length) continue;
+      if (!buffer?.length || notKept(a)) continue;
       await saveFile(userId, folder.id, { buffer, name: a.name || 'attachment', mimetype: a.mimetype || 'application/octet-stream' }, undefined, made);
     }
   }
@@ -352,6 +357,10 @@ export async function decide(user, id, { save, name, full_pdf: fullPdf = true, p
     // The card keeps only what was saved, under the name it was saved as.
     await db.prepare('UPDATE case_proposals SET folder_id = ?, name = ?, emails = ?::jsonb WHERE id = ?')
       .run(folder.id, folder.name, JSON.stringify(p.emails.filter((e) => keep.has(e.mail_key))), p.id);
+    // Other cards of this case still waiting (asked twice) can no longer be saved: close them.
+    const others = (await db.prepare("SELECT id, case_number FROM case_proposals WHERE user_id = ? AND status = 'pending' AND id <> ?").all(user.id, p.id))
+      .filter((o) => caseKey(o.case_number) === key).map((o) => o.id);
+    for (const o of others) await db.prepare(`UPDATE case_proposals SET status = 'cancelled', decided_at = ${NOW} WHERE id = ? AND status = 'pending'`).run(o);
   } catch (e) {
     await undo(user.id, made);
     if (folderId) await db.prepare('DELETE FROM case_folders WHERE id = ?').run(folderId);
