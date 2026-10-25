@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, X, Users, Eye } from 'lucide-react';
+import { Search, X, Users, Eye, ChevronRight } from 'lucide-react';
 import { api } from '../lib/api';
 import { groupChats } from '../lib/chatGroups';
 import Icon from './Icon';
@@ -47,6 +47,8 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState(null);
   const searchRef = useRef(null);
+  const [teamOpen, setTeamOpen] = useState(() => { try { return localStorage.getItem('teamOpen') === '1'; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem('teamOpen', teamOpen ? '1' : '0'); } catch { /* private window */ } }, [teamOpen]);
   // Only shown once somebody has actually looked at this account, so it is silent for
   // anyone nobody inspects - and impossible to miss for anyone who is.
   const [watched, setWatched] = useState(0);
@@ -124,8 +126,13 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
             already says, so only show it to the master (who adds agents here) or to
             anyone who really does have a team. */}
         {showTeam && (<>
-          <Label action={<span>{agents.length}</span>}>Your team</Label>
-          <div className="grid grid-cols-4 gap-y-3 px-1.5 pt-1">
+          {/* Folded by default: a big team would otherwise push the chats off the screen. */}
+          <button onClick={() => setTeamOpen(!teamOpen)} aria-expanded={teamOpen}
+            className="flex w-full items-center justify-between px-2.5 pb-1 pt-4 text-[11px] font-medium text-mute/80 hover:text-txt">
+            <span className="flex items-center gap-1">Your team <ChevronRight size={13} className={`transition ${teamOpen ? 'rotate-90' : ''}`} /></span>
+            <span>{agents.length}</span>
+          </button>
+          {teamOpen && <div className="grid grid-cols-4 gap-y-3 px-1.5 pt-1">
             {agents.map((a) => (
               <button key={a.id} onClick={() => onEditAgent(a)} title={`Edit ${a.name}`} className="group flex flex-col items-center gap-1">
                 <Avatar icon={a.icon} color={a.color} size={36} className="transition group-hover:scale-105 group-active:scale-95" />
@@ -142,7 +149,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
                 <span className="text-[11px] text-mute">Add</span>
               </button>
             )}
-          </div>
+          </div>}
         </>)}
 
         {/* Search sits under the team, just above the chats it searches. */}

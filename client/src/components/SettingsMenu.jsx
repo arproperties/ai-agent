@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, FileClock, Gavel } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, FileClock, Gavel, ChevronRight, Search } from 'lucide-react';
 import Icon from './Icon';
 import { Row, Count } from './NavRow';
 import { THEMES, currentTheme, setTheme } from '../lib/theme';
@@ -19,10 +19,37 @@ import { THEMES, currentTheme, setTheme } from '../lib/theme';
  * and choosing one leaves the menu open, so you can try each against the app behind it
  * before settling.
  */
+// One folding group of rows. Closed, it is a single line (with the total of any counts
+// inside, so nothing waiting goes unseen); open, it shows its rows. While searching,
+// every group opens and keeps only the rows whose name matches. A group with nothing in
+// it for this person (no module ticked, or no match) is left out entirely.
+function Group({ title, open, onToggle, count = 0, q = '', children }) {
+  const term = q.trim().toLowerCase();
+  const rows = [].concat(children).filter(Boolean)
+    .filter((r) => !term || String(r.props.label).toLowerCase().includes(term));
+  if (!rows.length) return null;
+  if (term) return <div className="space-y-0.5">{rows}</div>;
+  return (
+    <div>
+      <button onClick={onToggle} aria-expanded={open}
+        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition hover:bg-white/[0.06]">
+        <ChevronRight size={15} className={`text-mute transition ${open ? 'rotate-90' : ''}`} />
+        <span className="flex-1">{title}</span>
+        {!open && <Count n={count} />}
+      </button>
+      {open && <div className="space-y-0.5 pb-1 pl-3">{rows}</div>}
+    </div>
+  );
+}
+
 export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, modules = [], renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
+  // One group open at a time; Work first, since that is where the counts usually are.
+  const [group, setGroup] = useState('Work');
+  const [q, setQ] = useState('');
+  const fold = (name) => ({ q, open: group === name, onToggle: () => setGroup(group === name ? null : name) });
 
   // Clicking anywhere else, or pressing Escape, puts it away -- the two things everyone
   // tries first when a menu is in the way.
@@ -36,7 +63,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
   }, [open]);
 
   // Picking somewhere closes the menu on the way there.
-  const go = (fn) => () => { setOpen(false); fn(); };
+  const go = (fn) => () => { setOpen(false); setQ(''); fn(); };
   const waiting = expiring + dueTodos + (tenantCare?.waiting || 0);
   // Reem's own modules (server/modules.js): a row is there only for the people the master
   // has given it to, and for the master.
@@ -56,44 +83,57 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
 
       {open && (
         <div role="menu" aria-label="Settings"
-          className="menu-glass absolute bottom-full left-2 right-2 z-50 mb-1 space-y-0.5 rounded-xl p-1.5">
-          {has('shelf') && (
-            <Row role="menuitem" icon={<Icon name="folder" size={17} />} label="Shelf" active={filesOpen} onClick={go(onFiles)}
-              aria-label={expiring ? `Shelf (${expiring} expiring)` : 'Shelf'} badge={<Count n={expiring} />} />
-          )}
-          {has('legal') && <Row role="menuitem" icon={<Gavel size={17} strokeWidth={1.75} />} label="Legal cases" active={legalOpen} onClick={go(onLegal)} />}
-          {has('todos') && (
-            <Row role="menuitem" icon={<ListTodo size={17} strokeWidth={1.75} />} label="To-do" active={todosOpen} onClick={go(onTodos)}
-              aria-label={dueTodos ? `To-do (${dueTodos} due)` : 'To-do'} badge={<Count n={dueTodos} />} />
-          )}
-          {has('translate') && <Row role="menuitem" icon={<Languages size={17} strokeWidth={1.75} />} label="Live Translator" active={translateOpen} onClick={go(onTranslate)} />}
-          {has('meetings') && <Row role="menuitem" icon={<AudioLines size={17} strokeWidth={1.75} />} label="Meetings" active={meetingsOpen} onClick={go(onMeetings)} />}
-          {has('transcribe') && <Row role="menuitem" icon={<Captions size={17} strokeWidth={1.75} />} label="Transcribe" active={transcribeOpen} onClick={go(onTranscribe)} />}
-          {/* Only for the people who look after the tenant inbox (and the master). */}
-          {tenantCare?.member && (
-            <Row role="menuitem" icon={<Building2 size={17} strokeWidth={1.75} />} label="Tenant care" active={tenantCareOpen} onClick={go(onTenantCare)}
-              aria-label={tenantCare.waiting ? `Tenant care (${tenantCare.waiting} waiting)` : 'Tenant care'} badge={<Count n={tenantCare.waiting} />} />
-          )}
-          {has('renewals') && <Row role="menuitem" icon={<FileSignature size={17} strokeWidth={1.75} />} label="Lease renewals" active={renewalsOpen} onClick={go(onRenewals)} />}
-          {has('document_renewals') && <Row role="menuitem" icon={<FileClock size={17} strokeWidth={1.75} />} label="Document renewals" active={docRenewalsOpen} onClick={go(onDocRenewals)} />}
-          {/* The shared mailbox: who each email goes to, and who sent what. The master's alone. */}
-          {user.role === 'master' && <Row role="menuitem" icon={<Split size={17} strokeWidth={1.75} />} label="Mail routing" active={mailRoutingOpen} onClick={go(onMailRouting)} />}
-          {/* The company mailboxes Reem may send to. The master's alone. */}
-          {user.role === 'master' && <Row role="menuitem" icon={<BookUser size={17} strokeWidth={1.75} />} label="Address book" active={addressBookOpen} onClick={go(onAddressBook)} />}
-          {/* What the AI cost, by person, job and model. The master's alone. */}
-          {user.role === 'master' && <Row role="menuitem" icon={<Receipt size={17} strokeWidth={1.75} />} label="Billing" active={billingOpen} onClick={go(onBilling)} />}
-          {/* The emails Mail routing passed on to them, answered from the shared address. */}
-          {sharedInbox && <Row role="menuitem" icon={<Inbox size={17} strokeWidth={1.75} />} label="Shared inbox" active={sharedInboxOpen} onClick={go(onSharedInbox)} />}
-          {has('duties') && <Row role="menuitem" icon={<ClipboardList size={17} strokeWidth={1.75} />} label="My responsibilities" active={dutiesOpen} onClick={go(onDuties)} />}
-          {has('checklists') && <Row role="menuitem" icon={<ListChecks size={17} strokeWidth={1.75} />} label="Checklists" active={checklistsOpen} onClick={go(onChecklists)} />}
-          {/* Only for the master and for whoever runs a building: the field staff's jobs. */}
-          {hasBuildings && <Row role="menuitem" icon={<HardHat size={17} strokeWidth={1.75} />} label="Buildings" active={buildingsOpen} onClick={go(onBuildings)} />}
-          {/* The same people keep the inventory of those buildings. */}
-          {hasBuildings && <Row role="menuitem" icon={<Package size={17} strokeWidth={1.75} />} label="Inventory" active={inventoryOpen} onClick={go(onInventory)} />}
-          {has('memory') && <Row role="menuitem" icon={<Icon name="brain" size={17} />} label="Memory" onClick={go(onMemory)} />}
-          {has('email') && <Row role="menuitem" icon={<Icon name="mail" size={17} />} label="Email" onClick={go(onEmail)} />}
-          {/* Only the master manages people; the server refuses anyone else. */}
-          {user.role === 'master' && <Row role="menuitem" icon={<Users size={17} />} label="People" onClick={go(onPeople)} />}
+          className="menu-glass absolute bottom-full left-2 right-2 z-50 mb-1 max-h-[75vh] overflow-y-auto rounded-xl p-1.5">
+          <div className="mb-1 flex items-center gap-2 rounded-lg bg-white/[0.06] px-2.5">
+            <Search size={15} className="shrink-0 text-mute" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" autoFocus
+              className="w-full bg-transparent py-1.5 text-sm outline-none placeholder:text-mute/70" />
+          </div>
+          <Group title="Work" {...fold('Work')} count={expiring + dueTodos}>
+            {has('shelf') && (
+              <Row role="menuitem" icon={<Icon name="folder" size={17} />} label="Shelf" active={filesOpen} onClick={go(onFiles)}
+                aria-label={expiring ? `Shelf (${expiring} expiring)` : 'Shelf'} badge={<Count n={expiring} />} />
+            )}
+            {has('todos') && (
+              <Row role="menuitem" icon={<ListTodo size={17} strokeWidth={1.75} />} label="To-do" active={todosOpen} onClick={go(onTodos)}
+                aria-label={dueTodos ? `To-do (${dueTodos} due)` : 'To-do'} badge={<Count n={dueTodos} />} />
+            )}
+            {has('duties') && <Row role="menuitem" icon={<ClipboardList size={17} strokeWidth={1.75} />} label="My responsibilities" active={dutiesOpen} onClick={go(onDuties)} />}
+            {has('checklists') && <Row role="menuitem" icon={<ListChecks size={17} strokeWidth={1.75} />} label="Checklists" active={checklistsOpen} onClick={go(onChecklists)} />}
+            {has('legal') && <Row role="menuitem" icon={<Gavel size={17} strokeWidth={1.75} />} label="Legal cases" active={legalOpen} onClick={go(onLegal)} />}
+          </Group>
+          <Group title="Property" {...fold('Property')} count={tenantCare?.waiting || 0}>
+            {has('renewals') && <Row role="menuitem" icon={<FileSignature size={17} strokeWidth={1.75} />} label="Lease renewals" active={renewalsOpen} onClick={go(onRenewals)} />}
+            {/* Only for the people who look after the tenant inbox (and the master). */}
+            {tenantCare?.member && (
+              <Row role="menuitem" icon={<Building2 size={17} strokeWidth={1.75} />} label="Tenant care" active={tenantCareOpen} onClick={go(onTenantCare)}
+                aria-label={tenantCare.waiting ? `Tenant care (${tenantCare.waiting} waiting)` : 'Tenant care'} badge={<Count n={tenantCare.waiting} />} />
+            )}
+            {/* Only for the master and for whoever runs a building: the field staff's jobs. */}
+            {hasBuildings && <Row role="menuitem" icon={<HardHat size={17} strokeWidth={1.75} />} label="Buildings" active={buildingsOpen} onClick={go(onBuildings)} />}
+            {/* The same people keep the inventory of those buildings. */}
+            {hasBuildings && <Row role="menuitem" icon={<Package size={17} strokeWidth={1.75} />} label="Inventory" active={inventoryOpen} onClick={go(onInventory)} />}
+          </Group>
+          <Group title="People & mail" {...fold('People & mail')}>
+            {has('document_renewals') && <Row role="menuitem" icon={<FileClock size={17} strokeWidth={1.75} />} label="Document renewals" active={docRenewalsOpen} onClick={go(onDocRenewals)} />}
+            {has('email') && <Row role="menuitem" icon={<Icon name="mail" size={17} />} label="Email" onClick={go(onEmail)} />}
+            {/* The emails Mail routing passed on to them, answered from the shared address. */}
+            {sharedInbox && <Row role="menuitem" icon={<Inbox size={17} strokeWidth={1.75} />} label="Shared inbox" active={sharedInboxOpen} onClick={go(onSharedInbox)} />}
+            {/* The shared mailbox: who each email goes to, and who sent what. The master's alone. */}
+            {user.role === 'master' && <Row role="menuitem" icon={<Split size={17} strokeWidth={1.75} />} label="Mail routing" active={mailRoutingOpen} onClick={go(onMailRouting)} />}
+            {/* The company mailboxes Reem may send to. The master's alone. */}
+            {user.role === 'master' && <Row role="menuitem" icon={<BookUser size={17} strokeWidth={1.75} />} label="Address book" active={addressBookOpen} onClick={go(onAddressBook)} />}
+            {/* Only the master manages people; the server refuses anyone else. */}
+            {user.role === 'master' && <Row role="menuitem" icon={<Users size={17} />} label="People" onClick={go(onPeople)} />}
+          </Group>
+          <Group title="Tools" {...fold('Tools')}>
+            {has('translate') && <Row role="menuitem" icon={<Languages size={17} strokeWidth={1.75} />} label="Live Translator" active={translateOpen} onClick={go(onTranslate)} />}
+            {has('meetings') && <Row role="menuitem" icon={<AudioLines size={17} strokeWidth={1.75} />} label="Meetings" active={meetingsOpen} onClick={go(onMeetings)} />}
+            {has('transcribe') && <Row role="menuitem" icon={<Captions size={17} strokeWidth={1.75} />} label="Transcribe" active={transcribeOpen} onClick={go(onTranscribe)} />}
+            {has('memory') && <Row role="menuitem" icon={<Icon name="brain" size={17} />} label="Memory" onClick={go(onMemory)} />}
+            {/* What the AI cost, by person, job and model. The master's alone. */}
+            {user.role === 'master' && <Row role="menuitem" icon={<Receipt size={17} strokeWidth={1.75} />} label="Billing" active={billingOpen} onClick={go(onBilling)} />}
+          </Group>
           <div className="mt-1 flex items-center gap-3 border-t border-stroke/60 px-3 pb-1.5 pt-2.5">
             <span className="flex-1 text-[11px] font-medium text-mute/80">Theme</span>
             {THEMES.map((t) => {
