@@ -47,10 +47,11 @@ const oneOut = async (userId, id) => (await foldersOut(userId, Number(id)))[0];
  */
 async function deleteFolder(userId, id) {
   const f = await ownFolder(userId, id);
-  const docs = await db.prepare('SELECT id, created_at FROM documents WHERE user_id = ? AND case_folder_id = ?').all(userId, f.id);
+  // Only a file the case itself made is deleted; anything else in the folder is the user's own.
+  const docs = await db.prepare('SELECT id, case_made FROM documents WHERE user_id = ? AND case_folder_id = ?').all(userId, f.id);
   for (const d of docs) {
-    if (Number(d.created_at) < Number(f.created_at)) await db.prepare('UPDATE documents SET case_folder_id = NULL WHERE id = ?').run(d.id);
-    else await deleteDocument(userId, d.id);
+    if (d.case_made) await deleteDocument(userId, d.id);
+    else await db.prepare('UPDATE documents SET case_folder_id = NULL WHERE id = ?').run(d.id);
   }
   await db.prepare('DELETE FROM case_folders WHERE id = ?').run(f.id); // its case_emails go with it
 }

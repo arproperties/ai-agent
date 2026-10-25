@@ -141,7 +141,7 @@ publicCaseRoutes.get('/:token/files/:docId', wrap(async (req, res) => {
   const d = f && await db.prepare('SELECT * FROM documents WHERE id = ? AND case_folder_id = ? AND user_id = ?').get(Number(req.params.docId) || 0, f.id, f.user_id);
   if (!d?.path || !existsSync(d.path)) return gone(res);
   // Always a download, never shown inline on this address.
-  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(d.name || 'file')}`);
+  res.setHeader('Content-Disposition', `attachment; filename="${String(d.name || 'file').replace(/[^ -~]|["\\]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(d.name || 'file')}`);
   res.type(d.mime || 'application/octet-stream');
   createReadStream(d.path).on('error', () => res.destroy()).pipe(res);
 }));

@@ -239,7 +239,7 @@ async function saveFile(userId, folderId, { buffer, name, mimetype }, text, made
     return doc;
   }
   made.created.push(doc.id);
-  await db.prepare('UPDATE documents SET case_folder_id = ? WHERE id = ?').run(folderId, doc.id);
+  await db.prepare('UPDATE documents SET case_folder_id = ?, case_made = true WHERE id = ?').run(folderId, doc.id);
   await processDocument(doc, f, text, [], '', { classify: false });
   return doc;
 }
@@ -374,6 +374,17 @@ export async function refresh(user, folderId, deps = {}) {
   const folder = await db.prepare('SELECT * FROM case_folders WHERE id = ? AND user_id = ?').get(Number(folderId) || 0, user.id);
   if (!folder) throw notFound();
   if (!folder.tracking) return { added: 0 };
+  // One refresh per folder at a time: a second one would file the same new email twice.
+  if (REFRESHING.has(folder.id)) return { added: 0 };
+  REFRESHING.add(folder.id);
+  try {
+    return await refreshFolder(user, folder, deps);
+  } finally { REFRESHING.delete(folder.id); }
+}
+
+const REFRESHING = new Set();
+
+async function refreshFolder(user, folder, deps) {
   let added = [];
   const made = ledger();
   try {
@@ -385,7 +396,7 @@ export async function refresh(user, folderId, deps = {}) {
     const ids = new Set(skip.map((r) => r.message_id).filter(Boolean));
     // The same email under another key (Inbox and All Mail) is not new either.
     const mails = (await collectCase(box, folder.case_number, { since })).filter((m) => !keys.has(m.key) && !(m.messageId && ids.has(m.messageId)));
-    added = await insertEmails(folder.id, mails.map(toRow));
+    added = await tx(() => insertEmails(folder.id, mails.map(toRow))); // all or none
     if (added.length) {
       await saveEmailFiles(user.id, folder, added, mails, made);
       if (folder.full_pdf) await writeCasePdf(user.id, folder, deps, made);

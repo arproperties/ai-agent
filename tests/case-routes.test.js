@@ -121,3 +121,24 @@ test('another external user\'s folder is not found', async () => {
   });
   assert.notEqual((await db.prepare('SELECT name FROM case_folders WHERE id = ?').get(folder.id)).name, 'Mine now');
 });
+
+test('a file jeff uploads later, then linked by a refresh, survives deleting the folder', async () => {
+  const mine = Buffer.from('uploaded by jeff after the folder was saved');
+  const { doc } = await saveUpload(jeff.id, null, { buffer: mine, originalname: 'mine.txt', mimetype: 'text/plain', size: mine.length });
+  box.mails.push(mail({ key: 'INBOX:8', messageId: '<8@x>', at: new Date().toISOString(), subject: 'Soutex E - 205791 exhibit', text: 'Attached.', attachments: [{ name: 'same.txt', mimetype: 'text/plain', buffer: mine }] }));
+  assert.deepEqual(await refresh(jeff, folder.id, deps), { added: 1 });
+  assert.equal((await db.prepare('SELECT case_folder_id FROM documents WHERE id = ?').get(doc.id)).case_folder_id, folder.id);
+  await serve(jeff, async ({ del }) => assert.equal((await del(`/${folder.id}`)).status, 200));
+  const after = await db.prepare('SELECT * FROM documents WHERE id = ?').get(doc.id);
+  assert.ok(after);
+  assert.equal(after.case_folder_id, null);
+  assert.ok(existsSync(after.path));
+});
+
+test('two refreshes at once add the new email once', async () => {
+  box.mails.push(mail({ key: 'INBOX:9', messageId: '<9@x>', at: new Date().toISOString(), subject: 'Soutex E - 205791 order', text: 'Order.' }));
+  const [a, b] = await Promise.all([refresh(jeff, folder.id, deps), refresh(jeff, folder.id, deps)]);
+  assert.equal(a.added + b.added, 1);
+  assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM case_emails WHERE folder_id = ?').get(folder.id)).n, 3);
+  assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM documents WHERE case_folder_id = ?').get(folder.id)).n, 1);
+});
