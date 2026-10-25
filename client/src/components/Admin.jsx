@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, EyeOff, Check, Pencil, AlertTriangle, Star, Search, X } from 'lucide-react';
 import { api } from '../lib/api';
+import { cleanEmail } from '../lib/email';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
 import { ResponsibilitiesEditor } from './Responsibilities';
@@ -63,7 +64,7 @@ function AddPerson({ onAdded, onCancel }) {
   const [f, setF] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const set = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setError(''); };
+  const set = (k) => (e) => { setF({ ...f, [k]: k === 'email' ? cleanEmail(e.target.value) : e.target.value }); setError(''); };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -103,7 +104,7 @@ function EditPerson({ person, isMe, onSaved, onCancel }) {
   const [f, setF] = useState({ name: person.name, email: person.email, password: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const set = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setError(''); };
+  const set = (k) => (e) => { setF({ ...f, [k]: k === 'email' ? cleanEmail(e.target.value) : e.target.value }); setError(''); };
 
   const submit = async (e) => {
     e.preventDefault();
