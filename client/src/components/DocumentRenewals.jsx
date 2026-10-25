@@ -3,6 +3,7 @@ import {
   Loader2, AlertTriangle, Search, X, ChevronRight, Check, FileText, Ban, Undo2, Building2, UserRound, RefreshCw, Settings2, Send, Paperclip, Bell as BellIcon, Briefcase,
 } from 'lucide-react';
 import { api } from '../lib/api';
+import { cleanEmail } from '../lib/email';
 import Page from './Page';
 import Picker from './Picker';
 import Sheet from './Sheet';
@@ -278,7 +279,7 @@ function ContractModal({ code, name, kind, onClose, onError }) {
 function Addresses({ label, value, onChange }) {
   const [text, setText] = useState('');
   const add = () => {
-    const more = text.split(/[,;\s]+/).map((a) => a.trim()).filter(Boolean);
+    const more = text.split(/[,;\s]+/).map(cleanEmail).filter(Boolean);
     if (more.length) onChange([...new Set([...value, ...more])]);
     setText('');
   };
