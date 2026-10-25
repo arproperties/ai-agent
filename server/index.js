@@ -29,6 +29,7 @@ import { fileAccessRoutes } from './fileAccess.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
 import { caseRoutes } from './caseRoutes.js';
+import { startCaseFolders } from './caseWatch.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
 import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
@@ -445,6 +446,7 @@ app.listen(PORT, '0.0.0.0', () => {
   billAs({ userId: null, job: 'tenantcare' }, startTenantCare); // does nothing until the Tenant care inbox is connected
   billAs({ userId: null, job: 'renewals' }, startLeaseRenewals); // reads tenants' replies to renewals and sends the reminders
   billAs({ userId: null, job: 'mail' }, startMailRouting); // does nothing until the shared mailbox is connected
+  startCaseFolders(); // external users' case folders take in new case mail; each folder is billed to its owner
   billAs({ userId: null, job: 'buildings' }, startBuildings); // buzzes a building's administrator when a staff job needs them
   billAs({ userId: null, job: 'other' }, startRecurringPayments); // creates each recurring payment's line on its day of the month
   // meeting recordings that were still waiting to be transcribed when the server stopped
