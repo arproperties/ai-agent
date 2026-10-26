@@ -846,9 +846,10 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork }) {
   const [error, setError] = useState('');
   const [importing, setImporting] = useState(false); // the leases from Rent Manager's Rent Roll
   const [view, see] = useView('bookings');
-  // The order: as added, newest first (so the booking just made is at the top), or by start date as the server sends them.
-  const [sort, setSort] = useState(() => { try { return localStorage.getItem('bookings-sort') === 'start' ? 'start' : 'added'; } catch { return 'added'; } });
-  const order = (k) => { setSort(k); try { localStorage.setItem('bookings-sort', k); } catch { /* private mode: it just is not remembered */ } };
+  // The order: by unit number (101, 102 … building by building, the default), as added, newest first
+  // (so the booking just made is at the top), or by start date as the server sends them.
+  const [sort, setSort] = useState(() => { try { const k = localStorage.getItem('bookings-order'); return k === 'start' || k === 'added' ? k : 'unit'; } catch { return 'unit'; } });
+  const order = (k) => { setSort(k); try { localStorage.setItem('bookings-order', k); } catch { /* private mode: it just is not remembered */ } };
   const load = () => api.get(`/leasing/bookings?q=${encodeURIComponent(q)}`).then(setRows).catch((e) => setError(e.message));
   useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [q]);
 
@@ -858,7 +859,9 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork }) {
   const [to, setTo] = useState('');
   const dated = rows && rows.filter((b) => (!to || b.start_date <= to) && (!from || b.end_date >= from));
   const staged = dated && (stage ? dated.filter((b) => b.stage === stage) : dated);
-  const shown = staged && (sort === 'added' ? [...staged].sort((a, b) => b.id - a.id) : staged);
+  // Unit numbers compare as numbers ("101" before "1001"); one unit's leases show the latest first.
+  const byUnit = (a, b) => (a.building || '').localeCompare(b.building || '') || String(a.unit_no).localeCompare(String(b.unit_no), undefined, { numeric: true }) || (b.start_date || '').localeCompare(a.start_date || '');
+  const shown = staged && (sort === 'added' ? [...staged].sort((a, b) => b.id - a.id) : sort === 'unit' ? [...staged].sort(byUnit) : staged);
   const count = (k) => dated?.filter((b) => b.stage === k).length || 0;
   const paged = usePaged(shown, [q, stage, from, to, sort].join('|')); // cards or table, a page at a time
   return (
@@ -878,7 +881,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork }) {
           ))}
         </div>
         <span className="ml-auto flex flex-wrap items-center gap-2">
-          <Select value={sort} onChange={(e) => order(e.target.value)} options={[['added', 'Newest added first'], ['start', 'By start date']]} aria-label="Order" className="glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none" wrap="w-48" />
+          <Select value={sort} onChange={(e) => order(e.target.value)} options={[['unit', 'By unit number'], ['added', 'Newest added first'], ['start', 'By start date']]} aria-label="Order" className="glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none" wrap="w-48" />
           <DateRange from={from} to={to} onChange={(a, b) => { setFrom(a); setTo(b); }} className="glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none" />
           <ViewToggle view={view} onView={see} />
         </span>
