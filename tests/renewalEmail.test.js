@@ -32,8 +32,9 @@ async function office() {
   const visa = await add('Residence Visa', { file: false });
   await add('Passport', { code: 'E-0077' }); // someone else's
   const c = await rc.startCase(boss, contract, 'renew');
+  // What Reem read off the contract: its terms are the ones kept.
   await rc.propose(boss, c.id, { mode: 'keep', terms: { new_start: '2026-11-20', new_end: '2028-11-20', effective_date: '2026-11-20' }, note: 'Good worker' },
-    { ask: async () => ({ employee: { salary: { basic: 2000, allowance: 3000, total: 5000 }, position: 'Clerk' } }) });
+    { contract: async () => ({ basic: 2000, allowance: 3000, total: 5500, position: 'Clerk', hours: '48 hours a week', confidence: 'high' }) });
   return { boss, caseId: c.id, contract, passport, visa };
 }
 const mailbox = async () => ({ email: 'hr@example.com', can_write: true, smtp_host: 'smtp.example.com' });
@@ -51,7 +52,11 @@ test('a renewal email goes to the PRO: their address in To, who and the new peri
   assert.match(d.body, /^Dear Pro Person,/);
   assert.match(d.body, /Please process the renewal of the labour contract of Ahmed Khan \(E-0042\), AAR Properties/);
   assert.match(d.body, /New contract: 2 years, 20 Nov 2026 to 20 Nov 2028/);
+  assert.match(d.body, /Terms: same as the current contract/);
+  assert.match(d.body, /Job title: Clerk/);
   assert.match(d.body, /Basic salary: AED 2,000 a month/);
+  assert.match(d.body, /Total: AED 5,500 a month/, 'the contract\'s own total, when it prints one');
+  assert.match(d.body, /Working hours: 48 hours a week/);
   assert.match(d.body, /Good worker/, 'HR\'s note is for the PRO');
   assert.deepEqual(d.documents.map((x) => x.id).sort(), [contract, passport, visa].sort(), 'only this employee\'s');
   assert.equal(d.from, 'hr@example.com');
@@ -98,6 +103,16 @@ test('sending switched off (the default): nothing is drafted and nothing goes ou
   await assert.rejects(sendCaseEmail(boss, caseId, { to: 'pro@example.com', subject: 's', body: 'b', document_ids: [contract] }, { mailbox, kick: () => { kicked++; } }), /switched off/);
   assert.equal(kicked, 0);
   assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM email_drafts').get()).n, 0);
+});
+
+test('the master\'s switch in settings lets Send go out', async () => {
+  const { boss, caseId, contract } = await office();
+  await rc.saveCaseSettings(boss, { send_on: true });
+  let kicked = 0;
+  const fetch = async (user, id) => db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+  const out = await sendCaseEmail(boss, caseId, { to: 'pro@example.com', subject: 's', body: 'b', document_ids: [contract] }, { fetch, mailbox, kick: () => { kicked++; } });
+  assert.equal(out.status, 'approved');
+  assert.equal(kicked, 1);
 });
 
 test('a termination email has its reason and last day, and no documents', async () => {

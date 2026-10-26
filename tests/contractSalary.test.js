@@ -58,6 +58,11 @@ test('the contract is read once and kept, and read again only when its file chan
   await db.prepare(`UPDATE documents SET hash = 'h2' WHERE id = ?`).run(id);
   await contractSalary(boss, 'E-0042', deps);
   assert.equal(reads, 2, 'a new file is read again');
+  // A reading kept from before the other terms were read (no version) is read once more.
+  await db.prepare(`UPDATE documents SET terms_read = ? WHERE id = ?`).run(JSON.stringify({ ...read(), hash: 'h2' }), id);
+  const b = await contractSalary(boss, 'E-0042', deps);
+  assert.equal(reads, 3, 'an old reading is refreshed');
+  assert.equal(b.terms.allowance, 2800, 'what the contract says comes back with the comparison');
 });
 
 test('no labour contract on file is said plainly', async () => {

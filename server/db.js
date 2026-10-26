@@ -1938,7 +1938,8 @@ await db.exec(`
   -- decision through approval and the PRO to the papers that come back. A contract opens one by
   -- itself at open_days; any other document when the admin taps Renew or Cancel. One open case
   -- per document. status: open (nobody has decided), renew_review / cancel_review (deciding the
-  -- terms), needs_review (deferred), awaiting_approval, with_pro, checking_documents, writing_back,
+  -- terms), needs_review (deferred), approved (the proposal is saved: ready for the PRO; there is
+  -- no approval step since 2026-10-26), with_pro, checking_documents, writing_back,
   -- paused (paused_from is where it was), closed. Every step is an event, with who took it.
   CREATE TABLE IF NOT EXISTS doc_renewal_case_settings (
     id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
@@ -1986,6 +1987,14 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW},
     updated_at BIGINT DEFAULT ${NOW}
   );
+  -- Document Renewals sending (case emails, expiry alerts), the master's switch on the settings
+  -- screen; DOC_RENEWALS_SEND=on in .env also turns it on. Who flipped it last, and when.
+  ALTER TABLE doc_renewal_case_settings ADD COLUMN IF NOT EXISTS send_on BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE doc_renewal_case_settings ADD COLUMN IF NOT EXISTS send_changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  ALTER TABLE doc_renewal_case_settings ADD COLUMN IF NOT EXISTS send_changed_at BIGINT;
+  -- The approval step was taken out: a case that was waiting for it is ready for the PRO.
+  UPDATE doc_renewal_cases SET status = 'approved' WHERE status = 'awaiting_approval';
+  UPDATE doc_renewal_cases SET paused_from = 'approved' WHERE paused_from = 'awaiting_approval';
   CREATE TABLE IF NOT EXISTS saifsys_doc_links (
     saifsys_id INTEGER PRIMARY KEY,
     document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,

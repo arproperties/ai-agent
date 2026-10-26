@@ -5,9 +5,9 @@ import Page from './Page';
 import Picker from './Picker';
 
 // One renewal case (server/renewalCases.js): a document being renewed or cancelled, step by
-// step - decide, propose, approve, the PRO, the papers that come back, Verified. People decide
-// every step; Reem compares and flags. Like Lease renewals' "Start the renewal", the proposal
-// is a form with quick picks.
+// step - decide, propose, the PRO, the papers that come back, Verified. People decide every
+// step; Reem compares and flags. Like Lease renewals' "Start the renewal", the proposal is a
+// form with quick picks, and saving it is final (no approval): it can be corrected until the PRO has it.
 
 // saifsys keeps 0001-01-01 for a date nobody filled in: shown as nothing.
 const day = (d) => (d && d >= '1900' ? new Date(`${d}T00:00:00Z`).toLocaleDateString([], { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : '');
@@ -21,7 +21,7 @@ const addYears = (s, n) => {
 const TONE = { bad: 'bg-bad/15 text-bad', warn: 'bg-warn/15 text-warn', p1: 'bg-p1/20 text-txt', ok: 'bg-ok/15 text-ok', mute: 'bg-white/10 text-mute' };
 export const CASE_STATUS = {
   open: ['Needs a decision', 'warn'], renew_review: ['Renewal: proposal', 'p1'], cancel_review: ['Termination: proposal', 'p1'],
-  needs_review: ['Needs review', 'warn'], awaiting_approval: ['Waiting for approval', 'warn'], approved: ['Approved: give it to the PRO', 'p1'],
+  needs_review: ['Needs review', 'warn'], approved: ['Ready for the PRO', 'p1'],
   with_pro: ['With the PRO', 'p1'], checking_documents: ['Check the papers', 'warn'], writing_back: ['Update saifsys', 'p1'],
   paused: ['Paused', 'mute'], closed: ['Closed', 'ok'],
 };
@@ -54,10 +54,14 @@ const Chips = ({ items, onPick, active }) => (
   </div>
 );
 
+/** The proposal can be written or corrected: before it is saved, or after until the PRO has a task. */
+export const canPropose = (c, tasks = []) => ['renew_review', 'cancel_review'].includes(c.status) || (c.status === 'approved' && !tasks.length);
+
 export default function RenewalCasePage({ id, onBack }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const [paper, setPaper] = useState(null);
   const load = useCallback(() => api.get(`/document-renewals/cases/${id}`).then(setD).catch((e) => setError(e.message)), [id]);
   useEffect(() => { load(); }, [load]);
   // Every step answers with the case as it now is.
@@ -95,7 +99,7 @@ export default function RenewalCasePage({ id, onBack }) {
           </Box>
         )}
 
-        {contract && c.employee_code && <ContractSalary code={c.employee_code} />}
+        {contract && c.employee_code && <ContractSalary code={c.employee_code} onRead={setPaper} />}
 
         {['open', 'needs_review'].includes(c.status) && (
           <Box title="What should happen?">
@@ -108,14 +112,10 @@ export default function RenewalCasePage({ id, onBack }) {
           </Box>
         )}
 
-        {['renew_review', 'cancel_review'].includes(c.status) && (
-          <ProposalForm c={c} contract={contract} employee={d.employee} busy={busy}
-            onSave={(body) => act('save', 'proposal', body)} onSubmit={() => act('submit', 'submit')} />
-        )}
-
-        {c.proposal && !['renew_review', 'cancel_review'].includes(c.status) && <ProposalView p={c.proposal} />}
-
-        {c.status === 'awaiting_approval' && <Approval busy={busy} onApprove={() => act('approve', 'approve')} onReject={(note) => act('reject', 'reject', { note })} />}
+        {canPropose(c, d.tasks) ? (
+          <ProposalForm c={c} contract={contract} employee={d.employee} paper={paper} busy={busy}
+            onSave={(body) => act('save', 'proposal', body)} />
+        ) : c.proposal && <ProposalView p={c.proposal} />}
 
         {['approved', 'with_pro'].includes(c.status) && <TaskForm pros={d.pros} c={c} busy={busy} onCreate={(body) => act('task', 'tasks', body)} />}
         {d.tasks.length > 0 && <Tasks tasks={d.tasks} />}
@@ -144,18 +144,21 @@ export default function RenewalCasePage({ id, onBack }) {
 
 /**
  * The company salary (saifsys HR) beside what the employee's labour contract says, read by
- * Reem off the contract itself (the first time takes a few seconds; then it is kept).
+ * Reem off the contract itself (the first time takes a few seconds; then it is kept), and the
+ * contract's other terms. `onRead` gets what the contract says, for the proposal form.
  */
-export function ContractSalary({ code }) {
+export function ContractSalary({ code, onRead }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    api.get(`/document-renewals/employees/${encodeURIComponent(code)}/contract-salary`).then(setD).catch((e) => setError(e.message));
-  }, [code]);
+    api.get(`/document-renewals/employees/${encodeURIComponent(code)}/contract-salary`)
+      .then((r) => { setD(r); onRead?.(r.terms || null); }).catch((e) => setError(e.message));
+  }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
+  const other = d?.terms ? [['Job title', d.terms.position], ['Work location', d.terms.location], ['Hours', d.terms.hours], ['Benefits', d.terms.benefits]].filter(([, v]) => v) : [];
   const label = { basic: 'Basic', allowance: 'Allowance', total: 'Total' };
   const flag = { differs: ['Differs', 'bad'], missing: ['Not on the contract', 'warn'] };
   return (
-    <Box title="Contract salary" icon={<Sparkles size={15} />}>
+    <Box title="The current contract" icon={<Sparkles size={15} />}>
       {error ? <p className="text-sm text-mute">{error}</p> : !d ? (
         <p className="flex items-center gap-2 text-sm text-mute"><Loader2 size={14} className="animate-spin" /> Reading the labour contract…</p>
       ) : (
@@ -175,6 +178,11 @@ export function ContractSalary({ code }) {
               </tbody>
             </table>
           </div>
+          {other.length > 0 && (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-t border-stroke/50 pt-2 text-sm">
+              {other.map(([k, v]) => <div key={k}><p className="text-xs text-mute">{k} (contract)</p><p>{v}</p></div>)}
+            </div>
+          )}
           <p className="text-xs text-mute">Company salary from saifsys HR{d.paid_by ? ` · paid by ${d.paid_by}` : ''} · Contract: {d.document.name}{d.document.expires_on ? ` · ends ${day(d.document.expires_on)}` : ''}</p>
           {d.flags.map((f) => <p key={f} className="flex items-start gap-1.5 text-xs text-warn"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> {f}</p>)}
         </>
@@ -209,23 +217,35 @@ export function Compare({ compare }) {
   );
 }
 
-/** The "Start the renewal" form: keep or update the terms with quick picks, or the cancellation's details. */
-export function ProposalForm({ c, contract, employee, busy, onSave, onSubmit }) {
+/**
+ * The "Start the renewal" form: keep or update the terms with quick picks, or the cancellation's
+ * details. The current contract is the source of truth: Keep sends its terms as they are, and
+ * Update starts from them (HR's record only where Reem could not read the contract yet).
+ */
+export function ProposalForm({ c, contract, employee, paper, busy, onSave }) {
   const s = employee?.salary || {};
+  const k = paper || {};
   const old = c.proposal?.terms || {};
   const [mode, setMode] = useState(c.proposal?.mode || (c.kind === 'cancel' ? 'cancel' : contract ? 'keep' : 'renew_document'));
   const [t, setT] = useState({
-    basic: old.basic ?? s.basic ?? '', allowance: old.allowance ?? s.allowance ?? '', bonus: old.bonus ?? '',
-    position: old.position ?? employee?.position ?? '', location: old.location ?? employee?.location ?? '', hours: old.hours ?? '', benefits: old.benefits ?? '',
+    basic: old.basic ?? k.basic ?? s.basic ?? '', allowance: old.allowance ?? k.allowance ?? s.allowance ?? '', bonus: old.bonus ?? '',
+    position: old.position ?? k.position ?? employee?.position ?? '', location: old.location ?? k.location ?? employee?.location ?? '',
+    hours: old.hours ?? k.hours ?? '', benefits: old.benefits ?? k.benefits ?? '',
     new_start: old.new_start ?? c.ends_on ?? '', new_end: old.new_end ?? (c.ends_on ? addYears(c.ends_on, 2) : ''), effective_date: old.effective_date ?? c.ends_on ?? '',
     expected_expiry: old.expected_expiry ?? (c.ends_on ? addYears(c.ends_on, 2) : ''),
     reason: old.reason ?? '', last_working_day: old.last_working_day ?? c.ends_on ?? '', notice_days: old.notice_days ?? 30, notice_given_on: old.notice_given_on ?? '',
   });
   const [pct, setPct] = useState(0);
   const [note, setNote] = useState(c.proposal?.note || '');
-  const set = (k) => (e) => setT((x) => ({ ...x, [k]: e.target.value }));
-  const base = Number(s.basic) || 0;
-  const raise = (p) => { setPct(p); setT((x) => ({ ...x, basic: Math.round(base * (1 + p / 100)) })); };
+  // The contract is read in a few seconds after the form opens: its terms fill what nobody has typed yet.
+  const [typed, setTyped] = useState(false);
+  useEffect(() => {
+    if (!paper || c.proposal || typed) return;
+    setT((x) => ({ ...x, ...Object.fromEntries(['basic', 'allowance', 'position', 'location', 'hours', 'benefits'].filter((f) => paper[f] != null).map((f) => [f, paper[f]])) }));
+  }, [paper]); // eslint-disable-line react-hooks/exhaustive-deps
+  const set = (f) => (e) => { setTyped(true); setT((x) => ({ ...x, [f]: e.target.value })); };
+  const base = Number(k.basic ?? s.basic) || 0;
+  const raise = (p) => { setPct(p); setTyped(true); setT((x) => ({ ...x, basic: Math.round(base * (1 + p / 100)) })); };
   const total = (Number(t.basic) || 0) + (Number(t.allowance) || 0) + (Number(t.bonus) || 0);
   // A labour contract is always for two years: it ends on the same date two years on, and the new terms start with it.
   const twoYears = (x) => (contract && c.kind === 'renew' ? { ...x, new_end: x.new_start ? addYears(x.new_start, 2) : '', effective_date: x.new_start } : x);
@@ -240,6 +260,9 @@ export function ProposalForm({ c, contract, employee, busy, onSave, onSubmit }) 
       {c.kind === 'renew' && contract && (
         <Chips items={[['Keep the terms', 'keep'], ['Update the terms', 'update']]} active={mode} onPick={setMode} />
       )}
+      {c.kind === 'renew' && contract && mode === 'keep' && (
+        <p className="text-xs text-mute">The terms go to the PRO exactly as the current contract states them (above). The company salary in saifsys is only compared.</p>
+      )}
 
       {c.kind === 'renew' && contract && mode === 'update' && (
         <div className="space-y-3">
@@ -252,7 +275,7 @@ export function ProposalForm({ c, contract, employee, busy, onSave, onSubmit }) 
             <Field label="Allowance"><input inputMode="numeric" value={t.allowance} onChange={set('allowance')} className={input} /></Field>
             <Field label="Bonus"><input inputMode="numeric" value={t.bonus} onChange={set('bonus')} className={input} /></Field>
           </div>
-          <p className="rounded-xl bg-white/5 px-3 py-2 text-sm">New monthly total <b>{aed(total)}</b>{s.total ? <span className="text-mute"> (now {aed(s.total)})</span> : null}</p>
+          <p className="rounded-xl bg-white/5 px-3 py-2 text-sm">New monthly total <b>{aed(total)}</b>{(k.total ?? s.total) ? <span className="text-mute"> (contract now {aed(k.total ?? s.total)})</span> : null}</p>
           <div className="grid grid-cols-2 gap-2">
             <Field label="Job title"><input value={t.position} onChange={set('position')} className={input} /></Field>
             <Field label="Work location"><input value={t.location} onChange={set('location')} className={input} /></Field>
@@ -291,9 +314,9 @@ export function ProposalForm({ c, contract, employee, busy, onSave, onSubmit }) 
       )}
 
       <Field label="Note"><textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className={input} /></Field>
-      <div className="flex flex-wrap gap-2">
-        <Btn busy={busy === 'save'} onClick={save}><Check size={14} /> {mode === 'resolve_first' ? 'Pause to resolve' : 'Save the proposal'}</Btn>
-        {c.proposal && mode !== 'resolve_first' && <Btn primary busy={busy === 'submit'} onClick={onSubmit}><Send size={14} /> Send for approval</Btn>}
+      <div className="flex flex-wrap items-center gap-2">
+        <Btn primary busy={busy === 'save'} onClick={save}><Check size={14} /> {mode === 'resolve_first' ? 'Pause to resolve' : c.proposal ? 'Save the changes' : 'Save the proposal'}</Btn>
+        {c.proposal && <span className="text-xs text-ok">Saved: ready for the PRO. It can still be changed until the PRO has it.</span>}
       </div>
     </Box>
   );
@@ -302,6 +325,7 @@ export function ProposalForm({ c, contract, employee, busy, onSave, onSubmit }) 
 export function ProposalView({ p }) {
   const t = p.terms || {};
   const rows = [['Basic', t.basic != null && aed(t.basic)], ['Allowance', t.allowance != null && aed(t.allowance)], ['Bonus', t.bonus != null && aed(t.bonus)],
+    ['Total', t.total != null && aed(t.total)],
     ['Job title', t.position], ['Work location', t.location], ['Hours', t.hours], ['Benefits', t.benefits], ['Starts', day(t.new_start)], ['Ends', day(t.new_end)],
     ['Expected new expiry', day(t.expected_expiry)], ['Reason', t.reason], ['Last working day', day(t.last_working_day)],
     ['Notice', t.notice_days ? `${t.notice_days} days` : null], ['Notice given on', day(t.notice_given_on)]].filter(([, v]) => v);
@@ -311,19 +335,8 @@ export function ProposalView({ p }) {
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
         {rows.map(([k, v]) => <div key={k}><p className="text-xs text-mute">{k}</p><p>{v}</p></div>)}
       </div>
+      {p.from?.contract && <p className="text-xs text-mute">Terms as the current contract states them{p.from.confidence === 'high' ? '' : ' (Reem was not sure of its reading: check the contract)'}.</p>}
       {p.note && <p className="text-sm text-mute">“{p.note}”</p>}
-    </Box>
-  );
-}
-
-function Approval({ busy, onApprove, onReject }) {
-  return (
-    <Box title="Approval" icon={<ShieldCheck size={15} />}>
-      <p className="text-sm text-mute">The approvers (or the master) approve it. Whoever proposed it cannot approve it.</p>
-      <div className="flex flex-wrap gap-2">
-        <Btn primary busy={busy === 'approve'} onClick={onApprove}><Check size={14} /> Approve</Btn>
-        <Btn danger busy={busy === 'reject'} onClick={() => { const n = window.prompt('Why is it rejected?'); if (n) onReject(n); }}><X size={14} /> Reject</Btn>
-      </div>
     </Box>
   );
 }
