@@ -242,7 +242,7 @@ function offerLines(q, rent) {
     `- Period: ${longDate(q.start_date)} to ${longDate(q.end_date)}`,
     `- Annual rent: ${aed(rent)}`,
     ...c.items.map((x) => `- ${x.label}: ${aed(x.amount)}${x.vat ? ` + ${c.onCharges ? '5% ' : ''}VAT ${aed(x.vat)} = ${aed(x.amount + x.vat)}` : ''}`),
-    ...(c.vat && !c.onCharges ? [`- VAT: ${aed(c.vat)}`] : []),
+    ...(c.vat ? [`- ${c.onCharges ? 'Total VAT' : 'VAT'}: ${aed(c.vat)}`] : []),
     ...(rera ? [`- Ejari fee: ${aed(rera)}`] : []),
     `- Total: ${aed(total)}`,
     `- Payment by ${q.cheques.length} cheque${q.cheques.length > 1 ? 's' : ''}:`,

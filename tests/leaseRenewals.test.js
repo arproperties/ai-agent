@@ -127,7 +127,7 @@ test('Start: the admin fee the person types goes to saifsys and into the offer; 
   assert.deepEqual(await R.startFees(LEASE.lease_id), { admin: 1500, chiller: 0, chiller_shown: false, vat_rate: 5, rera: 300 }, 'the old lease\'s, for the Start box');
   const r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000, admin_fees: 2000 });
   assert.equal(world.acts.find((a) => a.action === 'start').admin_fees, 2000);
-  assert.match(lastMail(), /Admin fee: AED 2,000 \+ 5% VAT AED 100 = AED 2,100\n- Ejari fee: AED 300\n- Total: AED 47,400\n/);
+  assert.match(lastMail(), /Admin fee: AED 2,000 \+ 5% VAT AED 100 = AED 2,100\n- Total VAT: AED 100\n- Ejari fee: AED 300\n- Total: AED 47,400\n/);
   await R.draft(boss, { id: r.id, action: 'counter', rent: 44000 });
   assert.equal(world.acts.at(-1).admin_fees, 2000, 'a counter-offer is priced with the same fee');
   assert.equal(world.acts.at(-1).pest_fee, 0, 'a renewal started without pest control gets none, not the old lease\'s');
@@ -703,6 +703,7 @@ test('the offer for unit 604: each charge with its VAT, the total, and what cheq
     '- Admin fee: AED 1,500 + 5% VAT AED 75 = AED 1,575',
     '- Additional parking slot: AED 3,000 + 5% VAT AED 150 = AED 3,150',
     '- Small storeroom: AED 1,500 + 5% VAT AED 75 = AED 1,575',
+    '- Total VAT: AED 700',
     '- Ejari fee: AED 300',
     '- Total: AED 75,690',
     '- Payment by 6 cheques:',

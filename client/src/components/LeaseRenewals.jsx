@@ -196,7 +196,7 @@ function StartSheet({ lease, onClose, onDone }) {
   const [rent, setRent] = useState(String(Math.round(current)));
   const [pct, setPct] = useState('0');
   // The person's one step: the increase the RERA index allows. Reem falls back to it by itself.
-  const [rera, setRera] = useState('');
+  const [rera, setRera] = useState('0');
   const [touched, setTouched] = useState(false); // the offer typed by hand: the RERA % no longer moves it
   const indexRent = rera === '' ? null : Math.max(current, Math.floor((current * (1 + Number(rera) / 100)) / 100) * 100);
   const [cheques, setCheques] = useState(String(lease.cheques || 4));
