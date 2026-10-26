@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
-import { cleanAddresses, createDraft, getDraft, listDrafts, decideDraft, draftOut, MAX_RECIPIENTS } from '../server/drafts.js';
+import { cleanAddresses, createDraft, getDraft, listDrafts, decideDraft, editDraft, draftOut, MAX_RECIPIENTS } from '../server/drafts.js';
 
 test.after(() => closeDb());
 
@@ -113,6 +113,44 @@ test('what the app sends to the browser has no ids it should not have', async ()
   assert.equal(out.subject, 'Hi');
   assert.equal(out.status, 'pending');
   assert.ok(!('user_id' in out) && !('to_addrs' in out), 'client shape, not the row');
+});
+
+test('the owner can fix a waiting draft by hand', async () => {
+  const { userId } = await fixture();
+  const d = await createDraft(userId, { to: ['bob@example.com'], subject: 'Hi', body: 'Helo' });
+  const e = await editDraft(userId, d.id, { to: 'bob@example.com, Jo <JO@example.com>', cc: 'ann@example.com', subject: 'Hi Bob', body: 'Hello' });
+
+  assert.deepEqual(JSON.parse(e.to_addrs), ['bob@example.com', 'jo@example.com']);
+  assert.deepEqual(JSON.parse(e.cc_addrs), ['ann@example.com']);
+  assert.equal(e.subject, 'Hi Bob');
+  assert.equal(e.body, 'Hello');
+  assert.equal(e.status, 'pending', 'editing is not approving');
+});
+
+test('a field left out of an edit is kept as it was', async () => {
+  const { userId } = await fixture();
+  const d = await createDraft(userId, { to: ['bob@example.com'], cc: ['jo@example.com'], subject: 'Hi', body: 'Hello' });
+  const e = await editDraft(userId, d.id, { body: 'Hello again' });
+  assert.deepEqual(JSON.parse(e.cc_addrs), ['jo@example.com']);
+  assert.equal(e.subject, 'Hi');
+  assert.equal(e.body, 'Hello again');
+});
+
+test('an edit gets the same address checks as a new draft', async () => {
+  const { userId } = await fixture();
+  const d = await createDraft(userId, { to: ['bob@example.com'], body: 'hi' });
+  await assert.rejects(editDraft(userId, d.id, { to: '' }), /at least one recipient/);
+  await assert.rejects(editDraft(userId, d.id, { to: 'bob' }), /not a valid email address/);
+  assert.deepEqual(JSON.parse((await getDraft(userId, d.id)).to_addrs), ['bob@example.com'], 'and nothing changed');
+});
+
+test('a decided draft cannot be edited, and nobody else can edit one', async () => {
+  const { userId, otherId } = await fixture();
+  const d = await createDraft(userId, { to: ['bob@example.com'], body: 'hi' });
+  await assert.rejects(editDraft(otherId, d.id, { body: 'changed' }), /not found/i);
+  await decideDraft(userId, d.id, true);
+  await assert.rejects(editDraft(userId, d.id, { body: 'changed' }), /already approved/);
+  assert.equal((await getDraft(userId, d.id)).body, 'hi');
 });
 
 test('a very long body is stored, not silently dropped', async () => {

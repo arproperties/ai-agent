@@ -55,6 +55,33 @@ export function listDrafts(userId, { conversationId = null, status = null } = {}
     .all(userId, conversationId, conversationId, status, status);
 }
 
+/**
+ * The person fixing a word themselves rather than asking the agent to write it again. Only
+ * while it is waiting: once approved, what they approved is what goes. The same checks as a
+ * new draft, so an edit cannot get past what the agent could not.
+ */
+export async function editDraft(userId, id, { to, cc, subject, body }) {
+  const d = await getDraft(userId, id);
+  if (!d) throw fail(404, 'Draft not found');
+  if (d.status !== 'pending') throw fail(409, `This draft is already ${d.status}`);
+  const toList = to === undefined ? JSON.parse(d.to_addrs) : cleanAddresses(to, 'To');
+  const ccList = cc === undefined ? JSON.parse(d.cc_addrs) : cleanAddresses(cc, 'Cc');
+  if (!toList.length) throw fail(400, 'A draft needs at least one recipient');
+  if (toList.length + ccList.length > MAX_RECIPIENTS) throw fail(400, `Too many recipients (at most ${MAX_RECIPIENTS} across To and Cc)`);
+
+  // Guarded on pending in the statement itself: an approve tapped in another tab between the
+  // read and this write must not have its email changed underneath it.
+  const { changes } = await db.prepare(
+    `UPDATE email_drafts SET to_addrs = ?, cc_addrs = ?, subject = ?, body = ? WHERE id = ? AND status = 'pending'`
+  ).run(
+    JSON.stringify(toList), JSON.stringify(ccList),
+    String(subject ?? d.subject ?? '').slice(0, 200), String(body ?? d.body ?? '').slice(0, 20000),
+    d.id,
+  );
+  if (changes !== 1) throw fail(409, 'This draft has already been decided');
+  return getDraft(userId, id);
+}
+
 /** The user's decision. Made once: a decided draft never goes back to pending. */
 export async function decideDraft(userId, id, approved) {
   const d = await getDraft(userId, id);

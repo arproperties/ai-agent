@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown, Paperclip, FileText, Download } from 'lucide-react';
+import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown, Paperclip, FileText, Download, Pencil } from 'lucide-react';
 import { api } from '../lib/api';
 
 // An email an agent wrote, waiting for the person whose name it would go out under.
@@ -76,6 +76,59 @@ function FilePreview({ name, url, onClose }) {
   );
 }
 
+const field = 'glass w-full rounded-xl px-3 py-2 text-[13px] outline-none focus:border-p1/70';
+
+// Fixing the draft by hand, for the small things that are not worth asking the agent to
+// write again: a name spelt wrong, a figure, one more person on Cc. Opens on what is there.
+function DraftEditor({ draft, onSaved, onCancel }) {
+  const [f, setF] = useState({
+    to: draft.to.join(', '), cc: draft.cc.join(', '), subject: draft.subject || '', body: draft.body || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setF((v) => ({ ...v, [k]: e.target.value }));
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      onSaved((await api.patch(`/email/drafts/${draft.id}`, f)).draft);
+    } catch (e) {
+      setError(e.message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <label className="block text-xs text-mute">To
+        <input value={f.to} onChange={set('to')} className={`${field} mt-1`} placeholder="name@example.com, …" />
+      </label>
+      <label className="block text-xs text-mute">Cc
+        <input value={f.cc} onChange={set('cc')} className={`${field} mt-1`} placeholder="Optional" />
+      </label>
+      <label className="block text-xs text-mute">Subject
+        <input value={f.subject} onChange={set('subject')} maxLength={200} className={`${field} mt-1`} />
+      </label>
+      <label className="block text-xs text-mute">Message
+        <textarea value={f.body} onChange={set('body')} rows={Math.min(18, Math.max(6, f.body.split('\n').length + 1))} maxLength={20000}
+          dir="auto" className={`${field} mt-1 resize-y leading-relaxed text-txt`} />
+      </label>
+      {error && <p className="text-xs text-bad">{error}</p>}
+      <div className="flex gap-2">
+        <button onClick={save} disabled={saving}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 active:scale-[0.98] disabled:opacity-60">
+          {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Save changes
+        </button>
+        <button onClick={onCancel} disabled={saving}
+          className="flex items-center justify-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute hover:text-txt disabled:opacity-60">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const EVERY = 2000;
 const TRIES = 15; // about half a minute, which is longer than a healthy send takes
 
@@ -83,6 +136,7 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [viewing, setViewing] = useState(null); // index of the attachment being looked at
+  const [editing, setEditing] = useState(false);
   const watch = useRef(null);
   const s = STATE[draft.status] || STATE.pending;
 
@@ -169,8 +223,18 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
             )}
           </span>
         )}
+        {draft.status === 'pending' && !editing && (
+          <button onClick={() => { setError(null); setEditing(true); }} disabled={!!busy}
+            className="ml-auto flex shrink-0 items-center gap-1 rounded-full border border-stroke px-2.5 py-1 text-mute hover:text-txt disabled:opacity-60">
+            <Pencil size={12} /> Edit
+          </button>
+        )}
       </div>
 
+      {editing && draft.status === 'pending' ? (
+        <DraftEditor draft={draft} onCancel={() => setEditing(false)}
+          onSaved={(d) => { onChanged(d); setEditing(false); }} />
+      ) : (<>
       <dl className="space-y-1 text-[13px]">
         {from && (
           <div className="flex gap-2"><dt className="w-10 shrink-0 text-mute">From</dt><dd className="min-w-0 break-words">{from}</dd></div>
@@ -183,6 +247,7 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
       </dl>
 
       <p className="mt-2.5 whitespace-pre-wrap border-t border-stroke/60 pt-2.5 text-[13px] leading-relaxed">{draft.body}</p>
+      </>)}
 
       {draft.files?.length > 0 && (
         <div className="mt-2.5 border-t border-stroke/60 pt-2.5">
@@ -214,7 +279,7 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
       )}
       {error && <p className="mt-2.5 text-xs text-bad">{error}</p>}
 
-      {draft.status === 'pending' && (
+      {draft.status === 'pending' && !editing && (
         <div className="mt-3 flex gap-2">
           <button onClick={() => decide('approve')} disabled={!!busy}
             className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 active:scale-[0.98] disabled:opacity-60">
