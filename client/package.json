@@ -25,5 +25,9 @@
     "workbox-core": "^7.4.1",
     "workbox-precaching": "^7.4.1",
     "workbox-routing": "^7.4.1"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true,
+    "protobufjs@7.6.6": true
   }
 }
