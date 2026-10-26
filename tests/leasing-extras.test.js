@@ -114,6 +114,27 @@ test('a deposit or charge changed after part of it is paid owes what the booking
   assert.equal((await settleDeposit(bk.id, { refunded: 2000 }, staff, AT)).status, 'refunded');
 });
 
+test('a monthly charge runs between its own start and end dates', async () => {
+  const { staff, u1 } = await tower();
+  const year = { start_date: '2026-01-01', end_date: '2026-12-31' };
+  await assert.rejects(createBooking(sara(u1.id, { ...year, fees: [{ label: 'Parking', amount: 50, repeats: true, from: '2026-05-01', until: '2026-04-01' }] }), staff), /ends before it starts/);
+  await assert.rejects(createBooking(sara(u1.id, { ...year, fees: [{ label: 'Parking', amount: 50, repeats: true, until: 'soon' }] }), staff), /not a date/);
+  const bk = await createBooking(sara(u1.id, { ...year, fees: [{ label: 'Parking', amount: 50, repeats: true, from: '2026-03-01', until: '2026-05-15' }, { label: 'Pet fee', amount: 300, until: '2026-02-01' }] }), staff);
+  assert.deepEqual(bk.fees, [{ label: 'Parking', amount: 50, repeats: true, from: '2026-03-01', until: '2026-05-15' }, { label: 'Pet fee', amount: 300 }], 'a one-time charge has no dates');
+  const dues = async (name) => (await bookingPayments(bk.id, AT)).filter((r) => r.name === name).map((r) => r.due_date);
+  assert.deepEqual(await dues('Parking'), ['2026-03-01', '2026-04-01', '2026-05-01'], 'billed from its start; ended on 15 May, the 1 June bill is not made');
+
+  // With the end taken off it runs to the end of the lease; put back, the unpaid months after it come off.
+  await updateBooking(bk.id, { fees: [{ label: 'Parking', amount: 50, repeats: true, from: '2026-03-01' }] }, staff);
+  assert.equal((await dues('Parking')).length, 10);
+  await updateBooking(bk.id, { fees: [{ label: 'Parking', amount: 50, repeats: true, until: '2026-02-28' }] }, staff);
+  assert.deepEqual(await dues('Parking'), ['2026-01-01', '2026-02-01']);
+
+  // A renewal leaves behind a charge that has stopped, and starts one still running with the new lease.
+  await updateBooking(bk.id, { fees: [{ label: 'Parking', amount: 50, repeats: true, until: '2026-02-28' }, { label: 'Laundry', amount: 20, repeats: true, from: '2026-06-01', until: '2027-03-31' }] }, staff);
+  assert.deepEqual((await renewBooking(bk.id, staff)).fees, [{ label: 'Laundry', amount: 20, repeats: true, until: '2027-03-31' }]);
+});
+
 test('extra services: a saved list, charged once or with every rent payment', async () => {
   const { staff, u1 } = await tower();
   await assert.rejects(addService({ name: ' ' }, staff), /Give the service a name/);
@@ -287,7 +308,7 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   assert.match(await says('leasing_add_building', { company: 'ace', name: 'Marina Tower', area: 'Marina' }), /^Building added: Marina Tower, under ACE Properties/);
   assert.match(await says('leasing_add_units', { building: 'marina', units: [{ unit_no: '101', type: '1BR' }, { unit_no: '102' }, { unit_no: '101' }] }),
     /^2 units added to Marina Tower: 101, 102\.\nNot added: 101: That unit number already exists/);
-  assert.match(await says('leasing_add_service', { building: 'Marina Tower', name: 'Parking', amount: 300, repeats: true }), /Parking, USD 300, charged with every rent payment/);
+  assert.match(await says('leasing_add_service', { building: 'Marina Tower', name: 'Parking', amount: 300, repeats: true }), /Parking, USD 300, charged every month/);
   assert.equal(await says('leasing_add_tenant', { full_name: 'Sara Khan', phone: '0501234567' }), 'Tenant added: Sara Khan · 050-123-4567.');
   const twice = await ask('leasing_add_tenant', { full_name: 'sara khan' });
   assert.deepEqual([twice.is_error, /already a tenant named Sara Khan \(050-123-4567\)/.test(twice.content)], [true, true]);
@@ -297,13 +318,13 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
     security_deposit: 5000, tax_percent: 0, charges: [{ name: 'Parking', amount: 300, repeats: true }, { name: 'Pet fee', amount: 800 }] };
   const draft = await says('leasing_add_booking', booking);
   assert.match(draft, /^Lease LS-2026-0001 saved as a DRAFT .*Sara Khan, unit 101, Marina Tower, 2026-11-01 to 2027-10-31, USD 60,000 per year, paid monthly, no Sales tax\.\nAdded to Marina Tower's services: Pet fee\.\nThe lease contract \(with the Bed Bug Addendum\) was made and is with the lease's documents, ready to print and sign\.\nStill to do: the move-in inspection, after which the lease is confirmed; and, on the screens, attach the tenant's Driver License and Proof of Employment .*$/);
-  assert.match(await says('leasing_list', { what: 'services', building: 'Marina' }), /- Parking: USD 300, with every rent payment\n- Pet fee: USD 800, once/);
+  assert.match(await says('leasing_list', { what: 'services', building: 'Marina' }), /- Parking: USD 300, every month\n- Pet fee: USD 800, once/);
   // Asked for again, the same stay is not made twice: the draft is changed, and keeps the charges it had.
   const again = await ask('leasing_add_booking', { ...booking, charges: [{ name: 'Laundry', amount: 20, repeats: true }] });
   assert.deepEqual([again.is_error, /already a draft for this tenant and unit: LS-2026-0001 .*leasing_change_booking/.test(again.content)], [true, true]);
   assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0001', set_charges: [{ name: 'Laundry', amount: 20, repeats: true }] }),
-    /^Lease changed, still a DRAFT .*charges: Parking USD 300 with every rent payment, Pet fee USD 800 once, Laundry USD 20 with every rent payment\.\nAdded to Marina Tower's services: Laundry\.$/);
-  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0001', remove_charges: ['laundry'] }), /charges: Parking USD 300 with every rent payment, Pet fee USD 800 once\.$/);
+    /^Lease changed, still a DRAFT .*charges: Parking USD 300 every month, Pet fee USD 800 once, Laundry USD 20 every month\.\nAdded to Marina Tower's services: Laundry\.$/);
+  assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0001', remove_charges: ['laundry'] }), /charges: Parking USD 300 every month, Pet fee USD 800 once\.$/);
   assert.match(await says('leasing_list', { what: 'bookings', search: 'sara' }), /^- LS-2026-0001 \(draft, move-in inspection not done\): Sara Khan, unit 101, Marina Tower/);
   // As on the screens, it is not confirmed before the tenant is inspected in: she writes that down as she is told it.
   const tooSoon = await ask('leasing_confirm_booking', { booking: 'LS-2026-0001' });

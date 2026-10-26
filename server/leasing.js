@@ -195,11 +195,18 @@ function bookingFields(body = {}, { partial = false } = {}) {
   if ('referred_by' in body) out.referred_by = Number(body.referred_by) || null; // the tenant who sent them, checked by mustRefer
   if ('tenant_energy_account' in body) out.tenant_energy_account = isTrue(body.tenant_energy_account); // the energy bill is in the tenant's own name
   // Other charges (pet fee, parking, commission, energy deposit…): each is due once, on the first day,
-  // or, when it repeats, with every rent payment.
+  // or, when it repeats, every month. A monthly one may start (`from`) and stop (`until`) on dates of
+  // its own; with no `until` it runs to the end of the lease.
   if ('fees' in body) {
     const list = (Array.isArray(body.fees) ? body.fees : []).filter((f) => f && (f.label || f.amount));
     if (list.length > 10) throw bad('At most ten other charges.');
-    const fees = list.map((f) => ({ label: text(f.label, 60), amount: Number(f.amount), ...(isTrue(f.repeats) ? { repeats: true } : {}) }));
+    const day = (s, name) => { if (!s) return null; if (!isDate(s)) throw bad(`${name} is not a date.`); return s; };
+    const fees = list.map((f) => {
+      if (!isTrue(f.repeats)) return { label: text(f.label, 60), amount: Number(f.amount) };
+      const from = day(f.from, 'A monthly charge’s start'), until = day(f.until, 'A monthly charge’s end');
+      if (from && until && until < from) throw bad(`${text(f.label, 60) || 'A monthly charge'} ends before it starts.`);
+      return { label: text(f.label, 60), amount: Number(f.amount), repeats: true, ...(from ? { from } : {}), ...(until ? { until } : {}) };
+    });
     if (fees.some((f) => !f.label || !(f.amount > 0))) throw bad('Each other charge needs a name and an amount.');
     if (new Set(fees.map((f) => f.label.toLowerCase())).size < fees.length) throw bad('Two other charges have the same name.');
     out.fees = JSON.stringify(fees);
@@ -660,8 +667,8 @@ const TAX_OF_PAID = 'CASE WHEN amount > 0 THEN round(tax * (SELECT coalesce(sum(
 
 /**
  * Write a confirmed booking's schedule: the rent, then the security deposit and any other
- * charges. Those are due on the first day, except a charge that repeats, which is due with
- * every rent payment. A taxed booking's rent and charges carry their tax; the deposit never does. Rows with no payment against them are rebuilt. A row with money against
+ * charges. Those are due on the first day, except a charge that repeats, which is due every
+ * month between its own dates. A taxed booking's rent and charges carry their tax; the deposit never does. Rows with no payment against them are rebuilt. A row with money against
  * it is kept, and owes what the terms now say (never less than it has been paid); one the
  * terms no longer ask for at all (a charge taken off, a stay cut short) owes nothing more.
  */
@@ -670,6 +677,10 @@ async function writeSchedule(b) {
   await db.prepare(`DELETE FROM lease_installments i WHERE i.booking_id = ? AND i.kind NOT IN ${KEPT} AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)`).run(b.id);
   const fees = typeof b.fees === 'string' ? JSON.parse(b.fees) : b.fees || [];
   const rent = schedule(b);
+  // A monthly charge is due each month whatever the rent's own frequency, on the days monthly rent would be,
+  // from its own start (if any) up to its own end (if any): one ended on 15 March is billed on 1 March, not 1 April.
+  const months = b.payment_frequency === 'monthly' ? rent : schedule({ ...b, payment_frequency: 'monthly' });
+  const monthlyDues = (f) => months.map((p) => p.due).filter((d) => (!f.from || d >= f.from) && (!f.until || d <= f.until));
   // Due once, on the first day; or, on a lease imported from Rent Manager, the first day billed here.
   const first = b.billed_from > b.start_date ? b.billed_from : b.start_date;
   // The deposit on its own date when it was charged before the start, as Rent Manager has it (GSL 102: three weeks before).
@@ -679,9 +690,9 @@ async function writeSchedule(b) {
   const rows = [
     ...rent.map((p) => ({ kind: 'rent', label: '', ...p })),
     ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: depositDue, amount: Number(b.security_deposit) }] : []),
-    // A charge that repeats is due in full with each rent payment, a part month too: Rent Manager bills
+    // A monthly charge is due in full each month, a part month too: Rent Manager bills
     // water/trash at its whole price on the prorated month (Francis, 2026-10-17).
-    ...fees.flatMap((f) => (f.repeats ? rent.map((p) => [p.due, f.amount]) : [[first, f.amount]])
+    ...fees.flatMap((f) => (f.repeats ? monthlyDues(f).map((d) => [d, f.amount]) : [[first, f.amount]])
       .map(([due, amount]) => ({ kind: 'fee', label: f.label, due, amount: money(amount + taxOn(b, amount)), tax: taxOn(b, amount) }))),
   ];
   const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';
@@ -1063,7 +1074,7 @@ function serviceFields(body = {}, { partial = false } = {}) {
 const serviceRow = (s) => ({ ...s, amount: s.amount == null ? null : Number(s.amount) });
 const taken = (e) => (e.code === '23505' ? bad('This building already has a service with that name.', 409) : e.code === '23503' ? bad('Building not found', 404) : e);
 
-/** The saved services, by name. `amount` is the usual price (null: none yet); one that `repeats` is charged with every rent payment. */
+/** The saved services, by name. `amount` is the usual price (null: none yet); one that `repeats` is charged every month. */
 export const listServices = async (buildingId) => (await db.prepare('SELECT id, name, amount, repeats, building_id FROM lease_services ORDER BY lower(name)').all())
   .filter((s) => !buildingId || s.building_id == null || s.building_id === Number(buildingId)).map(serviceRow);
 
@@ -1161,7 +1172,8 @@ export async function renewBooking(id, by) {
   const end = iso(dayNo(addMonths(start, monthsOf(b))) - 1);
   const { id: nextId } = await db.prepare(`INSERT INTO lease_bookings (unit_id, tenant_id, type, start_date, end_date, rent_amount, rent_period, payment_frequency, prorate, fees, tax_percent, source, referred_by, status, renewed_from, created_by)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?) RETURNING id`).run(b.unit_id, b.tenant_id, b.type, start, end, b.rent_amount, b.rent_period, b.payment_frequency, b.prorate,
-    JSON.stringify(b.fees.filter((f) => f.repeats)), b.tax_percent, b.source, b.referred_by, b.id, by ?? null);
+    // A monthly charge that has already stopped stays behind; one still running carries on from the new start.
+    JSON.stringify(b.fees.filter((f) => f.repeats && !(f.until && f.until < start)).map(({ from, ...f }) => f)), b.tax_percent, b.source, b.referred_by, b.id, by ?? null);
   const next = await getBooking(nextId);
   await logEvent(b.id, 'renewed', `Renewal ${next.ref} drafted for ${start} to ${end}`, by);
   await logEvent(next.id, 'created', `Renewal of ${b.ref}, saved as a draft`, by);

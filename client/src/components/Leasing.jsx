@@ -12,7 +12,7 @@ import PhoneField from './PhoneField';
 import IdField from './IdField';
 import Pager, { usePaged } from './Pager';
 import BookingDocs, { REQUIRED } from './BookingDocs';
-import ServiceList, { REPEAT } from './ServiceList';
+import ServiceList from './ServiceList';
 import SourceList from './SourceList';
 import BookingPayments from './BookingPayments';
 import LeasingOverview from './LeasingOverview';
@@ -154,6 +154,8 @@ function proratedRows(v) {
 }
 /** The part month's rent as typed (Rent Manager's own figure), or null to work it out by the day. */
 const typedPart = (v) => (Number(v.part_month_amount) > 0 ? Number(v.part_month_amount) : null);
+/** The days a monthly charge is billed: those of `dues` (the monthly rent days) from its start to its end, when it has them. */
+const chargeDays = (f, dues) => dues.filter((d) => (!f.from || d >= f.from) && (!f.until || d <= f.until));
 function plan(v) {
   if (v.prorate && v.payment_frequency === 'monthly') return proratedPlan(v);
   let months = 1;
@@ -169,12 +171,14 @@ function plan(v) {
   const deposit = Number(v.security_deposit || 0);
   const fees = v.fees.filter((f) => Number(f.amount) > 0);
   const firstRent = monthly * Math.min(step, months);
-  const firstFees = fees.reduce((t, f) => t + Number(f.amount), 0);
-  const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? payments : 1), 0);
+  // A monthly charge is billed each month, whatever the rent's frequency, between its own dates.
+  const dues = Array.from({ length: months }, (_, k) => addMonths(v.start_date, k));
+  const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? (chargeDays(f, dues)[0] === v.start_date ? 1 : 0) : 1), 0);
+  const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? chargeDays(f, dues).length : 1), 0);
   const firstTax = (firstRent + firstFees) * rate;
   const tax = (monthly * months + allFees) * rate;
   return {
-    payments, firstRent, deposit, fees, firstTax, tax, discount: (off / per) * months,
+    payments, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats && chargeDays(f, dues)[0] !== v.start_date ? 0 : f.amount })), firstTax, tax, discount: (off / per) * months,
     // The deposit is held for the tenant and given back, so it is never part of what the stay costs.
     charges: firstRent + firstFees + firstTax,
     first: firstRent + deposit + firstFees + firstTax,
@@ -198,13 +202,15 @@ function proratedPlan(v) {
   const rentOf = (r) => (r.part && typedPart(v) ? typedPart(v) : monthly * r.share);
   const allRent = rows.reduce((t, r) => t + rentOf(r), 0);
   const firstRent = rows[0]?.due === v.start_date ? rentOf(rows[0]) : 0;
-  // A repeating charge is its whole price with every rent payment, the part month too, as Rent Manager bills it.
-  const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? (atStart ? 1 : 0) : 1), 0);
-  const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? rows.length : 1), 0);
+  // A monthly charge is its whole price each month, the part month too, as Rent Manager bills it.
+  const dues = rows.map((r) => r.due);
+  const billsFirst = (f) => !!atStart && chargeDays(f, dues)[0] === v.start_date;
+  const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? (billsFirst(f) ? 1 : 0) : 1), 0);
+  const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? chargeDays(f, dues).length : 1), 0);
   const firstTax = (firstRent + firstFees) * rate;
   const tax = (allRent + allFees) * rate;
   return {
-    payments: rows.length, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats && !atStart ? 0 : f.amount })), firstTax, tax,
+    payments: rows.length, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats && !billsFirst(f) ? 0 : f.amount })), firstTax, tax,
     discount: (off / per) * shares,
     head: head && { ...head, amount: monthly * head.share, typed: typedPart(v) },
     second: head && v.prorate === 'second' && rows[1] ? { due: rows[1].due, amount: rentOf(rows[1]) } : null,
@@ -524,44 +530,61 @@ function BookingForm({ start, preset, onDone, onCancel }) {
           </div>
           {off > 0 && <p className="mt-2 text-xs text-mute">Takes {aed(off)} off, so the rent is <span className="font-medium text-txt">{aed(rent - off)}</span> a {v.rent_period}.</p>}
         </Group>
-        <Group title="Other charges" hint="pet fee, parking, laundry…, once on the first day or with every rent payment">
-          {v.fees.map((f, i) => {
-            const put = (patch) => setV((now) => ({ ...now, fees: now.fees.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
-            // Choosing a saved service fills in its usual price, which can still be changed for this booking.
-            const pick = (name) => {
-              const s = services.find((x) => x.name === name);
-              put({ label: name, ...(s?.amount != null ? { amount: s.amount, repeats: s.repeats } : {}) });
-            };
-            // A new name is saved to the list there and then, so nobody has to leave the booking to add it.
-            const make = async (name) => {
-              try {
-                const s = await api.post('/leasing/services', { name, amount: f.amount, repeats: !!f.repeats, building_id: buildingId });
-                setServices((list) => [...list, s].sort((a, b) => a.name.localeCompare(b.name)));
-                put({ label: s.name });
-              } catch (err) { setError(err.message); }
-            };
-            return (
-              <div key={i} className="mb-2 flex flex-wrap items-center gap-2">
-                <Select value={f.label} onChange={(e) => pick(e.target.value)} onCreate={make} options={[...new Set([...services.map((s) => s.name), f.label].filter(Boolean))]}
-                  placeholder="Choose, or type a new one…" aria-label="Charge" className={SELECT} wrap="min-w-[11rem] flex-1" />
-                <input type="number" min="0" step="any" value={f.amount} onChange={(e) => put({ amount: e.target.value })} placeholder={currency()} aria-label="Amount" className={`${FIELD} max-w-[9rem]`} />
-                <Select value={f.repeats ? 'every' : 'once'} onChange={(e) => put({ repeats: e.target.value === 'every' })} options={REPEAT} aria-label="How often" className={SELECT} wrap="w-56" />
-                <button type="button" onClick={() => setV({ ...v, fees: v.fees.filter((_, j) => j !== i) })} aria-label="Remove this charge"
-                  className="grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={15} /></button>
-              </div>
-            );
-          })}
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setV({ ...v, fees: [...v.fees, { label: '', amount: '' }] })} className={GHOST}><Plus size={13} /> Add a charge</button>
-            <button type="button" onClick={() => setListOpen(!listOpen)} className={GHOST}><Pencil size={13} /> {listOpen ? 'Hide this building’s services' : 'Edit this building’s services'}</button>
-          </div>
-          {listOpen && (
-            <div className="mt-3 rounded-2xl border border-stroke p-3">
-              <p className="mb-2 text-xs text-mute">{buildingId ? 'This building’s extra services. The usual price fills in when one is chosen, and can still be changed on the lease.' : 'Choose the building first (step 1).'}</p>
-              {buildingId && <ServiceList services={services} buildingId={buildingId} onChange={setServices} onError={setError} />}
+        {/* Other charges in two lists: monthly ones, each with its own start and end, then those due once. One list
+            (v.fees) holds both; `repeats` says which. */}
+        {[[true, 'Recurring charges', 'billed every month · with no end date, to the end of the lease', 'Add a monthly charge'],
+          [false, 'One-time charges', 'pet fee, application fee…, due once on the first day', 'Add a one-time charge']].map(([monthly, title, hint, add]) => (
+          <Group key={title} title={title} hint={hint}>
+            {v.fees.map((f, i) => {
+              if (!!f.repeats !== monthly) return null;
+              const put = (patch) => setV((now) => ({ ...now, fees: now.fees.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
+              // Choosing a saved service fills in its usual price, which can still be changed for this booking.
+              const pick = (name) => {
+                const s = services.find((x) => x.name === name);
+                put({ label: name, ...(s?.amount != null ? { amount: s.amount } : {}) });
+              };
+              // A new name is saved to the list there and then, so nobody has to leave the booking to add it.
+              const make = async (name) => {
+                try {
+                  const s = await api.post('/leasing/services', { name, amount: f.amount, repeats: monthly, building_id: buildingId });
+                  setServices((list) => [...list, s].sort((a, b) => a.name.localeCompare(b.name)));
+                  put({ label: s.name });
+                } catch (err) { setError(err.message); }
+              };
+              return (
+                <div key={i} className="mb-2 flex flex-wrap items-end gap-2">
+                  <Select value={f.label} onChange={(e) => pick(e.target.value)} onCreate={make} options={[...new Set([...services.map((s) => s.name), f.label].filter(Boolean))]}
+                    placeholder="Choose, or type a new one…" aria-label="Charge" className={SELECT} wrap="min-w-[11rem] flex-1" />
+                  <input type="number" min="0" step="any" value={f.amount} onChange={(e) => put({ amount: e.target.value })} placeholder={currency()} aria-label="Amount" className={`${FIELD} max-w-[9rem]`} />
+                  {monthly && (
+                    <>
+                      <label className="block w-40">
+                        <span className="mb-1 block text-xs text-txt/80">Start date</span>
+                        <DateField value={f.from || ''} onChange={(e) => put({ from: e.target.value })} max={f.until || v.end_date || undefined} aria-label="Start date" className={FIELD} />
+                      </label>
+                      <label className="block w-40">
+                        <span className="mb-1 block text-xs text-txt/80">End date · empty: no end</span>
+                        <DateField value={f.until || ''} onChange={(e) => put({ until: e.target.value })} min={f.from || v.start_date || undefined} aria-label="End date" className={FIELD} />
+                      </label>
+                    </>
+                  )}
+                  <button type="button" onClick={() => setV({ ...v, fees: v.fees.filter((_, j) => j !== i) })} aria-label="Remove this charge"
+                    className="mb-0.5 grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={15} /></button>
+                </div>
+              );
+            })}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setV({ ...v, fees: [...v.fees, monthly ? { label: '', amount: '', repeats: true, from: v.start_date || '' } : { label: '', amount: '' }] })} className={GHOST}><Plus size={13} /> {add}</button>
+              {!monthly && <button type="button" onClick={() => setListOpen(!listOpen)} className={GHOST}><Pencil size={13} /> {listOpen ? 'Hide this building’s services' : 'Edit this building’s services'}</button>}
             </div>
-          )}
-        </Group>
+            {!monthly && listOpen && (
+              <div className="mt-3 rounded-2xl border border-stroke p-3">
+                <p className="mb-2 text-xs text-mute">{buildingId ? 'This building’s extra services. The usual price fills in when one is chosen, and can still be changed on the lease.' : 'Choose the building first (step 1).'}</p>
+                {buildingId && <ServiceList services={services} buildingId={buildingId} onChange={setServices} onError={setError} />}
+              </div>
+            )}
+          </Group>
+        ))}
         <Group title={taxName} hint="on the rent and the other charges, never on the deposit">
           <div className="flex flex-wrap items-center gap-2">
             <Pick value={v.tax_percent === '' ? 'none' : 'taxed'} onPick={(k) => setV({ ...v, tax_percent: k === 'none' ? '' : v.tax_percent || region().tax_percent || 5 })}

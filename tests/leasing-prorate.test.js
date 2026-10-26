@@ -81,10 +81,11 @@ test('a lease that does not prorate is billed exactly as before', async () => {
   const t = await addTenant({ full_name: 'Sara Lee' });
   const fees = async (id) => (await db.prepare("SELECT to_char(due_date, 'YYYY-MM-DD') AS due, amount FROM lease_installments WHERE booking_id = ? AND kind = 'fee' ORDER BY due_date").all(id))
     .map((r) => [r.due, Number(r.amount)]);
-  // A repeating charge stays its own amount with each payment, however many months the payment covers.
+  // A repeating charge is billed every month, even when the rent is paid a quarter at a time.
   const q = await createBooking({ unit_id: u1.id, tenant_id: t.id, start_date: '2026-10-17', end_date: '2027-10-16', rent_amount: 1100,
     payment_frequency: 'quarterly', fees: [{ label: 'Pet', amount: 50, repeats: true }], status: 'confirmed' });
-  assert.deepEqual(await fees(q.id), [['2026-10-17', 50], ['2027-01-17', 50], ['2027-04-17', 50], ['2027-07-17', 50]]);
+  assert.deepEqual((await fees(q.id)).slice(0, 3), [['2026-10-17', 50], ['2026-11-17', 50], ['2026-12-17', 50]]);
+  assert.equal((await fees(q.id)).length, 12);
   const m = await createBooking({ unit_id: u2.id, tenant_id: t.id, start_date: '2026-10-17', end_date: '2027-10-16', rent_amount: 1100,
     payment_frequency: 'monthly', fees: [{ label: 'Pet', amount: 50, repeats: true }], status: 'confirmed' });
   assert.equal((await getBooking(m.id)).prorate, null);

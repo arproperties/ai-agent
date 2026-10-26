@@ -12,7 +12,7 @@ import Select from './Select';
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const SELECT = `${FIELD} bg-surface`;
 const ICON = 'grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10';
-export const REPEAT = [['once', 'Once, on the first day'], ['every', 'With every rent payment']];
+export const REPEAT = [['once', 'Once, on the first day'], ['every', 'Every month']];
 const BLANK = { name: '', amount: '', repeats: false };
 
 export default function ServiceList({ services, buildingId, onChange, onError, readOnly }) {
@@ -77,7 +77,7 @@ export default function ServiceList({ services, buildingId, onChange, onError, r
               <li key={s.id} className="flex items-center gap-3 py-2">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{s.name}</p>
-                  <p className="truncate text-xs text-mute">{s.repeats ? 'With every rent payment' : 'Once, on the first day'}</p>
+                  <p className="truncate text-xs text-mute">{s.repeats ? 'Every month' : 'Once, on the first day'}</p>
                 </div>
                 <span className={`shrink-0 text-sm ${Number(s.amount) ? '' : 'text-mute'}`}>{Number(s.amount) ? money(s.amount) : 'Price set on the lease'}</span>
                 {!readOnly && <div className="-mr-1.5 flex shrink-0">

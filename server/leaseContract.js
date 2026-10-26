@@ -384,7 +384,10 @@ export async function renderContract(p) {
     small('You will pay these with the rent each month, as well as anything set out in an addendum or the Special Provisions.', L + 150, t - 11, { width: R - L - 160, f: F.r, size: 7 });
     for (let k = 0; k < lines; k++) {
       const f = monthly[k];
-      field(k < monthly.length ? '' : 'Other:', f ? f.label : '', L + pad, t - 26 - k * 12, R - 120);
+      // A monthly charge with dates of its own says when it starts and stops.
+      const us = (s) => `${s.slice(5, 7)}/${s.slice(8, 10)}/${s.slice(0, 4)}`;
+      const when = f && [f.from && `from ${us(f.from)}`, f.until && `until ${us(f.until)}`].filter(Boolean).join(' ');
+      field(k < monthly.length ? '' : 'Other:', f ? `${f.label}${when ? ` (${when})` : ''}` : '', L + pad, t - 26 - k * 12, R - 120);
       field(sym, f ? amt(f.amount) : '', R - 110, t - 26 - k * 12, R - pad);
     }
     const yy = t - 26 - lines * 12;

@@ -133,7 +133,7 @@ export const LEASING_TOOLS = [
     input_schema: {
       type: 'object',
       properties: { building: str, name: str, amount: { type: 'number', description: 'The usual price. Leave out if not known.' },
-        repeats: { type: 'boolean', description: 'true: charged with every rent payment. false (default): once, on the first day.' } },
+        repeats: { type: 'boolean', description: 'true: charged every month. false (default): once, on the first day.' } },
       required: ['building', 'name'],
     },
   },
@@ -166,7 +166,7 @@ export const LEASING_TOOLS = [
         discount_percent: { type: 'number', description: 'A discount off the rent, in percent. Only when the user gives one.' },
         discount_amount: { type: 'number', description: 'A discount as an amount off rent_amount (off the month, or off the year). Give this or discount_percent, never both.' }, discount_note: { ...str, description: 'Why the discount was given.' },
         tax_percent: { type: 'number', description: "Tax (VAT) on the rent and the charges, in percent; the deposit is never taxed. Left out, the lease gets the region's usual tax, as the lease form does: say so in the answer. 0 only when the user says there is no tax." },
-        charges: { type: 'array', maxItems: 10, items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: with every rent payment. false: once.' } }, required: ['name', 'amount'] } },
+        charges: { type: 'array', maxItems: 10, items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: every month. false: once.' }, from: { type: 'string', description: 'YYYY-MM-DD, monthly charges only: first day it is billed; leave out for the lease start.' }, until: { type: 'string', description: 'YYYY-MM-DD, monthly charges only: it stops after the month this falls in; leave out to run to the lease end.' } }, required: ['name', 'amount'] } },
         source: { ...str, description: 'Where the tenant came from (walk-in, referral, a listing site…), as in leasing_list sources. Only when the user says; a new one is added to that list.' },
         tenant_energy_account: { type: 'boolean', description: "true when the tenant has an energy (electricity and water) account in their own name; false when the bill is on the company's account. Only when the user says." },
         contract_no: str, notes: str,
@@ -214,7 +214,7 @@ export const LEASING_TOOLS = [
         discount_amount: { type: 'number', description: 'A discount as an amount off rent_amount (off the month, or off the year). Give this or discount_percent, never both. 0 takes the discount off.' }, discount_note: { ...str, description: 'Why the discount was given.' },
         tax_percent: { type: 'number', description: 'Tax (VAT) on the rent and the charges, in percent; the deposit is never taxed. 0 takes the tax off.' },
         set_charges: { type: 'array', maxItems: 10, description: 'Charges to add, or to re-price if the lease already has one of that name. The others stay as they are.',
-          items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: with every rent payment. false: once.' } }, required: ['name', 'amount'] } },
+          items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: every month. false: once.' }, from: { type: 'string', description: 'YYYY-MM-DD, monthly charges only: first day it is billed; leave out for the lease start.' }, until: { type: 'string', description: 'YYYY-MM-DD, monthly charges only: it stops after the month this falls in; leave out to run to the lease end.' } }, required: ['name', 'amount'] } },
         remove_charges: { type: 'array', items: str, description: 'Names of charges to take off the lease.' },
         source: { ...str, description: 'Where the tenant came from, as in leasing_list sources; a new one is added to that list. Empty takes it off.' },
         tenant_energy_account: { type: 'boolean', description: "true when the tenant has an energy (electricity and water) account in their own name; false when the bill is on the company's account. Only when the user says." },
@@ -319,7 +319,7 @@ async function sourceOf(name) {
 const discountLine = (b) => (b.discount_type ? `discount ${b.discount_type === 'percent' ? `${b.discount_value}%` : cash(b.discount_value)}${b.discount_note ? ` (${b.discount_note})` : ''}` : '');
 const taxLine = (b) => (b.tax_percent ? `${region().tax_name} ${b.tax_percent}%` : '');
 
-const chargesLine = (fees) => (fees.length ? fees.map((f) => `${f.label} ${cash(f.amount)}${f.repeats ? ' with every rent payment' : ' once'}`).join(', ') : 'none');
+const chargesLine = (fees) => (fees.length ? fees.map((f) => `${f.label} ${cash(f.amount)}${f.repeats ? ` every month${f.from ? ` from ${f.from}` : ''}${f.until ? ` until ${f.until}` : ''}` : ' once'}`).join(', ') : 'none');
 
 /** Where a lease stands with its move-in inspection, when that is worth saying. */
 const inspected = (b) => (b.status === 'draft' ? (b.renewed_from ? ', a renewal: no move-in inspection needed' : `, move-in inspection ${b.moved_in ? 'done' : 'not done'}`)
@@ -463,7 +463,7 @@ const reads = {
     const b = await find('prop_buildings', 'building', input.building);
     if (input.what === 'services') {
       const rows = await listServices(b.id);
-      return rows.length ? `Services of ${b.name}:\n${rows.map((s) => `- ${s.name}: ${s.amount == null ? 'no usual price yet' : cash(s.amount)}, ${s.repeats ? 'with every rent payment' : 'once'}`).join('\n')}` : `${b.name} has no services yet.`;
+      return rows.length ? `Services of ${b.name}:\n${rows.map((s) => `- ${s.name}: ${s.amount == null ? 'no usual price yet' : cash(s.amount)}, ${s.repeats ? 'every month' : 'once'}`).join('\n')}` : `${b.name} has no services yet.`;
     }
     if (input.what === 'units') {
       const rows = await listUnits(b.id);
@@ -508,7 +508,7 @@ const writes = (user) => {
     leasing_add_service: async (input) => {
       const b = await find('prop_buildings', 'building', input.building);
       const s = await addService({ name: input.name, amount: input.amount ?? '', repeats: !!input.repeats, building_id: b.id }, user.id);
-      return `Service added to ${b.name}: ${s.name}, ${s.amount == null ? 'no usual price yet' : cash(s.amount)}, ${s.repeats ? 'charged with every rent payment' : 'charged once'}.`;
+      return `Service added to ${b.name}: ${s.name}, ${s.amount == null ? 'no usual price yet' : cash(s.amount)}, ${s.repeats ? 'charged every month' : 'charged once'}.`;
     },
     leasing_add_tenant: async (input) => {
       const same = await db.prepare('SELECT full_name, phone FROM lease_tenants WHERE lower(full_name) = lower(?) LIMIT 1').get(String(input.full_name || '').trim());
@@ -542,7 +542,7 @@ const writes = (user) => {
       const made = await createBooking({
         unit_id: unit.id, tenant_id: tenant.id, start_date: input.start_date, end_date: input.end_date, rent_amount: input.rent_amount,
         rent_period: input.rent_period || 'month', payment_frequency: input.payment_frequency || 'monthly', security_deposit: input.security_deposit ?? null,
-        fees: charges.map((c) => ({ label: c.name, amount: c.amount, repeats: !!c.repeats })), contract_no: input.contract_no, notes: input.notes, tenant_energy_account: input.tenant_energy_account === true,
+        fees: charges.map((c) => ({ label: c.name, amount: c.amount, repeats: !!c.repeats, from: c.from, until: c.until })), contract_no: input.contract_no, notes: input.notes, tenant_energy_account: input.tenant_energy_account === true,
         // Like the lease form, a new lease starts with the region's usual tax unless another rate, or none, is given,
         // and is a draft: it is confirmed after the move-in inspection.
         tax_percent: region().tax_percent, ...terms(input), ...(source ? { source: source.name } : {}), status: 'draft',
@@ -609,7 +609,7 @@ const writes = (user) => {
         const missing = [...drop].filter((n) => !old.fees.some((f) => key(f.label) === n));
         if (missing.length) throw new Error(`This lease has no charge named ${missing.join(', ')}. Its charges: ${chargesLine(old.fees)}.`);
         body.fees = [...old.fees.filter((f) => !drop.has(key(f.label)) && !set.some((c) => key(c.name) === key(f.label))),
-          ...set.map((c) => ({ label: c.name, amount: c.amount, repeats: !!c.repeats }))];
+          ...set.map((c) => ({ label: c.name, amount: c.amount, repeats: !!c.repeats, from: c.from, until: c.until }))];
       }
       const source = input.source != null ? await sourceOf(input.source) : null;
       if (source) body.source = source.name;
