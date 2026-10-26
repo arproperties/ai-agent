@@ -323,7 +323,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
               <span className="min-w-0 truncate"><span className="hidden md:inline">Case </span>{focus.primary.number}</span>
               {/* On a wide screen the timer is beside the chat; here it rides on the chip. */}
               {(timer.running || timer.session > 0) && (
-                <span className={`shrink-0 tabular-nums 2xl:hidden ${timer.running ? '' : 'opacity-60'}`}>· {shortClock(timer.session)}</span>
+                <span className={`shrink-0 tabular-nums xl:hidden ${timer.running ? '' : 'opacity-60'}`}>· {shortClock(timer.session)}</span>
               )}
             </button>
           )}
@@ -342,10 +342,11 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       </header>
 
       {/* A chat about a case has its files on the left and its timer on the right, where the
-          screen is wide enough to leave the chat its room; elsewhere they are in the case sheet. */}
+          screen is wide enough to leave the chat its room (from 1280: a 1920 screen at Windows'
+          150% scaling is 1280 to the browser); elsewhere they are in the case sheet. */}
       <div className="flex min-h-0 flex-1">
       {focus?.primary && (
-        <aside className="hidden w-64 shrink-0 overflow-y-auto border-r border-stroke/60 px-3 py-4 2xl:block">
+        <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-stroke/60 px-3 py-4 xl:block 2xl:w-64">
           <b className="mb-2 block px-1 text-xs font-medium uppercase tracking-wide text-mute">Case files</b>
           <CaseFiles files={caseFiles} number={focus.primary.number} onOpen={openFile} onOpenShelf={onOpenFiles} />
         </aside>
@@ -517,7 +518,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       </div>
       </div>
       {focus?.primary && (
-        <aside className="hidden w-60 shrink-0 overflow-y-auto border-l border-stroke/60 px-4 py-4 2xl:block">
+        <aside className="hidden w-52 shrink-0 overflow-y-auto border-l border-stroke/60 px-4 py-4 xl:block 2xl:w-60">
           <b className="mb-3 block text-xs font-medium uppercase tracking-wide text-mute">Time on this case</b>
           <CaseTimer timer={timer} />
         </aside>
