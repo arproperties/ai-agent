@@ -50,8 +50,9 @@ export function transcript(rows, userName) {
  * stops arriving, it does not break the turn.
  */
 export async function recapOf(user, conversationId, { summarise = askSummary } = {}) {
-  const conv = await db.prepare('SELECT id, title FROM conversations WHERE id = ? AND user_id = ?').get(conversationId, user.id);
+  const conv = await db.prepare('SELECT id, title, primary_case FROM conversations WHERE id = ? AND user_id = ?').get(conversationId, user.id);
   if (!conv) return null;
+  const withCase = (recap) => (conv.primary_case ? { ...recap, case: conv.primary_case } : recap); // chat.js marks another case's chat as a reference
   const rows = (await db.prepare(`SELECT m.id, m.role, m.content, m.files, a.name agent_name
     FROM messages m LEFT JOIN agents a ON a.id = m.agent_id
     WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT ${WINDOW}`).all(conv.id)).reverse();
@@ -59,11 +60,11 @@ export async function recapOf(user, conversationId, { summarise = askSummary } =
 
   const title = conv.title || 'Untitled chat';
   const text = transcript(rows, user.name);
-  if (text.length <= VERBATIM) return { id: conv.id, title, body: text, verbatim: true };
+  if (text.length <= VERBATIM) return withCase({ id: conv.id, title, body: text, verbatim: true });
 
   const through = rows.at(-1).id;
   const hit = await db.prepare('SELECT summary FROM chat_recaps WHERE conversation_id = ? AND through_id = ?').get(conv.id, through);
-  if (hit) return { id: conv.id, title, body: hit.summary };
+  if (hit) return withCase({ id: conv.id, title, body: hit.summary });
 
   // A summary that does not come back is not worth failing the turn for: the opening of
   // the chat is still better context than nothing.
@@ -73,12 +74,12 @@ export async function recapOf(user, conversationId, { summarise = askSummary } =
   } catch (e) {
     console.error('[recap]', e.message);
   }
-  if (!summary) return { id: conv.id, title, body: `${text.slice(0, VERBATIM)}\n…(beginning of the chat only)`, verbatim: true };
+  if (!summary) return withCase({ id: conv.id, title, body: `${text.slice(0, VERBATIM)}\n…(beginning of the chat only)`, verbatim: true });
 
   await db.prepare(`INSERT INTO chat_recaps (conversation_id, through_id, summary) VALUES (?, ?, ?)
     ON CONFLICT (conversation_id) DO UPDATE SET through_id = EXCLUDED.through_id, summary = EXCLUDED.summary,
       created_at = extract(epoch from now())`).run(conv.id, through, summary);
-  return { id: conv.id, title, body: summary };
+  return withCase({ id: conv.id, title, body: summary });
 }
 
 /** Chats already brought into this conversation by an earlier message. */

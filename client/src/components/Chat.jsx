@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ListTodo, Lightbulb, X, Bell } from 'lucide-react';
+import { ListTodo, Lightbulb, X, Bell, Scale } from 'lucide-react';
 import { api, streamChat } from '../lib/api';
 import { speakText, stopSpeaking, togglePause } from '../lib/voice';
 import { cutSelection } from '../lib/cut';
@@ -77,6 +77,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [carrying, setCarrying] = useState([]); // titles of the chats this conversation is already using
   const [picking, setPicking] = useState(false); // the bring-in-a-chat sheet is open
   const [quote, setQuote] = useState(''); // part of a reply picked to answer (select → Reply)
+  const [focus, setFocus] = useState(null); // { primary, references }: the case this chat is about (server/caseFocus.js)
+  const [focusOpen, setFocusOpen] = useState(false); // the case sheet is open
   const abortRef = useRef();
   const scrollRef = useRef();
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
@@ -101,6 +103,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       api.get(`/inventory/proposals?conversation=${conversationId}`).then(setStock).catch(() => {});
       if (user.external) api.get(`/cases/proposals?conversation=${conversationId}`).then(setCases).catch(() => {});
       api.get(`/notices/chat?conversation=${conversationId}`).then(setNotices).catch(() => {});
+      api.get(`/case-focus/${conversationId}`).then(setFocus).catch(() => {}); // refused without the Primary case module
     }
     api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
     // Only on the first screen, where they are shown. The server decides whether it is
@@ -179,6 +182,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
               .map((x) => (x.role === 'user' && x.content === text && !x.saved ? { ...x, saved: d.userMessageId } : x)));
           }
           else if (event === 'carried') setCarrying(d.map((c) => c.title));
+          else if (event === 'primaryCase') setFocus(d);
           else if (event === 'status') setStatus(d.label);
           else if (event === 'notice') flash(d.message);
           else if (event === 'error') { failed = true; update({ error: d.message }); }
@@ -298,6 +302,14 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
               {status || (orb === 'listening' ? 'Listening…' : orb === 'speaking' && !busy ? 'Speaking…' : `Auto-picks from your ${agents.length} agents`)}
             </span>
           </span>
+          {/* The case this chat is about. Shown, never changed: another case is a new chat. */}
+          {focus?.primary && (
+            <button onClick={() => setFocusOpen(true)} title={`This chat is about case ${focus.primary.number}`}
+              className="ml-1 flex min-w-0 max-w-[45%] shrink items-center gap-1.5 rounded-full border border-p1/40 bg-p1/[0.09] px-2.5 py-1 text-xs text-p1 hover:bg-p1/[0.15]">
+              <Scale size={13} className="shrink-0" />
+              <span className="truncate">Case {focus.primary.number}</span>
+            </button>
+          )}
         </div>
         {voiceEnabled && (
           <IconBtn icon="live" label="Live voice — hands free" onClick={() => { stopSpeaking(); setLive(true); }} />
@@ -486,6 +498,27 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           icon={<span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><Icon name="clip" size={16} /></span>}>
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
             {chatFiles.map((d) => <FileCard key={d.id} d={d} onOpen={setViewer} />)}
+          </div>
+        </Sheet>
+      )}
+      {focusOpen && focus?.primary && (
+        <Sheet title={`Case ${focus.primary.number}`} onClose={() => setFocusOpen(false)}
+          icon={<span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><Scale size={16} /></span>}>
+          <div className="space-y-4 text-sm">
+            {(focus.primary.partyA || focus.primary.partyB || focus.primary.title) && (
+              <p>{focus.primary.partyA || focus.primary.partyB
+                ? `${focus.primary.partyA || 'Party A unknown'} vs ${focus.primary.partyB || 'Party B unknown'}` : focus.primary.title}</p>
+            )}
+            <p className="text-mute">This chat is about this case. Other cases you mention here are kept apart as references.
+              To make another case the main one, start a new chat.</p>
+            {focus.references?.length > 0 && (
+              <div>
+                <b className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-mute">Reference cases</b>
+                <div className="flex flex-wrap gap-1.5">
+                  {focus.references.map((r) => <span key={r.key} className="rounded-full border border-stroke px-2.5 py-1 text-xs">{r.number}</span>)}
+                </div>
+              </div>
+            )}
           </div>
         </Sheet>
       )}

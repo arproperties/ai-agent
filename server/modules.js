@@ -37,6 +37,8 @@ export const MODULES = [
   { key: 'email', label: 'Email', about: 'Connect their own mailbox and see what Reem has sent from it.', everyone: true },
   // Not a screen: what a chat does with /explain, /breakdown and /explore (server/pictures.js).
   { key: 'pictures', label: 'Pictures', about: 'Start a chat message with /explain, /breakdown or /explore and Reem draws it as a picture. Each picture is paid for.' },
+  // Not a screen either: what a chat does once a case is named in it (server/caseFocus.js).
+  { key: 'case_focus', label: 'Primary case', about: 'The first case named in a chat becomes its main case; other cases mentioned later are kept apart as references.', everyone: true },
 ];
 const KEYS = MODULES.map((m) => m.key);
 export const COMPANY_MODULES = MODULES.filter((m) => m.company).map((m) => m.key);

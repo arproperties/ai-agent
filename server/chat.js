@@ -20,6 +20,8 @@ import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
 import { chatAgents, privateAgents, isExternal, isMaster } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
+import { focusTurn } from './caseFocus.js';
+import { primaryCaseBlock, labelExcerpt, sameCase } from './primaryCase.js';
 import { userModules } from './modules.js';
 import { pictureTag, makePicture, pictureKit } from './pictures.js';
 import { AUTO_MODEL, ADVISOR_MODEL, MASTER_MODEL } from './config.js';
@@ -58,7 +60,11 @@ export function chatModel(user, agent) {
   return { model: AUTO_MODEL, auto: true };
 }
 
-function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false, auto = false) {
+// A chat brought in that is about another case says so, so its notes are read as a reference.
+const carriedCase = (c, primary) => (primary && c.case && !sameCase(c.case.number, primary.number)
+  ? ` case="${String(c.case.number).replace(/"/g, "'")}" about="a reference case, not ${String(primary.number).replace(/"/g, "'")}"` : '');
+
+function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false, auto = false, focus = null) {
   const others = team.filter((a) => a.id !== agent.id).map((a) => a.name);
   const parts = [
     agent.persona || `You are ${agent.name}, a helpful assistant.`,
@@ -226,7 +232,12 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
       'To change one, write the corrected version in full with replaces set to its id, so the old one is withdrawn.\n' +
       `${mailbox.waiting.map((d) => `<draft id="${d.id}" to="${JSON.parse(d.to_addrs).join(', ')}" subject="${String(d.subject).replace(/"/g, "'")}">\n${d.body}\n</draft>`).join('\n')}\n</waiting_drafts>`);
   }
-  if (knowledge.length) context.push(`<knowledge>\nExcerpts from the user's files that may be relevant:\n${knowledge.join('\n---\n')}\n</knowledge>`);
+  // The case this chat is about, and the others it has mentioned: a reference case's dates
+  // must not end up in the primary one. Excerpts say which case their file belongs to.
+  const primary = focus?.primary;
+  if (primary) context.push(primaryCaseBlock(user.name, primary, focus.references));
+  const excerpts = primary ? knowledge.map((k) => labelExcerpt(k, primary, focus.references)) : knowledge;
+  if (excerpts.length) context.push(`<knowledge>\nExcerpts from the user's files that may be relevant:\n${excerpts.join('\n---\n')}\n</knowledge>`);
   // Chats the user deliberately brought into this one — the material for pulling several
   // conversations together, so it sits above recalled excerpts in importance, and the
   // reply has to say which chat each point came from or the person cannot check it.
@@ -234,7 +245,7 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     context.push(`<earlier_chats>\n${user.name} has brought these earlier chats of theirs into this conversation, to be used together here. ` +
       'Each one is notes written from that chat\'s real messages. Use them as your source material and name the chat a point came from. ' +
       'Never add a decision, name, number or date that is not in them, and say so plainly if something they are asking for is not there.\n\n' +
-      `${carried.map((c) => `<chat title="${c.title.replace(/"/g, "'")}">\n${c.body}\n</chat>`).join('\n\n')}\n</earlier_chats>`);
+      `${carried.map((c) => `<chat title="${c.title.replace(/"/g, "'")}"${carriedCase(c, primary)}>\n${c.body}\n</chat>`).join('\n\n')}\n</earlier_chats>`);
   }
   if (auto) parts.push(ADVISOR_RULE);
   return [
@@ -464,7 +475,8 @@ export async function chat(req, res) {
 
   // /explain, /breakdown, /explore: drawn rather than answered, for those given Pictures.
   // With a file attached, or without the module, the tag is only words and the turn is an ordinary one.
-  const canPicture = (await userModules(user)).includes('pictures');
+  const modules = await userModules(user);
+  const canPicture = modules.includes('pictures');
   const asked = canPicture && !files.length && pictureTag(text);
   if (asked) return pictureTurn({ user, team: [...team, ...byName], convId, text, asked, send, res });
 
@@ -542,7 +554,12 @@ export async function chat(req, res) {
     }));
   }
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
-  const { memories, knowledge } = await recall(reader, text || meta.map((f) => f.name).join(' '));
+  // The case this chat is about (caseFocus.js): set once, by the first message naming one.
+  const focus = modules.includes('case_focus')
+    ? await focusTurn(user, convId, { text, fileNames: meta.map((f) => f.name), modules }) : null;
+  if (focus?.changed) send('primaryCase', { primary: focus.primary, references: focus.references });
+  // Its number goes into the search too, so the case's own files come up first.
+  const { memories, knowledge } = await recall(reader, [text || meta.map((f) => f.name).join(' '), focus?.primary?.number].filter(Boolean).join(' '));
   const library = await libraryCatalog(reader); // same every turn, so read it once
   // Chats brought in by this message, plus any brought in earlier: once a chat is carried
   // into this conversation it stays for every message after it, which is what "this chat
@@ -572,7 +589,7 @@ export async function chat(req, res) {
     let prevType = null;
     const { model, auto } = chatModel(user, agent);
     if (mailbox) await loadAddresses(); // the master may have added one since the last message
-    const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto);
+    const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto, focus);
     for (let turn = 0; turn < MAX_ROUNDS; turn++) {
       stream = claude.beta.messages.stream({
         model,

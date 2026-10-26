@@ -2204,4 +2204,10 @@ await db.exec(`
   -- The emails the user unticked on Save, as [{ mail_key, message_id }] only (no content),
   -- so a later update never brings them back.
   ALTER TABLE case_folders ADD COLUMN IF NOT EXISTS excluded_keys JSONB NOT NULL DEFAULT '[]';
+
+  -- Primary case (server/caseFocus.js): the first case a chat names, written once and never
+  -- changed, as { number, key, partyA, partyB, title, folderId, legalCaseId, source }.
+  -- reference_cases: every other case named in the chat since, as [{ number, key }].
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS primary_case JSONB;
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reference_cases JSONB NOT NULL DEFAULT '[]';
 `);

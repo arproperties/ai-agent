@@ -107,7 +107,7 @@ export async function canUseAgent(user, agentId) {
  */
 const EXTERNAL_OPEN = new Set(['auth', 'config', 'agents', 'conversations', 'chat', 'messages', 'documents', 'imports',
   'memories', 'voice', 'access', 'modules', 'todos', 'routines', 'suggestions', 'push', 'meetings', 'transcripts',
-  'translate', 'replies', 'pictures', 'email', 'outlook', 'imap', 'cases']);
+  'translate', 'replies', 'pictures', 'email', 'outlook', 'imap', 'cases', 'case-focus']);
 
 /** Mount after requireUser. Leaves everyone but an external person alone. */
 export function externalFence(req, res, next) {
