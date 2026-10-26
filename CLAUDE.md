@@ -80,4 +80,4 @@ Each feature is usually one server file exporting `xxxRoutes` (an Express Router
 - Comments explain *why* in plain language, often describing the user-visible behaviour; match that style.
 - Design specs and implementation plans go in `docs/superpowers/specs/` and `docs/superpowers/plans/` (dated filenames).
 - Feature flags are env vars read in `config.js` (e.g. `DOC_RENEWALS_SEND=on`); keep anything that emails or pushes to real people off by default locally.
-- Branch `deploy/reem-cases` is what is live on the server; `main` is the PR base.
+- `main` is what is live on the server, and the PR base: deploy from `main`. Other sessions deploy too, so before shipping, compare live with what you are about to ship and merge `origin/main` first if live has more. (`deploy/reem-cases` is an old branch; never deploy it.)
