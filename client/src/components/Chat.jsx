@@ -520,11 +520,10 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       </div>
       {focus?.primary && (
         <aside className="hidden w-52 shrink-0 overflow-y-auto border-l border-stroke/60 px-4 py-4 xl:block 2xl:w-60">
-          {/* Dates first: a deadline is what most needs seeing; the timer is there for later. */}
-          <b className="mb-2 block text-xs font-medium uppercase tracking-wide text-mute">Legal dates</b>
-          <CaseDeadlines deadlines={deadlines} onOpen={openFile} />
-          <b className="mb-3 mt-6 block text-xs font-medium uppercase tracking-wide text-mute">Time on this case</b>
+          <b className="mb-3 block text-xs font-medium uppercase tracking-wide text-mute">Time on this case</b>
           <CaseTimer timer={timer} />
+          <b className="mb-2 mt-6 block text-xs font-medium uppercase tracking-wide text-mute">Legal dates</b>
+          <CaseDeadlines deadlines={deadlines} onOpen={openFile} />
         </aside>
       )}
       </div>
