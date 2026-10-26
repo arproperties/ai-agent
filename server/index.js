@@ -35,6 +35,7 @@ import { inventoryRoutes } from './inventory.js';
 import { caseRoutes } from './caseRoutes.js';
 import { startCaseFolders } from './caseWatch.js';
 import { caseShareRoutes, publicCaseRoutes } from './caseShare.js';
+import { caseFocusRoutes } from './caseFocus.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
 import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
@@ -110,6 +111,7 @@ app.use('/api/buildings', buildingRoutes); // who runs each building, and the st
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
 app.use('/api/cases', caseShareRoutes); // a case folder emailed, or its link turned on and off (external only)
 app.use('/api/cases', caseRoutes); // an external person's case folders, got ready from their inbox in chat (external only)
+app.use('/api/case-focus', caseFocusRoutes); // the case a chat is about, its references (module case_focus)
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)

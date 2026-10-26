@@ -2204,4 +2204,25 @@ await db.exec(`
   -- The emails the user unticked on Save, as [{ mail_key, message_id }] only (no content),
   -- so a later update never brings them back.
   ALTER TABLE case_folders ADD COLUMN IF NOT EXISTS excluded_keys JSONB NOT NULL DEFAULT '[]';
+
+  -- Primary case (server/caseFocus.js): the first case a chat names, written once and never
+  -- changed, as { number, key, partyA, partyB, title, folderId, legalCaseId, source }.
+  -- reference_cases: every other case named in the chat since, as [{ number, key }].
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS primary_case JSONB;
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reference_cases JSONB NOT NULL DEFAULT '[]';
+  -- Time spent on a case, counted by the chat's timer (caseFocus.js) in 30-second beats.
+  -- One row per person, case, chat and Dubai day; case_key joins the chats about one case.
+  -- Only ever read back by the person themselves.
+  CREATE TABLE IF NOT EXISTS case_time (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_key TEXT NOT NULL,
+    case_number TEXT NOT NULL,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    day DATE NOT NULL,
+    seconds INTEGER NOT NULL DEFAULT 0,
+    last_beat_at BIGINT,
+    UNIQUE (user_id, case_key, conversation_id, day)
+  );
+  CREATE INDEX IF NOT EXISTS idx_case_time_user ON case_time(user_id, case_key, day);
 `);
