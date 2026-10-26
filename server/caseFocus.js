@@ -9,7 +9,9 @@
 import { Router } from 'express';
 import { db } from './db.js';
 import { needsModule } from './modules.js';
-import { casesIn, allCases, sameCase } from './primaryCase.js';
+import { casesIn, allCases, sameCase, names } from './primaryCase.js';
+import { caseKey, searchTerm } from './caseMatch.js';
+import { dubaiDate } from './saifsys/client.js';
 
 /** The cases this person has of their own: their case folders, and legal cases if they have Legal. */
 export async function knownCases(user, modules = []) {
@@ -87,11 +89,127 @@ export async function focusOf(userId, conversationId) {
   return conv && { primary: conv.primary_case, references: conv.reference_cases || [] };
 }
 
+// ---------- the case's files, for the panel beside the chat ----------
+
+const FILE_COLS = 'id, title, name, created_at, case_folder_id';
+
+/**
+ * The person's own Shelf files that belong to the chat's primary case: what its case folder
+ * made (the summary first), and any file whose title or name has the case number. Never a
+ * reference case's files: the panel is the one case the chat is about.
+ */
+export async function caseFiles(userId, conversationId) {
+  const focus = await focusOf(userId, conversationId);
+  if (!focus?.primary) return null;
+  const p = focus.primary;
+  const folders = (await db.prepare('SELECT id, case_number, summary_doc_id FROM case_folders WHERE user_id = ?').all(userId))
+    .filter((f) => f.id === p.folderId || sameCase(f.case_number, p.number));
+  const inFolders = folders.length
+    ? await db.prepare(`SELECT ${FILE_COLS} FROM documents WHERE user_id = ? AND case_folder_id = ANY(?::int[])`).all(userId, folders.map((f) => f.id))
+    : [];
+  // The database narrows by the number's digits; names() then checks it is this case and not a longer number.
+  const digits = searchTerm(p.number);
+  const byName = digits.length >= 4
+    ? (await db.prepare(`SELECT ${FILE_COLS} FROM documents WHERE user_id = ? AND (title ILIKE ? OR name ILIKE ?)`).all(userId, `%${digits}%`, `%${digits}%`))
+      .filter((d) => names(d.title || '', p.number) || names(d.name || '', p.number))
+    : [];
+  const summaries = new Set(folders.map((f) => f.summary_doc_id).filter(Boolean));
+  const files = [...new Map([...inFolders, ...byName].map((d) => [d.id, d])).values()]
+    .map((d) => ({ ...d, summary: summaries.has(d.id) }))
+    .sort((a, b) => (b.summary - a.summary) || (b.created_at - a.created_at) || (b.id - a.id));
+  return { number: p.number, files };
+}
+
+// ---------- the case timer ----------
+
+// The most one beat can add. The page beats every 30 seconds while the timer runs, and a
+// background tab is slowed to about once a minute, which must still count; a laptop that
+// slept for an hour must not.
+export const BEAT_CAP = 120;
+
+const keyOf = (primary) => primary.key || caseKey(primary.number);
+
+// The seven Dubai days ending today, oldest first, as YYYY-MM-DD.
+const lastDays = (today, n = 7) => Array.from({ length: n }, (_, i) => {
+  const d = new Date(`${today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - (n - 1 - i));
+  return d.toISOString().slice(0, 10);
+});
+
+/** This person's time on one case: today, the last 7 days, all of it, and each of the 7 days. */
+export async function timeOn(userId, primary, today = dubaiDate()) {
+  const key = keyOf(primary);
+  const days = lastDays(today);
+  const t = await db.prepare(`SELECT coalesce(sum(seconds) FILTER (WHERE day = ?::date), 0)::int today,
+      coalesce(sum(seconds) FILTER (WHERE day >= ?::date), 0)::int week,
+      coalesce(sum(seconds), 0)::int total, count(DISTINCT conversation_id)::int chats
+    FROM case_time WHERE user_id = ? AND case_key = ?`).get(today, days[0], userId, key);
+  const rows = await db.prepare(`SELECT day::text d, sum(seconds)::int s FROM case_time
+    WHERE user_id = ? AND case_key = ? AND day >= ?::date GROUP BY day`).all(userId, key, days[0]);
+  return { ...t, days: days.map((d) => ({ day: d, seconds: rows.find((r) => r.d === d)?.s || 0 })) };
+}
+
+/**
+ * One beat of a running timer. start: the timer has just been started or resumed, so the
+ * time since the last beat was a pause and is not counted. The case is the chat's own, read
+ * here, never one the page names. Returns the totals, or null for a chat with no case.
+ */
+export async function beat(userId, conversationId, { start = false, now = Math.floor(Date.now() / 1000) } = {}) {
+  const focus = await focusOf(userId, conversationId);
+  if (!focus?.primary) return null;
+  const p = focus.primary;
+  const { last } = await db.prepare('SELECT max(last_beat_at) AS last FROM case_time WHERE user_id = ? AND conversation_id = ?')
+    .get(userId, Number(conversationId));
+  const add = start || !last ? 0 : Math.max(0, Math.min(BEAT_CAP, now - last));
+  const today = dubaiDate(now * 1000);
+  await db.prepare(`INSERT INTO case_time (user_id, case_key, case_number, conversation_id, day, seconds, last_beat_at)
+    VALUES (?, ?, ?, ?, ?::date, ?, ?)
+    ON CONFLICT (user_id, case_key, conversation_id, day)
+    DO UPDATE SET seconds = case_time.seconds + EXCLUDED.seconds, last_beat_at = EXCLUDED.last_beat_at`)
+    .run(userId, keyOf(p), p.number, Number(conversationId), today, add, now);
+  return { added: add, ...(await timeOn(userId, p, today)) };
+}
+
+/** Every case this person has timed, for Time on cases: in the range asked, and all time. */
+export async function timeByCase(userId, from, to) {
+  const rows = await db.prepare(`SELECT case_key, max(case_number) case_number,
+      coalesce(sum(seconds) FILTER (WHERE day BETWEEN ?::date AND ?::date), 0)::int seconds,
+      sum(seconds)::int total, count(DISTINCT conversation_id)::int chats, max(day)::text last_day
+    FROM case_time WHERE user_id = ? GROUP BY case_key ORDER BY max(last_beat_at) DESC`).all(from, to, userId);
+  return rows;
+}
+
 // ---------- routes ----------
 
 const wrap = (fn) => (req, res, next) => fn(req, res).catch(next);
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 export const caseFocusRoutes = Router();
 caseFocusRoutes.use(needsModule('case_focus'));
+
+// Time on cases: their own only. There is no route that takes another person's id.
+caseFocusRoutes.get('/time', wrap(async (req, res) => {
+  const to = DAY.test(req.query.to) ? req.query.to : dubaiDate();
+  const from = DAY.test(req.query.from) ? req.query.from : lastDays(to, 30)[0];
+  res.json({ from, to, cases: await timeByCase(req.user.id, from, to) });
+}));
+
+caseFocusRoutes.get('/:conversationId/files', wrap(async (req, res) => {
+  const out = await caseFiles(req.user.id, req.params.conversationId);
+  if (!out) return res.status(404).json({ error: 'Not found' });
+  res.json(out);
+}));
+
+caseFocusRoutes.get('/:conversationId/time', wrap(async (req, res) => {
+  const focus = await focusOf(req.user.id, req.params.conversationId);
+  if (!focus?.primary) return res.status(404).json({ error: 'Not found' });
+  res.json(await timeOn(req.user.id, focus.primary));
+}));
+
+caseFocusRoutes.post('/:conversationId/beat', wrap(async (req, res) => {
+  const out = await beat(req.user.id, req.params.conversationId, { start: req.body?.start === true });
+  if (!out) return res.status(404).json({ error: 'Not found' });
+  res.json(out);
+}));
 
 // Read only: there is no route that sets or changes a primary case. Only a chat message does.
 caseFocusRoutes.get('/:conversationId', wrap(async (req, res) => {

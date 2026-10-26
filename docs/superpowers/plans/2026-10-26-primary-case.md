@@ -198,9 +198,9 @@ looks exactly as it does today.
 
 ## Layout
 
-- **Wide screens (≥ 1280px):** three columns. The left rail is about 260px, the chat stays
-  `max-w-6xl` in the middle, and the right rail is about 240px. Below 1280px the chat would
-  get squeezed, so:
+- **Wide screens (≥ 1536px, Tailwind `2xl`):** three columns. The left rail is 256px, the
+  chat is in the middle, and the right rail is 240px. The app's own sidebar already takes
+  about 290px, so at 1280px the chat would be left with about 500px. Below 1536px:
 - **Phones and narrow screens:** no side rails. The ⚖ chip from Part 1 also shows the
   running time (**⚖ E-205791 · 0:42**). Tapping it opens a sheet with two tabs: *Files* and
   *Time*.

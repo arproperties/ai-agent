@@ -26,6 +26,7 @@ import PdfSheet from './PdfSheet';
 import { lastDrawing, exportAsked } from '../lib/drawing';
 import { Welcome, InstallHint } from './FirstRun';
 import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
+import { useCaseTimer, useCaseFiles, CaseFiles, CaseTimer, shortClock } from './CaseRails';
 
 // Which reply can be shared: one the server has written down. A reply still streaming
 // has only a made-up id here, and the share is sent by id so the team gets the words
@@ -78,7 +79,17 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [picking, setPicking] = useState(false); // the bring-in-a-chat sheet is open
   const [quote, setQuote] = useState(''); // part of a reply picked to answer (select → Reply)
   const [focus, setFocus] = useState(null); // { primary, references }: the case this chat is about (server/caseFocus.js)
-  const [focusOpen, setFocusOpen] = useState(false); // the case sheet is open
+  const [focusOpen, setFocusOpen] = useState(false); // the case sheet is open, and on which tab
+  const [sent, setSent] = useState(0); // messages sent from this screen: what starts the case timer
+  const [answered, setAnswered] = useState(0); // replies finished: a new file may belong to the case
+  const timer = useCaseTimer(convId, focus?.primary);
+  const caseFiles = useCaseFiles(convId, focus?.primary, answered);
+  // Sending a message starts the timer (or resumes it after Pause); opening an old case
+  // chat does not. The case can arrive during the first reply, so this waits for it.
+  const timedSend = useRef(0);
+  useEffect(() => {
+    if (sent > timedSend.current && focus?.primary) { timedSend.current = sent; timer.start(); }
+  }, [sent, focus?.primary]); // eslint-disable-line react-hooks/exhaustive-deps
   const abortRef = useRef();
   const scrollRef = useRef();
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
@@ -140,6 +151,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   // onDelta: live voice mode starts reading the reply out while it is still arriving
   const send = async (text, files, { voice, onDelta } = {}) => {
     stopSpeaking();
+    setSent((n) => n + 1);
     const form = new FormData();
     if (convId) form.append('conversationId', convId);
     form.append('text', text);
@@ -221,6 +233,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     // "…convert into pdf": the reply is the PDF's content, so open it straight away.
     if (!voice && savedId && /\bpdf\b/i.test(text) && /<!--\s*doc\s*-->/i.test(reply)) setPdfOf({ id: savedId, content: reply });
     setBusy(false); setOrb('idle'); setStatus('');
+    setAnswered((n) => n + 1);
     onConversation(null);
     if (voice && reply) say(reply, aid, agentId);
     return { reply, agentId }; // live voice mode reads the reply out itself
@@ -304,10 +317,14 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           </span>
           {/* The case this chat is about. Shown, never changed: another case is a new chat. */}
           {focus?.primary && (
-            <button onClick={() => setFocusOpen(true)} title={`This chat is about case ${focus.primary.number}`}
-              className="ml-1 flex min-w-0 max-w-[45%] shrink items-center gap-1.5 rounded-full border border-p1/40 bg-p1/[0.09] px-2.5 py-1 text-xs text-p1 hover:bg-p1/[0.15]">
+            <button onClick={() => setFocusOpen('case')} title={`This chat is about case ${focus.primary.number}`}
+              className="ml-1 flex min-w-0 max-w-[55%] shrink-0 items-center gap-1.5 rounded-full border border-p1/40 bg-p1/[0.09] px-2.5 py-1 text-xs text-p1 hover:bg-p1/[0.15] md:max-w-[45%]">
               <Scale size={13} className="shrink-0" />
-              <span className="truncate">Case {focus.primary.number}</span>
+              <span className="min-w-0 truncate"><span className="hidden md:inline">Case </span>{focus.primary.number}</span>
+              {/* On a wide screen the timer is beside the chat; here it rides on the chip. */}
+              {(timer.running || timer.session > 0) && (
+                <span className={`shrink-0 tabular-nums 2xl:hidden ${timer.running ? '' : 'opacity-60'}`}>· {shortClock(timer.session)}</span>
+              )}
             </button>
           )}
         </div>
@@ -324,6 +341,16 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         <IconBtn icon="edit" label="New Reem chat" onClick={onNewChat} />
       </header>
 
+      {/* A chat about a case has its files on the left and its timer on the right, where the
+          screen is wide enough to leave the chat its room; elsewhere they are in the case sheet. */}
+      <div className="flex min-h-0 flex-1">
+      {focus?.primary && (
+        <aside className="hidden w-64 shrink-0 overflow-y-auto border-r border-stroke/60 px-3 py-4 2xl:block">
+          <b className="mb-2 block px-1 text-xs font-medium uppercase tracking-wide text-mute">Case files</b>
+          <CaseFiles files={caseFiles} number={focus.primary.number} onOpen={openFile} onOpenShelf={onOpenFiles} />
+        </aside>
+      )}
+      <div className="flex min-w-0 flex-1 flex-col">
       {/* messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
         {messages.length === 0 ? (
@@ -488,6 +515,14 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           onSend={send} onStop={() => abortRef.current?.abort()}
           onVoiceState={(s) => { stopSpeaking(); setOrb(s); }} onError={flash} />
       </div>
+      </div>
+      {focus?.primary && (
+        <aside className="hidden w-60 shrink-0 overflow-y-auto border-l border-stroke/60 px-4 py-4 2xl:block">
+          <b className="mb-3 block text-xs font-medium uppercase tracking-wide text-mute">Time on this case</b>
+          <CaseTimer timer={timer} />
+        </aside>
+      )}
+      </div>
 
       {live && (
         <LiveVoice onAsk={(text, onDelta) => send(text, [], { onDelta })} onClose={() => setLive(false)} onError={flash} />
@@ -503,8 +538,11 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       )}
       {focusOpen && focus?.primary && (
         <Sheet title={`Case ${focus.primary.number}`} onClose={() => setFocusOpen(false)}
+          tabs={[['case', 'Case'], ['files', 'Files'], ['time', 'Time']]} tab={focusOpen} onTab={setFocusOpen}
           icon={<span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><Scale size={16} /></span>}>
-          <div className="space-y-4 text-sm">
+          {focusOpen === 'files' && <CaseFiles files={caseFiles} number={focus.primary.number} onOpen={(id) => { setFocusOpen(false); openFile(id); }} onOpenShelf={onOpenFiles} />}
+          {focusOpen === 'time' && <CaseTimer timer={timer} />}
+          {focusOpen === 'case' && <div className="space-y-4 text-sm">
             {(focus.primary.partyA || focus.primary.partyB || focus.primary.title) && (
               <p>{focus.primary.partyA || focus.primary.partyB
                 ? `${focus.primary.partyA || 'Party A unknown'} vs ${focus.primary.partyB || 'Party B unknown'}` : focus.primary.title}</p>
@@ -519,7 +557,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 </div>
               </div>
             )}
-          </div>
+          </div>}
         </Sheet>
       )}
       {sharing && (

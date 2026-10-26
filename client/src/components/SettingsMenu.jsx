@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, FileClock, Gavel, ChevronRight, Search, PawPrint } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, FileClock, Gavel, ChevronRight, Search, PawPrint, Timer } from 'lucide-react';
 import Icon from './Icon';
+import { CaseTimeSheet } from './CaseRails';
 import { Row, Count } from './NavRow';
 import { THEMES, currentTheme, setTheme } from '../lib/theme';
 
@@ -49,6 +50,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
   // One group open at a time; Work first, since that is where the counts usually are.
   const [group, setGroup] = useState('Work');
   const [q, setQ] = useState('');
+  const [timeOpen, setTimeOpen] = useState(false); // Time on cases
   const fold = (name) => ({ q, open: group === name, onToggle: () => setGroup(group === name ? null : name) });
 
   // Clicking anywhere else, or pressing Escape, puts it away -- the two things everyone
@@ -101,6 +103,8 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
             {has('duties') && <Row role="menuitem" icon={<ClipboardList size={17} strokeWidth={1.75} />} label="My responsibilities" active={dutiesOpen} onClick={go(onDuties)} />}
             {has('checklists') && <Row role="menuitem" icon={<ListChecks size={17} strokeWidth={1.75} />} label="Checklists" active={checklistsOpen} onClick={go(onChecklists)} />}
             {has('legal') && <Row role="menuitem" icon={<Gavel size={17} strokeWidth={1.75} />} label="Legal cases" active={legalOpen} onClick={go(onLegal)} />}
+            {/* What the case timer in each case chat added up to: their own time only. */}
+            {has('case_focus') && <Row role="menuitem" icon={<Timer size={17} strokeWidth={1.75} />} label="Time on cases" onClick={go(() => setTimeOpen(true))} />}
           </Group>
           <Group title="Property" {...fold('Property')} count={tenantCare?.waiting || 0}>
             {has('renewals') && <Row role="menuitem" icon={<FileSignature size={17} strokeWidth={1.75} />} label="Lease renewals" active={renewalsOpen} onClick={go(onRenewals)} />}
@@ -161,6 +165,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
           </div>
         </div>
       )}
+      {timeOpen && <CaseTimeSheet onClose={() => setTimeOpen(false)} />}
     </div>
   );
 }
