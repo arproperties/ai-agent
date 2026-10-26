@@ -203,18 +203,31 @@ async function contractCase() {
   await rc.decide(who.hrUser, c.id, { choice: 'renew' });
   return { ...who, c };
 }
-const pushes = () => {
-  const sent = [];
-  return { sent, push: async (ids, msg) => { sent.push({ ids: [...ids], ...msg }); } };
-};
 
-test('keep copies current terms', async () => {
+// What Reem read off the labour contract (renewalAi.js), as the route hands it to propose.
+const PAPER = { basic: 500, allowance: 2500, total: 3000, position: 'Project Engineer', location: null, hours: '48 hours a week',
+  benefits: 'Air ticket every 2 years', confidence: 'high' };
+const paper = (over = {}) => async () => ({ ...PAPER, ...over });
+const DATES = { new_start: plus(50), new_end: plus(780), effective_date: plus(50) };
+
+test('keep takes the terms from the current contract, not from saifsys HR', async () => {
   const { hrUser, c } = await contractCase();
-  await rc.propose(hrUser, c.id, { mode: 'keep', note: 'Same again' }, { ask: hr });
+  await rc.propose(hrUser, c.id, { mode: 'keep', terms: DATES, note: 'Same again' }, { contract: paper() });
   const p = (await rc.getCase(hrUser, c.id)).proposal;
   assert.equal(p.mode, 'keep');
-  assert.deepEqual([p.terms.basic, p.terms.allowance, p.terms.position, p.terms.location], [800, 700, 'Clerk', 'Head office']);
+  assert.deepEqual([p.terms.basic, p.terms.allowance, p.terms.total, p.terms.position, p.terms.hours, p.terms.benefits],
+    [500, 2500, 3000, 'Project Engineer', '48 hours a week', 'Air ticket every 2 years'], 'the contract, not HR\'s 800 / 700 / Clerk');
+  assert.equal(p.terms.location, undefined, 'what the contract does not say is not filled from HR');
+  assert.equal(p.terms.new_start, plus(50), 'the new period is still HR\'s choice');
+  assert.deepEqual(p.from, { contract: c.document_id, confidence: 'high' });
   assert.equal(p.by, hrUser.id);
+});
+
+test('keep says so when Reem could not read the salary off the contract', async () => {
+  const { hrUser, c } = await contractCase();
+  await assert.rejects(rc.propose(hrUser, c.id, { mode: 'keep', terms: DATES }, { contract: paper({ basic: null }) }),
+    (e) => e.status === 400 && /Update the terms/.test(e.message));
+  await assert.rejects(rc.propose(hrUser, c.id, { mode: 'keep', terms: DATES }, { contract: async () => null }), (e) => e.status === 400);
 });
 
 test('update requires new_end and effective_date', async () => {
@@ -252,57 +265,31 @@ test('a cancellation proposes its reason', async () => {
   assert.equal((await rc.getCase(hrUser, c.id)).proposal.terms.reason, 'Left the company');
 });
 
-test('submitting asks the approvers, and only approvers or the master approve', async () => {
-  const { boss, hrUser, c } = await contractCase();
-  await assert.rejects(rc.submit(hrUser, c.id), (e) => e.status === 400, 'nothing proposed yet');
-  await rc.propose(hrUser, c.id, { mode: 'keep' }, { ask: hr });
-  const p = pushes();
-  await rc.submit(hrUser, c.id, { push: p.push });
-  assert.equal((await rc.getCase(hrUser, c.id)).status, 'awaiting_approval');
-  assert.deepEqual(p.sent[0].ids, [boss.id], 'no approvers set: the master');
-  assert.equal(p.sent[0].url, `/?docrenewals=case-${c.id}`);
-  assert.doesNotMatch(JSON.stringify(p.sent[0]), /800|700/, 'no pay figures in a notification');
-  const other = { id: await makeUser('Other'), role: 'user' };
-  await setModuleAccess(other.id, ['document_renewals']);
-  await assert.rejects(rc.approve(other, c.id), (e) => e.status === 403);
-  await rc.approve(boss, c.id);
-  assert.equal((await rc.getCase(boss, c.id)).status, 'approved');
-});
-
-test('proposer cannot approve their own proposal', async () => {
-  const { boss, hrUser, c } = await contractCase();
-  await db.prepare('INSERT INTO doc_renewal_case_settings (id, approver_ids) VALUES (1, ?)').run([hrUser.id, boss.id]);
-  await rc.propose(hrUser, c.id, { mode: 'keep' }, { ask: hr });
-  await rc.submit(hrUser, c.id, { push: async () => {} });
-  await assert.rejects(rc.approve(hrUser, c.id), (e) => e.status === 403 && /own/.test(e.message));
-  await rc.approve(boss, c.id);
-});
-
-test('rejected goes back to review with the note', async () => {
-  const { boss, hrUser, c } = await contractCase();
-  await rc.propose(hrUser, c.id, { mode: 'keep' }, { ask: hr });
-  await rc.submit(hrUser, c.id, { push: async () => {} });
-  await assert.rejects(rc.reject(boss, c.id, {}), (e) => e.status === 400, 'a rejection says why');
-  await rc.reject(boss, c.id, { note: 'Offer 5% more' });
-  const now = await rc.getCase(hrUser, c.id);
-  assert.equal(now.status, 'renew_review');
-  const last = (await events(c.id)).at(-1);
-  assert.deepEqual([last.kind, last.detail.note, last.user_id], ['rejected', 'Offer 5% more', boss.id]);
-});
-
-test('the proposal cannot change once it is waiting for approval', async () => {
+test('saving the proposal is final: no approval step, the case is ready for the PRO', async () => {
   const { hrUser, c } = await contractCase();
-  await rc.propose(hrUser, c.id, { mode: 'keep' }, { ask: hr });
-  await rc.submit(hrUser, c.id, { push: async () => {} });
-  await assert.rejects(rc.propose(hrUser, c.id, { mode: 'keep' }, { ask: hr }), (e) => e.status === 400);
+  await rc.propose(hrUser, c.id, { mode: 'keep', terms: DATES }, { contract: paper() });
+  assert.equal((await rc.getCase(hrUser, c.id)).status, 'approved');
+  assert.deepEqual((await events(c.id)).map((e) => e.kind), ['opened', 'decision', 'proposal']);
+  assert.equal(rc.submit, undefined, 'there is no sending for approval');
+  assert.equal(rc.approve, undefined);
 });
 
-test('case settings: only the master sets approvers, PROs and the opening days', async () => {
+test('the proposal can be corrected until a PRO task is given, not after', async () => {
+  const { hrUser, c } = await contractCase();
+  await rc.propose(hrUser, c.id, { mode: 'keep', terms: DATES }, { contract: paper() });
+  await rc.propose(hrUser, c.id, { mode: 'update', terms: { ...DATES, basic: 600, allowance: 2500 } }, { contract: paper() });
+  assert.equal((await rc.getCase(hrUser, c.id)).proposal.terms.basic, 600);
+  const pro = await makeUser('Pro');
+  await db.prepare(`INSERT INTO doc_renewal_case_tasks (case_id, assignee_id, kind, due_date) VALUES (?, ?, 'renewal', ?)`).run(c.id, pro, plus(7));
+  await assert.rejects(rc.propose(hrUser, c.id, { mode: 'keep', terms: DATES }, { contract: paper() }), (e) => e.status === 400);
+});
+
+test('case settings: only the master sets the PROs and the opening days', async () => {
   const { boss, hrUser } = await office();
   const pro = await makeUser('Pro');
   await assert.rejects(rc.saveCaseSettings(hrUser, { pro_ids: [pro] }), (e) => e.status === 403);
-  const s = await rc.saveCaseSettings(boss, { open_days: 45, approver_ids: [boss.id, 99999], pro_ids: [pro, 'x'] });
-  assert.deepEqual(s, { open_days: 45, approver_ids: [boss.id], pro_ids: [pro] }, 'unknown people are dropped');
+  const s = await rc.saveCaseSettings(boss, { open_days: 45, pro_ids: [pro, 'x'] });
+  assert.deepEqual(s, { open_days: 45, pro_ids: [pro] }, 'unknown people are dropped');
   await assert.rejects(rc.saveCaseSettings(boss, { open_days: 0 }), (e) => e.status === 400);
 });
 
@@ -343,14 +330,13 @@ test('Renew on a person with no labour contract says so', async () => {
   await assert.rejects(startEmployeeCases(hrUser, 'E-0042', 'renew'), /no labour contract/);
 });
 
-test('a renewal waiting for approval can still be turned into a termination; its proposal goes', async () => {
+test('a saved renewal not yet given to the PRO can still be turned into a termination; its proposal goes', async () => {
   const { hrUser, staff } = await office();
   const { startEmployeeCases } = await import('../server/documentRenewals.js');
   const contract = await doc(staff.id);
   const c = await rc.startCase(hrUser, contract, 'renew');
-  await rc.propose(hrUser, c.id, { mode: 'keep', terms: { new_start: plus(50), new_end: plus(780), effective_date: plus(50) } }, { ask: hr });
-  await rc.submit(hrUser, c.id);
-  assert.equal((await open())[0].status, 'awaiting_approval');
+  await rc.propose(hrUser, c.id, { mode: 'keep', terms: DATES }, { contract: paper() });
+  assert.equal((await open())[0].status, 'approved');
   const r = await startEmployeeCases(hrUser, 'E-0042', 'cancel');
   assert.deepEqual(r.switched, [c.id]);
   const [now] = await open();

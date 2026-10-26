@@ -3,29 +3,35 @@ import { isMaster, isExternal } from './access.js';
 import { userModules } from './modules.js';
 import { readableDocument } from './files.js';
 import { askSaifsys, dubaiDate } from './saifsys/client.js';
-import { sendPush } from './push.js';
 
 // Renewal cases (Document Renewals): one document being renewed or cancelled, from the
 // decision to the papers coming back. A contract (a type the master ticked "opens a case")
 // opens one by itself 60 days before it ends; any other document when the admin taps Renew
 // or Cancel. People decide: nothing here renews, terminates or cancels anything by itself.
 // Every step is an event with who took it. The master and Document Renewals holders work
-// the cases, on documents they can read.
+// the cases, on documents they can read. There is no approval step: the saved proposal is
+// what goes to the PRO, and it can be corrected until the PRO has a task.
 
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
 const DAY = 86400000;
 const shift = (s, n) => new Date(Date.parse(`${s}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 const now = () => Math.floor(Date.now() / 1000);
 
-export const STATUSES = ['open', 'renew_review', 'cancel_review', 'needs_review', 'awaiting_approval', 'with_pro',
+// 'approved' is the saved proposal, ready for the PRO (the name is kept for the cases already in it).
+export const STATUSES = ['open', 'renew_review', 'cancel_review', 'needs_review', 'with_pro',
   'approved', 'checking_documents', 'writing_back', 'paused', 'closed'];
 const DECIDING = ['open', 'renew_review', 'cancel_review', 'needs_review'];
+const PROPOSING = ['renew_review', 'cancel_review', 'needs_review'];
 const AFTER = { renew: 'renew_review', cancel: 'cancel_review', needs_review: 'needs_review' };
 
 export async function caseSettings() {
-  return (await db.prepare('SELECT open_days, approver_ids, pro_ids FROM doc_renewal_case_settings WHERE id = 1').get())
-    || { open_days: 60, approver_ids: [], pro_ids: [] };
+  return (await db.prepare('SELECT open_days, pro_ids FROM doc_renewal_case_settings WHERE id = 1').get())
+    || { open_days: 60, pro_ids: [] };
 }
+
+/** Has a PRO been given this case yet? Until then its proposal and decision can still change. */
+const withPro = async (caseId) => !!(await db.prepare('SELECT 1 FROM doc_renewal_case_tasks WHERE case_id = ? LIMIT 1').get(caseId));
+const stillOpenToChange = async (c) => PROPOSING.includes(c.status) || (c.status === 'approved' && !(await withPro(c.id)));
 
 export const event = (caseId, userId, kind, detail = {}) =>
   db.prepare('INSERT INTO doc_renewal_case_events (case_id, user_id, kind, detail) VALUES (?, ?, ?, ?)').run(caseId, userId, kind, JSON.stringify(detail));
@@ -80,15 +86,15 @@ export async function startCase(user, docId, kind) {
 }
 
 /**
- * Renew, cancel (for a contract: start a termination review) or needs review. Only before
- * approval, or while waiting for it when the mind changes the other way (a renewal sent for
- * approval becomes a termination): the old proposal goes with it, a new one is written.
+ * Renew, cancel (for a contract: start a termination review) or needs review. Before the
+ * proposal, or after it until the PRO has a task when the mind changes the other way (a
+ * saved renewal becomes a termination): the old proposal goes with it, a new one is written.
  */
 export async function decide(user, id, { choice, note } = {}) {
   const c = await getCase(user, id);
   if (!AFTER[choice]) throw bad('Choose renew, cancel or needs review');
   const turned = choice !== 'needs_review' && c.kind && choice !== c.kind;
-  if (!DECIDING.includes(c.status) && !(c.status === 'awaiting_approval' && turned)) throw bad('This case is past its decision');
+  if (!DECIDING.includes(c.status) && !(turned && (await stillOpenToChange(c)))) throw bad('This case is past its decision');
   const kind = choice === 'needs_review' ? c.kind : choice;
   await db.prepare(`UPDATE doc_renewal_cases SET status = ?, kind = ?, owner_id = COALESCE(owner_id, ?),
       proposal = CASE WHEN ? THEN NULL ELSE proposal END, updated_at = ${'extract(epoch from now())::bigint'} WHERE id = ?`)
@@ -189,9 +195,9 @@ export async function scanCases({ today = dubaiDate(), ask = askSaifsys } = {}) 
   return out;
 }
 
-// ---------- proposal and approval ----------
+// ---------- the proposal ----------
 
-const MONEY = ['basic', 'allowance', 'bonus'];
+const MONEY = ['basic', 'allowance', 'bonus', 'total'];
 const TEXT = ['position', 'location', 'hours', 'benefits'];
 const DATES = ['new_start', 'new_end', 'effective_date', 'expected_expiry', 'last_working_day', 'notice_given_on'];
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
@@ -218,17 +224,24 @@ function cleanTerms(t = {}) {
   return out;
 }
 
+// What Reem last read off the case's contract, as kept on the document. The route passes a reader
+// that also reads it when it is not read yet (documentRenewals.js contractTerms).
+const keptReading = async (c) => (await db.prepare('SELECT terms_read FROM documents WHERE id = ?').get(c.document_id))?.terms_read || null;
+
 /**
- * HR's proposal. A contract renewal keeps the terms (copied from saifsys), updates them (a new
- * end and effective date required), or resolves a discrepancy first (the case pauses). Any other
+ * HR's proposal, and saving it is final: the case is then ready for the PRO (it can be saved
+ * again until the PRO has a task). A contract renewal keeps the terms, which come from the
+ * current contract itself, the source of truth the PRO works from; or updates them (a new end
+ * and effective date required); or resolves a discrepancy first (the case pauses). Any other
  * document proposes its expected new expiry; a cancellation its reason.
  */
-export async function propose(user, id, { mode, terms, note } = {}, { ask = askSaifsys } = {}) {
+export async function propose(user, id, { mode, terms, note } = {}, { contract: readContract = keptReading } = {}) {
   const c = await getCase(user, id);
-  if (!['renew_review', 'cancel_review', 'needs_review'].includes(c.status)) throw bad('Decide renew or cancel first, before the proposal');
+  if (!(await stillOpenToChange(c))) throw bad(c.status === 'approved' ? 'The PRO has the case already: the proposal cannot change now' : 'Decide renew or cancel first, before the proposal');
   const contract = await isContract(c);
   const why = String(note || '').trim().slice(0, 1000) || null;
   let t;
+  let from;
   if (c.kind === 'cancel') {
     if (mode !== 'cancel') throw bad('This case is a cancellation');
     t = cleanTerms(terms);
@@ -242,9 +255,13 @@ export async function propose(user, id, { mode, terms, note } = {}, { ask = askS
     await pause(user, c.id, { reason: `Resolve before proceeding${why ? `: ${why}` : ''}` });
     return getCase(user, c.id);
   } else if (mode === 'keep') {
-    const e = c.employee_code ? (await ask('hr', 'employee', { q: c.employee_code })).employee : null;
-    if (!e) throw bad('saifsys has no record of this employee to copy the terms from', 502);
-    t = cleanTerms({ ...e.salary, position: e.position, location: e.location, ...terms });
+    // Only what the contract says: nothing it leaves out is filled from HR.
+    const paper = await readContract(c);
+    if (paper?.basic == null) throw bad('Reem could not read the salary on the contract: choose Update the terms and type it in');
+    const said = Object.fromEntries(['basic', 'allowance', 'total', 'position', 'location', 'hours', 'benefits'].filter((k) => paper[k] != null).map((k) => [k, paper[k]]));
+    const dates = Object.fromEntries(Object.entries(terms || {}).filter(([k]) => DATES.includes(k)));
+    t = cleanTerms({ ...said, ...dates });
+    from = { contract: c.document_id, confidence: paper.confidence === 'high' ? 'high' : 'low' };
   } else if (mode === 'update') {
     t = cleanTerms(terms);
     if (!t.new_end) throw bad('Give the new end date');
@@ -252,57 +269,10 @@ export async function propose(user, id, { mode, terms, note } = {}, { ask = askS
   } else {
     throw bad('Choose keep terms, update terms or resolve first');
   }
-  const proposal = { mode, terms: t, note: why, by: user.id, at: now() };
-  await db.prepare('UPDATE doc_renewal_cases SET proposal = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(proposal), now(), c.id);
+  const proposal = { mode, terms: t, ...(from ? { from } : {}), note: why, by: user.id, at: now() };
+  await db.prepare("UPDATE doc_renewal_cases SET proposal = ?, status = 'approved', updated_at = ? WHERE id = ?").run(JSON.stringify(proposal), now(), c.id);
   await event(c.id, user.id, 'proposal', proposal);
   return getCase(user, c.id);
-}
-
-/** Who approves: the people the master named, or else the master. */
-async function approvers() {
-  const { approver_ids } = await caseSettings();
-  if (approver_ids?.length) return approver_ids;
-  return (await db.prepare("SELECT id FROM users WHERE role = 'master' AND NOT external ORDER BY id").all()).map((r) => r.id);
-}
-
-export async function submit(user, id, { push = sendPush } = {}) {
-  const c = await getCase(user, id);
-  if (!['renew_review', 'cancel_review', 'needs_review'].includes(c.status)) throw bad('This case is not being prepared');
-  if (!c.proposal) throw bad('Write the proposal first');
-  await db.prepare("UPDATE doc_renewal_cases SET status = 'awaiting_approval', updated_at = ? WHERE id = ?").run(now(), c.id);
-  await event(c.id, user.id, 'submitted');
-  // Who and what, never the terms: the approver reads those on the case page.
-  const who = c.employee_name || c.subject || 'a document';
-  await push((await approvers()).filter((uid) => uid !== user.id || isMaster(user)), {
-    title: `Approval needed: ${c.kind === 'cancel' ? 'cancellation' : 'renewal'} for ${who}`,
-    body: 'Open the case to read the proposal and approve or reject it',
-    url: `/?docrenewals=case-${c.id}`,
-    tag: `renewal-case-${c.id}`,
-  });
-}
-
-async function mayApprove(user, c) {
-  const list = await approvers();
-  if (!isMaster(user) && !list.includes(user.id)) throw bad('Only the approvers or the master approve', 403);
-  if (c.proposal?.by === user.id && !isMaster(user)) throw bad('Someone else has to approve your own proposal', 403);
-}
-
-export async function approve(user, id) {
-  const c = await getCase(user, id);
-  if (c.status !== 'awaiting_approval') throw bad('Nothing is waiting for approval');
-  await mayApprove(user, c);
-  await db.prepare("UPDATE doc_renewal_cases SET status = 'approved', updated_at = ? WHERE id = ?").run(now(), c.id);
-  await event(c.id, user.id, 'approved');
-}
-
-export async function reject(user, id, { note } = {}) {
-  const c = await getCase(user, id);
-  if (c.status !== 'awaiting_approval') throw bad('Nothing is waiting for approval');
-  await mayApprove(user, c);
-  const why = String(note || '').trim().slice(0, 1000);
-  if (!why) throw bad('Say why it is rejected');
-  await db.prepare('UPDATE doc_renewal_cases SET status = ?, updated_at = ? WHERE id = ?').run(c.kind === 'cancel' ? 'cancel_review' : 'renew_review', now(), c.id);
-  await event(c.id, user.id, 'rejected', { note: why });
 }
 
 // ---------- the papers that come back ----------
@@ -367,8 +337,8 @@ export async function verify(user, id, { document_id } = {}) {
   await closeCase(c.id, user.id, c.kind === 'renew' ? `Renewed: runs to ${d.expires_on}` : 'Cancelled');
 }
 
-/** The master's settings: when a contract opens a case, who approves, who the PROs are. */
-export async function saveCaseSettings(user, { open_days, approver_ids, pro_ids } = {}) {
+/** The master's settings: when a contract opens a case, who the PROs are. */
+export async function saveCaseSettings(user, { open_days, pro_ids } = {}) {
   if (!isMaster(user)) throw bad('Only the master changes these settings', 403);
   const cur = await caseSettings();
   const days = open_days === undefined ? cur.open_days : Number(open_days);
@@ -380,9 +350,8 @@ export async function saveCaseSettings(user, { open_days, approver_ids, pro_ids 
     const rows = await db.prepare('SELECT id FROM users WHERE id = ANY(?::int[]) AND NOT external').all(want);
     return want.filter((id) => rows.some((r) => r.id === id));
   };
-  const a = await known(approver_ids, cur.approver_ids);
   const p = await known(pro_ids, cur.pro_ids);
-  await db.prepare(`INSERT INTO doc_renewal_case_settings (id, open_days, approver_ids, pro_ids) VALUES (1, ?, ?, ?)
-    ON CONFLICT (id) DO UPDATE SET open_days = EXCLUDED.open_days, approver_ids = EXCLUDED.approver_ids, pro_ids = EXCLUDED.pro_ids`).run(days, a, p);
+  await db.prepare(`INSERT INTO doc_renewal_case_settings (id, open_days, pro_ids) VALUES (1, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET open_days = EXCLUDED.open_days, pro_ids = EXCLUDED.pro_ids`).run(days, p);
   return caseSettings();
 }

@@ -15,7 +15,7 @@ const plus = (n) => new Date(Date.parse(`${TODAY}T00:00:00Z`) + n * 86400000).to
 const quiet = async () => {};
 const outbox = () => { const sent = []; return { sent, push: async (ids, m) => { sent.push({ ids: [...ids], ...m }); } }; };
 
-async function approvedCase({ approve = true } = {}) {
+async function approvedCase({ propose = true } = {}) {
   await reset();
   const boss = { id: await makeUser('Boss'), role: 'master' };
   await db.prepare(`UPDATE users SET role = 'master' WHERE id = ?`).run(boss.id);
@@ -33,16 +33,15 @@ async function approvedCase({ approve = true } = {}) {
   await db.prepare(`UPDATE documents SET type_id = ?, category_id = (SELECT category_id FROM document_types WHERE id = ?),
     employee_code = 'E-0077', employee_name = 'Sara', link_confirmed_at = 1 WHERE id = ?`).run(t, t, other);
   const c = await rc.startCase(hr, visa, 'renew');
-  await rc.propose(hr, c.id, { mode: 'renew_document', terms: { expected_expiry: plus(750) } });
-  await rc.submit(hr, c.id, { push: quiet });
-  if (approve) await rc.approve(boss, c.id);
+  // Saving the proposal is final: the case is ready for the PRO at once.
+  if (propose) await rc.propose(hr, c.id, { mode: 'renew_document', terms: { expected_expiry: plus(750) } });
   return { boss, hr, pro, staff, c, visa, other };
 }
 const newTask = (by, c, pro, over = {}) => tasks.createTask(by, c.id, { assignee_id: pro.id, kind: 'visa_renewal', instructions: 'Renew at ICP', due_date: plus(7), ...over }, { push: quiet });
 
-test('task before approval is refused', async () => {
-  const { hr, pro, c } = await approvedCase({ approve: false });
-  await assert.rejects(newTask(hr, c, pro), (e) => e.status === 400 && /approv/.test(e.message));
+test('task before the proposal is saved is refused', async () => {
+  const { hr, pro, c } = await approvedCase({ propose: false });
+  await assert.rejects(newTask(hr, c, pro), (e) => e.status === 400 && /proposal/.test(e.message));
 });
 
 test('a task goes to a PRO, moves the case on and tells them without any document', async () => {
@@ -189,8 +188,6 @@ test('a verified cancellation marks the document not renewing and closes', async
     employee_code = 'E-0500', employee_name = 'Old Hand', expires_on = ?, expiry_confirmed_at = 1, link_confirmed_at = 1 WHERE id = ?`).run(t, t, plus(200), visa);
   const c = await rc.startCase(boss, visa, 'cancel');
   await rc.propose(boss, c.id, { mode: 'cancel', terms: { reason: 'Left the company' } });
-  await rc.submit(boss, c.id, { push: quiet });
-  await rc.approve(boss, c.id);
   const task = await tasks.createTask(boss, c.id, { assignee_id: pro.id, kind: 'visa_cancellation', due_date: plus(5) }, { push: quiet });
   const proof = await tasks.taskUpload(pro, task.id, pdf('cancellation.pdf'));
   await tasks.finishTask(pro, task.id, {}, { push: quiet });
