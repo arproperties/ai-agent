@@ -29,6 +29,8 @@ export const FAST_MODEL = 'claude-haiku-4-5-20251001';
 // What Auto runs on: the executor writes the answer, the advisor is consulted mid-answer.
 export const AUTO_MODEL = 'claude-haiku-5-5';
 export const ADVISOR_MODEL = 'claude-sonnet-5-5';
+// The master on Auto: the boss noticed Haiku's answers, so his get the stronger model writing them.
+export const MASTER_MODEL = 'claude-sonnet-5-5';
 // For work printed or filed as fact (lease renewals, picture captions): always the careful model.
 export const CAREFUL_MODEL = 'claude-sonnet-5';
 // OpenAI's image model, for the pictures a chat tag asks for (server/pictures.js).
