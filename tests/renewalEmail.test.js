@@ -105,6 +105,16 @@ test('sending switched off (the default): nothing is drafted and nothing goes ou
   assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM email_drafts').get()).n, 0);
 });
 
+test('the master\'s switch in settings lets Send go out', async () => {
+  const { boss, caseId, contract } = await office();
+  await rc.saveCaseSettings(boss, { send_on: true });
+  let kicked = 0;
+  const fetch = async (user, id) => db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+  const out = await sendCaseEmail(boss, caseId, { to: 'pro@example.com', subject: 's', body: 'b', document_ids: [contract] }, { fetch, mailbox, kick: () => { kicked++; } });
+  assert.equal(out.status, 'approved');
+  assert.equal(kicked, 1);
+});
+
 test('a termination email has its reason and last day, and no documents', async () => {
   const { boss, contract } = await office();
   const c = await rc.startCase(boss, contract, 'cancel').catch(async () => {

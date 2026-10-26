@@ -143,14 +143,23 @@ export async function alertOnce({ today = dubaiDate(), push = sendPush, todo = c
   return due.length;
 }
 
-/** Hourly; acts once a day at the settings' hour, Dubai time. */
-export function startDocumentAlerts() {
-  let lastDay = null;
+/**
+ * One hourly check: acts once a day at the settings' hour, Dubai time, and only while `gate`
+ * says sending is on (Document Renewals' switch). A day skipped while it was off is not
+ * counted as done, so turning it on later that day still sends that day's alerts.
+ */
+export async function alertTick(state, { gate = async () => true, today = dubaiDate(), hour = dubaiHour(), run = alertOnce } = {}) {
+  if (state.lastDay === today || hour < (await alertSettings()).hour) return null;
+  if (!(await gate())) return null;
+  state.lastDay = today;
+  return run({ today });
+}
+
+/** Hourly; `gate` is whether sending is on (renewalCases.js sendingOn), asked every time. */
+export function startDocumentAlerts({ gate } = {}) {
+  const state = { lastDay: null };
   const tick = async () => {
-    const today = dubaiDate();
-    if (lastDay === today || dubaiHour() < (await alertSettings()).hour) return;
-    lastDay = today;
-    const n = await alertOnce({ today });
+    const n = await alertTick(state, { gate });
     if (n) console.log(`[document-alerts] ${n} alerts sent`);
   };
   const run = () => tick().catch((e) => console.error('[document-alerts]', e.message));

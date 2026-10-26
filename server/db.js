@@ -1987,6 +1987,11 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW},
     updated_at BIGINT DEFAULT ${NOW}
   );
+  -- Document Renewals sending (case emails, expiry alerts), the master's switch on the settings
+  -- screen; DOC_RENEWALS_SEND=on in .env also turns it on. Who flipped it last, and when.
+  ALTER TABLE doc_renewal_case_settings ADD COLUMN IF NOT EXISTS send_on BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE doc_renewal_case_settings ADD COLUMN IF NOT EXISTS send_changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  ALTER TABLE doc_renewal_case_settings ADD COLUMN IF NOT EXISTS send_changed_at BIGINT;
   -- The approval step was taken out: a case that was waiting for it is ready for the PRO.
   UPDATE doc_renewal_cases SET status = 'approved' WHERE status = 'awaiting_approval';
   UPDATE doc_renewal_cases SET paused_from = 'approved' WHERE paused_from = 'awaiting_approval';

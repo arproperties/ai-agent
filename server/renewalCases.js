@@ -3,6 +3,7 @@ import { isMaster, isExternal } from './access.js';
 import { userModules } from './modules.js';
 import { readableDocument } from './files.js';
 import { askSaifsys, dubaiDate } from './saifsys/client.js';
+import { DOC_RENEWALS_SEND } from './config.js';
 
 // Renewal cases (Document Renewals): one document being renewed or cancelled, from the
 // decision to the papers coming back. A contract (a type the master ticked "opens a case")
@@ -25,8 +26,17 @@ const PROPOSING = ['renew_review', 'cancel_review', 'needs_review'];
 const AFTER = { renew: 'renew_review', cancel: 'cancel_review', needs_review: 'needs_review' };
 
 export async function caseSettings() {
-  return (await db.prepare('SELECT open_days, pro_ids FROM doc_renewal_case_settings WHERE id = 1').get())
-    || { open_days: 60, pro_ids: [] };
+  const s = await db.prepare(`SELECT s.open_days, s.pro_ids, s.send_on, s.send_changed_at, u.name AS send_changed_by
+    FROM doc_renewal_case_settings s LEFT JOIN users u ON u.id = s.send_changed_by WHERE s.id = 1`).get();
+  return s || { open_days: 60, pro_ids: [], send_on: false, send_changed_at: null, send_changed_by: null };
+}
+
+/**
+ * Do Document Renewals' emails and expiry alerts go out? The master's switch on the settings
+ * screen, read each time so flipping it needs no restart; DOC_RENEWALS_SEND=on in .env also turns it on.
+ */
+export async function sendingOn({ env = DOC_RENEWALS_SEND } = {}) {
+  return env || !!(await caseSettings()).send_on;
 }
 
 /** Has a PRO been given this case yet? Until then its proposal and decision can still change. */
@@ -337,8 +347,8 @@ export async function verify(user, id, { document_id } = {}) {
   await closeCase(c.id, user.id, c.kind === 'renew' ? `Renewed: runs to ${d.expires_on}` : 'Cancelled');
 }
 
-/** The master's settings: when a contract opens a case, who the PROs are. */
-export async function saveCaseSettings(user, { open_days, pro_ids } = {}) {
+/** The master's settings: when a contract opens a case, who the PROs are, and whether sending is on. */
+export async function saveCaseSettings(user, { open_days, pro_ids, send_on } = {}) {
   if (!isMaster(user)) throw bad('Only the master changes these settings', 403);
   const cur = await caseSettings();
   const days = open_days === undefined ? cur.open_days : Number(open_days);
@@ -353,5 +363,10 @@ export async function saveCaseSettings(user, { open_days, pro_ids } = {}) {
   const p = await known(pro_ids, cur.pro_ids);
   await db.prepare(`INSERT INTO doc_renewal_case_settings (id, open_days, pro_ids) VALUES (1, ?, ?)
     ON CONFLICT (id) DO UPDATE SET open_days = EXCLUDED.open_days, pro_ids = EXCLUDED.pro_ids`).run(days, p);
+  // Only a real change of the switch is written down with who and when.
+  if (send_on !== undefined && !!send_on !== !!cur.send_on) {
+    await db.prepare('UPDATE doc_renewal_case_settings SET send_on = ?, send_changed_by = ?, send_changed_at = ? WHERE id = 1').run(!!send_on, user.id, now());
+    console.log(`[document-renewals] sending turned ${send_on ? 'on' : 'off'} by user ${user.id}`);
+  }
   return caseSettings();
 }

@@ -5,9 +5,24 @@ import { db, reset, makeUser, makeDoc, closeDb } from './helpers/db.js';
 process.env.SAIFSYS_API_KEY = ''; // nothing here may reach the real saifsys
 const { setModuleAccess } = await import('../server/modules.js');
 const cats = await import('../server/docCategories.js');
-const { alertOnce, dueStep, recipientsFor, alertSettings, saveAlertSettings } = await import('../server/documentAlerts.js');
+const { alertOnce, alertTick, dueStep, recipientsFor, alertSettings, saveAlertSettings } = await import('../server/documentAlerts.js');
 
 test.after(() => closeDb());
+
+test('the daily alerts wait for the sending switch, and a day skipped while it was off is not lost', async () => {
+  await reset();
+  let on = false;
+  let runs = 0;
+  const state = { lastDay: null };
+  const deps = { gate: async () => on, today: '2026-10-24', hour: 9, run: async () => { runs++; return 1; } };
+  assert.equal(await alertTick(state, deps), null, 'off: nothing goes out');
+  assert.equal(runs, 0);
+  on = true;
+  assert.equal(await alertTick(state, deps), 1, 'turned on later the same day: that day still goes');
+  assert.equal(await alertTick(state, deps), null, 'once a day');
+  assert.equal(runs, 1);
+  assert.equal(await alertTick({ lastDay: null }, { ...deps, hour: 7 }), null, 'not before the hour');
+});
 
 const TODAY = '2026-10-24';
 const plus = (n) => new Date(Date.parse(`${TODAY}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);

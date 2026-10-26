@@ -289,8 +289,24 @@ test('case settings: only the master sets the PROs and the opening days', async 
   const pro = await makeUser('Pro');
   await assert.rejects(rc.saveCaseSettings(hrUser, { pro_ids: [pro] }), (e) => e.status === 403);
   const s = await rc.saveCaseSettings(boss, { open_days: 45, pro_ids: [pro, 'x'] });
-  assert.deepEqual(s, { open_days: 45, pro_ids: [pro] }, 'unknown people are dropped');
+  assert.deepEqual([s.open_days, s.pro_ids], [45, [pro]], 'unknown people are dropped');
   await assert.rejects(rc.saveCaseSettings(boss, { open_days: 0 }), (e) => e.status === 400);
+});
+
+test('sending is the master\'s switch: off by default, who turned it on and when is kept', async () => {
+  const { boss, hrUser } = await office();
+  assert.equal(await rc.sendingOn({ env: false }), false, 'off until the master says');
+  await assert.rejects(rc.saveCaseSettings(hrUser, { send_on: true }), (e) => e.status === 403);
+  const s = await rc.saveCaseSettings(boss, { send_on: true });
+  assert.equal(s.send_on, true);
+  assert.equal(s.send_changed_by, 'Boss');
+  assert.ok(s.send_changed_at);
+  assert.equal(await rc.sendingOn({ env: false }), true, 'read each time: no restart needed');
+  await rc.saveCaseSettings(boss, { open_days: 30 });
+  assert.equal((await rc.caseSettings()).send_on, true, 'saving other settings leaves it as it is');
+  await rc.saveCaseSettings(boss, { send_on: false });
+  assert.equal(await rc.sendingOn({ env: false }), false);
+  assert.equal(await rc.sendingOn({ env: true }), true, 'DOC_RENEWALS_SEND=on in .env still turns it on');
 });
 
 // ---------- Renew / Terminate on an employee's row ----------

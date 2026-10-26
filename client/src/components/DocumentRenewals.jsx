@@ -488,7 +488,37 @@ const SmallBtn = ({ busy, tone, children, ...p }) => (
   </button>
 );
 
-/** The master's settings: who the PROs are, when a contract opens a case, and the alert days. */
+/**
+ * The master's switch for everything Document Renewals sends: the case emails (Send) and the daily
+ * expiry alerts. Saved with the other settings; turning it on asks first, because the first
+ * day's alerts cover every document at once.
+ */
+function SendSwitch({ s, onChange }) {
+  const on = !!s.send_on;
+  const flip = () => {
+    if (!on && !window.confirm('Turn on sending?\n\nThe Send button on renewal and termination emails will work, and the daily expiry alerts start today for every document (pushes and to-dos to you and the Document Renewals team).')) return;
+    onChange(!on);
+  };
+  const since = s.send_changed_at ? new Date(s.send_changed_at * 1000).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : null;
+  return (
+    <div className={`space-y-1.5 rounded-xl border p-3 ${on ? 'border-ok/40 bg-ok/10' : 'border-stroke bg-white/5'}`}>
+      <div className="flex items-center gap-3">
+        <span className="flex-1">
+          <span className="block text-sm font-medium">Send emails and expiry alerts</span>
+          <span className="block text-xs text-mute">{on ? 'On: Send works and the daily alerts go out.' : 'Off: nothing reaches anyone; the screen works as usual.'}</span>
+        </span>
+        <button type="button" role="switch" aria-checked={on} onClick={flip}
+          className={`relative h-6 w-11 shrink-0 rounded-full transition ${on ? 'bg-ok' : 'bg-white/20'}`}>
+          <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
+        </button>
+      </div>
+      {since && <p className="text-xs text-mute">Last turned {s.saved_on ? 'on' : 'off'}{s.send_changed_by ? ` by ${s.send_changed_by}` : ''} · {since}</p>}
+      {on !== s.saved_on && <p className="text-xs text-warn">Takes effect when you press Save below.</p>}
+    </div>
+  );
+}
+
+/** The master's settings: whether sending is on, who the PROs are, when a contract opens a case, and the alert days. */
 function SettingsSheet({ onClose }) {
   const [s, setS] = useState(null);
   const [alerts, setAlerts] = useState(null);
@@ -496,13 +526,13 @@ function SettingsSheet({ onClose }) {
   const [error, setError] = useState('');
   useEffect(() => {
     Promise.all([api.get('/document-renewals/case-settings'), api.get('/document-renewals/alert-settings')])
-      .then(([c, a]) => { setS({ ...c, pro_ids: c.pro_ids.map(String) }); setAlerts({ ...a, days: a.days.join(', ') }); })
+      .then(([c, a]) => { setS({ ...c, saved_on: !!c.send_on, pro_ids: c.pro_ids.map(String) }); setAlerts({ ...a, days: a.days.join(', ') }); })
       .catch((e) => setError(e.message));
   }, []);
   const save = async () => {
     setBusy(true); setError('');
     try {
-      await api.put('/document-renewals/case-settings', { open_days: Number(s.open_days), pro_ids: s.pro_ids.map(Number) });
+      await api.put('/document-renewals/case-settings', { open_days: Number(s.open_days), pro_ids: s.pro_ids.map(Number), send_on: !!s.send_on });
       await api.put('/document-renewals/alert-settings', { days: alerts.days.split(/[^\d]+/).filter(Boolean).map(Number), overdue_every_days: Number(alerts.overdue_every_days), hour: Number(alerts.hour) });
       onClose();
     } catch (e) { setError(e.message); }
@@ -515,6 +545,7 @@ function SettingsSheet({ onClose }) {
       <div className="space-y-4 px-5 pb-6">
         {!s || !alerts ? (error ? <Problem text={error} /> : <Spinner />) : (
           <>
+            <SendSwitch s={s} onChange={(on) => setS({ ...s, send_on: on })} />
             <label className="block space-y-1"><span className="text-xs text-mute">PROs</span>
               <Picker multi value={s.pro_ids} onChange={(v) => setS({ ...s, pro_ids: v })} options={staff} placeholder="Choose the PROs" /></label>
             <label className="block space-y-1"><span className="text-xs text-mute">A contract opens a case this many days before it ends</span>
