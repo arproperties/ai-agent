@@ -517,19 +517,6 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             </label>
           </Group>
         )}
-        <Group title="Discount" hint={`off the rent per ${v.rent_period}`}
-          extra={<span className="ml-auto"><Pick value={v.discount_type} onPick={(k) => setV({ ...v, discount_type: k })} options={[['percent', 'Percent'], ['amount', currency()]]} /></span>}>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Label text={`Discount (${v.discount_type === 'percent' ? '%' : currency()})`}>
-              <input type="number" min="0" max={v.discount_type === 'percent' ? 99.99 : undefined} step="any" value={v.discount_value} onChange={set('discount_value')} placeholder="None" className={FIELD} />
-            </Label>
-            <label className="block sm:col-span-2">
-              <span className="mb-1 block text-xs text-txt/80">Reason</span>
-              <input value={v.discount_note} onChange={set('discount_note')} disabled={!Number(v.discount_value)} placeholder="e.g. early payment, long stay" className={`${FIELD} disabled:opacity-50`} />
-            </label>
-          </div>
-          {off > 0 && <p className="mt-2 text-xs text-mute">Takes {aed(off)} off, so the rent is <span className="font-medium text-txt">{aed(rent - off)}</span> a {v.rent_period}.</p>}
-        </Group>
         {/* Other charges in two lists: monthly ones, each with its own start and end, then those due once. One list
             (v.fees) holds both; `repeats` says which. */}
         {[[true, 'Recurring charges', 'billed every month · with no end date, to the end of the lease', 'Add a monthly charge'],
@@ -585,6 +572,19 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             )}
           </Group>
         ))}
+        <Group title="Discount" hint={`off the rent per ${v.rent_period}`}
+          extra={<span className="ml-auto"><Pick value={v.discount_type} onPick={(k) => setV({ ...v, discount_type: k })} options={[['percent', 'Percent'], ['amount', currency()]]} /></span>}>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Label text={`Discount (${v.discount_type === 'percent' ? '%' : currency()})`}>
+              <input type="number" min="0" max={v.discount_type === 'percent' ? 99.99 : undefined} step="any" value={v.discount_value} onChange={set('discount_value')} placeholder="None" className={FIELD} />
+            </Label>
+            <label className="block sm:col-span-2">
+              <span className="mb-1 block text-xs text-txt/80">Reason</span>
+              <input value={v.discount_note} onChange={set('discount_note')} disabled={!Number(v.discount_value)} placeholder="e.g. early payment, long stay" className={`${FIELD} disabled:opacity-50`} />
+            </label>
+          </div>
+          {off > 0 && <p className="mt-2 text-xs text-mute">Takes {aed(off)} off, so the rent is <span className="font-medium text-txt">{aed(rent - off)}</span> a {v.rent_period}.</p>}
+        </Group>
         <Group title={taxName} hint="on the rent and the other charges, never on the deposit">
           <div className="flex flex-wrap items-center gap-2">
             <Pick value={v.tax_percent === '' ? 'none' : 'taxed'} onPick={(k) => setV({ ...v, tax_percent: k === 'none' ? '' : v.tax_percent || region().tax_percent || 5 })}
