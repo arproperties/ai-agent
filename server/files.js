@@ -7,7 +7,11 @@ import { ask } from './ai.js';
 import { billAs } from './billing.js';
 import { DATA_DIR, FOLDERS } from './config.js';
 import { IMAGE_TYPES, VIDEO_TYPES, VIDEO_EXT, extractText, describeImage, readVideo, indexChunks, retrievalScope, agentScope } from './knowledge.js';
-import { isMaster, masterReach } from './access.js';
+import { isMaster, isExternal, masterReach } from './access.js';
+import { listCategories, typeById } from './docCategories.js';
+import { lookupCode } from './hrLinks.js';
+import { userModules } from './modules.js';
+import { askSaifsys } from './saifsys/client.js';
 import { keepText } from './copies.js';
 
 const UPLOAD_DIR = `${DATA_DIR}/uploads`;
@@ -132,7 +136,149 @@ ${EXPIRY_GUIDE} UAE documents write dates as DD/MM/YYYY.`,
   return /^\d{4}-\d{2}-\d{2}$/.test(d.expires) ? d.expires : null;
 }
 
-async function classify(name, text, agents = [], companies = []) {
+// ---------- Document Renewals: the kind of document, and who it is for ----------
+
+// saifsys's current staff, for "whose visa is this?". Kept an hour: it changes when
+// someone joins or leaves, not between two uploads. Per lookup function, so a test's
+// fake never shares the real one's copy. A failure is not kept: the next upload asks again.
+const ROSTER_TTL = 60 * 60 * 1000;
+const rosters = new WeakMap();
+async function employeeRoster(lookup) {
+  const hit = rosters.get(lookup);
+  if (hit && Date.now() - hit.at < ROSTER_TTL) return hit.list;
+  const body = await lookup('hr', 'employees', { status: 'current' });
+  const list = (body.employees || []).filter((e) => e.code)
+    .map((e) => ({ code: String(e.code), name: String(e.name || ''), nickname: String(e.nickname || '') }));
+  rosters.set(lookup, { at: Date.now(), list });
+  return list;
+}
+
+/**
+ * What the classifier may file this person's upload as: the active document types, and
+ * - only for the master and Document Renewals holders - saifsys's staff list, so a visa
+ * can be tied to its employee. Anyone else's prompt carries no colleague's name. An
+ * external person files nothing into a category. saifsys being down costs only the roster.
+ */
+export async function filingKinds(user, lookup = askSaifsys) {
+  if (isExternal(user)) return { types: [], roster: null };
+  const types = (await listCategories()).flatMap((c) => c.types.map((t) => ({ id: t.id, label: t.label, category: c })));
+  let roster = null;
+  if (types.some((t) => t.category.links_to === 'employee') && (await userModules(user)).includes('document_renewals')) {
+    roster = await employeeRoster(lookup).catch((e) => {
+      console.error('[files] no staff list from saifsys:', e.message);
+      return null;
+    });
+  }
+  return { types, roster };
+}
+
+/** The employee the model named, by an exact code from the roster only. */
+export function pickEmployee(raw, roster = []) {
+  const code = typeof raw === 'string' || typeof raw === 'number' ? String(raw).trim().toLowerCase() : '';
+  if (!code) return null;
+  const e = (roster || []).find((r) => r.code.toLowerCase() === code);
+  return e ? { code: e.code, name: e.name } : null;
+}
+
+const kindsPrompt = ({ types = [], roster = null } = {}) => (types.length ? `
+
+What kind of document it is - "type_id" is one of these ids, or null when none clearly fits (most files are none of them):
+${types.map((t) => `- ${t.id} · ${t.category.label} › ${t.label}`).join('\n')}${roster?.length ? `
+When it is one of the ${[...new Set(types.filter((t) => t.category.links_to === 'employee').map((t) => t.category.label))].join(' / ')} types, "employee_code" is the code of the employee it belongs to, from this staff list, or null if they are not on it:
+${roster.map((e) => `- ${e.code} · ${e.name}${e.nickname && e.nickname !== e.name ? ` (${e.nickname})` : ''}`).join('\n')}` : ''}
+For the other categories, "subject" is what it is for: the company, the vehicle plate or the policy, or null.` : '');
+
+/**
+ * Write what the classifier found about the kind of document. A person's own choice
+ * outranks it: a file that already has a type keeps its type, employee and subject.
+ * Nothing the AI read is confirmed.
+ */
+export async function fileAs(docId, c) {
+  if (!c.typeId) return;
+  await db.prepare(`UPDATE documents SET type_id = ?, category_id = ?, employee_code = ?, employee_name = ?, subject = ?
+    WHERE id = ? AND type_id IS NULL`)
+    .run(c.typeId, c.categoryId, c.employee?.code ?? null, c.employee?.name ?? null, c.subject, docId);
+}
+
+const KIND_FIELDS = ['type_id', 'employee_code', 'subject', 'confirm_expiry', 'confirm_link', 'not_renewing'];
+export const kindFieldsIn = (body = {}) => KIND_FIELDS.some((k) => k in body);
+
+/**
+ * A person corrects or confirms what a file is, who it is for and when it runs out:
+ * body may carry type_id (null clears the kind), employee_code, subject, expires_on,
+ * confirm_expiry, confirm_link and not_renewing ({ note } or null).
+ * Its owner and the master may; so may a Document Renewals holder, on a file that is
+ * already in a category - these fields only, never rename, move or delete. Anyone else
+ * gets the same 404 as a file they cannot see. A changed date or employee is unconfirmed.
+ */
+export async function editDocumentKind(user, docId, body = {}, lookup = askSaifsys) {
+  const doc = await readableDocument(user, docId);
+  const holder = doc && !isExternal(user) && (await userModules(user)).includes('document_renewals');
+  if (!doc || !(doc.user_id === user.id || isMaster(user) || (holder && doc.category_id))) {
+    throw Object.assign(new Error('Not found'), { status: 404 });
+  }
+  const bad = (m) => Object.assign(new Error(m), { status: 400 });
+  const next = { ...doc };
+  const now = Math.floor(Date.now() / 1000);
+
+  if ('type_id' in body) {
+    if (body.type_id === null || body.type_id === '') {
+      Object.assign(next, { type_id: null, category_id: null, employee_code: null, employee_name: null, subject: null });
+    } else if (Number(body.type_id) !== doc.type_id) {
+      if (isExternal(user)) throw bad('Not allowed');
+      const t = await typeById(body.type_id);
+      if (!t || !t.active || !t.category.active) throw bad('That kind of document is not in the list');
+      const before = doc.category_id ? (await typeById(doc.type_id))?.category : null;
+      next.type_id = t.id;
+      next.category_id = t.category.id;
+      if (before?.links_to !== t.category.links_to) Object.assign(next, { employee_code: null, employee_name: null, subject: null });
+    }
+  }
+  const links = next.type_id ? (await typeById(next.type_id)).category.links_to : null;
+  if ('employee_code' in body) {
+    if (body.employee_code === null || body.employee_code === '') Object.assign(next, { employee_code: null, employee_name: null });
+    else {
+      if (links !== 'employee') throw bad('This kind of document is not for an employee');
+      const e = await lookupCode(body.employee_code, lookup);
+      Object.assign(next, { employee_code: e.code, employee_name: e.name });
+    }
+  }
+  if ('subject' in body) {
+    const s = String(body.subject ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) || null;
+    if (s && links !== 'subject') throw bad('This kind of document is for an employee, not a company or vehicle');
+    next.subject = s;
+  }
+  if ('expires_on' in body) next.expires_on = /^\d{4}-\d{2}-\d{2}$/.test(body.expires_on) ? body.expires_on : null;
+
+  // What changed is no longer what was confirmed.
+  if (next.expires_on !== doc.expires_on) Object.assign(next, { expiry_confirmed_by: null, expiry_confirmed_at: null });
+  if (next.employee_code !== doc.employee_code || next.subject !== doc.subject || next.type_id !== doc.type_id) {
+    Object.assign(next, { link_confirmed_by: null, link_confirmed_at: null });
+  }
+  if (body.confirm_expiry === true) {
+    if (!next.expires_on) throw bad('There is no expiry date to confirm');
+    Object.assign(next, { expiry_confirmed_by: user.id, expiry_confirmed_at: now });
+  }
+  if (body.confirm_link === true) {
+    if (!next.employee_code && !next.subject) throw bad('Say who or what it is for first');
+    Object.assign(next, { link_confirmed_by: user.id, link_confirmed_at: now });
+  }
+  if ('not_renewing' in body) {
+    Object.assign(next, body.not_renewing
+      ? { not_renewing_at: now, not_renewing_note: String(body.not_renewing.note || '').trim().slice(0, 300) || null }
+      : { not_renewing_at: null, not_renewing_note: null });
+  }
+
+  await db.prepare(`UPDATE documents SET type_id = ?, category_id = ?, employee_code = ?, employee_name = ?, subject = ?,
+      expires_on = ?, expiry_confirmed_by = ?, expiry_confirmed_at = ?, link_confirmed_by = ?, link_confirmed_at = ?,
+      not_renewing_at = ?, not_renewing_note = ? WHERE id = ?`)
+    .run(next.type_id, next.category_id, next.employee_code, next.employee_name, next.subject,
+      next.expires_on, next.expiry_confirmed_by, next.expiry_confirmed_at, next.link_confirmed_by, next.link_confirmed_at,
+      next.not_renewing_at, next.not_renewing_note, doc.id);
+  return db.prepare('SELECT * FROM documents WHERE id = ?').get(doc.id);
+}
+
+export async function classify(name, text, agents = [], companies = [], { kinds = null, ask: model = ask } = {}) {
   // The roster rides along in the prompt that was already being sent: same call, same
   // cost. The wording about type and purpose is router.js's, which makes the same
   // judgement about attachments and should not drift from this one.
@@ -144,8 +290,12 @@ The user's agents, to file this against:
 ${agents.map((a) => `- id=${a.id} · ${a.name}: ${(a.persona || '').slice(0, 200).replace(/\s+/g, ' ')}`).join('\n')}
 Judge the file by its type and purpose, not by words that merely appear in it (an offer letter for an accountant job is an HR matter; a tenancy contract is a property matter). Use null when nothing clearly fits - that is the normal answer for personal paperwork.` : '';
 
-  const out = await ask(`File name: ${name}\n\nContent (start):\n${text.slice(0, 6000)}`, {
-    maxTokens: 400,
+  const kindFields = kinds?.types?.length ? `,
+ "type_id": <one of the type ids below, or null>${kinds.roster?.length ? `,
+ "employee_code": "<a code from the staff list below, or null>"` : ''},
+ "subject": "<what it is for, or null>"` : '';
+  const out = await model(`File name: ${name}\n\nContent (start):\n${text.slice(0, 6000)}`, {
+    maxTokens: 500,
     system: `You file documents for a UAE-based user. Reply with ONLY JSON:
 {"title": "<clear human title, max 8 words, e.g. \\"Tenancy contract – Marina Heights 1402\\">",
  "folder": "<exactly one of: ${FOLDERS.join(' | ')}>",
@@ -153,13 +303,21 @@ Judge the file by its type and purpose, not by words that merely appear in it (a
  "tags": ["<up to 5 short lowercase tags>"],
  "company": "<${COMPANY_RULE}>",
  "date": "<the document's own date as YYYY-MM-DD, or null>",
- "expires": "<${EXPIRY_RULE}>"${roster}}
+ "expires": "<${EXPIRY_RULE}>"${roster}${kindFields}}
 Photos and videos of people, places or things with no document content go in "Photos". UAE documents write dates as DD/MM/YYYY.
 A first line "Sent with the words: ..." is what the user said as they sent it. When it says what the file is for (a project, a building, a person), put that in the summary and the tags. It is not part of the document.
-${EXPIRY_GUIDE}${knownCompanies(companies)}${team}`,
+${EXPIRY_GUIDE}${knownCompanies(companies)}${team}${kindsPrompt(kinds || {})}`,
   });
   const d = JSON.parse(out.match(/\{[\s\S]*\}/)[0]);
+  // The category comes from the type, never from the model; and only the link its
+  // category asks for is kept.
+  const type = (kinds?.types || []).find((t) => typeof d.type_id !== 'boolean' && String(t.id) === String(d.type_id ?? '').trim()) || null;
+  const subject = typeof d.subject === 'string' ? d.subject.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
   return {
+    typeId: type?.id ?? null,
+    categoryId: type?.category.id ?? null,
+    employee: type?.category.links_to === 'employee' ? pickEmployee(d.employee_code, kinds.roster) : null,
+    subject: type?.category.links_to === 'subject' && subject && !/^(null|none|n\/?a|unknown)$/i.test(subject) ? subject : null,
     title: String(d.title || name).slice(0, 120),
     folder: FOLDERS.includes(d.folder) ? d.folder : 'Other',
     summary: String(d.summary || '').slice(0, 600),
@@ -180,13 +338,16 @@ ${EXPIRY_GUIDE}${knownCompanies(companies)}${team}`,
  *
  * `said` is what the person wrote as they sent it in a chat ("this is for the school
  * project"). It is filed with the file, so the Shelf can find the bill by what it was for.
+ *
+ * `classify: false` only reads and indexes it: the title, folder and shelf it already has
+ * stay (a case file keeps its own name and its case folder).
  */
-export function processDocument(doc, f, text, agents = [], said = '') {
+export function processDocument(doc, f, text, agents = [], said = '', { classify: sort = true } = {}) {
   // Priced as reading this file, under whatever job brought it in (a chat, the Shelf, an import).
-  return billAs({ note: doc.name }, () => fileDocument(doc, f, text, agents, said));
+  return billAs({ note: doc.name }, () => fileDocument(doc, f, text, agents, said, sort));
 }
 
-async function fileDocument(doc, f, text, agents, said) {
+async function fileDocument(doc, f, text, agents, said, sort = true) {
   try {
     // A video is read off disk rather than out of the buffer: ffmpeg needs a file, and
     // saveUpload has already written one.
@@ -201,9 +362,14 @@ async function fileDocument(doc, f, text, agents, said) {
     const own = content; // the file's own words, without what was said with it
     const words = String(said || '').replace(/[\u0000\s]+/g, ' ').trim().slice(0, 300);
     if (words) content = `Sent with the words: "${words}"\n\n${content}`;
-    const c = await classify(doc.name, content, doc.agent_id ? [] : agents, await userCompanies(doc.user_id));
-    await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, expires_on = ?, company = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
-      .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, c.expires, c.company, c.agentId, doc.id);
+    if (sort) {
+      const owner = await db.prepare('SELECT * FROM users WHERE id = ?').get(doc.user_id);
+      const kinds = owner ? await filingKinds(owner) : null;
+      const c = await classify(doc.name, content, doc.agent_id ? [] : agents, await userCompanies(doc.user_id), { kinds });
+      await db.prepare('UPDATE documents SET title = ?, folder = ?, summary = ?, tags = ?, doc_date = ?, expires_on = ?, company = ?, agent_id = COALESCE(agent_id, ?) WHERE id = ?')
+        .run(c.title, c.folder, c.summary, JSON.stringify(c.tags), c.date, c.expires, c.company, c.agentId, doc.id);
+      await fileAs(doc.id, c);
+    }
     // Re-read rather than spreading over the copy we were handed: `doc` predates the
     // UPDATE, and chunks carry agent_id and shared of their own. Indexing from a stale
     // copy would file the chunks on the shelf the document just left, leaving the file

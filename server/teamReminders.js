@@ -222,7 +222,7 @@ async function deliver(id) {
   const from = await db.prepare('SELECT name FROM users WHERE id = ?').get(r.sender_id);
   const media = (await db.prepare('SELECT mime FROM team_reminder_photos WHERE reminder_id = ?').all(r.id)).map((f) => f.mime);
   const mark = media.some((m) => VIDEO.test(m)) ? '🎬 ' : media.length ? '📷 ' : '';
-  await sendPush(ids, { title: `To-do from ${from?.name || 'a colleague'}`, body: `${mark}${r.text}`, url: '/?todos=1', tag: `jarvis-team-${r.id}` })
+  await sendPush(ids, { title: `To-do from ${from?.name || 'a colleague'}`, body: `${mark}${r.text}`, url: '/?todos=1', tag: `reem-team-${r.id}` })
     .catch((e) => console.error('[team-reminders]', e.message));
 }
 

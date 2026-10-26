@@ -1837,6 +1837,262 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_document_copies_same ON document_copies(same_as);
 `);
 
+// Document Renewals (server/docCategories.js, 2026-10-24): a Shelf file can belong to a
+// category (Employee Documents, Company Documents, any the master adds) and a type in it.
+//   document_categories: the master's list. private: hidden from shared and file_access,
+//     seen only by its uploader, the master and Document Renewals holders (retrievalScope).
+//     links_to: what a file in it is for - 'employee' (a saifsys employee, by code) or
+//     'subject' (free text: the company, a plate, a policy). Never deleted, only retired
+//     (active false), so the files that have it keep it.
+//   document_types: the types in a category. opens_case: an expiring file of this type
+//     opens an Employee Renewals case (the labour contract).
+//   documents: category_id/type_id (NULL = a personal file); employee_code/employee_name or
+//     subject; who confirmed the expiry and the employee link (an AI read is unconfirmed);
+//     superseded_by the renewed file; not_renewing_* when nobody will renew it.
+//   chunks.category_id is denormalised off documents, as shared is, because recall() reads
+//     chunks without joining documents. The triggers keep it right on every write path.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS document_categories (
+    id SERIAL PRIMARY KEY,
+    label TEXT NOT NULL,
+    private BOOLEAN NOT NULL DEFAULT false,
+    links_to TEXT NOT NULL CHECK (links_to IN ('employee', 'subject')),
+    active BOOLEAN NOT NULL DEFAULT true,
+    sort INTEGER NOT NULL DEFAULT 0,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_document_categories_label ON document_categories(lower(label));
+  CREATE TABLE IF NOT EXISTS document_types (
+    id SERIAL PRIMARY KEY,
+    category_id INTEGER NOT NULL REFERENCES document_categories(id),
+    label TEXT NOT NULL,
+    opens_case BOOLEAN NOT NULL DEFAULT false,
+    active BOOLEAN NOT NULL DEFAULT true,
+    sort INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_document_types_label ON document_types(category_id, lower(label));
+  -- required: every current employee should have one (passport, visa, Emirates ID); Document
+  -- Renewals lists who is missing it. The master ticks it per type.
+  ALTER TABLE document_types ADD COLUMN IF NOT EXISTS required BOOLEAN NOT NULL DEFAULT false;
+
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES document_categories(id);
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS type_id INTEGER REFERENCES document_types(id);
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS employee_code TEXT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS employee_name TEXT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS subject TEXT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS expiry_confirmed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS expiry_confirmed_at BIGINT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS link_confirmed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS link_confirmed_at BIGINT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS superseded_by INTEGER REFERENCES documents(id) ON DELETE SET NULL;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS not_renewing_at BIGINT;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS not_renewing_note TEXT;
+  CREATE INDEX IF NOT EXISTS idx_docs_category ON documents(category_id, expires_on) WHERE category_id IS NOT NULL;
+
+  ALTER TABLE chunks ADD COLUMN IF NOT EXISTS category_id INTEGER;
+  CREATE INDEX IF NOT EXISTS idx_chunks_category ON chunks(category_id) WHERE category_id IS NOT NULL;
+
+  CREATE OR REPLACE FUNCTION chunk_takes_category() RETURNS trigger AS $$
+  BEGIN
+    NEW.category_id := (SELECT category_id FROM documents WHERE id = NEW.document_id);
+    RETURN NEW;
+  END $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_chunk_takes_category ON chunks;
+  CREATE TRIGGER trg_chunk_takes_category
+    BEFORE INSERT OR UPDATE OF document_id, category_id ON chunks
+    FOR EACH ROW EXECUTE FUNCTION chunk_takes_category();
+
+  CREATE OR REPLACE FUNCTION chunks_follow_category() RETURNS trigger AS $$
+  BEGIN
+    UPDATE chunks SET category_id = NEW.category_id WHERE document_id = NEW.id;
+    RETURN NEW;
+  END $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_chunks_follow_category ON documents;
+  CREATE TRIGGER trg_chunks_follow_category
+    AFTER UPDATE OF category_id ON documents
+    FOR EACH ROW WHEN (OLD.category_id IS DISTINCT FROM NEW.category_id)
+    EXECUTE FUNCTION chunks_follow_category();
+`);
+
+// saifsys's employee documents, copied onto the Shelf (server/saifsysDocSync.js): which
+// saifsys document became which file, when saifsys last changed it, and whether its file
+// has come yet (saifsys may hold the row before the file).
+await db.exec(`
+  -- Expiry alerts (server/documentAlerts.js): the master's alert days, and every alert sent,
+  -- one per file and step, so none is sent twice.
+  CREATE TABLE IF NOT EXISTS document_alert_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    days INTEGER[] NOT NULL DEFAULT '{60,30,14}',
+    overdue_every_days INTEGER NOT NULL DEFAULT 7,
+    hour INTEGER NOT NULL DEFAULT 8
+  );
+  CREATE TABLE IF NOT EXISTS document_alerts (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    step TEXT NOT NULL,
+    sent_to INTEGER[] NOT NULL DEFAULT '{}',
+    sent_at BIGINT DEFAULT ${NOW},
+    UNIQUE (document_id, step)
+  );
+  -- Renewal cases (server/renewalCases.js): a document being renewed or cancelled, from the
+  -- decision through approval and the PRO to the papers that come back. A contract opens one by
+  -- itself at open_days; any other document when the admin taps Renew or Cancel. One open case
+  -- per document. status: open (nobody has decided), renew_review / cancel_review (deciding the
+  -- terms), needs_review (deferred), awaiting_approval, with_pro, checking_documents, writing_back,
+  -- paused (paused_from is where it was), closed. Every step is an event, with who took it.
+  CREATE TABLE IF NOT EXISTS doc_renewal_case_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    open_days INTEGER NOT NULL DEFAULT 60,
+    approver_ids INTEGER[] NOT NULL DEFAULT '{}',
+    pro_ids INTEGER[] NOT NULL DEFAULT '{}'
+  );
+  CREATE TABLE IF NOT EXISTS doc_renewal_cases (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    employee_code TEXT,
+    employee_name TEXT,
+    subject TEXT,
+    ends_on TEXT,
+    kind TEXT CHECK (kind IN ('renew', 'cancel')),
+    status TEXT NOT NULL DEFAULT 'open',
+    paused_from TEXT,
+    paused_reason TEXT,
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    proposal JSONB,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW},
+    closed_at BIGINT,
+    closed_note TEXT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS doc_idx_renewal_cases_open ON doc_renewal_cases(document_id) WHERE closed_at IS NULL;
+  CREATE TABLE IF NOT EXISTS doc_renewal_case_events (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES doc_renewal_cases(id) ON DELETE CASCADE,
+    at BIGINT DEFAULT ${NOW},
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,
+    detail JSONB NOT NULL DEFAULT '{}'
+  );
+  CREATE INDEX IF NOT EXISTS doc_idx_renewal_case_events ON doc_renewal_case_events(case_id, id);
+  CREATE TABLE IF NOT EXISTS doc_renewal_case_tasks (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES doc_renewal_cases(id) ON DELETE CASCADE,
+    assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,
+    instructions TEXT,
+    due_date TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'blocked')),
+    evidence JSONB NOT NULL DEFAULT '{}',
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS saifsys_doc_links (
+    saifsys_id INTEGER PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    changed_at TEXT,
+    has_file BOOLEAN NOT NULL DEFAULT false,
+    synced_at BIGINT DEFAULT ${NOW}
+  );
+  -- Whether saifsys itself holds a file for it (null: not known yet), so a document with none is not offered for fetching.
+  ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS saifsys_has_file BOOLEAN;
+  -- What Reem read off a labour contract (its pay), with the file's hash: read again only for a new file.
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS terms_read JSONB;
+  -- Where that pay differs from the company salary, as last checked: a flag on Document Renewals' bell.
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS terms_flags JSONB;
+`);
+
+// Legal cases (server/legalCases.js): a legal case from its type to its end, step by step,
+// as Alreem's SRS draws it (docs/superpowers/specs/2026-10-24-legal-cases-design.md).
+//   legal_case_settings: one row. The two cooling periods in days, who besides the master
+//     may take the settlement and case-status decisions (deciders, user ids), how many days
+//     before a period ends the alert goes, and the largest file in MB.
+//   legal_case_types: Unauthorized Use, Rule Violation, ...; the master adds and retires them.
+//     A case keeps the type's name as it was (type_name), so retiring a type loses nothing.
+//   legal_cases: stage is where it is in the flow, status the business state - kept apart
+//     on purpose (SRS: "business status and process stage are distinguishable"). steps holds
+//     each stage's own fields once filled in, by stage key: {"legal_notice": {...}, ...}.
+//   legal_case_events: the timeline and the audit trail. data has before/after where a value changed.
+//   legal_case_files: the documents, by the stage they were added at; files under data/legal-cases.
+//   legal_case_alerts: which alert went for which case, so each goes once.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS legal_case_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    initial_days INTEGER NOT NULL DEFAULT 7,
+    legal_days INTEGER NOT NULL DEFAULT 30,
+    warn_days INTEGER NOT NULL DEFAULT 3,
+    max_file_mb INTEGER NOT NULL DEFAULT 15,
+    deciders JSONB NOT NULL DEFAULT '[]',
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS legal_case_types (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    active BOOLEAN NOT NULL DEFAULT true,
+    sort INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS legal_cases (
+    id SERIAL PRIMARY KEY,
+    number TEXT NOT NULL UNIQUE,
+    type_id INTEGER REFERENCES legal_case_types(id) ON DELETE SET NULL,
+    type_name TEXT NOT NULL,
+    title TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    status TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+    description TEXT,
+    incident_date TEXT,
+    building TEXT,
+    unit TEXT,
+    party_name TEXT,
+    party_phone TEXT,
+    party_email TEXT,
+    contract_ref TEXT,
+    remarks TEXT,
+    steps JSONB NOT NULL DEFAULT '{}',
+    assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    outcome TEXT,
+    closed_at BIGINT,
+    closed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_legal_cases_stage ON legal_cases(stage);
+  CREATE TABLE IF NOT EXISTS legal_case_events (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('created', 'stage', 'decision', 'update', 'assign', 'file', 'note', 'closed')),
+    stage TEXT,
+    title TEXT NOT NULL,
+    data JSONB,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_legal_case_events ON legal_case_events(case_id, id);
+  CREATE TABLE IF NOT EXISTS legal_case_files (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    doc_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_legal_case_files ON legal_case_files(case_id);
+  CREATE TABLE IF NOT EXISTS legal_case_alerts (
+    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (case_id, key)
+  );
+  INSERT INTO legal_case_types (name, sort) VALUES
+    ('Unauthorized Use', 1), ('Rule Violation', 2), ('Damage', 3), ('Complaint', 4), ('Cheque Bounce', 5), ('Other', 6)
+    ON CONFLICT (name) DO NOTHING;
+`);
+
 // Company mailboxes the master added to the address book (server/addressBook.js), next to
 // the ones written into the code. Only addresses on our own domains: anything else is
 // never checked, so it needs no entry.
@@ -1883,4 +2139,69 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_ai_costs_at ON ai_costs(at);
   CREATE INDEX IF NOT EXISTS idx_ai_costs_user ON ai_costs(user_id, at);
+`);
+
+// Case folders for an external user (server/caseFolders.js): their inbox sorted by case number.
+//   case_settings:  the user's own case-number pattern (empty = the built-in ones)
+//   case_folders:   one folder per case; case_key is the number in a form that matches across spellings
+//   case_emails:    the mails filed in a folder; body is kept so the PDF can be rebuilt without the mailbox
+//   case_proposals: a folder Reem got ready from the chat, waiting on a card for Create or Cancel
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS case_settings (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    pattern TEXT
+  );
+  CREATE TABLE IF NOT EXISTS case_folders (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    case_number TEXT NOT NULL,
+    case_key TEXT NOT NULL,
+    party_a TEXT,
+    party_b TEXT,
+    full_pdf BOOLEAN NOT NULL DEFAULT true,
+    per_email BOOLEAN NOT NULL DEFAULT false,
+    tracking BOOLEAN NOT NULL DEFAULT true,
+    summary_doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    share_token TEXT UNIQUE,
+    share_on BOOLEAN NOT NULL DEFAULT false,
+    last_checked_at BIGINT,
+    last_error TEXT,
+    new_count INTEGER NOT NULL DEFAULT 0,
+    updated_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW},
+    UNIQUE (user_id, case_key)
+  );
+  CREATE TABLE IF NOT EXISTS case_emails (
+    id SERIAL PRIMARY KEY,
+    folder_id INTEGER NOT NULL REFERENCES case_folders(id) ON DELETE CASCADE,
+    mail_key TEXT NOT NULL,
+    message_id TEXT,
+    at BIGINT,
+    sender TEXT,
+    recipients TEXT,
+    subject TEXT,
+    body TEXT,
+    doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    UNIQUE (folder_id, mail_key)
+  );
+  CREATE TABLE IF NOT EXISTS case_proposals (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    case_number TEXT NOT NULL,
+    party_a TEXT,
+    party_b TEXT,
+    name TEXT NOT NULL,
+    emails JSONB NOT NULL,
+    folder_id INTEGER REFERENCES case_folders(id) ON DELETE SET NULL,
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS case_folder_id INTEGER REFERENCES case_folders(id) ON DELETE SET NULL;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS case_made BOOLEAN NOT NULL DEFAULT false;
+  -- The emails the user unticked on Save, as [{ mail_key, message_id }] only (no content),
+  -- so a later update never brings them back.
+  ALTER TABLE case_folders ADD COLUMN IF NOT EXISTS excluded_keys JSONB NOT NULL DEFAULT '[]';
 `);

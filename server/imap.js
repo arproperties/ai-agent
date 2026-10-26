@@ -371,6 +371,42 @@ export async function recentInbox(userId, { since, limit = 20 } = {}) {
   });
 }
 
+/**
+ * Every mail in the inbox and sent folder that has `term` in it (no term: every mail), as
+ * full records, for case folders. Read-only. `since` is by day on the server, so the hours
+ * are checked here. Newest `limit` kept, no 25 cap like the agent tool.
+ * Mail = { key, messageId, at, from, to, subject, text, attachments: [{ name, mimetype, buffer }] }
+ */
+export async function imapMatching(userId, { term = '', since, limit = 500 } = {}) {
+  const acc = await imapAccount(userId);
+  if (!acc) return [];
+  const criteria = { ...(term ? { text: term } : { all: true }), ...(since ? { since } : {}) };
+  return withMailbox(acc, async (c) => {
+    const sent = await sentPath(c);
+    const out = [];
+    for (const path of ['INBOX', ...(sent ? [sent] : [])]) {
+      const lock = await c.getMailboxLock(path, { readOnly: true });
+      try {
+        const uids = ((await c.search(criteria, { uid: true })) || []).slice(-limit); // highest UIDs = newest
+        if (!uids.length) continue;
+        for await (const m of c.fetch(uids, { uid: true, internalDate: true, source: true }, { uid: true })) {
+          const p = await simpleParser(m.source).catch(() => null);
+          if (!p) continue;
+          const at = new Date(p.date || m.internalDate || 0);
+          if (since && at < since) continue;
+          out.push({
+            key: `${path}:${m.uid}`, messageId: p.messageId || null, at,
+            from: [].concat(p.from || []).map((x) => x.text).filter(Boolean).join(', ') || 'unknown',
+            to: [].concat(p.to || []).map((x) => x.text).filter(Boolean).join(', '), subject: p.subject || '(no subject)',
+            text: String(p.text || ''), attachments: attached(p),
+          });
+        }
+      } finally { lock.release(); }
+    }
+    return out.sort((a, b) => b.at - a.at).slice(0, limit);
+  });
+}
+
 // ---------- acting on the mailbox ----------
 // Everything below opens a writable lock, unlike the read tools above. All of it is
 // reversible and all of it stays inside the mailbox: nothing here sends, and nothing here

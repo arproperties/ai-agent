@@ -217,7 +217,7 @@ export async function readVideo(path) {
   const secs = await videoSeconds(path);
   if (secs > MAX_MINUTES * 60) throw new Error(`This video is ${Math.round(secs / 60)} minutes long; the limit is ${MAX_MINUTES}`);
 
-  const dir = mkdtempSync(join(tmpdir(), 'jarvis-video-'));
+  const dir = mkdtempSync(join(tmpdir(), 'reem-video-'));
   try {
     const audio = await videoAudio(path, dir);
     const shots = await videoFrames(path, dir, secs);
@@ -391,13 +391,24 @@ export async function findChunks(user, query, k = 20, scope = agentScope(user)) 
  * filed on. The shelf says where a file lives, not who may read it. And the files of
  * anyone the master let this person see (file_access - "Rona can see Said's files").
  *
+ * A file in a private document category (Employee Documents: passports, visas) is the
+ * exception: shared and file_access do not reach it. Any categorised file is read instead
+ * by whoever holds the Document Renewals module - never an external holder, and never an
+ * external person's own file. chunks carry category_id too (db.js), so this works on both.
+ *
  * `t` is the alias to hang it on, for the queries that already call their table
  * something else.
  */
 export function retrievalScope(userId, t = 't') {
   return {
-    sql: `(${t}.user_id = ? OR ${t}.shared OR ${t}.user_id IN (SELECT owner_id FROM file_access WHERE viewer_id = ?))`,
-    params: [userId, userId],
+    sql: `(${t}.user_id = ?
+      OR (NOT EXISTS (SELECT 1 FROM document_categories dc WHERE dc.id = ${t}.category_id AND dc.private)
+          AND (${t}.shared OR ${t}.user_id IN (SELECT owner_id FROM file_access WHERE viewer_id = ?)))
+      OR (${t}.category_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM module_access ma JOIN users u ON u.id = ma.user_id
+            WHERE ma.user_id = ? AND ma.module = 'document_renewals' AND NOT u.external)
+          AND NOT EXISTS (SELECT 1 FROM users o WHERE o.id = ${t}.user_id AND o.external)))`,
+    params: [userId, userId, userId],
   };
 }
 

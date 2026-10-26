@@ -35,7 +35,7 @@ if (!devices.length) {
   process.exit(0);
 }
 
-const sent = await sendPush([user.id], { title: 'Jarvis', body: 'Test notification — nothing is wrong.', url: '/', tag: 'push-test' });
+const sent = await sendPush([user.id], { title: 'Reem', body: 'Test notification — nothing is wrong.', url: '/', tag: 'push-test' });
 console.log(`\nAccepted by the push service for ${sent} of ${devices.length} device(s).`);
-console.log(sent ? 'If the phone still does not buzz, the fault is on the phone: notifications off for Jarvis in its settings, or a Focus mode.' : 'None were accepted — the reason is logged above.');
+console.log(sent ? 'If the phone still does not buzz, the fault is on the phone: notifications off for Reem in its settings, or a Focus mode.' : 'None were accepted — the reason is logged above.');
 await closeDb();

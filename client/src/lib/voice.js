@@ -263,6 +263,18 @@ export const TAP_TO_STOP = { silenceMs: 12000, maxMs: 5 * 60000 };
 
 let listening = null;
 
+/** A recorded clip (webm, mp4 or wav) to text. */
+export async function transcribeClip(blob) {
+  const ext = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('wav') ? 'wav' : 'webm';
+  const form = new FormData();
+  form.append('audio', blob, `voice.${ext}`);
+  const res = await fetch('/api/voice/transcribe', { method: 'POST', body: form });
+  const data = await res.json();
+  if (res.status === 401) window.dispatchEvent(new Event('jarvis:signedout'));
+  if (!res.ok) throw new Error(data.error || 'Transcription failed');
+  return data.text.trim();
+}
+
 /** Give up on the turn entirely — nothing is sent. */
 export function stopListening() {
   listening?.abort();
@@ -328,15 +340,7 @@ export function listenUntilSilence({ onLevel, onCaptured, raw = false, silenceMs
           const blob = new Blob(parts, { type: rec.mimeType || 'audio/webm' });
           if (!spoke || blob.size < 1200) return resolve(raw ? null : ''); // nothing worth sending
           if (raw) return resolve(blob);
-          try {
-            const form = new FormData();
-            form.append('audio', blob, `voice.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`);
-            const res = await fetch('/api/voice/transcribe', { method: 'POST', body: form });
-            const data = await res.json();
-            if (res.status === 401) window.dispatchEvent(new Event('jarvis:signedout'));
-            if (!res.ok) throw new Error(data.error || 'Transcription failed');
-            resolve(data.text.trim());
-          } catch (e) { reject(e); }
+          transcribeClip(blob).then(resolve, reject);
         };
         rec.start();
 

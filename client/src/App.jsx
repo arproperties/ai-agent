@@ -13,6 +13,8 @@ import ListsPage from './components/Lists';
 import MeetingsPage from './components/Meetings';
 import TranscribePage from './components/Transcribe';
 import LeaseRenewalsPage from './components/LeaseRenewals';
+import DocumentRenewalsPage from './components/DocumentRenewals';
+import LegalCasesPage from './components/LegalCases';
 import TranslatePage from './components/Translate';
 import TenantCarePage from './components/TenantCare';
 import MailRoutingPage from './components/MailRouting';
@@ -27,6 +29,7 @@ import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { NotifyPrompt } from './components/Notifications';
 import MessageToast from './components/MessageToast';
+import Pet from './components/Pet';
 
 // back from the Microsoft sign-in page: /?outlook=connected or /?outlook=error&message=…
 const params = new URLSearchParams(window.location.search);
@@ -40,14 +43,17 @@ const notifiedMailRouting = params.get('mailrouting') === '1'; // an email to th
 const notifiedSharedInbox = params.get('sharedinbox') === '1'; // an email to the shared mailbox was passed on to them
 const notifiedDuties = params.get('responsibilities') === '1'; // the master gave them a new responsibility
 const notifiedRenewal = Number(params.get('renewals')) || null; // a lease renewal needs them: /?renewals=12
+// a document runs out: /?docrenewals=E00056 opens that employee in Document Renewals, =1 the list
+const notifiedDocRenewal = params.get('docrenewals') || null;
+const notifiedLegal = Number(params.get('legal')) || null; // a legal case needs them: /?legal=7
 const notifiedRenewals = params.has('renewals'); // that one, or the list: /?renewals=list
 // a staff job in one of their buildings needs them: /?building=2&job=41
 const notifiedBuilding = Number(params.get('building')) ? { building: Number(params.get('building')), job: Number(params.get('job')) || null } : null;
-if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedMailRouting || notifiedSharedInbox || notifiedDuties || notifiedRenewals || notifiedBuilding) window.history.replaceState(null, '', '/');
+if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedMailRouting || notifiedSharedInbox || notifiedDuties || notifiedRenewals || notifiedLegal || notifiedBuilding) window.history.replaceState(null, '', '/');
 
 // The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
 const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
-  duties: 'duties', checklists: 'checklists', memory: 'memory', email: 'email', renewals: 'renewals' };
+  duties: 'duties', checklists: 'checklists', memory: 'memory', email: 'email', renewals: 'renewals', docrenewals: 'document_renewals', legal: 'legal' };
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -62,12 +68,20 @@ export default function App() {
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewals ? 'renewals' : notifiedBuilding ? 'buildings' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewals ? 'renewals' : notifiedDocRenewal ? 'docrenewals' : notifiedLegal ? 'legal' : notifiedBuilding ? 'buildings' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const [jumpToRenewal, setJumpToRenewal] = useState(notifiedRenewal); // a lease renewal a notification asked for
+  const [jumpToDocRenewal, setJumpToDocRenewal] = useState(notifiedDocRenewal); // a document a notification asked for
+  const [jumpToLegal, setJumpToLegal] = useState(notifiedLegal); // a legal case a notification asked for
   const [hasBuildings, setHasBuildings] = useState(false); // the master, or someone who runs a building
   const [modules, setModules] = useState(null); // Reem's own modules the master has given this person; null until they are known
   const [jumpToBuilding, setJumpToBuilding] = useState(notifiedBuilding); // a building (and job) a notification asked for
+  // The pet is still being tried out: off until the master switches it on (Tools menu), on this device.
+  const [petOn, setPetOn] = useState(() => { try { return localStorage.getItem('jarvis:pet-on') === '1'; } catch { return false; } });
+  const togglePet = () => setPetOn((on) => {
+    try { if (on) localStorage.removeItem('jarvis:pet-on'); else localStorage.setItem('jarvis:pet-on', '1'); } catch { /* private mode */ }
+    return !on;
+  });
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
   const chatOpened = useCallback(() => setJumpToChat(null), []);
@@ -111,6 +125,8 @@ export default function App() {
       if (where.get('sharedinbox') === '1') { setPanel('sharedinbox'); return; }
       if (where.get('responsibilities') === '1') { setPanel('duties'); return; }
       if (where.has('renewals')) { setJumpToRenewal(Number(where.get('renewals')) || null); setPanel('renewals'); return; }
+      if (where.get('docrenewals')) { setJumpToDocRenewal(where.get('docrenewals')); setPanel('docrenewals'); return; }
+      if (Number(where.get('legal'))) { setJumpToLegal(Number(where.get('legal'))); setPanel('legal'); return; }
       if (Number(where.get('building'))) {
         setJumpToBuilding({ building: Number(where.get('building')), job: Number(where.get('job')) || null });
         setPanel('buildings');
@@ -129,12 +145,15 @@ export default function App() {
 
   useEffect(() => {
     // Signed out, however it happened: nothing of theirs may still be on screen when the
-    // next person signs in on the same phone and their own has not arrived yet.
-    if (!me) {
+    // next person signs in on the same phone and their own has not arrived yet. Not while
+    // it is still loading (undefined): that would also drop the screen a notification's
+    // link opened the app on, e.g. /?legal=7.
+    if (me === null) {
       setDue({ todos: [], routines: [] }); setExpiring([]); setModules(null); setHasBuildings(false);
       setTenantCare({ member: false, waiting: 0 }); setSharedInbox(false); setPanel(null);
       return;
     }
+    if (!me) return;
     api.get('/config').then(setConfig);
     loadAgents();
     loadConvs();
@@ -179,7 +198,7 @@ export default function App() {
       <aside className={`max-md:liquid-glass rail-wash fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'}`}>
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
-          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv}
+          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} petOn={petOn} onPet={togglePet}
           expiring={expiring.length} dueTodos={due.todos.length + due.routines.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
           meetingsOpen={panel === 'meetings'} onMeetings={() => { setPanel('meetings'); setDrawer(false); }}
           translateOpen={panel === 'translate'} onTranslate={() => { setPanel('translate'); setDrawer(false); }}
@@ -194,6 +213,8 @@ export default function App() {
           hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
           inventoryOpen={panel === 'inventory'} onInventory={() => { setPanel('inventory'); setDrawer(false); }}
           renewalsOpen={panel === 'renewals'} onRenewals={() => { setJumpToRenewal(null); setPanel('renewals'); setDrawer(false); }}
+          docRenewalsOpen={panel === 'docrenewals'} onDocRenewals={() => { setJumpToDocRenewal(null); setPanel('docrenewals'); setDrawer(false); }}
+          legalOpen={panel === 'legal'} onLegal={() => { setJumpToLegal(null); setPanel('legal'); setDrawer(false); }}
           modules={modules || []}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
@@ -247,7 +268,9 @@ export default function App() {
         {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'buildings' && <BuildingsPage me={me} start={jumpToBuilding} onBack={() => setPanel(null)} />}
         {panel === 'inventory' && <InventoryPage me={me} onBack={() => setPanel(null)} />}
+        {panel === 'docrenewals' && <DocumentRenewalsPage key={jumpToDocRenewal || 'list'} start={jumpToDocRenewal} onBack={() => { setJumpToDocRenewal(null); setPanel(null); }} />}
         {panel === 'renewals' && <LeaseRenewalsPage key={jumpToRenewal || 'list'} open={jumpToRenewal} onBack={() => setPanel(null)} />}
+        {panel === 'legal' && <LegalCasesPage key={jumpToLegal || 'list'} open={jumpToLegal} onBack={() => setPanel(null)} />}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
         {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}
@@ -261,6 +284,12 @@ export default function App() {
       )}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
       <NotifyPrompt />
+      {me.role === 'master' && petOn && (
+        <Pet me={me} due={due} expiring={expiring} unread={dm.unread} canShelf={!modules || modules.includes('shelf')}
+          canTalk={agents.length > 0} voiceEnabled={config.voice}
+          onOpen={(p) => { setPanel(p); setDrawer(false); }} onOpenChat={openChat}
+          onChatSaved={() => { loadConvs(); loadDue(); }} />
+      )}
       <MessageToast toast={dm.toast} onClose={dm.dismissToast}
         onOpen={(id) => { dm.dismissToast(); setJumpToChat(id); setPanel('messages'); setDrawer(false); }} />
     </div>

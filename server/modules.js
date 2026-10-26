@@ -22,6 +22,7 @@ import { isMaster, isExternal } from './access.js';
 
 export const MODULES = [
   { key: 'shelf', label: 'Shelf', about: 'Their files and the ones shared with them: upload, sort, search and open.', everyone: true },
+  { key: 'legal', label: 'Legal cases', about: 'Legal cases from the case type to the end: cooling periods, legal notice, settlement, proceedings, appeal and vouchers, with every document and step kept.', company: true },
   { key: 'todos', label: 'To-do', about: 'Their to-do list and the things that come back, with reminders.', everyone: true },
   { key: 'translate', label: 'Live Translator', about: 'Two people, two languages, one phone.', everyone: true },
   { key: 'meetings', label: 'Meetings', about: 'Record a meeting and get who said what, with a summary.', everyone: true },
@@ -29,6 +30,7 @@ export const MODULES = [
   // company: the company's own work, never given to an external person (access.js).
   { key: 'renewals', label: 'Lease renewals', about: 'See the leases ending in the next 120 days, live from saifsys, with a link to the DLD Rental Index.', company: true },
   { key: 'notices', label: 'Tenant notices', about: 'Report something at a unit in a chat with Reem, with a photo. Reem writes the notice; it is emailed to the tenant when they tap Send.', company: true },
+  { key: 'document_renewals', label: 'Document Renewals', about: 'Employee and company documents (visas, contracts, trade licences, insurance): see them, get their expiry alerts, and renew or end employee contracts with approvals and the PRO.', company: true },
   { key: 'duties', label: 'My responsibilities', about: 'See what they look after, as you have written it.', everyone: true, company: true },
   { key: 'checklists', label: 'Checklists', about: 'The points of a job, ticked each time it is done.', everyone: true, company: true },
   { key: 'memory', label: 'Memory', about: 'See and remove what Reem remembers about them.', everyone: true },

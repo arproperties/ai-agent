@@ -37,7 +37,7 @@ self.addEventListener('push', (event) => {
   // Closing the one already showing before putting up the next matters on a Mac: there,
   // Chrome swaps the text of a same-tag notification in silence, so every message after
   // the first in a chat arrived with no banner at all. Closed and shown fresh, it pops up.
-  const tag = data.tag || 'jarvis';
+  const tag = data.tag || 'reem';
   event.waitUntil(self.registration.getNotifications({ tag })
     .then((open) => open.forEach((n) => n.close()), () => {})
     .then(() => self.registration.showNotification(data.title || 'Reem', {

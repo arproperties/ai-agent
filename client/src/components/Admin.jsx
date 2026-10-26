@@ -446,18 +446,18 @@ function Modules({ person }) {
           ? 'The master has every module.'
           : `Tick the modules ${person.name} should have - as many as you like. Each one shows up in their menu the next time they open Reem.`}
       </p>
-      <div className="grid items-start gap-2 @md:grid-cols-2">
+      {/* One list, settings-style: a thin line between rows and a switch on the right. */}
+      <div className="divide-y divide-stroke overflow-hidden rounded-2xl border border-stroke bg-white/[0.02]">
         {data.modules.map((m) => (
-          <button key={m.key} onClick={() => !data.master && toggle(m.key)} disabled={data.master} aria-pressed={m.on}
-            className={`flex w-full items-center gap-3 rounded-[1.25rem] border p-3 text-left transition ${
-              m.on ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent' : 'border-stroke bg-white/[0.035] hover:bg-white/[0.07]'}`}>
+          <button key={m.key} onClick={() => !data.master && toggle(m.key)} disabled={data.master}
+            role="switch" aria-checked={m.on} title={m.about}
+            className="flex w-full items-center gap-4 px-4 py-3 text-left transition hover:bg-white/[0.04] disabled:hover:bg-transparent">
             <span className="min-w-0 flex-1">
               <span className={`block truncate text-sm font-medium ${m.on ? 'text-txt' : 'text-mute'}`}>{m.label}</span>
-              <span className="block text-xs leading-relaxed text-mute">{m.about}</span>
+              <span className="block truncate text-xs text-mute">{m.about}</span>
             </span>
-            <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
-              m.on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
-              {m.on && <Check size={11} strokeWidth={3.5} />}
+            <span className={`relative h-6 w-10 shrink-0 rounded-full transition ${m.on ? 'bg-p1' : 'bg-white/15'}`}>
+              <span className={`absolute top-1 size-4 rounded-full bg-white transition-all ${m.on ? 'left-5' : 'left-1'}`} />
             </span>
           </button>
         ))}

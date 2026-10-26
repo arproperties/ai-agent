@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { existsSync } from 'node:fs';
-import { ROOT, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS } from './config.js';
+import { ROOT, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS, DOC_RENEWALS_SEND } from './config.js';
 import { db, tx } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo, timingsFor } from './tts.js';
@@ -10,7 +10,7 @@ import { agentOut, agentIn, agentLinks } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
 import { deleteMessage, editReply, chat } from './chat.js';
 import { addMemory } from './knowledge.js';
-import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument } from './files.js';
+import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument, editDocumentKind, kindFieldsIn } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
@@ -26,8 +26,15 @@ import { addressRoutes } from './addressBook.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
+import { docCategoryRoutes, seedCategories } from './docCategories.js';
+import { documentRenewalRoutes, proTaskRoutes } from './documentRenewals.js';
+import { startSaifsysDocSync } from './saifsysDocSync.js';
+import { startDocumentAlerts } from './documentAlerts.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
+import { caseRoutes } from './caseRoutes.js';
+import { startCaseFolders } from './caseWatch.js';
+import { caseShareRoutes, publicCaseRoutes } from './caseShare.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
 import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
@@ -49,6 +56,7 @@ import { noticeRoutes } from './notices.js';
 import { pictureRoutes } from './pictures.js';
 import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
 import { billingContext, billingRoutes, billAs } from './billing.js';
+import { legalCaseRoutes, startLegalCases } from './legalCases.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -61,6 +69,7 @@ app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; che
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
+app.use('/api/case-share', publicCaseRoutes); // a case folder shared by link: anyone with it, while it is on (caseShare.js)
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api', externalFence); // someone from outside the company reaches only their own things (access.js)
 app.use('/api', billingContext); // every AI call made for this request is priced to this person (billing.js)
@@ -91,6 +100,7 @@ app.use('/api/shared-inbox', sharedInboxRoutes); // the emails Mail routing pass
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
 app.use('/api/lease-renewals', leaseRenewalRoutes); // leases ending within 120 days, renewed with the tenant by email step by step (module renewals)
+app.use('/api/legal-cases', legalCaseRoutes); // legal cases step by step, cooling periods to closure (module legal)
 app.use('/api/pictures', pictureRoutes); // the pictures a chat drew for /explain, /breakdown and /explore
 app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's
 app.use('/api/address-book', addressRoutes); // company mailboxes the master added, next to the built-in ones (master only)
@@ -98,9 +108,14 @@ app.use('/api/responsibilities', responsibilityRoutes); // who looks after what;
 app.use('/api/checklists', needsModule('checklists'), checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
+app.use('/api/cases', caseShareRoutes); // a case folder emailed, or its link turned on and off (external only)
+app.use('/api/cases', caseRoutes); // an external person's case folders, got ready from their inbox in chat (external only)
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
+app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
+app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
+app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
 app.use('/api/billing', requireMaster, billingRoutes); // what the AI cost: by person, job and model (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
@@ -302,7 +317,9 @@ app.get('/api/documents/:id/file', wrap(async (req, res) => {
   const inline = !req.query.download && inlineType(doc);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(doc.name)}`);
-  res.type(inline || 'application/octet-stream').sendFile(doc.path);
+  // dotfiles: the path is the one stored for this file, never the visitor's; a data folder
+  // under a dot-named folder (a git worktree under .claude) must not turn every file into a 404.
+  res.type(inline || 'application/octet-stream').sendFile(doc.path, { dotfiles: 'allow' });
 }));
 // Word documents rendered as HTML for the in-app viewer
 app.get('/api/documents/:id/preview', wrap(async (req, res) => {
@@ -318,17 +335,28 @@ app.post('/api/documents/share', needsModule('shelf'), wrap(async (req, res) => 
 // move to another folder or company, rename, or (master only) publish to the shelf
 app.patch('/api/documents/:id', needsModule('shelf'), wrap(async (req, res) => {
   const doc = await own('documents', req.params.id, req.user.id);
-  if (!doc) return notFound(res);
+  // Not theirs: only what a file is, who it is for and its dates, and only for the master
+  // or a Document Renewals holder (editDocumentKind decides; anyone else gets its 404).
+  if (!doc) {
+    if (!kindFieldsIn(req.body) && !('expires_on' in req.body)) return notFound(res);
+    const { type_id, employee_code, subject, expires_on, confirm_expiry, confirm_link, not_renewing } = req.body;
+    const kind = Object.fromEntries(Object.entries({ type_id, employee_code, subject, expires_on, confirm_expiry, confirm_link, not_renewing })
+      .filter(([k]) => k in req.body));
+    const edited = await editDocumentKind(req.user, req.params.id, kind);
+    return res.json(docOut(await db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(edited.id), req.user.id));
+  }
   const folder = FOLDERS.includes(req.body.folder) ? req.body.folder : doc.folder;
   const title = String(req.body.title || doc.title).slice(0, 120);
   // An empty company means "Other"; a typed one is matched to an existing spelling.
   const company = 'company' in req.body ? pickCompany(req.body.company, await userCompanies(req.user.id)) : doc.company;
+  await db.prepare('UPDATE documents SET folder = ?, title = ?, company = ? WHERE id = ?').run(folder, title, company, doc.id);
   // A read expiry is a guess, and one nobody can correct is worse than none at all.
-  // Anything that is not a date clears it, which is how the field is emptied.
-  const expires = 'expires_on' in req.body
-    ? (/^\d{4}-\d{2}-\d{2}$/.test(req.body.expires_on) ? req.body.expires_on : null)
-    : doc.expires_on;
-  await db.prepare('UPDATE documents SET folder = ?, title = ?, company = ?, expires_on = ? WHERE id = ?').run(folder, title, company, expires, doc.id);
+  // Anything that is not a date clears it, which is how the field is emptied. A changed
+  // date is no longer the one somebody confirmed: editDocumentKind clears that.
+  if (kindFieldsIn(req.body) || 'expires_on' in req.body) {
+    const { title: _t, folder: _f, company: _c, shared: _s, ...kind } = req.body;
+    await editDocumentKind(req.user, doc.id, kind);
+  }
   // A field-level permission, not a route-level one: everyone renames and refiles here,
   // but only the master may publish. A user sending `shared` simply does not get it.
   if ('shared' in req.body && isMaster(req.user)) await setShared(req.user, doc.id, req.body.shared);
@@ -426,12 +454,20 @@ if (existsSync(dist)) {
 await giveToEveryoneOnce()
   .then((given) => given.length && console.log('[modules] given to everyone already here:', given.join(', ')))
   .catch((e) => console.error('[modules] could not give the new modules to everyone:', e.message));
+// The first two document categories (Employee / Company Documents), into an empty list only.
+await seedCategories().catch((e) => console.error('[doc-categories] could not seed the categories:', e.message));
 // Reminders sent before they landed as to-dos are put on each person's list. Once only.
 await bringOldRemindersIntoTodos()
   .then((n) => n && console.log(`[team-reminders] ${n} sent reminders put on people's to-do lists`))
   .catch((e) => console.error('[team-reminders] could not bring old reminders into to-dos:', e.message));
 
 app.listen(PORT, '0.0.0.0', () => {
+  // saifsys's employee documents onto the Shelf, for Document Renewals: nightly, and once now
+  startSaifsysDocSync();
+  // Expiry alerts (pushes and to-dos) on the live server only, unless asked for: a local copy of
+  // the live database holds real people's phones, which a test run must not wake. And on live
+  // only once Document Renewals sending is switched on (DOC_RENEWALS_SEND).
+  if ((process.env.NODE_ENV === 'production' && DOC_RENEWALS_SEND) || process.env.DOCUMENT_ALERTS === 'on') startDocumentAlerts();
   // drafts approved while the rate limit was full go out when it clears
   startOutbox().catch((e) => console.error('[outbox]', e.message));
   // files from a folder or ZIP import that were still waiting when the server stopped
@@ -442,7 +478,9 @@ app.listen(PORT, '0.0.0.0', () => {
   // Each timer keeps the job it was started as, so what it costs shows under that job in Billing.
   billAs({ userId: null, job: 'tenantcare' }, startTenantCare); // does nothing until the Tenant care inbox is connected
   billAs({ userId: null, job: 'renewals' }, startLeaseRenewals); // reads tenants' replies to renewals and sends the reminders
+  billAs({ userId: null, job: 'other' }, startLegalCases); // tells people when a cooling period is about to end, or has run over
   billAs({ userId: null, job: 'mail' }, startMailRouting); // does nothing until the shared mailbox is connected
+  startCaseFolders(); // external users' case folders take in new case mail; each folder is billed to its owner
   billAs({ userId: null, job: 'buildings' }, startBuildings); // buzzes a building's administrator when a staff job needs them
   billAs({ userId: null, job: 'other' }, startRecurringPayments); // creates each recurring payment's line on its day of the month
   // meeting recordings that were still waiting to be transcribed when the server stopped

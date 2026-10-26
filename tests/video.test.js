@@ -46,7 +46,7 @@ let dir;
 let clip;
 let silent;
 test('make the test clips', withFfmpeg, async () => {
-  dir = mkdtempSync(join(tmpdir(), 'jarvis-video-test-'));
+  dir = mkdtempSync(join(tmpdir(), 'reem-video-test-'));
   clip = join(dir, 'clip.mp4');
   silent = join(dir, 'silent.mp4');
   // 6 seconds of moving colour bars with a tone over them, and the same with no sound
@@ -67,7 +67,7 @@ test('a file that is not a video has no length, rather than throwing', withFfmpe
 });
 
 test('stills come back spread through the clip', withFfmpeg, async () => {
-  const out = mkdtempSync(join(tmpdir(), 'jarvis-frames-'));
+  const out = mkdtempSync(join(tmpdir(), 'reem-frames-'));
   try {
     const shots = await videoFrames(clip, out, 6);
     assert.equal(shots.length, FRAME_AT.length);
@@ -85,7 +85,7 @@ test('stills come back spread through the clip', withFfmpeg, async () => {
 
 // A 1080p frame sent whole would cost about half again as much to read for no more detail.
 test('a still is capped at 1280 wide, so one frame costs the same whatever the camera', withFfmpeg, async () => {
-  const out = mkdtempSync(join(tmpdir(), 'jarvis-frames-'));
+  const out = mkdtempSync(join(tmpdir(), 'reem-frames-'));
   try {
     const [shot] = await videoFrames(clip, out, 6);
     const { stdout } = await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
@@ -97,7 +97,7 @@ test('a still is capped at 1280 wide, so one frame costs the same whatever the c
 });
 
 test('the sound comes out as an mp3 small enough to send', withFfmpeg, async () => {
-  const out = mkdtempSync(join(tmpdir(), 'jarvis-audio-'));
+  const out = mkdtempSync(join(tmpdir(), 'reem-audio-'));
   try {
     const path = await videoAudio(clip, out);
     assert.ok(path, 'a clip with sound should give an audio file');
@@ -112,7 +112,7 @@ test('the sound comes out as an mp3 small enough to send', withFfmpeg, async () 
 
 // A video with no sound is the ordinary case for a photo-app export, not a failure.
 test('a silent video gives no audio rather than an error', withFfmpeg, async () => {
-  const out = mkdtempSync(join(tmpdir(), 'jarvis-audio-'));
+  const out = mkdtempSync(join(tmpdir(), 'reem-audio-'));
   try {
     assert.equal(await videoAudio(silent, out), null);
   } finally {

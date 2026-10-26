@@ -8,11 +8,13 @@ import {
 import { api } from '../lib/api';
 import { startImport, importState, onImport, clearImportError } from '../lib/importer';
 import { describeIgnored } from '../lib/zip';
+import { sendToShelf } from '../lib/shelf';
 import Icon from './Icon';
 import Sheet from './Sheet';
 import Page from './Page';
 import Picker from './Picker';
 import Orb from './Orb';
+import { CaseFolders, CaseFolder, useCaseFolders } from './CaseFolders';
 
 export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
@@ -82,17 +84,8 @@ function useFiles(agentId) {
   const upload = async (files) => {
     if (!files?.length) return;
     setUploading(true);
-    // Ten to a request, the server's limit: a folder of forty court files is four uploads,
-    // and the queue files them all whichever request brought them.
-    const all = [...files];
-    const res = [];
     try {
-      for (let i = 0; i < all.length; i += 10) {
-        const form = new FormData();
-        if (agentId) form.append('agent', agentId);
-        all.slice(i, i + 10).forEach((f) => form.append('files', f));
-        res.push(...await api.upload('/documents', form));
-      }
+      const res = await sendToShelf(files, agentId);
       setNotes(res.filter((r) => r.duplicate).map((r) => `${r.name} is already in your files${r.shelf ? `, filed under ${r.shelf}` : ''}`));
     } catch (e) { setNotes([e.message]); }
     setUploading(false);
@@ -708,7 +701,14 @@ function ImportBar({ onChanged }) {
 
 // ---------- full-screen Files page ----------
 export function FilesPage({ folders, me, onBack, onOpenChat }) {
-  const { docs, load, upload, write, uploading, notes } = useFiles(null);
+  const { docs: allDocs, load, upload, write, uploading, notes } = useFiles(null);
+  // Someone from outside the company sees their case folders first; a case's files live in
+  // its folder there, not in the grid below. Staff and the master see the Shelf as it was.
+  const external = !!me?.external;
+  const cases = useCaseFolders(external);
+  const [caseId, setCaseId] = useState(null);
+  const openCase = caseId && cases.folders?.find((f) => f.id === caseId);
+  const docs = useMemo(() => (external && allDocs ? allDocs.filter((d) => !d.case_folder_id) : allDocs), [allDocs, external]);
   // Two levels: Companies (then one company) or Others (files naming no company).
   const [group, setGroup] = useState(null); // null = the two top cards, 'companies' | 'others'
   const [company, setCompany] = useState(null); // a company's name, inside Companies
@@ -740,7 +740,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
   const inFolder = (d) => (folder === 'All' ? true : folder === 'Learned' ? d.kind === 'fact' : d.folder === folder);
   // Search always covers every file, whichever level is open.
   const shown = q ? (docs || []).filter((d) => matches(d, q)) : (scope || []).filter(inFolder);
-  const openDoc = open && docs?.find((d) => d.id === open);
+  const openDoc = open && allDocs?.find((d) => d.id === open);
 
   // A single ZIP dropped on the Shelf is an import; anything else is an ordinary upload.
   const drop = (e) => {
@@ -809,7 +809,12 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
             <Orb className="w-28" state="thinking" />
             <p className="animate-pulse text-sm font-light tracking-wide text-mute">Opening your shelf…</p>
           </div>
-        ) : docs.length === 0 ? (
+        ) : openCase && !q ? (
+          <div className="mx-auto w-full py-5">
+            <CaseFolder key={openCase.id} folder={openCase} onBack={() => setCaseId(null)} onOpenFile={setViewing}
+              onChanged={() => Promise.all([cases.load(), load()])} />
+          </div>
+        ) : docs.length === 0 && !cases.folders?.length ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
             <span className="grid size-20 place-items-center rounded-3xl bg-gradient-to-br from-sky-500/25 to-p1/10 text-sky-300"><FolderOpen size={36} strokeWidth={1.4} /></span>
             <div>
@@ -830,6 +835,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
               <FileGrid title={`SEARCH · “${q}”`} files={shown} onOpen={setViewing} />
             ) : !group ? (
               <>
+                {external && <CaseFolders folders={cases.folders} onOpen={setCaseId} />}
                 <ExpiringSoon docs={docs} onOpen={(d) => setOpen(d.id)} />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <GroupCard icon={Building2} tone="text-sky-300" bg="from-sky-500/30 to-sky-500/5" label="Companies"
@@ -886,7 +892,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
         </div>
       )}
       {viewing && <FileViewer d={viewing} onClose={() => setViewing(null)} onInfo={(d) => { setViewing(null); setOpen(d.id); }} />}
-      {openDoc && <FileDetail d={openDoc} folders={folders} companies={companies.names} me={me} onClose={() => setOpen(null)} onChanged={load} onOpenChat={onOpenChat} />}
+      {openDoc && <FileDetail d={openDoc} folders={folders} companies={companies.names} me={me} onClose={() => setOpen(null)} onChanged={() => { load(); cases.load(); }} onOpenChat={onOpenChat} />}
       {writing && <NoteSheet onSave={write} onClose={() => setWriting(false)} />}
     </div>
   );
