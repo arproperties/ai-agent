@@ -205,12 +205,13 @@ function StartSheet({ lease, onClose, onDone }) {
   const [fees, setFees] = useState(null);
   const [admin, setAdmin] = useState('');
   const [chiller, setChiller] = useState('');
-  // The extra services: off, or on at a yearly fee (the old lease's to start with).
+  // The extra services: all start off, a person ticks what the tenant takes. The fee is
+  // filled with the old lease's (EV's own price where it had none), ready for the tick.
   const [extras, setExtras] = useState({});
   useEffect(() => {
     api.get(`/lease-renewals/fees/${lease.lease_id}`).then((f) => {
       setFees(f); setAdmin(String(Math.round(f.admin || 0))); setChiller(String(Math.round(f.chiller || 0)));
-      setExtras(Object.fromEntries(EXTRAS.map(([k]) => [k, { on: Number(f[k]) > 0, fee: Number(f[k]) > 0 ? String(Math.round(f[k])) : k === 'ev' ? String(EV_FEE) : '' }])));
+      setExtras(Object.fromEntries(EXTRAS.map(([k]) => [k, { on: false, fee: Number(f[k]) > 0 ? String(Math.round(f[k])) : k === 'ev' ? String(EV_FEE) : '' }])));
     }).catch(() => setFees({ failed: true }));
   }, [lease.lease_id]);
   // The % and the rent fill each other in, so either can be typed.
