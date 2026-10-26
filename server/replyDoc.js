@@ -10,10 +10,14 @@
 // Same reply in, same bytes out (the dates in it are the reply's own), so saving it to
 // the Shelf twice is caught by saveUpload's duplicate check. The routes are replyPdf.js.
 //
-// The built-in PDF fonts only cover Western European letters. Anything else is swapped
-// for a near equivalent or dropped, and a document that is mostly another script
-// (Arabic, say) is refused rather than handed over with its words missing.
+// The built-in PDF fonts only cover Western European letters. Arabic is drawn with Noto
+// Sans Arabic (server/fonts), embedded only when a document has Arabic in it: fontkit joins
+// the letters, and the lines of an Arabic paragraph run right to left. Anything else is
+// swapped for a near equivalent or dropped, and a document that is mostly another script
+// (Hindi, say) is refused rather than handed over with its words missing.
+import { readFileSync } from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 
 const OPEN = /^[ \t]*<!--\s*doc\s*-->[ \t]*$/im;
 const CLOSE = /^[ \t]*<!--\s*\/doc\s*-->[ \t]*$/im;
@@ -76,9 +80,15 @@ export const clean = (s) => String(s).replace(/[*_`#]/g, '').replace(/\[([^\]]+)
 // ---------- characters the standard fonts can draw ----------
 
 const WIN_ANSI_EXTRA = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ';
+const ARABIC_CHARS = '؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿';
+const ARABIC = new RegExp(`[${ARABIC_CHARS}]`, 'u');
+const ARABIC_RUN = new RegExp(`([${ARABIC_CHARS}]+)`, 'u');
+export const hasArabic = (s) => ARABIC.test(String(s));
+/** Right to left when the first letter is Arabic. */
+export const isRtl = (s) => hasArabic(String(s).match(/\p{L}/u)?.[0] || '');
 const drawable = (c) => {
   const n = c.codePointAt(0);
-  return (n >= 0x20 && n <= 0x7e) || (n >= 0xa0 && n <= 0xff) || WIN_ANSI_EXTRA.includes(c);
+  return (n >= 0x20 && n <= 0x7e) || (n >= 0xa0 && n <= 0xff) || WIN_ANSI_EXTRA.includes(c) || ARABIC.test(c);
 };
 const SWAP = {
   '✓': 'v', '✔': 'v', '☑': '[x]', '✅': 'v', '✗': 'x', '✘': 'x', '❌': 'x', // no tick in the standard fonts
@@ -209,6 +219,36 @@ export function parseInline(text) {
 
 // ---------- layout ----------
 
+const ARABIC_FONTS = {};
+const arabicFont = (weight) => (ARABIC_FONTS[weight] ??= readFileSync(new URL(`./fonts/NotoSansArabic-${weight}.ttf`, import.meta.url)));
+
+// Brackets face the other way in right-to-left text.
+const MIRROR = { '(': ')', ')': '(', '[': ']', ']': '[', '{': '}', '}': '{', '<': '>', '>': '<', '«': '»', '»': '«' };
+const mirror = (t) => [...t].map((c) => MIRROR[c] ?? c).join('');
+const kindOf = (seg) => (seg.dot || !seg.text.trim() ? 'n' : hasArabic(seg.text) ? 'r' : /[\p{L}\p{N}]/u.test(seg.text) ? 'l' : 'n');
+
+/**
+ * A line's words in the order they are drawn, left to right. A right-to-left line is turned
+ * round, keeping English words and numbers inside it the right way; a left-to-right line
+ * keeps its order, with a run of Arabic words inside it turned round.
+ */
+export function visualOrder(line, rtl) {
+  const out = rtl ? [...line].reverse() : [...line];
+  const flip = rtl ? 'l' : 'r';
+  for (let i = 0; i < out.length; i++) {
+    if (kindOf(out[i]) !== flip) continue;
+    let end = i;
+    for (let j = i + 1; j < out.length; j++) {
+      const k = kindOf(out[j]);
+      if (k === flip) end = j;
+      else if (k !== 'n') break;
+    }
+    out.splice(i, end - i + 1, ...out.slice(i, end + 1).reverse());
+    i = end;
+  }
+  return out;
+}
+
 const A4 = [595.28, 841.89];
 // A table this wide turns the whole document sideways: eight columns on an upright page left
 // each one a word wide, and a case table became a column of broken lines.
@@ -242,6 +282,26 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     mono: await pdf.embedFont(StandardFonts.Courier),
   };
   const fontOf = (r) => (r.code ? F.mono : r.bold && r.italic ? F.boldItalic : r.bold ? F.bold : r.italic ? F.italic : F.regular);
+  // Arabic is only embedded when there is some; the name is fixed so the same reply still makes the same bytes.
+  let A = null;
+  if (hasArabic(title) || hasArabic(markdown)) {
+    pdf.registerFontkit(fontkit);
+    A = {
+      regular: await pdf.embedFont(arabicFont('Regular'), { subset: true, customName: 'NotoSansArabic' }),
+      bold: await pdf.embedFont(arabicFont('Bold'), { subset: true, customName: 'NotoSansArabic-Bold' }),
+    };
+  }
+  // A word as pieces, each in a font that can draw it: Arabic letters in Noto, the rest in the standard font.
+  const piecesOf = (text, font) => {
+    if (!A || !hasArabic(text) || font === F.mono) return [{ text, font }];
+    const ar = font === F.bold || font === F.boldItalic ? A.bold : A.regular;
+    return text.split(ARABIC_RUN).filter(Boolean).map((t) => (ARABIC.test(t) ? { text: t, font: ar, arabic: true } : { text: t, font }));
+  };
+  const widthOf = (pieces, size) => pieces.reduce((w, p) => w + p.font.widthOfTextAtSize(p.text, size), 0);
+  const textWidth = (text, size, font = F.regular) => widthOf(piecesOf(text, font), size);
+  // An Arabic document reads from the right: its tables run right to left too.
+  const letters = [...markdown].filter((c) => /\p{L}/u.test(c));
+  const docRtl = letters.filter((c) => ARABIC.test(c)).length > letters.length / 2;
   const blocks = parseBlocks(markdown);
   const SIZE = pageSize(blocks);
   const width = SIZE[0] - MARGIN.x * 2;
@@ -261,7 +321,10 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
       const sz = r.code ? size * 0.92 : size;
       for (const part of r.text.split(MARK_RE).flatMap((t) => (MARKS[t] ? [t] : t.split(/(\n|[^\S\n]+)/)))) {
         if (MARKS[part]) words.push({ text: part, dot: MARKS[part].dot, font, size: sz });
-        else if (part) words.push({ text: part === '\n' ? '\n' : /^\s+$/.test(part) ? ' ' : part, font, size: sz, color: base.color });
+        else if (part) {
+          const text = part === '\n' ? '\n' : /^\s+$/.test(part) ? ' ' : part;
+          words.push({ text, font, pieces: piecesOf(text, font), size: sz, color: base.color });
+        }
       }
     }
     for (const word of words) {
@@ -270,7 +333,7 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
         lines.push([]); w = 0;
         continue;
       }
-      const ww = word.dot ? word.size * 1.05 : word.font.widthOfTextAtSize(word.text, word.size);
+      const ww = word.dot ? word.size * 1.05 : widthOf(word.pieces, word.size);
       if (word.text === ' ') {
         if (lines.at(-1).length) { lines.at(-1).push({ ...word, w: ww }); w += ww; }
         continue;
@@ -279,17 +342,17 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
         while (lines.at(-1).at(-1)?.text === ' ') w -= lines.at(-1).pop().w;
         lines.push([]); w = 0;
       }
-      if (ww > max && !word.dot) { // a word longer than the line: break it by letters
+      if (ww > max && !word.dot && !hasArabic(word.text)) { // a word longer than the line: break it by letters
         let chunk = '';
         for (const ch of word.text) {
           if (word.font.widthOfTextAtSize(chunk + ch, word.size) > max - w && chunk) {
-            lines.at(-1).push({ ...word, text: chunk, w: word.font.widthOfTextAtSize(chunk, word.size) });
+            lines.at(-1).push({ ...word, text: chunk, pieces: [{ text: chunk, font: word.font }], w: word.font.widthOfTextAtSize(chunk, word.size) });
             lines.push([]); w = 0; chunk = '';
           }
           chunk += ch;
         }
         const cw = word.font.widthOfTextAtSize(chunk, word.size);
-        lines.at(-1).push({ ...word, text: chunk, w: cw }); w += cw;
+        lines.at(-1).push({ ...word, text: chunk, pieces: [{ text: chunk, font: word.font }], w: cw }); w += cw;
         continue;
       }
       lines.at(-1).push({ ...word, w: ww }); w += ww;
@@ -298,34 +361,47 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     return lines.filter((l, i) => l.length || i === 0);
   };
 
-  const drawLine = (line, x, baseline, color = INK) => {
-    let cx = x;
-    for (const seg of line) {
+  const lineWidth = (line) => line.reduce((w, seg) => w + seg.w, 0);
+  // A right-to-left line is drawn against the right edge of its `max` wide space.
+  const drawLine = (line, x, baseline, color = INK, { rtl = false, max = 0 } = {}) => {
+    let cx = rtl ? x + max - lineWidth(line) : x;
+    for (const seg of visualOrder(line, rtl)) {
       if (seg.dot) page.drawCircle({ x: cx + seg.size * 0.33, y: baseline + seg.size * 0.33, size: seg.size * 0.33, color: seg.dot });
-      else if (seg.text !== ' ') page.drawText(seg.text, { x: cx, y: baseline, size: seg.size, font: seg.font, color: seg.color || color });
+      else if (seg.text !== ' ') {
+        // An English word keeps its brackets; around Arabic they face the other way.
+        const flip = rtl && kindOf(seg) !== 'l';
+        let px = cx;
+        for (const p of flip ? [...seg.pieces].reverse() : seg.pieces) {
+          const text = flip && !p.arabic ? mirror(p.text) : p.text;
+          page.drawText(text, { x: px, y: baseline, size: seg.size, font: p.font, color: seg.color || color });
+          px += p.font.widthOfTextAtSize(text, seg.size);
+        }
+      }
       cx += seg.w;
     }
   };
 
   // A wrapped paragraph at x, `lead` apart, moving y down as it goes.
-  const flow = (runs, { size = 10.5, x = MARGIN.x, max = width - (x - MARGIN.x), lead = size * 1.45, color = INK, base = {}, before } = {}) => {
+  const flow = (runs, { size = 10.5, x = MARGIN.x, max = width - (x - MARGIN.x), lead = size * 1.45, color = INK, base = {}, before, rtl = false } = {}) => {
     const lines = wrap(runs, size, max, base);
     lines.forEach((line, i) => {
       room(lead);
       if (i === 0 && before) before(y - size);
-      drawLine(line, x, y - size, color);
+      drawLine(line, x, y - size, color, { rtl, max });
       y -= lead;
     });
   };
+  const rtlOf = (text) => isRtl(clean(String(text || '')).replace(MARK_RE, ''));
 
   // ---- title block ----
   newPage();
   const when = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Dubai' });
-  page.drawRectangle({ x: MARGIN.x, y: y - 3, width: 36, height: 3, color: ACCENT });
+  const titleRtl = isRtl(title);
+  page.drawRectangle({ x: titleRtl ? MARGIN.x + width - 36 : MARGIN.x, y: y - 3, width: 36, height: 3, color: ACCENT });
   y -= 18;
-  flow([{ text: sanitize(title) }], { size: 21, lead: 26, base: { bold: true } });
+  flow([{ text: sanitize(title) }], { size: 21, lead: 26, base: { bold: true }, rtl: titleRtl });
   y -= 2;
-  flow([{ text: when }], { size: 9.5, color: SOFT });
+  flow([{ text: when }], { size: 9.5, color: SOFT, rtl: titleRtl });
   y -= 6;
   page.drawLine({ start: { x: MARGIN.x, y }, end: { x: MARGIN.x + width, y }, thickness: 0.6, color: LINE });
   y -= 18;
@@ -338,26 +414,32 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
       const size = b.level === 1 ? 16 : b.level === 2 ? 13.5 : b.level === 3 ? 11.5 : 10.5;
       y -= b.level <= 2 ? 10 : 6;
       room(size * 3.2); // never a heading alone at the foot of a page
-      flow(parseInline(b.text), { size, lead: size * 1.35, base: { bold: true }, color: b.level <= 2 ? ACCENT : INK });
+      flow(parseInline(b.text), { size, lead: size * 1.35, base: { bold: true }, color: b.level <= 2 ? ACCENT : INK, rtl: rtlOf(b.text) });
       if (b.level <= 2) y -= 2;
       y -= 3;
     } else if (b.type === 'para') {
-      flow(parseInline(b.text));
+      flow(parseInline(b.text), { rtl: rtlOf(b.text) });
       y -= 6;
     } else if (b.type === 'item') {
       const indent = MARGIN.x + 6 + b.depth * 16;
       // A line starting with a colour mark (a colour key) has its dot in place of the bullet.
       const dotted = b.check === null && b.marker === '•' && new RegExp(`^\\s*${MARK_RE.source}`, 'u').test(b.text);
       const gap = dotted ? 0 : b.check !== null ? 17 : b.marker === '•' ? 11 : 17;
+      // Right to left, the bullet sits at the right edge, indented from there.
+      const rtl = rtlOf(b.text);
+      const markFont = b.marker === '•' ? F.regular : F.bold;
+      const markX = rtl ? MARGIN.x * 2 + width - indent - (b.check !== null ? 9 : markFont.widthOfTextAtSize(b.marker, 10.5)) : indent;
       flow(parseInline(b.text), {
-        x: indent + gap,
+        x: rtl ? MARGIN.x : indent + gap,
+        max: width - (indent - MARGIN.x) - gap,
+        rtl,
         before: (baseline) => {
           if (dotted) return;
           if (b.check !== null) {
-            page.drawRectangle({ x: indent, y: baseline - 1, width: 9, height: 9, borderColor: SOFT, borderWidth: 0.8 });
-            if (b.check) page.drawText('x', { x: indent + 2, y: baseline + 0.5, size: 8.5, font: F.bold, color: ACCENT });
+            page.drawRectangle({ x: markX, y: baseline - 1, width: 9, height: 9, borderColor: SOFT, borderWidth: 0.8 });
+            if (b.check) page.drawText('x', { x: markX + 2, y: baseline + 0.5, size: 8.5, font: F.bold, color: ACCENT });
           } else {
-            page.drawText(b.marker, { x: indent, y: baseline, size: 10.5, font: b.marker === '•' ? F.regular : F.bold, color: ACCENT });
+            page.drawText(b.marker, { x: markX, y: baseline, size: 10.5, font: markFont, color: ACCENT });
           }
         },
       });
@@ -365,14 +447,15 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     } else if (b.type === 'quote') {
       const top = y;
       const startPage = page;
-      flow(parseInline(b.text), { x: MARGIN.x + 14, color: SOFT, base: { italic: true } });
-      if (page === startPage) page.drawRectangle({ x: MARGIN.x + 2, y: y + 4, width: 2, height: top - y - 4, color: ACCENT });
+      const rtl = rtlOf(b.text);
+      flow(parseInline(b.text), { x: rtl ? MARGIN.x : MARGIN.x + 14, max: width - 14, color: SOFT, base: { italic: true }, rtl });
+      if (page === startPage) page.drawRectangle({ x: rtl ? MARGIN.x + width - 4 : MARGIN.x + 2, y: y + 4, width: 2, height: top - y - 4, color: ACCENT });
       y -= 6;
     } else if (b.type === 'code') {
       for (const l of b.lines) {
         room(13);
         page.drawRectangle({ x: MARGIN.x, y: y - 13, width, height: 13, color: FILL });
-        const text = sanitize(l.replace(/\t/g, '  '));
+        const text = sanitize(l.replace(/\t/g, '  ')).replace(new RegExp(ARABIC_RUN.source, 'gu'), '?'); // the code font has no Arabic
         let fit = text;
         while (fit && F.mono.widthOfTextAtSize(fit, 9) > width - 16) fit = fit.slice(0, -1);
         page.drawText(fit, { x: MARGIN.x + 8, y: y - 9.5, size: 9, font: F.mono, color: INK });
@@ -390,8 +473,12 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     }
   }
 
-  function drawTable({ head, rows }) {
-    const cols = Math.max(head.length, ...rows.map((r) => r.length));
+  function drawTable(table) {
+    const cols = Math.max(table.head.length, ...table.rows.map((r) => r.length));
+    // Right to left, the first column is the one on the right.
+    const order = (r) => { const full = Array.from({ length: cols }, (_, i) => r[i] ?? ''); return docRtl ? full.reverse() : full; };
+    const head = order(table.head);
+    const rows = table.rows.map(order);
     const size = cols > 4 ? 8.5 : 9.5;
     const pad = 5;
     // A colour mark shades its row and is not printed in the cell.
@@ -399,8 +486,8 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     const plain = (c) => sanitize(clean(unmark(c)));
     // Column widths by how much each holds, with a floor so no column collapses.
     const want = Array.from({ length: cols }, (_, i) => Math.max(
-      F.bold.widthOfTextAtSize(plain(head[i]), size),
-      ...rows.map((r) => Math.min(F.regular.widthOfTextAtSize(plain(r[i]), size), 220)),
+      textWidth(plain(head[i]), size, F.bold),
+      ...rows.map((r) => Math.min(textWidth(plain(r[i]), size), 220)),
     ) + pad * 2);
     const floor = Math.min(60, width / cols);
     const total = want.reduce((a, b) => a + b, 0);
@@ -410,7 +497,7 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     // No column narrower than its longest word, so "204/2024/1667" is never split across
     // lines: the room comes from the columns with the most to spare.
     const longest = Array.from({ length: cols }, (_, i) => Math.max(0, ...[head[i], ...rows.map((r) => r[i])]
-      .flatMap((c) => plain(c).split(/\s+/)).map((w) => F.bold.widthOfTextAtSize(w, size))) + pad * 2 + 1);
+      .flatMap((c) => plain(c).split(/\s+/)).map((w) => textWidth(w, size, F.bold))) + pad * 2 + 1);
     const short = widths.map((w, i) => Math.max(0, Math.min(longest[i], width / 3) - w));
     const need = short.reduce((a, b) => a + b, 0);
     const spare = widths.map((w, i) => (short[i] ? 0 : Math.max(0, w - longest[i])));
@@ -426,11 +513,12 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
       else if (markOf(cells)) {
         const m = MARKS[markOf(cells)];
         page.drawRectangle({ x: MARGIN.x, y: y - h, width, height: h, color: m.fill });
-        page.drawRectangle({ x: MARGIN.x, y: y - h, width: 3, height: h, color: m.dot });
+        page.drawRectangle({ x: docRtl ? MARGIN.x + width - 3 : MARGIN.x, y: y - h, width: 3, height: h, color: m.dot });
       }
       let x = MARGIN.x;
       wrapped.forEach((lines, i) => {
-        lines.forEach((line, j) => drawLine(line, x + pad, y - pad - size - j * lead + 1.5));
+        const rtl = rtlOf(unmark(cells[i]));
+        lines.forEach((line, j) => drawLine(line, x + pad, y - pad - size - j * lead + 1.5, INK, { rtl, max: widths[i] - pad * 2 }));
         x += widths[i];
       });
       page.drawLine({ start: { x: MARGIN.x, y: y - h }, end: { x: MARGIN.x + width, y: y - h }, thickness: header ? 0.8 : 0.5, color: header ? SOFT : LINE });
@@ -443,12 +531,13 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
 
   // ---- footer on every page ----
   const pages = pdf.getPages();
-  const foot = sanitize(title).slice(0, 80);
+  const foot = wrap([{ text: sanitize(title).slice(0, 80) }], 8, width * 0.7)[0];
   pages.forEach((p, i) => {
+    page = p;
     p.drawLine({ start: { x: MARGIN.x, y: 44 }, end: { x: MARGIN.x + width, y: 44 }, thickness: 0.5, color: LINE });
-    p.drawText(foot, { x: MARGIN.x, y: 30, size: 8, font: F.regular, color: SOFT });
+    drawLine(foot, MARGIN.x, 30, SOFT, { rtl: titleRtl, max: width });
     const n = `Page ${i + 1} of ${pages.length}`;
-    p.drawText(n, { x: MARGIN.x + width - F.regular.widthOfTextAtSize(n, 8), y: 30, size: 8, font: F.regular, color: SOFT });
+    p.drawText(n, { x: titleRtl ? MARGIN.x : MARGIN.x + width - F.regular.widthOfTextAtSize(n, 8), y: 30, size: 8, font: F.regular, color: SOFT });
   });
 
   return pdf.save();
