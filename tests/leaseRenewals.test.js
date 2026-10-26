@@ -130,6 +130,7 @@ test('Start: the admin fee the person types goes to saifsys and into the offer; 
   assert.match(lastMail(), /Admin fee: AED 2,000 \+ 5% VAT AED 100 = AED 2,100\n- Ejari fee: AED 300\n- Total: AED 47,400\n/);
   await R.draft(boss, { id: r.id, action: 'counter', rent: 44000 });
   assert.equal(world.acts.at(-1).admin_fees, 2000, 'a counter-offer is priced with the same fee');
+  assert.equal(world.acts.at(-1).pest_fee, 0, 'a renewal started without pest control gets none, not the old lease\'s');
 });
 
 test('a lease the staff started in saifsys, or with no email, cannot be started here', async () => {
@@ -752,4 +753,23 @@ test('EV charger: 700 + VAT on the offer and in cheque 1, and its fee goes to sa
   assert.match(d.text, /- EV charger: AED 700 \+ 5% VAT AED 35 = AED 735/);
   assert.match(d.text, /- Total: AED 55,760/);
   assert.match(d.text, /1\. 1 November 2026: AED 18,260 \(rent AED 12,500 \+ admin fee with VAT AED 1,575 \+ additional parking slot with VAT AED 3,150 \+ EV charger with VAT AED 735 \+ Ejari fee AED 300\)/);
+});
+
+test('Pest control & cleaning: its fee + VAT on the offer and in cheque 1, and its fee goes to saifsys', async () => {
+  const boss = await setup();
+  stub();
+  R.useForTests({ act: async (m, action, body) => {
+    world.acts.push({ action, ...body });
+    return { quote: {
+      proposed_rent: 52000, rera: 300, grand_total: 52000 + 1575 + 3276 + 300, start_date: '2026-11-01', end_date: '2027-10-31', terms_text: '', required_documents_text: '',
+      fees: { chiller: 0, admin: 1500, parking: 0, small_store: 0, big_store: 0, ev: 0, pest: 3120, chiller_shown: false },
+      cheques: [{ date: '2026-11-01', amount: 13000 + 1575 + 3276 + 300, type: 'rent' }, ...['2027-02-01', '2027-05-01', '2027-08-01'].map((date) => ({ date, amount: 13000, type: 'rent' }))],
+      cheques_total: 57151,
+    } };
+  } });
+  const d = await R.draft(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 52000, cheques: 4, pest_fee: 3120 });
+  assert.equal(world.acts.at(-1).pest_fee, 3120);
+  assert.match(d.text, /- Pest control & cleaning: AED 3,120 \+ 5% VAT AED 156 = AED 3,276/);
+  assert.match(d.text, /- Total: AED 57,151/);
+  assert.match(d.text, /1\. 1 November 2026: AED 18,151 \(rent AED 13,000 \+ admin fee with VAT AED 1,575 \+ pest control & cleaning with VAT AED 3,276 \+ Ejari fee AED 300\)/);
 });

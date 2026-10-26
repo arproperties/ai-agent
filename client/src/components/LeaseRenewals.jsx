@@ -187,7 +187,7 @@ function LeaseCard({ l, onOpen }) {
 // ---------- writing and sending ----------
 
 /** The optional extra services saifsys renews with a lease: key, label, the field saifsys takes. */
-const EXTRAS = [['parking', 'Additional parking slot', 'additional_parking_fee'], ['small_store', 'Small storeroom', 'small_store_fee'], ['big_store', 'Big storeroom', 'big_store_fee'], ['ev', 'EV charger', 'ev_fee']];
+const EXTRAS = [['parking', 'Additional parking slot', 'additional_parking_fee'], ['small_store', 'Small storeroom', 'small_store_fee'], ['big_store', 'Big storeroom', 'big_store_fee'], ['ev', 'EV charger', 'ev_fee'], ['pest', 'Pest control & cleaning', 'pest_fee']];
 const EV_FEE = 700; // a year, with VAT on top, in cheque 1
 
 /** Start: the rent we choose and the cheques, then the offer to read before it goes. */
