@@ -486,21 +486,22 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         </span>
       )}>
         <Group title="Rent">
-          <div className="grid gap-3 sm:grid-cols-3">
+          {/* One line on a wide screen, two fields a line on a narrower one. */}
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Label text={`Amount (${currency()})`} need><input type="number" min="0" step="any" value={v.rent_amount} onChange={set('rent_amount')} required className={FIELD} /></Label>
             <Label text="Paid">
               {/* Only a lease paid monthly can prorate its first month. */}
               <Select value={v.payment_frequency} onChange={(e) => setV({ ...v, payment_frequency: e.target.value, prorate: e.target.value === 'monthly' && onTheFirst ? v.prorate || start?.prorate || 'first' : null })} className={SELECT} options={FREQ} />
             </Label>
             <Label text={`Security deposit (${currency()})`}><input type="number" min="0" step="any" value={v.security_deposit} onChange={set('security_deposit')} placeholder="None" className={FIELD} /></Label>
+            {/* A deposit charged before the lease start (paid before moving in), on the day Rent Manager charged it. */}
+            {Number(v.security_deposit) > 0 && (
+              <label className="block min-w-0">
+                <span className="mb-1 block truncate text-xs text-txt/80">Deposit charged on · if not the lease start</span>
+                <DateField value={v.deposit_due} onChange={set('deposit_due')} max={v.end_date || undefined} className={FIELD} />
+              </label>
+            )}
           </div>
-          {/* A deposit charged before the lease start (paid before moving in), on the day Rent Manager charged it. */}
-          {Number(v.security_deposit) > 0 && (
-            <label className="mt-3 block max-w-xs">
-              <span className="mb-1 block text-xs text-txt/80">Deposit charged on · if not the lease start</span>
-              <DateField value={v.deposit_due} onChange={set('deposit_due')} max={v.end_date || undefined} className={FIELD} />
-            </label>
-          )}
         </Group>
         {/* A lease that starts after the 1st can charge its part month by the day, then rent on the 1st. */}
         {onTheFirst && v.payment_frequency === 'monthly' && v.start_date && !v.start_date.endsWith('-01') && (
