@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listDrafts, getDraft, decideDraft, hideDraft, deleteDraft, draftOut, logAction, actionLog, sendQuota } from './drafts.js';
+import { listDrafts, getDraft, decideDraft, editDraft, hideDraft, deleteDraft, draftOut, logAction, actionLog, sendQuota } from './drafts.js';
 import { kick } from './outbox.js';
 import mammoth from 'mammoth';
 import { discard, fileOf } from './draftFiles.js';
@@ -62,6 +62,15 @@ table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6p
   approve: decide('approve', true),
   reject: decide('reject', false),
 
+  // The person's own changes to a waiting draft. Logged, so the record shows the email that
+  // went out was not word for word the agent's.
+  edit: async (req, res) => {
+    const { to, cc, subject, body } = req.body || {};
+    const d = await editDraft(req.user.id, req.params.id, { to, cc, subject, body });
+    await logAction(req.user.id, { agentId: d.agent_id, action: 'edit', draftId: d.id, recipients: d.to_addrs, target: d.reply_to_id });
+    res.json({ draft: draftOut(d) });
+  },
+
   hide: async (req, res) => {
     res.json({ draft: draftOut(await hideDraft(req.user.id, req.params.id, req.body?.hidden !== false)) });
   },
@@ -83,7 +92,8 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 emailRoutes.get('/drafts', wrap(emailHandlers.listDrafts));
 emailRoutes.get('/drafts/:id', wrap(emailHandlers.getDraft)); // after /drafts, so it cannot shadow it
 emailRoutes.get('/drafts/:id/files/:n', wrap(emailHandlers.file));
-emailRoutes.post('/drafts/:id/approve', wrap(emailHandlers.approve));
+emailRoutes.patch('/drafts/:id', wrap(emailHandlers.edit));
+emailRoutes.post('/drafts/:id/approve',wrap(emailHandlers.approve));
 emailRoutes.post('/drafts/:id/reject', wrap(emailHandlers.reject));
 emailRoutes.post('/drafts/:id/hide', wrap(emailHandlers.hide));
 emailRoutes.delete('/drafts/:id', wrap(emailHandlers.remove));

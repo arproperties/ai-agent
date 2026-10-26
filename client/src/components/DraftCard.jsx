@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown, Paperclip, FileText, Download } from 'lucide-react';
+import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown, Paperclip, FileText, Download, Pencil } from 'lucide-react';
 import { api } from '../lib/api';
+import { cleanEmail } from '../lib/email';
 
 // An email an agent wrote, waiting for the person whose name it would go out under.
 // The whole body is shown, not a preview: approving something you have only seen the top
@@ -76,6 +77,122 @@ function FilePreview({ name, url, onClose }) {
   );
 }
 
+const field = 'glass w-full rounded-xl px-3 py-2 text-[13px] outline-none focus:border-p1/70';
+
+// A rough look only, to colour a chip that will not go: the server's check is the real one.
+const LOOKS_LIKE = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[a-z]{2,}$/i;
+// One piece of what was typed or pasted: "Bob <bob@x.com>" keeps only the address.
+const addressOf = (s) => cleanEmail(/<([^>]*)>/.exec(s)?.[1] ?? s).toLowerCase();
+// A pasted list may be split by commas, spaces or new lines, and may carry names: pick out
+// the addresses. Text with no @ in it at all is kept as typed, so a mistake shows as a red
+// chip rather than vanishing.
+const split = (s) => {
+  const found = s.match(/<[^>]*>|[^\s,;<>"]*@[^\s,;<>"]*/g);
+  return (found || s.split(/[,;\s]+/)).map(addressOf).filter(Boolean);
+};
+
+// Several recipients, each its own chip, so it is plain how to add another and easy to
+// take one off. A comma, semicolon, space or Enter finishes an address; a pasted list
+// becomes several chips at once; Backspace in the empty box takes the last one back.
+function AddressBox({ label, list, onChange, typed, onType, placeholder }) {
+  const input = useRef(null);
+  const add = (text) => {
+    const fresh = split(text).filter((a) => !list.includes(a));
+    if (fresh.length) onChange([...list, ...fresh]);
+    onType('');
+  };
+  const keyDown = (e) => {
+    if ([',', ';', 'Enter'].includes(e.key) || (e.key === ' ' && !typed.includes('<'))) {
+      e.preventDefault();
+      add(typed);
+    } else if (e.key === 'Backspace' && !typed && list.length) {
+      e.preventDefault();
+      onType(list[list.length - 1]); // back into the box to fix, not lost
+      onChange(list.slice(0, -1));
+    }
+  };
+
+  return (
+    <div className="text-xs text-mute">
+      {label}
+      <div onClick={() => input.current?.focus()}
+        className={`${field} mt-1 flex cursor-text flex-wrap items-center gap-1.5 focus-within:border-p1/70`}>
+        {list.map((a) => (
+          <span key={a} title={LOOKS_LIKE.test(a) ? a : 'This does not look like an email address'}
+            className={`flex max-w-full items-center gap-1 rounded-full border py-0.5 pl-2.5 pr-1 text-[12.5px] ${LOOKS_LIKE.test(a) ? 'border-p1/30 bg-p1/10 text-txt' : 'border-bad/50 bg-bad/10 text-bad'}`}>
+            <span className="truncate">{a}</span>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onChange(list.filter((x) => x !== a)); }}
+              aria-label={`Remove ${a}`} className="grid size-4 shrink-0 place-items-center rounded-full text-mute hover:bg-white/20 hover:text-txt">
+              <X size={11} />
+            </button>
+          </span>
+        ))}
+        <input ref={input} value={typed} autoComplete="off" autoCapitalize="none" spellCheck={false} inputMode="email"
+          onChange={(e) => (/[,;\n]/.test(e.target.value) ? add(e.target.value) : onType(e.target.value))}
+          onKeyDown={keyDown} onBlur={() => typed && add(typed)}
+          placeholder={list.length ? 'Add another…' : placeholder}
+          className="min-w-[9rem] flex-1 bg-transparent py-0.5 text-txt outline-none placeholder:text-mute/70" />
+      </div>
+    </div>
+  );
+}
+
+// Fixing the draft by hand, for the small things that are not worth asking the agent to
+// write again: a name spelt wrong, a figure, one more person on Cc. Opens on what is there.
+function DraftEditor({ draft, onSaved, onCancel }) {
+  const [f, setF] = useState({
+    to: draft.to, cc: draft.cc, subject: draft.subject || '', body: draft.body || '',
+  });
+  const [typed, setTyped] = useState({ to: '', cc: '' }); // what is in each box, not yet a chip
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setF((v) => ({ ...v, [k]: e.target.value }));
+  const box = (k) => ({
+    list: f[k], onChange: (list) => setF((v) => ({ ...v, [k]: list })),
+    typed: typed[k], onType: (s) => setTyped((t) => ({ ...t, [k]: s })),
+  });
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      // An address still being typed when Save is tapped counts: it is plainly meant.
+      const to = [...f.to, ...split(typed.to)];
+      const cc = [...f.cc, ...split(typed.cc)];
+      onSaved((await api.patch(`/email/drafts/${draft.id}`, { ...f, to, cc })).draft);
+    } catch (e) {
+      setError(e.message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <AddressBox label="To" placeholder="name@example.com" {...box('to')} />
+      <AddressBox label="Cc" placeholder="Optional" {...box('cc')} />
+      <p className="-mt-1 text-[11px] text-mute/80">Add several by typing a comma or pressing Enter after each address.</p>
+      <label className="block text-xs text-mute">Subject
+        <input value={f.subject} onChange={set('subject')} maxLength={200} className={`${field} mt-1`} />
+      </label>
+      <label className="block text-xs text-mute">Message
+        <textarea value={f.body} onChange={set('body')} rows={Math.min(18, Math.max(6, f.body.split('\n').length + 1))} maxLength={20000}
+          dir="auto" className={`${field} mt-1 resize-y leading-relaxed text-txt`} />
+      </label>
+      {error && <p className="text-xs text-bad">{error}</p>}
+      <div className="flex gap-2">
+        <button onClick={save} disabled={saving}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 active:scale-[0.98] disabled:opacity-60">
+          {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Save changes
+        </button>
+        <button onClick={onCancel} disabled={saving}
+          className="flex items-center justify-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute hover:text-txt disabled:opacity-60">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const EVERY = 2000;
 const TRIES = 15; // about half a minute, which is longer than a healthy send takes
 
@@ -83,6 +200,7 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [viewing, setViewing] = useState(null); // index of the attachment being looked at
+  const [editing, setEditing] = useState(false);
   const watch = useRef(null);
   const s = STATE[draft.status] || STATE.pending;
 
@@ -169,8 +287,18 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
             )}
           </span>
         )}
+        {draft.status === 'pending' && !editing && (
+          <button onClick={() => { setError(null); setEditing(true); }} disabled={!!busy}
+            className="ml-auto flex shrink-0 items-center gap-1 rounded-full border border-stroke px-2.5 py-1 text-mute hover:text-txt disabled:opacity-60">
+            <Pencil size={12} /> Edit
+          </button>
+        )}
       </div>
 
+      {editing && draft.status === 'pending' ? (
+        <DraftEditor draft={draft} onCancel={() => setEditing(false)}
+          onSaved={(d) => { onChanged(d); setEditing(false); }} />
+      ) : (<>
       <dl className="space-y-1 text-[13px]">
         {from && (
           <div className="flex gap-2"><dt className="w-10 shrink-0 text-mute">From</dt><dd className="min-w-0 break-words">{from}</dd></div>
@@ -183,6 +311,7 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
       </dl>
 
       <p className="mt-2.5 whitespace-pre-wrap border-t border-stroke/60 pt-2.5 text-[13px] leading-relaxed">{draft.body}</p>
+      </>)}
 
       {draft.files?.length > 0 && (
         <div className="mt-2.5 border-t border-stroke/60 pt-2.5">
@@ -214,7 +343,7 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
       )}
       {error && <p className="mt-2.5 text-xs text-bad">{error}</p>}
 
-      {draft.status === 'pending' && (
+      {draft.status === 'pending' && !editing && (
         <div className="mt-3 flex gap-2">
           <button onClick={() => decide('approve')} disabled={!!busy}
             className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 active:scale-[0.98] disabled:opacity-60">
