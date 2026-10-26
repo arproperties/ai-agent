@@ -18,7 +18,7 @@ const OWNER_AFTER_DAYS = 3; // this many days late, the case's owner hears too
 
 export async function createTask(user, caseId, { assignee_id, kind, instructions, due_date } = {}, { push = sendPush } = {}) {
   const c = await getCase(user, caseId);
-  if (!['approved', 'with_pro'].includes(c.status)) throw bad('A PRO task comes after the approval');
+  if (!['approved', 'with_pro'].includes(c.status)) throw bad('A PRO task comes after the proposal is saved');
   const { pro_ids } = await caseSettings();
   const pro = Number(assignee_id);
   if (!pro_ids?.length) throw bad('Name the PRO in the Document Renewals settings first');

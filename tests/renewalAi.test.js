@@ -13,10 +13,21 @@ test('the paper goes to the model as a PDF or a picture, and comes back in one s
   const seen = {};
   const r = await readReturnedDoc({ mime: 'application/pdf', data: 'JVBERi0=' }, { ask: model({ name: 'A', end: '2028-11-20', basic: '900', signed: 'yes', confidence: 'medium' }, seen) });
   assert.equal(seen.content[0].type, 'document');
-  assert.deepEqual(r, { name: 'A', employee_code: null, passport_no: null, start: null, end: '2028-11-20', basic: 900, allowance: null, total: null, signed: null, confidence: 'low' },
+  assert.deepEqual(r, { name: 'A', employee_code: null, passport_no: null, start: null, end: '2028-11-20', basic: 900, allowance: null, total: null,
+    position: null, location: null, hours: null, benefits: null, signed: null, confidence: 'low' },
     'odd values become null, an unknown confidence is low');
   await readReturnedDoc({ mime: 'image/jpeg', data: 'x' }, { ask: model({}, seen) });
   assert.equal(seen.content[0].type, 'image');
+});
+
+test('a contract gives its other terms too: job title, work location, hours, benefits', async () => {
+  const seen = {};
+  const r = await readReturnedDoc({ mime: 'application/pdf', data: 'JVBERi0=' }, {
+    ask: model({ basic: 500, allowance: 2500, total: 3000, position: ' Project Engineer ', location: 'Dubai', hours: '8 hours a day, 6 days a week',
+      benefits: 'Air ticket every 2 years, medical insurance', confidence: 'high' }, seen),
+  });
+  assert.deepEqual([r.position, r.location, r.hours, r.benefits], ['Project Engineer', 'Dubai', '8 hours a day, 6 days a week', 'Air ticket every 2 years, medical insurance']);
+  assert.match(seen.system, /job title/i, 'the model is asked for them');
 });
 
 test('matching document passes', () => {

@@ -18,7 +18,6 @@ import { imapAccount } from './imap.js';
 import { createDraft, decideDraft, draftOut, getDraft } from './drafts.js';
 import { keepFiles } from './draftFiles.js';
 import { kick } from './outbox.js';
-import { DOC_RENEWALS_SEND } from './config.js';
 
 // Document Renewals, the screen (client/src/components/DocumentRenewals.jsx): every
 // categorised Shelf file this person may read, by the employee or the company it is for,
@@ -205,7 +204,7 @@ export async function unlinkedData(user, { today = dubaiDate() } = {}) {
 
 /**
  * Renew or Terminate on an employee's row: on their labour contract (a type that "opens a
- * case"), the one paper the company renews. A renewal not yet sent for approval turns into a
+ * case"), the one paper the company renews. A renewal not yet given to the PRO turns into a
  * termination and back; one already further along is left as it is.
  */
 export async function startEmployeeCases(user, code, kind) {
@@ -222,36 +221,45 @@ export async function startEmployeeCases(user, code, kind) {
       r.switched.push(f.open_case.id);
     } catch (e) {
       if (e.status !== 400) throw e;
-      r.left.push(f.open_case.id); // past its decision: approved, with the PRO...
+      r.left.push(f.open_case.id); // past its decision: with the PRO...
     }
   }
   return { ...r, case_id: [...r.opened, ...r.switched, ...r.left][0] };
 }
 
+// Bumped when Reem reads more off a contract, so readings kept from before are made again once.
+const TERMS_READ_VERSION = 2;
+
 /**
- * An employee's company salary (saifsys's HR API) beside what their labour contract says. The
- * contract's file is fetched from saifsys if it is not here yet and read by Reem once; what it
- * read is kept with the file's hash, so it is read again only when the file changes.
+ * What a labour contract says (salary, job title, location, hours, benefits), as Reem read it.
+ * The file is fetched from saifsys if it is not here yet and read once; the reading is kept with
+ * the file's hash, so it is read again only when the file (or what Reem reads) changes.
  */
+export async function contractTerms(user, docId, { fetch = fileFor, read = readReturnedDoc } = {}) {
+  const doc = await fetch(user, docId);
+  const kept = doc.terms_read;
+  if (kept?.hash && kept.hash === doc.hash && kept.v === TERMS_READ_VERSION) return kept;
+  if (!/^(application\/pdf|image\/)/.test(doc.mime || '')) throw Object.assign(new Error('Reem can only read a contract that is a PDF or a photo'), { status: 400 });
+  const terms = { ...(await read({ mime: doc.mime, data: readFileSync(doc.path).toString('base64') })), hash: doc.hash, v: TERMS_READ_VERSION };
+  await db.prepare('UPDATE documents SET terms_read = ? WHERE id = ?').run(JSON.stringify(terms), doc.id);
+  return terms;
+}
+
+/** An employee's company salary (saifsys's HR API) beside what their labour contract says. */
 export async function contractSalary(user, code, { salary = hrSalary, fetch = fileFor, read = readReturnedDoc } = {}) {
   const want = String(code || '').trim();
   const [c] = (await readableFiles(user, "t.employee_code = ? AND dc.links_to = 'employee' AND dt.opens_case", [want]))
     .sort((a, b) => String(b.expires_on || '').localeCompare(String(a.expires_on || '')));
   if (!c) throw Object.assign(new Error('No labour contract on file'), { status: 404 });
-  const doc = await fetch(user, c.id);
-  let terms = doc.terms_read?.hash && doc.terms_read.hash === doc.hash ? doc.terms_read : null;
-  if (!terms) {
-    if (!/^(application\/pdf|image\/)/.test(doc.mime || '')) throw Object.assign(new Error('Reem can only read a contract that is a PDF or a photo'), { status: 400 });
-    terms = { ...(await read({ mime: doc.mime, data: readFileSync(doc.path).toString('base64') })), hash: doc.hash };
-    await db.prepare('UPDATE documents SET terms_read = ? WHERE id = ?').run(JSON.stringify(terms), doc.id);
-  }
+  const terms = await contractTerms(user, c.id, { fetch, read });
   const pay = await salary(want).catch((e) => { console.error('[document-renewals] no salary from saifsys:', e.message); return null; });
   const out = compareWithContract(pay, terms);
   // Kept on the contract for the bell: the differences, or none.
   const differs = out.rows.filter((r) => r.flag === 'differs').length ? out.flags.filter((f) => /company salary/.test(f)) : [];
   await db.prepare('UPDATE documents SET terms_flags = ? WHERE id = ?').run(JSON.stringify(differs), c.id);
   if (!pay) out.flags.unshift('saifsys did not give the company salary');
-  return { document: { id: c.id, name: doc.name, expires_on: c.expires_on }, paid_by: pay?.paid_by || null, ...out };
+  const { hash, v, ...said } = terms;
+  return { document: { id: c.id, name: c.name, expires_on: c.expires_on }, paid_by: pay?.paid_by || null, terms: said, ...out };
 }
 
 // ---------- the bell: who sent what, when ----------
@@ -310,7 +318,8 @@ function emailText(c, user, e, pros = []) {
     lines.push(c.proposal?.mode === 'update' ? 'Terms: updated as below' : 'Terms: same as the current contract');
     for (const [k, label] of [['position', 'Job title'], ['location', 'Work location']]) if (t[k]) lines.push(`${label}: ${t[k]}`);
     for (const [k, label] of [['basic', 'Basic salary'], ['allowance', 'Allowance'], ['bonus', 'Bonus']]) if (t[k] != null && Number(t[k]) > 0) lines.push(`${label}: ${money(t[k])} a month`);
-    const total = ['basic', 'allowance', 'bonus'].reduce((n, k) => n + (Number(t[k]) || 0), 0);
+    // The contract's own total when it prints one (it can carry allowances not listed apart).
+    const total = t.total ?? ['basic', 'allowance', 'bonus'].reduce((n, k) => n + (Number(t[k]) || 0), 0);
     if (total) lines.push(`Total: ${money(total)} a month`);
     for (const [k, label] of [['hours', 'Working hours'], ['benefits', 'Benefits']]) if (t[k]) lines.push(`${label}: ${t[k]}`);
     lines.push('', 'Their documents are attached.');
@@ -356,8 +365,10 @@ export async function caseEmail(user, caseId, { mailbox = imapAccount, lookup = 
  * in one go and the outbox sends it from their own mailbox. The ticked documents (the
  * employee's own, fetched from saifsys if not here yet) are attached; a termination has none.
  */
-export async function sendCaseEmail(user, caseId, { to, cc = [], subject, body, document_ids: ids = [] } = {}, { mailbox = imapAccount, fetch = fileFor, kick: go = kick, allowed = DOC_RENEWALS_SEND } = {}) {
-  if (!allowed) throw Object.assign(new Error('Sending is switched off for Document Renewals for now. Nothing was sent.'), { status: 403 });
+export async function sendCaseEmail(user, caseId, { to, cc = [], subject, body, document_ids: ids = [] } = {}, { mailbox = imapAccount, fetch = fileFor, kick: go = kick, allowed } = {}) {
+  if (!(allowed ?? await cases.sendingOn())) {
+    throw Object.assign(new Error('Sending is switched off for Document Renewals. Nothing was sent. The master turns it on in Document Renewals settings.'), { status: 403 });
+  }
   const c = await cases.getCase(user, caseId);
   const acc = await mailbox(user.id);
   if (!acc?.can_write || !acc.smtp_host) throw Object.assign(new Error('Connect your email with sending turned on first (Settings, Email)'), { status: 400 });
@@ -454,10 +465,9 @@ documentRenewalRoutes.post('/documents/:id/case', wrap(async (req, res) => {
 }));
 const step = (fn) => wrap(async (req, res) => { await fn(req); res.json(await casePage(req.user, req.params.id)); });
 documentRenewalRoutes.post('/cases/:id/decision', step((req) => cases.decide(req.user, req.params.id, req.body || {})));
-documentRenewalRoutes.post('/cases/:id/proposal', step((req) => cases.propose(req.user, req.params.id, req.body || {})));
-documentRenewalRoutes.post('/cases/:id/submit', step((req) => cases.submit(req.user, req.params.id)));
-documentRenewalRoutes.post('/cases/:id/approve', step((req) => cases.approve(req.user, req.params.id)));
-documentRenewalRoutes.post('/cases/:id/reject', step((req) => cases.reject(req.user, req.params.id, req.body || {})));
+// Keep the terms takes them from the contract itself, read now if Reem has not read it yet.
+documentRenewalRoutes.post('/cases/:id/proposal', step((req) => cases.propose(req.user, req.params.id, req.body || {},
+  { contract: (c) => contractTerms(req.user, c.document_id) })));
 documentRenewalRoutes.post('/cases/:id/pause', step((req) => cases.pause(req.user, req.params.id, req.body || {})));
 documentRenewalRoutes.post('/cases/:id/resume', step((req) => cases.resume(req.user, req.params.id)));
 documentRenewalRoutes.post('/cases/:id/out-of-scope', step((req) => cases.outOfScope(req.user, req.params.id, req.body || {})));
@@ -467,7 +477,7 @@ documentRenewalRoutes.get('/cases/:id/email', wrap(async (req, res) => { res.jso
 documentRenewalRoutes.post('/cases/:id/email', wrap(async (req, res) => { res.json(await sendCaseEmail(req.user, req.params.id, req.body || {})); }));
 documentRenewalRoutes.post('/cases/:id/verify', step((req) => cases.verify(req.user, req.params.id, req.body || {})));
 
-// The case settings: approvers, PROs, when a contract opens a case. The master sets them.
+// The case settings: the PROs, when a contract opens a case. The master sets them.
 documentRenewalRoutes.get('/case-settings', wrap(async (req, res) => {
   const s = await cases.caseSettings();
   const staff = isMaster(req.user) ? await db.prepare('SELECT id, name, email FROM users WHERE NOT external ORDER BY lower(name)').all() : [];
