@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ChevronLeft, Loader2, Search, CheckCircle2, XCircle, AlertTriangle, Send, KeyRound, Play, ArrowRight, Sparkles, Undo2, Mic, Square } from 'lucide-react';
 import { api } from '../lib/api';
+import { cleanEmail } from '../lib/email';
 import { useRecorder } from '../lib/useRecorder';
 
 // Mail routing, the master's alone: the one mailbox the company is written to, and who each
@@ -65,7 +66,7 @@ function SharedMailbox({ front, onChanged }) {
       ) : (
         <form onSubmit={connect} className="space-y-2">
           <p className="text-sm text-mute">The email everyone writes to. For Gmail, use an app password (Google Account → Security → App passwords). Reem starts from new emails; old ones are left alone.</p>
-          <input type="email" required placeholder="shared@gmail.com" value={email} onChange={(e) => setEmail(e.target.value)} className={field} />
+          <input type="email" required placeholder="shared@gmail.com" value={email} onChange={(e) => setEmail(cleanEmail(e.target.value))} className={field} />
           <input type="password" required placeholder="App password" value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
           {error && <p className="text-sm text-bad">{error}</p>}
           <button disabled={busy} className={primary}>{busy && <Loader2 size={14} className="animate-spin" />} Connect</button>

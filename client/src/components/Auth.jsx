@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
+import { cleanEmail } from '../lib/email';
 import Orb from './Orb';
 import PasswordField from './PasswordField';
 
@@ -19,7 +20,7 @@ export default function Auth({ onAuthed }) {
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
-  const set = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setError(''); };
+  const set = (k) => (e) => { setF({ ...f, [k]: k === 'email' ? cleanEmail(e.target.value) : e.target.value }); setError(''); };
   const go = (m) => { setMode(m); setError(''); setSent(false); };
   const [title, subtitle, cta] = COPY[mode];
 

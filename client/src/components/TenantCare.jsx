@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ChevronLeft, Loader2, Send, X, AlertTriangle, Check, Search, CheckCircle2, XCircle } from 'lucide-react';
 import { api } from '../lib/api';
+import { cleanEmail } from '../lib/email';
 
 // Tenant care: the shared tenant inbox. When a tenant's email does not say which building
 // and unit it is about, Reem replies by itself asking (server/tenantCare.js). Only a reply
@@ -98,7 +99,7 @@ function Setup({ data, onChanged }) {
       ) : (
         <form onSubmit={connect} className="space-y-2">
           <p className="text-sm text-mute">Connect the tenant email. Every 3 minutes Reem checks for new emails and replies to any that don't give a building and unit.</p>
-          <input type="email" required placeholder="tenantcare@…" value={email} onChange={(e) => setEmail(e.target.value)}
+          <input type="email" required placeholder="tenantcare@…" value={email} onChange={(e) => setEmail(cleanEmail(e.target.value))}
             className="w-full rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm outline-none focus:border-p1/60" />
           <input type="password" required placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)}
             className="w-full rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm outline-none focus:border-p1/60" />
