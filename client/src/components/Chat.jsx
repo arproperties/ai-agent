@@ -26,7 +26,7 @@ import PdfSheet from './PdfSheet';
 import { lastDrawing, exportAsked } from '../lib/drawing';
 import { Welcome, InstallHint } from './FirstRun';
 import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
-import { useCaseTimer, useCaseFiles, CaseFiles, CaseTimer, shortClock } from './CaseRails';
+import { useCaseTimer, useCaseFiles, useCaseDeadlines, CaseFiles, CaseTimer, CaseDeadlines, shortClock } from './CaseRails';
 
 // Which reply can be shared: one the server has written down. A reply still streaming
 // has only a made-up id here, and the share is sent by id so the team gets the words
@@ -84,6 +84,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [answered, setAnswered] = useState(0); // replies finished: a new file may belong to the case
   const timer = useCaseTimer(convId, focus?.primary);
   const caseFiles = useCaseFiles(convId, focus?.primary, answered);
+  const deadlines = useCaseDeadlines(convId, focus?.primary, answered); // a new file may bring a new date
   // Sending a message starts the timer (or resumes it after Pause); opening an old case
   // chat does not. The case can arrive during the first reply, so this waits for it.
   const timedSend = useRef(0);
@@ -521,6 +522,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         <aside className="hidden w-52 shrink-0 overflow-y-auto border-l border-stroke/60 px-4 py-4 xl:block 2xl:w-60">
           <b className="mb-3 block text-xs font-medium uppercase tracking-wide text-mute">Time on this case</b>
           <CaseTimer timer={timer} />
+          <b className="mb-2 mt-6 block text-xs font-medium uppercase tracking-wide text-mute">Legal dates</b>
+          <CaseDeadlines deadlines={deadlines} onOpen={openFile} />
         </aside>
       )}
       </div>
@@ -539,10 +542,11 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       )}
       {focusOpen && focus?.primary && (
         <Sheet title={`Case ${focus.primary.number}`} onClose={() => setFocusOpen(false)}
-          tabs={[['case', 'Case'], ['files', 'Files'], ['time', 'Time']]} tab={focusOpen} onTab={setFocusOpen}
+          tabs={[['case', 'Case'], ['dates', 'Dates'], ['files', 'Files'], ['time', 'Time']]} tab={focusOpen} onTab={setFocusOpen}
           icon={<span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><Scale size={16} /></span>}>
           {focusOpen === 'files' && <CaseFiles files={caseFiles} number={focus.primary.number} onOpen={(id) => { setFocusOpen(false); openFile(id); }} onOpenShelf={onOpenFiles} />}
           {focusOpen === 'time' && <CaseTimer timer={timer} />}
+          {focusOpen === 'dates' && <CaseDeadlines deadlines={deadlines} onOpen={(id) => { setFocusOpen(false); openFile(id); }} />}
           {focusOpen === 'case' && <div className="space-y-4 text-sm">
             {(focus.primary.partyA || focus.primary.partyB || focus.primary.title) && (
               <p>{focus.primary.partyA || focus.primary.partyB

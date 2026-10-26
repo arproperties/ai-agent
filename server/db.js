@@ -2234,4 +2234,27 @@ await db.exec(`
     UNIQUE (user_id, case_key, conversation_id, day)
   );
   CREATE INDEX IF NOT EXISTS idx_case_time_user ON case_time(user_id, case_key, day);
+  -- Legal dates read out of a case's files and emails (server/caseDeadlines.js), shown beside
+  -- the chat. A scan replaces them all; fingerprint is what the case had when it was read, so
+  -- the next look reads it again only when a file or an email has come in since.
+  CREATE TABLE IF NOT EXISTS case_deadline_scans (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_key TEXT NOT NULL,
+    fingerprint TEXT,
+    scanned_at BIGINT,
+    error TEXT,
+    PRIMARY KEY (user_id, case_key)
+  );
+  CREATE TABLE IF NOT EXISTS case_deadlines (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_key TEXT NOT NULL,
+    due DATE NOT NULL,
+    what TEXT NOT NULL,
+    basis TEXT,
+    quote TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_case_deadlines ON case_deadlines(user_id, case_key, due);
 `);
