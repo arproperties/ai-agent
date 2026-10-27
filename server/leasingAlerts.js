@@ -291,6 +291,8 @@ async function emailTenants(s, cfg, mail) {
 const WORDING = {
   due: 'Dear {tenant}, a kind reminder that {what} of {amount} for unit {unit}, {building} is due on {due_date}. Thank you. {company}',
   overdue: 'Dear {tenant}, {what} of {amount} for unit {unit}, {building} was due on {due_date} and is now {days_late} days late. Kindly arrange payment, or call us if there is a problem. Thank you. {company}',
+  // A tenant who owes more than one thing: {items} is a line for each, {total} what they come to.
+  list: 'Dear {tenant}, this is what is outstanding for unit {unit}, {building}:\n\n{items}\n\nTotal: {total}. Kindly arrange payment, or call us if there is a problem. Thank you. {company}',
 };
 
 export async function getWording() {
@@ -325,7 +327,11 @@ export function whatsappNumber(phone) {
   return d.length >= 10 ? d : null;
 }
 
-/** The reminder for one row of a booking's schedule: the words, and the links that open it ready to send. */
+/**
+ * The reminder for one row of a booking's schedule: the words, and the links that open it ready to send.
+ * When the tenant owes more than that row (anything else overdue or due by then), it is one message
+ * listing all of it, each at what is still owed, with the total.
+ */
 export async function tenantReminder(installmentId, today = todayHere()) {
   const i = await db.prepare(`SELECT i.id, i.booking_id, i.kind, i.label, i.amount, to_char(i.due_date, 'YYYY-MM-DD') AS due_date,
       (SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = i.id) AS paid,
@@ -337,10 +343,21 @@ export async function tenantReminder(installmentId, today = todayHere()) {
   const left = Number(i.amount) - Number(i.paid);
   if (left <= 0.004) throw bad('This one is already paid in full.', 409);
   const late = dayNo(today) - dayNo(i.due_date);
+  // Everything this lease still owes that is due by today, or by this row's own day when that is later.
+  const until = i.due_date > today ? i.due_date : today;
+  const owed = (await db.prepare(`SELECT i.kind, i.label, to_char(i.due_date, 'YYYY-MM-DD') AS due_date,
+      i.amount - (SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = i.id) AS left
+    FROM lease_installments i WHERE i.booking_id = ? AND i.kind <> 'credit' AND i.due_date <= ?::date
+    ORDER BY i.due_date, (i.kind = 'rent'), i.kind, i.label`).all(i.booking_id, until)).filter((x) => Number(x.left) > 0.004);
+  const lateAny = late > 0 || owed.some((x) => x.due_date < today);
   const words = { tenant: i.tenant, what: dueName(i).toLowerCase(), amount: aed(left), unit: i.unit_no, building: i.building, company: i.company,
-    due_date: usDate(i.due_date), days_late: Math.max(0, late) };
-  const message = (await getWording())[late > 0 ? 'overdue' : 'due'].replace(/\{(\w+)\}/g, (all, k) => (k in words ? words[k] : all));
-  const subject = `${late > 0 ? 'Overdue' : 'Reminder'}: ${dueName(i).toLowerCase()} for unit ${i.unit_no}, ${i.building}`;
+    due_date: usDate(i.due_date), days_late: Math.max(0, late),
+    items: owed.map((x) => `• ${dueName(x)} · due ${usDate(x.due_date)} · ${aed(Number(x.left))}`).join('\n'),
+    total: aed(owed.reduce((t, x) => t + Number(x.left), 0)) };
+  const many = owed.length > 1;
+  const message = (await getWording())[many ? 'list' : late > 0 ? 'overdue' : 'due'].replace(/\{(\w+)\}/g, (all, k) => (k in words ? words[k] : all));
+  const subject = many ? `${lateAny ? 'Overdue' : 'Reminder'}: ${owed.length} amounts for unit ${i.unit_no}, ${i.building}`
+    : `${late > 0 ? 'Overdue' : 'Reminder'}: ${dueName(i).toLowerCase()} for unit ${i.unit_no}, ${i.building}`;
   const number = whatsappNumber(i.phone);
   return { booking_id: i.booking_id, tenant: i.tenant, phone: i.phone, email: i.email, subject, message,
     whatsapp: number && `https://wa.me/${number}?text=${encodeURIComponent(message)}`,

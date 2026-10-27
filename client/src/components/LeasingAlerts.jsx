@@ -210,12 +210,12 @@ function Wording({ start }) {
   return (
     <form onSubmit={save} className="space-y-3">
       <p className={HEAD}>Reminder to the tenant</p>
-      <p className="text-xs text-mute">Used by “Remind tenant” on a lease’s payments. These are filled in for you: {'{tenant} {what} {amount} {due_date} {days_late} {unit} {building} {company}'}.</p>
+      <p className="text-xs text-mute">Used by “Remind tenant” on a lease’s payments and by the automatic email. These are filled in for you: {'{tenant} {what} {amount} {due_date} {days_late} {unit} {building} {company}'}; in the list, {'{items}'} (a line for each amount) and {'{total}'}.</p>
       <div className="grid gap-3 sm:grid-cols-2">
-        {[['due', 'Before or on the due date'], ['overdue', 'When it is overdue']].map(([k, l]) => (
-          <label key={k} className={`${CARD} block`}>
+        {[['due', 'Before or on the due date · one amount'], ['overdue', 'When it is overdue · one amount'], ['list', 'More than one amount owed · all in one message']].map(([k, l]) => (
+          <label key={k} className={`${CARD} block ${k === 'list' ? 'sm:col-span-2' : ''}`}>
             <span className="mb-2 block text-sm">{l}</span>
-            <textarea value={v[k]} onChange={(e) => { setNote(''); setV({ ...v, [k]: e.target.value }); }} rows={4} className={`${FIELD} w-full resize-none`} />
+            <textarea value={v[k]} onChange={(e) => { setNote(''); setV({ ...v, [k]: e.target.value }); }} rows={k === 'list' ? 6 : 4} className={`${FIELD} w-full resize-none`} />
           </label>
         ))}
       </div>

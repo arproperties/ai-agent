@@ -220,7 +220,7 @@ function Remind({ row, onDone, onCancel }) {
   return (
     <div className="mt-3 space-y-3 rounded-xl border border-p1/40 p-3">
       <p className="text-xs text-mute">To {r.tenant}{r.phone && ` · ${usPhone(r.phone)}`}{r.email && ` · ${r.email}`}. Nothing is sent until you press send in WhatsApp or your email.</p>
-      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} className={`${FIELD} resize-none text-sm`} />
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={Math.min(14, Math.max(4, text.split('\n').length + 1))} className={`${FIELD} resize-none text-sm`} />
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" onClick={onCancel} className="mr-auto rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>

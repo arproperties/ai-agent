@@ -198,6 +198,27 @@ test('a lease can name the tenant who referred them, beside the source', async (
   assert.deepEqual([after.referred_by, after.source], [null, 'Referral'], 'a referrer removed takes the link, the lease stays');
 });
 
+test('a tenant who owes several things gets them all in one reminder, with the total', async () => {
+  const { staff, u1 } = await tower();
+  const bk = await createBooking(sara(u1.id, { security_deposit: 5000, fees: [{ label: 'Admin fee', amount: 500 }] }), staff);
+  const rows = await bookingPayments(bk.id, AT);
+  const rent = rows.find((r) => r.name === 'Rent');
+  await recordPayment(rent.id, { amount: 4000, method: 'cash', received_on: '2026-09-20' }, staff, AT);
+
+  // From any of its rows: everything overdue, each at what is still owed, and the total.
+  const r = await tenantReminder(rent.id, AT);
+  assert.equal(r.subject, 'Overdue: 3 amounts for unit 101, Tower');
+  assert.match(r.message, /^Dear Sara, this is what is outstanding for unit 101, Tower:\n\n/);
+  assert.match(r.message, /• Security deposit · due 09\/15\/2026 · USD 5,000\n• Admin fee · due 09\/15\/2026 · USD 500\n• Rent · due 09\/15\/2026 · USD 500\n/);
+  assert.match(r.message, /Total: USD 6,000\./);
+  assert.doesNotMatch(r.message, /10\/15\/2026/, 'rent not due yet stays out');
+  // Pressed on the rent coming up, that one is in it too.
+  const oct = rows.find((x) => x.due_date === '2026-10-15');
+  assert.match((await tenantReminder(oct.id, AT)).message, /• Rent · due 10\/15\/2026 · USD 4,500\n\nTotal: USD 10,500\./);
+  await saveWording({ list: 'Hi {tenant}, unit {unit} owes {total}:\n{items}' });
+  assert.match((await tenantReminder(rent.id, AT)).message, /^Hi Sara, unit 101 owes USD 6,000:\n• Security deposit/);
+});
+
 test('each building has its own services and prices; a booking learns the price in its own building', async () => {
   const { staff, c, b, u1 } = await tower();
   const marina = await create('building', { name: 'Marina' }, c.id);

@@ -124,8 +124,9 @@ test('the people who look after a building get its alerts, and the tenant can be
   await runAlerts('2026-09-18', 10, { mail });
   assert.equal(mails.length, 1, 'three days late is a day to chase, and it goes once');
   assert.equal(mails[0][0], 'sara@example.com');
-  assert.match(mails[0][1], /^Overdue: rent for unit 101, Tower/);
-  assert.match(mails[0][2], /^Dear Sara, rent of USD 4,500 .* is now 3 days late/);
+  // Sara owes more than the rent, so it is all in the one email.
+  assert.match(mails[0][1], /^Overdue: 2 amounts for unit 101, Tower/);
+  assert.match(mails[0][2], /^Dear Sara, this is what is outstanding for unit 101, Tower:\n\n• .*\n• Rent · due 09\/15\/2026 · USD 4,500\n\nTotal: /);
   await runAlerts('2026-09-19', 9, { mail });
   assert.equal(mails.length, 1, 'four days late is not one of the days');
   assert.equal((await bookingHistory(bk.id))[0].detail, 'Emailed to the tenant automatically');
@@ -145,8 +146,9 @@ test('the people who look after a building get its alerts, and the tenant can be
   await saveSettings({ tenant: { before: 3 } });
   await runAlerts('2026-10-12', 10, { mail });
   assert.equal(mails.length, 3);
-  assert.match(mails[2][1], /^Reminder: rent for unit 101, Tower/);
-  assert.match(mails[2][2], /^Dear Sara, a kind reminder that rent of USD 4,500 .* is due on /);
+  // September is still owed, so October's heads-up comes with it, and it says overdue.
+  assert.match(mails[2][1], /^Overdue: 3 amounts for unit 101, Tower/);
+  assert.match(mails[2][2], /• Rent · due 10\/15\/2026 · USD 4,500\n\nTotal: /);
 
   // Two bookings of one tenant are one tenant behind.
   const u2 = await create('unit', { unit_no: '102' }, b.id);
