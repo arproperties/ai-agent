@@ -294,14 +294,68 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     api.get(`/leasing/available?building_id=${buildingId}&start=${v.start_date}&end=${v.end_date}`).then(setUnits).catch((e) => setError(e.message));
   }, [buildingId, v.start_date, v.end_date]);
 
+  // A draft saves itself a moment after each change: one being edited straight away, a new one once it has
+  // all a draft needs (unit, tenant and their documents, dates and rent). From then on the new one is that draft.
+  const [draftId, setDraftId] = useState(null);
+  const [autoNote, setAutoNote] = useState(''); // 'saving', 'saved 5:24 PM', or why it could not be saved
+  const lastSaved = useRef(null);
+  const autoBusy = useRef(false);
+  const draftRef = useRef(null); // draftId, read by a save that was waiting while the draft was made
+  const [kick, setKick] = useState(0); // another round, for a change made while a save was on its way
+  const autosaves = !start || start.status === 'draft';
+  const bodyNow = { ...v, ...(tenantMode === 'existing' ? { tenant_id: tenantId } : { tenant }) };
+  const sent = JSON.stringify(bodyNow);
+  const latest = useRef();
+  latest.current = { sent, bodyNow };
+  useEffect(() => {
+    if (!autosaves || busy) return;
+    if (lastSaved.current === null) { lastSaved.current = sent; if (start) return; } // what it opened with is already saved
+    if (sent === lastSaved.current && (start || draftId)) return;
+    const canMake = v.unit_id && datesOk && Number(v.rent_amount) > 0 && (tenantMode === 'existing' ? tenantId : tenant.full_name.trim() && tenant.phone) && REQUIRED.every(([f]) => files[f]);
+    if (!start && !draftId && !canMake) return;
+    const timer = setTimeout(async () => {
+      if (autoBusy.current) return; // the save on its way kicks off another round when it is done
+      autoBusy.current = true;
+      setAutoNote('saving');
+      const { sent: now, bodyNow: body } = latest.current;
+      const id = start?.id || draftRef.current;
+      try {
+        let saved;
+        if (id) saved = await api.put(`/leasing/bookings/${id}`, body);
+        else {
+          const form = new FormData();
+          form.append('booking', JSON.stringify({ ...body, status: 'draft' }));
+          for (const [f] of REQUIRED) form.append(f, files[f]);
+          saved = await api.upload('/leasing/bookings', form);
+          draftRef.current = saved.id;
+          setDraftId(saved.id);
+          // The new tenant now exists: the draft keeps them, rather than making them again.
+          if (tenantMode === 'new') {
+            api.get('/leasing/tenants').then(setTenants).catch(() => {});
+            setTenantId(saved.tenant_id);
+            setTenantMode('existing');
+          }
+        }
+        lastSaved.current = now;
+        setAutoNote(`saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
+      } catch (err) { lastSaved.current = now; setAutoNote(`Not saved: ${err.message}`); } finally {
+        autoBusy.current = false;
+        if (latest.current.sent !== now) setKick((k) => k + 1);
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [sent, files, busy, kick]);
+
   const submit = (status, inspect) => async (e) => {
     e?.preventDefault();
     if (busy) return;
     setBusy(true);
     setError('');
-    const body = { ...v, ...(tenantMode === 'existing' ? { tenant_id: tenantId } : { tenant }) };
+    const body = bodyNow;
     try {
       if (start) return onDone(await api.put(`/leasing/bookings/${start.id}`, body));
+      // Saved as a draft already while it was filled in: this saves the last of it, and goes on as a new one does.
+      if (draftRef.current) return onDone(await api.put(`/leasing/bookings/${draftRef.current}`, body), inspect);
       const form = new FormData();
       form.append('booking', JSON.stringify({ ...body, status }));
       for (const [f] of REQUIRED) form.append(f, files[f]);
@@ -688,11 +742,16 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         ) : <p className="border-t border-stroke/60 pt-3 text-mute">Choose the dates and enter the rent to see what is due.</p>}
 
         {error && <p className="text-bad">{error}</p>}
+        {autosaves && (
+          <p className={`text-center text-xs ${autoNote.startsWith('Not saved') ? 'text-bad' : 'text-mute'}`}>
+            {autoNote === 'saving' ? 'Saving the draft…' : autoNote.startsWith('saved') ? `Draft ${autoNote}` : autoNote || (start || draftId ? 'Changes save themselves as a draft.' : 'Saves itself as a draft once the rent is entered.')}
+          </p>
+        )}
         <div className="space-y-2 pt-1">
-          {start ? <button disabled={busy || !ready} className={`${PRIMARY} w-full justify-center`}>{busy ? 'Saving…' : 'Save'}</button> : <>
-            <button disabled={busy || !ready} className={`${PRIMARY} w-full justify-center`}>{busy ? 'Saving…' : 'Save and inspect'}</button>
+          {start ? <button disabled={busy || !ready || autoNote === 'saving'} className={`${PRIMARY} w-full justify-center`}>{busy ? 'Saving…' : 'Save'}</button> : <>
+            <button disabled={busy || !ready || autoNote === 'saving'} className={`${PRIMARY} w-full justify-center`}>{busy ? 'Saving…' : 'Save and inspect'}</button>
             <p className="text-center text-xs text-mute">Next is the move-in inspection. The lease is confirmed after it.</p>
-            <button type="button" disabled={busy || !ready} onClick={submit('draft')} className="w-full rounded-full border border-stroke px-4 py-2 text-sm hover:bg-white/5 disabled:opacity-50">Save as draft</button>
+            <button type="button" disabled={busy || !ready || autoNote === 'saving'} onClick={submit('draft')} className="w-full rounded-full border border-stroke px-4 py-2 text-sm hover:bg-white/5 disabled:opacity-50">Save as draft</button>
           </>}
           <button type="button" onClick={onCancel} className="w-full rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
         </div>
@@ -1317,10 +1376,10 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
 
   // A new lease is a draft, and goes on to its move-in inspection; saved as a draft only, it goes on to its documents.
   if (form) return (
-    <Page title={form.id ? `Edit ${form.ref}` : 'New lease'} onBack={() => setForm(null)}
+    <Page title={form.id ? `Edit ${form.ref}` : 'New lease'} onBack={close}
       action={form.id && <button onClick={() => setForm({ docsOf: form })} className={PRIMARY}><Paperclip size={16} /> Documents</button>}>
       <BookingForm start={form.id ? form : null} preset={form.preset}
-        onDone={(saved, inspect) => { setTab('bookings'); if (form.id) close(); else { setFresh(saved.id); setForm(inspect ? { inspectOf: saved, start: 'move_in' } : { docsOf: saved }); } }} onCancel={() => setForm(null)} />
+        onDone={(saved, inspect) => { setTab('bookings'); if (form.id) close(); else { setFresh(saved.id); setForm(inspect ? { inspectOf: saved, start: 'move_in' } : { docsOf: saved }); } }} onCancel={close} />
     </Page>
   );
 
