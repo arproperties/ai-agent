@@ -141,8 +141,8 @@ function Rules({ start, onSaved }) {
     ['summary', 'Morning summary', BellRing, 'One line to the master each morning: what is due today and what is overdue.', []],
     ['contract', 'No contract on file', FileWarning, 'A confirmed lease still has no contract attached.', [['Notify after', num('contract', 'days', 'Days without a contract', 60)]]],
     ['workorder', 'Work orders', Wrench, 'A work order past its scheduled day, every day until it is done; and a new urgent one, at once, whatever the hour.', []],
-    ['latefee', 'Late fee', Coins, 'Added to the lease when rent is still not paid after the days of grace. Only rent falling due from the day you switch this on.', [
-      ['Days of grace after the due date', num('latefee', 'days', 'Days of grace', 60)],
+    ['latefee', 'Late fee', Coins, 'Added to the lease when rent is still not paid after the days of grace, then a little more each day to the end of that month. Saturdays and Sundays are never counted. Each month’s rent has its own. Only rent falling due from the day you switch this on.', [
+      ['Days of grace after the due date (weekdays)', num('latefee', 'days', 'Days of grace', 60)],
       ['Charge', (
         <div className="flex gap-1 rounded-full border border-stroke p-0.5 text-sm">
           {[['amount', 'Fixed amount'], ['percent', '% of the rent']].map(([k, l]) => (
@@ -153,7 +153,10 @@ function Rules({ start, onSaved }) {
       )],
       feeBy === 'percent'
         ? ['Percent of the late rent', <Num value={v.latefee.percent} onChange={setFee('percent')} min={0} max={100} unit="%" label="Late fee percent of the rent" />]
-        : ['Fee', <Num value={v.latefee.amount} onChange={setFee('amount')} min={0} max={1000000} unit={currency()} label="Late fee amount" />],
+        : ['Fee, on the next weekday', <Num value={v.latefee.amount} onChange={setFee('amount')} min={0} max={1000000} unit={currency()} label="Late fee amount" />],
+      ['Then each weekday to the month’s end', num('latefee', 'daily', 'Late fee each weekday', 100000, currency())],
+      ['Most a month for the daily part (0: no limit)', num('latefee', 'cap', 'Most a month', 1000000, currency())],
+      ['Email the tenant when it goes on, then every (0: never)', num('latefee', 'email', 'Email the tenant every', 60, 'weekdays')],
     ]],
     ['tenant', 'Email the tenant automatically', Mail, 'Before the due date, on it, and on the overdue days above, the reminder is emailed to the tenant by itself, in your wording. Tenants with no email get nothing; WhatsApp still needs a person to press send.', [
       ['First email this long before the due date (0: not before)', num('tenant', 'before', 'Days before the due date', 60)],

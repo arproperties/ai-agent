@@ -749,28 +749,65 @@ async function backfillSchedules() {
   for (const b of rows) await writeSchedule(b);
 }
 
+/** Whether day number `n` is a Saturday or a Sunday (day 0, 1 January 1970, was a Thursday). */
+export const isWeekend = (n) => [0, 6].includes((((n + 4) % 7) + 7) % 7);
+/** The day number `k` weekdays after day `n`: Saturdays and Sundays are not counted. */
+export function addWeekdays(n, k) {
+  let d = n;
+  for (let left = k; left > 0;) { d++; if (!isWeekend(d)) left--; }
+  return d;
+}
+/** How many weekdays fall after day `from` up to and including day `to`. */
+export function weekdaysBetween(from, to) {
+  let n = 0;
+  for (let d = from + 1; d <= to; d++) if (!isWeekend(d)) n++;
+  return n;
+}
+
 /**
- * The late fee, when the master has set one (Alert rules): rent not received in full by the
- * end of the days of grace gets one fee, a row of its own on the schedule, due the day
- * after. It is a fixed amount, a share of that rent, or both. Only rent falling due since
- * the rule was switched on is charged, so old arrears are not all fined at once. A fee put
- * on because a payment was written down late, when the money had come in time, comes off again.
+ * The late fee, when the master has set one (Alert rules), counted in weekdays only (Saturday and
+ * Sunday never count). Rent not received in full within the days of grace gets a fee on the next
+ * weekday: a fixed amount or a share of that rent. Each weekday after it, to the end of the month
+ * the rent fell due in, `daily` more is added while the rent is still not paid in full, at most
+ * `cap` a month for that part. Each month's rent has its own. The fee is one row on the schedule,
+ * due the day it went on, whose amount grows. Only rent falling due since the rule was switched on
+ * is charged, so old arrears are not all fined at once. A fee put on because a payment was written
+ * down late, when the money had come in time, comes off again.
  */
 export async function applyLateFees(today) {
   const row = await db.prepare("SELECT value FROM lease_settings WHERE key = 'alerts'").get();
   const rule = row && JSON.parse(row.value).latefee;
   if (!rule?.on || !(rule.amount > 0 || rule.percent > 0)) return;
-  const days = Number(rule.days) || 0;
-  const inTime = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = r.id AND p.received_on <= r.due_date + ?::int)';
-  await db.prepare(`DELETE FROM lease_installments f WHERE f.kind = 'late' AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = f.id)
-    AND EXISTS (SELECT 1 FROM lease_installments r WHERE r.booking_id = f.booking_id AND r.kind = 'rent' AND to_char(r.due_date, 'YYYY-MM-DD') = f.label AND ${inTime} >= r.amount)`).run(days);
-  const late = await db.prepare(`SELECT r.booking_id, to_char(r.due_date, 'YYYY-MM-DD') AS due, r.amount FROM lease_installments r JOIN lease_bookings b ON b.id = r.booking_id
-    WHERE r.kind = 'rent' AND b.status = 'confirmed' AND NOT b.no_late_fees AND r.due_date >= ?::date AND r.due_date + ?::int < ?::date AND ${inTime} < r.amount
-      AND NOT EXISTS (SELECT 1 FROM lease_installments f WHERE f.booking_id = r.booking_id AND f.kind = 'late' AND f.label = to_char(r.due_date, 'YYYY-MM-DD'))`)
-    .all(rule.since || today, days, today, days);
-  for (const r of late) {
-    const fee = money(Number(rule.amount || 0) + (Number(r.amount) * Number(rule.percent || 0)) / 100);
-    if (fee > 0) await db.prepare("INSERT INTO lease_installments (booking_id, kind, label, due_date, amount) VALUES (?, 'late', ?, ?, ?) ON CONFLICT DO NOTHING").run(r.booking_id, r.due, iso(dayNo(r.due) + days + 1), fee);
+  const grace = Number(rule.days) || 0;
+  const daily = Number(rule.daily) || 0;
+  const cap = Number(rule.cap) > 0 ? Number(rule.cap) : Infinity;
+  const T = dayNo(today);
+  const rents = await db.prepare(`SELECT r.id, r.booking_id, to_char(r.due_date, 'YYYY-MM-DD') AS due, r.amount FROM lease_installments r JOIN lease_bookings b ON b.id = r.booking_id
+    WHERE r.kind = 'rent' AND b.status = 'confirmed' AND NOT b.no_late_fees AND r.due_date >= ?::date AND r.due_date < ?::date`).all(rule.since || today, today);
+  if (!rents.length) return;
+  const pays = await db.prepare(`SELECT installment_id, to_char(received_on, 'YYYY-MM-DD') AS on_day, amount FROM lease_payments
+    WHERE installment_id IN (${rents.map(() => '?').join(', ')}) ORDER BY received_on, id`).all(...rents.map((r) => r.id));
+  const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';
+  for (const r of rents) {
+    // The day the rent was paid in full, if it has been.
+    let sum = 0, full = null;
+    for (const p of pays) if (p.installment_id === r.id && full == null && (sum += Number(p.amount)) >= Number(r.amount) - 0.004) full = dayNo(p.on_day);
+    const feeDay = addWeekdays(dayNo(r.due), grace + 1);
+    const fee = await db.prepare("SELECT id FROM lease_installments WHERE booking_id = ? AND kind = 'late' AND label = ?").get(r.booking_id, r.due);
+    if (full != null && full < feeDay) {
+      // In time after all: the fee comes off, unless money was already taken against it.
+      if (fee) await db.prepare('DELETE FROM lease_installments i WHERE i.id = ? AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)').run(fee.id);
+      continue;
+    }
+    if (T < feeDay) continue;
+    // Each weekday after the fee went on, to the month's end, while the rent was still owed.
+    const monthEnd = dayNo(lastOfMonth(r.due));
+    const upTo = Math.min(T, monthEnd, full != null ? full - 1 : Infinity);
+    const extra = Math.min(cap, daily * Math.max(0, weekdaysBetween(feeDay, upTo)));
+    const amount = money(Number(rule.amount || 0) + (Number(r.amount) * Number(rule.percent || 0)) / 100 + extra);
+    if (!(amount > 0)) continue;
+    if (fee) await db.prepare(`UPDATE lease_installments SET amount = GREATEST(?, ${paid}), due_date = ? WHERE id = ?`).run(amount, iso(feeDay), fee.id);
+    else await db.prepare("INSERT INTO lease_installments (booking_id, kind, label, due_date, amount) VALUES (?, 'late', ?, ?, ?) ON CONFLICT DO NOTHING").run(r.booking_id, r.due, iso(feeDay), amount);
   }
 }
 

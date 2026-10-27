@@ -348,7 +348,9 @@ export async function renderContract(p) {
     text(lf?.amount > 0 && lf?.percent > 0 ? '(both are charged)' : '', L + pad + 295, t - 24, { size: 6.8, color: grey });
     text('Charged if the rent is not paid in full within', L + pad, t - 38, { size: 7.6 });
     field('', lf ? String(Number(lf.days) || 0) : '', L + pad + 160, t - 38, L + pad + 200);
-    text('days after its due date (by 11:59 p.m. on the last of those days).', L + pad + 204, t - 38, { size: 7.6 });
+    // Saturdays and Sundays are not counted; a daily fee, when there is one, runs to the end of that month.
+    const perDay = lf && Number(lf.daily) > 0 ? `, then ${sym} ${amt(lf.daily)} a business day to the month's end${Number(lf.cap) > 0 ? ` (at most ${sym} ${amt(lf.cap)})` : ''}` : '';
+    text(`business days after its due date${perDay}.`, L + pad + 204, t - 38, { size: perDay ? 6.6 : 7.6 });
   });
 
   // H and I, J, K side by side.

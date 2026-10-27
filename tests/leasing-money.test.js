@@ -56,13 +56,14 @@ test('money for the lease as a whole pays the extra charges due before the rent,
 
 test('a late fee is added once the days of grace are over, and comes off if the money had come in time', async () => {
   const { staff, bk } = await tower();
-  await assert.rejects(saveSettings({ latefee: { on: true } }), /an amount or a percent of the rent/);
-  const cfg = await saveSettings({ latefee: { on: true, days: 5, amount: 100, percent: 2 } }, '2026-09-01');
-  assert.deepEqual(cfg.latefee, { on: true, days: 5, amount: 100, percent: 2, since: '2026-09-01' });
+  await assert.rejects(saveSettings({ latefee: { on: true, amount: 0, percent: 0 } }), /an amount or a percent of the rent/);
+  const cfg = await saveSettings({ latefee: { on: true, days: 5, amount: 100, percent: 2, daily: 0 } }, '2026-09-01');
+  assert.deepEqual(cfg.latefee, { on: true, days: 5, amount: 100, percent: 2, daily: 0, cap: 100, email: 5, since: '2026-09-01' });
 
-  assert.equal((await bookingPayments(bk.id, '2026-09-20')).some((r) => r.kind === 'late'), false, 'the last day of grace: no fee yet');
+  // Five weekdays of grace after Tue 15th: Wed, Thu, Fri, Mon, Tue; the fee on Wed 23rd.
+  assert.equal((await bookingPayments(bk.id, '2026-09-22')).some((r) => r.kind === 'late'), false, 'the last day of grace: no fee yet');
   const rows = await bookingPayments(bk.id, AT);
-  assert.deepEqual(rows.filter((r) => r.kind === 'late').map((r) => [r.name, r.due_date, r.amount, r.status]), [['Late fee (rent due 2026-09-15)', '2026-09-21', 190, 'overdue']]);
+  assert.deepEqual(rows.filter((r) => r.kind === 'late').map((r) => [r.name, r.due_date, r.amount, r.status]), [['Late fee (rent due 2026-09-15)', '2026-09-23', 190, 'overdue']]);
   assert.equal((await bookingPayments(bk.id, AT)).filter((r) => r.kind === 'late').length, 1, 'one fee for one late rent, however often it is looked at');
   assert.equal((await report('aging', {}, AT)).total.owed, 9690, 'it is owed like anything else: deposit, rent and the fee');
 

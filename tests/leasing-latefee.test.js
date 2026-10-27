@@ -1,0 +1,89 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { reset, closeDb, db, makeUser } from './helpers/db.js';
+import { create } from '../server/properties.js';
+import { createBooking, bookingPayments, recordPayment, bookingHistory, addWeekdays, iso, dayNo } from '../server/leasing.js';
+import { runAlerts, saveSettings, getSettings } from '../server/leasingAlerts.js';
+
+test.after(() => closeDb());
+
+// Sara: from Tue 15 September 2026 at 4,500 a month, rent due on the 15th. Nothing paid yet.
+async function sara(extra = {}) {
+  await reset();
+  const staff = await makeUser('Staff');
+  const c = await create('company', { name: 'ACE' });
+  const b = await create('building', { name: 'Tower' }, c.id);
+  const u = await create('unit', { unit_no: '101' }, b.id);
+  const bk = await createBooking({ unit_id: u.id, start_date: '2026-09-15', end_date: '2026-11-14', rent_amount: 4500, status: 'confirmed',
+    tenant: { full_name: 'Sara', phone: '050 123 4567', email: 'sara@example.com' }, ...extra }, staff);
+  return { staff, bk };
+}
+const fees = async (id, day) => (await bookingPayments(id, day)).filter((r) => r.kind === 'late').map((r) => [r.label, r.due_date, r.amount]);
+
+test('weekdays only: Saturday and Sunday are skipped', () => {
+  assert.equal(iso(addWeekdays(dayNo('2026-09-15'), 4)), '2026-09-21'); // Tue + 4 weekdays: Wed, Thu, Fri, Mon
+  assert.equal(iso(addWeekdays(dayNo('2026-09-18'), 1)), '2026-09-21'); // Fri → Mon
+});
+
+test('the defaults: 3 days of grace, 50 on the 4th weekday, then 5 a weekday to the month end, at most 100', async () => {
+  const { bk } = await sara();
+  const cfg = await saveSettings({ latefee: { on: true } }, '2026-09-01');
+  assert.deepEqual(cfg.latefee, { on: true, days: 3, amount: 50, percent: 0, daily: 5, cap: 100, email: 5, since: '2026-09-01' });
+
+  assert.deepEqual(await fees(bk.id, '2026-09-18'), [], 'Fri 18th is the 3rd weekday of grace');
+  assert.deepEqual(await fees(bk.id, '2026-09-21'), [['2026-09-15', '2026-09-21', 50]], 'Mon 21st, the 4th weekday: 50');
+  assert.deepEqual(await fees(bk.id, '2026-09-22'), [['2026-09-15', '2026-09-21', 55]]);
+  assert.deepEqual(await fees(bk.id, '2026-09-25'), [['2026-09-15', '2026-09-21', 70]], 'Tue–Fri: four days of 5');
+  assert.deepEqual(await fees(bk.id, '2026-09-27'), [['2026-09-15', '2026-09-21', 70]], 'nothing on the weekend');
+  assert.deepEqual(await fees(bk.id, '2026-09-30'), [['2026-09-15', '2026-09-21', 85]]);
+  assert.deepEqual(await fees(bk.id, '2026-10-09'), [['2026-09-15', '2026-09-21', 85]], 'it stops at the end of the month');
+  // October's rent starts its own: due Thu 15th, grace Fri, Mon, Tue, 50 on Wed 21st.
+  assert.deepEqual((await fees(bk.id, '2026-10-23'))[1], ['2026-10-15', '2026-10-21', 60]);
+});
+
+test('the daily part stops once the rent is paid, never goes past the cap, and none at all if paid in the grace', async () => {
+  const { staff, bk } = await sara();
+  await saveSettings({ latefee: { on: true } }, '2026-09-01');
+  const sep = (await bookingPayments(bk.id, '2026-09-21')).find((r) => r.kind === 'rent');
+  await recordPayment(sep.id, { amount: 4500, method: 'cash', received_on: '2026-09-24' }, staff, '2026-09-24');
+  assert.deepEqual(await fees(bk.id, '2026-09-30'), [['2026-09-15', '2026-09-21', 60]], 'Tue and Wed only: paid on Thu');
+
+  const { staff: s2, bk: b2 } = await sara();
+  await saveSettings({ latefee: { on: true, days: 0, amount: 50, daily: 10, cap: 100 } }, '2026-09-01');
+  assert.deepEqual(await fees(b2.id, '2026-09-30'), [['2026-09-15', '2026-09-16', 150]], 'ten weekdays of 10 (Thu 17th to Wed 30th), held to 100');
+  const r = (await bookingPayments(b2.id, '2026-09-30')).find((x) => x.kind === 'rent');
+  await saveSettings({ latefee: { on: true, days: 3 } }, '2026-09-01');
+  await recordPayment(r.id, { amount: 4500, method: 'cash', received_on: '2026-09-18' }, s2, '2026-09-30');
+  assert.deepEqual(await fees(b2.id, '2026-09-30'), [], 'paid on the last weekday of grace: no fee');
+});
+
+test('a lease marked no late fees is never charged', async () => {
+  const { bk } = await sara({ no_late_fees: true });
+  await saveSettings({ latefee: { on: true } }, '2026-09-01');
+  assert.deepEqual(await fees(bk.id, '2026-09-30'), []);
+});
+
+test('the tenant is emailed when the fee goes on, then every 5th weekday while it is owed', async () => {
+  const { staff, bk } = await sara();
+  await saveSettings({ latefee: { on: true }, quiet: { from: 0, to: 0 } }, '2026-09-01');
+  assert.equal((await getSettings()).tenant.on, false, 'the dues email is off: this one goes anyway');
+  const mails = [];
+  const mail = async (to, subject, text) => { mails.push([to, subject, text]); };
+  for (const day of ['2026-09-18', '2026-09-21', '2026-09-22', '2026-09-25', '2026-09-28', '2026-09-29']) await runAlerts(day, 9, { mail });
+  assert.deepEqual(mails.map((m) => m[0]), ['sara@example.com', 'sara@example.com'], 'Mon 21st, then Mon 28th');
+  assert.match(mails[0][1], /^Late fee: unit 101, Tower/);
+  assert.match(mails[0][2], /Late fee \(rent due 2026-09-15\) · due 09\/21\/2026 · USD 50/);
+  assert.match(mails[1][2], /USD 75/, 'the fee as it stands on the day: 50 and five weekdays of 5');
+  assert.equal((await bookingHistory(bk.id))[0].detail, 'Late fee emailed to the tenant automatically');
+
+  // Paid: no more emails about it.
+  for (const r of (await bookingPayments(bk.id, '2026-09-29')).filter((x) => x.left > 0 && x.due_date <= '2026-09-29')) {
+    await recordPayment(r.id, { amount: r.left, method: 'cash', received_on: '2026-09-29' }, staff, '2026-09-29');
+  }
+  await runAlerts('2026-10-05', 9, { mail });
+  assert.equal(mails.length, 2);
+
+  // 0: never emailed.
+  await saveSettings({ latefee: { email: 0 } }, '2026-09-01');
+  assert.equal((await getSettings()).latefee.email, 0);
+});

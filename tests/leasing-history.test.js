@@ -51,7 +51,7 @@ test('late rent is worked out from the payments: paid late, still unpaid, and ne
 
 test('a late fee that was charged shows with the rent it was charged for', async () => {
   const { sara } = await tower();
-  await saveSettings({ latefee: { on: true, days: 5, amount: 100, percent: 0 } }, '2026-09-01');
+  await saveSettings({ latefee: { on: true, days: 5, amount: 100, percent: 0, daily: 0 } }, '2026-09-01');
   const h = await tenantHistory(sara, AT);
   assert.deepEqual(h.items.map((i) => [i.date, i.fee]), [['2026-10-15', 100], ['2026-09-15', 100]]);
   assert.equal(h.summary.late_fees, 200);

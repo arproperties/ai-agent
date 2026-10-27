@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from './db.js';
 import { requireMaster } from './auth.js';
-import { snapshot, dayNo, total, todayHere, bad, dueName, logEvent } from './leasing.js';
+import { snapshot, dayNo, total, todayHere, bad, dueName, logEvent, isWeekend, weekdaysBetween } from './leasing.js';
 import { region, hourHere, dayOf, cash } from './leasingRegion.js';
 import { usDate } from './usFormat.js';
 import { register } from './properties.js';
@@ -31,7 +31,9 @@ const DEFAULTS = {
   workorder: { on: true },                               // a work order past its scheduled day, and a new urgent one
   summary: { on: true },                                 // the morning's one-line total, to the master
   quiet: { from: 22, to: 8 },                            // no buzz between these hours (the business's time zone)
-  latefee: { on: false, days: 5, amount: 0, percent: 0 }, // a fee on rent still unpaid after the days of grace: fixed, a share of the rent, or both
+  // A fee on rent still unpaid after the days of grace (weekdays): fixed or a share of the rent, then `daily` each weekday
+  // to the month's end, at most `cap` a month for that part; the tenant is emailed every `email` weekdays (0: never).
+  latefee: { on: false, days: 3, amount: 50, percent: 0, daily: 5, cap: 100, email: 5 },
   tenant: { on: false, before: 3 },                      // email the tenant the reminder automatically: this many days before (0: not before), on the due day and the overdue days
 };
 export const RULES = ['overdue', 'due', 'upcoming', 'ending', 'contract', 'eid', 'document', 'workorder'];
@@ -62,7 +64,9 @@ export async function saveSettings(body = {}, today = todayHere()) {
   const on = (k) => (body[k] && 'on' in body[k] ? !!body[k].on : now[k].on);
   const pick = (k, f, read) => (body[k] && f in body[k] ? read(body[k][f]) : now[k][f]);
   const fee = { on: on('latefee'), days: pick('latefee', 'days', (v) => whole(v, 60, 'Days of grace')), amount: pick('latefee', 'amount', (v) => whole(v, 1000000, 'The late fee')),
-    percent: pick('latefee', 'percent', (v) => whole(v, 100, 'The share of the rent')) };
+    percent: pick('latefee', 'percent', (v) => whole(v, 100, 'The share of the rent')),
+    daily: pick('latefee', 'daily', (v) => whole(v, 100000, 'The fee a day')), cap: pick('latefee', 'cap', (v) => whole(v, 1000000, 'The most a month')),
+    email: pick('latefee', 'email', (v) => whole(v, 60, 'Email the tenant every')) };
   if (fee.on && !(fee.amount > 0 || fee.percent > 0)) throw bad('Give the late fee an amount or a percent of the rent.');
   // Only rent falling due from the day the fee is switched on is charged.
   const since = fee.on ? (now.latefee.on && now.latefee.since) || today : null;
@@ -242,7 +246,43 @@ export async function runAlerts(today = todayHere(), hour = hourHere(), { mail }
     await sendPush([user_id], { ...note, url: '/?leasing=alerts', tag: 'leasing-alerts' }).catch((e) => console.error('[leasing-alerts]', e.message));
   }
   if (cfg.tenant.on) await emailTenants(s, cfg, mail).catch((e) => console.error('[leasing-alerts] tenant email:', e.message));
+  if (cfg.latefee.on && cfg.latefee.email > 0) await emailLateFees(today, cfg, mail).catch((e) => console.error('[leasing-alerts] late fee email:', e.message));
   return sent;
+}
+
+/**
+ * The late fee, emailed to the tenant: on the weekday it goes on, then every `email` weekdays after
+ * while the fee or its rent is still owed, with everything they owe listed. Never on a Saturday or
+ * a Sunday, and one email a lease a day at most, shared with the reminder above.
+ */
+async function emailLateFees(today, cfg, mail) {
+  const T = dayNo(today);
+  if (isWeekend(T)) return;
+  if (!mail) {
+    const m = await import('./mailer.js');
+    if (!m.mailReady()) return;
+    mail = m.sendPlain;
+  }
+  const fees = await db.prepare(`SELECT f.id, f.booking_id, to_char(f.due_date, 'YYYY-MM-DD') AS on_day, t.email, u.unit_no, bl.name AS building,
+      f.amount - (SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = f.id)
+        + coalesce((SELECT r.amount - (SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = r.id)
+           FROM lease_installments r WHERE r.booking_id = f.booking_id AND r.kind = 'rent' AND to_char(r.due_date, 'YYYY-MM-DD') = f.label), 0) AS owed
+    FROM lease_installments f JOIN lease_bookings b ON b.id = f.booking_id JOIN lease_tenants t ON t.id = b.tenant_id
+    JOIN prop_units u ON u.id = b.unit_id JOIN prop_buildings bl ON bl.id = u.building_id
+    WHERE f.kind = 'late' AND b.status = 'confirmed' AND f.due_date <= ?::date ORDER BY f.due_date`).all(today);
+  for (const f of fees) {
+    if (!f.email || !(Number(f.owed) > 0.004) || weekdaysBetween(dayNo(f.on_day), T) % cfg.latefee.email !== 0) continue;
+    const fresh = await db.prepare('INSERT INTO lease_tenant_notices (booking_id, day) VALUES (?, ?) ON CONFLICT DO NOTHING').run(f.booking_id, today);
+    if (!fresh.changes) continue;
+    try {
+      const r = await tenantReminder(f.id, today);
+      await mail(f.email, `Late fee: unit ${f.unit_no}, ${f.building}`, r.message);
+      await logEvent(f.booking_id, 'reminder', 'Late fee emailed to the tenant automatically', null);
+    } catch (e) {
+      await db.prepare('DELETE FROM lease_tenant_notices WHERE booking_id = ? AND day = ?').run(f.booking_id, today);
+      throw e;
+    }
+  }
 }
 
 /**
