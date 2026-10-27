@@ -508,11 +508,11 @@ function BookingForm({ start, preset, onDone, onCancel }) {
           <Group title="First month">
             <Pick value={v.prorate} onPick={(k) => setV({ ...v, prorate: k })}
               options={[['first', 'From the first month'], ['second', 'From the second month']]} />
-            {sum?.head && v.prorate === 'first' && <p className="mt-2 text-xs text-mute">{sum.head.typed ? 'The part month' : `${sum.head.days} of ${sum.head.of} days`} = <span className="font-medium text-txt">{aed(sum.head.typed || sum.head.amount)}</span>, then the rent is due on the 1st.</p>}
+            {sum?.head && v.prorate === 'first' && <p className="mt-2 text-xs text-mute">{sum.head.typed ? 'The prorated rent' : `${sum.head.days} of ${sum.head.of} days`} = <span className="font-medium text-txt">{aed(sum.head.typed || sum.head.amount)}</span>, then the rent is due on the 1st.</p>}
             {sum?.head && v.prorate === 'second' && sum.second && <p className="mt-2 text-xs text-mute">A full month's rent at move-in, then {aed(sum.head.typed || sum.head.amount)} {!sum.head.typed && `(${sum.head.days} of ${sum.head.of} days) `}on <span className="font-medium text-txt">{fmt(sum.second.due)}</span>.</p>}
             {/* Rent Manager may have charged the part month at a figure of its own: typed here, it is used as it is. */}
             <label className="mt-3 block max-w-xs">
-              <span className="mb-1 block text-xs text-txt/80">Part month’s rent ({currency()}) · only to use a different amount</span>
+              <span className="mb-1 block text-xs text-txt/80">Prorated rent ({currency()}) · only to use a different amount</span>
               <input type="number" min="0" step="any" value={v.part_month_amount} onChange={set('part_month_amount')}
                 placeholder={sum?.head ? `Worked out: ${aed(sum.head.amount)}` : 'Worked out by the day'} className={FIELD} />
             </label>
@@ -652,7 +652,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
               {sum.firstTax > 0 && <Row k={`${taxName} ${Number(v.tax_percent)}%`}>{aed(sum.firstTax)}</Row>}
               <Row k="Rent and charges" strong>{aed(sum.charges)}</Row>
               {sum.discount > 0 && <Row k="Discount, already taken off">−{aed(sum.discount)}</Row>}
-              {sum.second && <Row k={`Part month · on ${fmt(sum.second.due)}`}>{aed(sum.second.amount)}</Row>}
+              {sum.second && <Row k={`Prorated rent · on ${fmt(sum.second.due)}`}>{aed(sum.second.amount)}</Row>}
               {sum.payments > 1 && <Row k={`Whole stay · ${sum.payments} payments`}>{aed(sum.total)}</Row>}
               {sum.payments > 1 && sum.tax > 0 && <Row k={`Of which ${taxName}`}>{aed(sum.tax)}</Row>}
             </div>

@@ -238,7 +238,7 @@ function bookingFields(body = {}, { partial = false } = {}) {
   // The part month's rent as Rent Manager charged it, in place of the one worked out by the day. Empty: worked out.
   if ('part_month_amount' in body) {
     const v = body.part_month_amount;
-    if (v !== '' && v != null && !(Number(v) > 0)) throw bad('The part month\'s rent must be a number above zero.');
+    if (v !== '' && v != null && !(Number(v) > 0)) throw bad('The prorated rent must be a number above zero.');
     out.part_month_amount = v === '' || v == null ? null : money(Number(v));
   }
   // What Rent Manager's General tab has besides: the day it was signed, the day the tenant moved in, a notice
