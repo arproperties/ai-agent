@@ -156,6 +156,8 @@ function proratedRows(v) {
 const typedPart = (v) => (Number(v.part_month_amount) > 0 ? Number(v.part_month_amount) : null);
 /** The days a monthly charge is billed: those of `dues` (the monthly rent days) from its start to its end, when it has them. */
 const chargeDays = (f, dues) => dues.filter((d) => (!f.from || d >= f.from) && (!f.until || d <= f.until));
+/** What the dated discounts take off the rent of the month billed on `due`, as offOn() on the server. */
+const offOn = (v, due) => (v.discounts || []).reduce((t, d) => t + (Number(d.amount) > 0 && (!d.from || due >= d.from) && (!d.until || due <= d.until) ? Number(d.amount) : 0), 0);
 function plan(v) {
   if (v.prorate && v.payment_frequency === 'monthly') return proratedPlan(v);
   let months = 1;
@@ -170,19 +172,22 @@ function plan(v) {
   const rate = Number(v.tax_percent || 0) / 100;
   const deposit = Number(v.security_deposit || 0);
   const fees = v.fees.filter((f) => Number(f.amount) > 0);
-  const firstRent = monthly * Math.min(step, months);
   // A monthly charge is billed each month, whatever the rent's frequency, between its own dates.
   const dues = Array.from({ length: months }, (_, k) => addMonths(v.start_date, k));
+  // The dated discounts come off each month they cover.
+  const offs = dues.map((d) => Math.min(monthly, offOn(v, d)));
+  const dated = offs.reduce((t, o) => t + o, 0);
+  const firstRent = monthly * Math.min(step, months) - offs.slice(0, step).reduce((t, o) => t + o, 0);
   const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? (chargeDays(f, dues)[0] === v.start_date ? 1 : 0) : 1), 0);
   const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? chargeDays(f, dues).length : 1), 0);
   const firstTax = (firstRent + firstFees) * rate;
-  const tax = (monthly * months + allFees) * rate;
+  const tax = (monthly * months - dated + allFees) * rate;
   return {
-    payments, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats && chargeDays(f, dues)[0] !== v.start_date ? 0 : f.amount })), firstTax, tax, discount: (off / per) * months,
+    payments, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats && chargeDays(f, dues)[0] !== v.start_date ? 0 : f.amount })), firstTax, tax, discount: (off / per) * months + dated,
     // The deposit is held for the tenant and given back, so it is never part of what the stay costs.
     charges: firstRent + firstFees + firstTax,
     first: firstRent + deposit + firstFees + firstTax,
-    total: monthly * months + allFees + tax,
+    total: monthly * months - dated + allFees + tax,
   };
 }
 /** plan() for a lease that prorates its first month. `head` is the part month; `second`, when the part
@@ -198,8 +203,9 @@ function proratedPlan(v) {
   const fees = v.fees.filter((f) => Number(f.amount) > 0);
   const shares = rows.reduce((t, r) => t + r.share, 0);
   const atStart = rows[0]?.due === v.start_date ? rows[0].share : 0;
-  // A row's rent: the part month at its typed amount when one was typed, the rest by the day.
-  const rentOf = (r) => (r.part && typedPart(v) ? typedPart(v) : monthly * r.share);
+  // A row's rent: the part month at its typed amount when one was typed, the rest by the day; a dated discount comes off by the day too.
+  const offOf = (r) => Math.min(monthly, offOn(v, r.due)) * r.share;
+  const rentOf = (r) => Math.max(0, (r.part && typedPart(v) ? typedPart(v) : monthly * r.share) - offOf(r));
   const allRent = rows.reduce((t, r) => t + rentOf(r), 0);
   const firstRent = rows[0]?.due === v.start_date ? rentOf(rows[0]) : 0;
   // A monthly charge is its whole price each month, the part month too, as Rent Manager bills it.
@@ -211,8 +217,8 @@ function proratedPlan(v) {
   const tax = (allRent + allFees) * rate;
   return {
     payments: rows.length, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats && !billsFirst(f) ? 0 : f.amount })), firstTax, tax,
-    discount: (off / per) * shares,
-    head: head && { ...head, amount: monthly * head.share, typed: typedPart(v) },
+    discount: (off / per) * shares + rows.reduce((t, r) => t + offOf(r), 0),
+    head: head && (({ due }) => ({ ...head, amount: rentOf({ due, share: head.share }), typed: typedPart(v) && rentOf({ due, share: head.share, part: true }) }))(rows.find((r) => r.part) || head),
     second: head && v.prorate === 'second' && rows[1] ? { due: rows[1].due, amount: rentOf(rows[1]) } : null,
     charges: firstRent + firstFees + firstTax,
     first: firstRent + deposit + firstFees + firstTax,
@@ -239,7 +245,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [v, setV] = useState({
     start_date: init.start_date || '', end_date: init.end_date || '', unit_id: init.unit_id || '',
     rent_amount: start?.rent_amount ?? '', rent_period: start?.rent_period || 'year', payment_frequency: start?.payment_frequency || 'monthly',
-    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], source: start?.source || '', referred_by: start?.referred_by || '', tenant_energy_account: !!start?.tenant_energy_account,
+    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], discounts: start?.discounts || [], source: start?.source || '', referred_by: start?.referred_by || '', tenant_energy_account: !!start?.tenant_energy_account,
     discount_type: start?.discount_type || 'percent', discount_value: start?.discount_value ?? '', discount_note: start?.discount_note || '',
     // A new booking starts with the region's usual tax; one being edited keeps what it has. Empty is no tax.
     tax_percent: start ? start.tax_percent ?? '' : region().tax_percent || '',
@@ -326,9 +332,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const buildingName = buildings.find((b) => String(b.id) === String(buildingId))?.name || (start && String(buildingId) === String(start.building_id) ? start.building : '');
   const tenantName = tenantMode === 'existing' ? tenants.find((t) => String(t.id) === String(tenantId))?.full_name : tenant.full_name.trim();
   const sum = datesOk && Number(v.rent_amount) > 0 ? plan(v) : null;
-  // What the discount takes off the rent as entered, shown under the discount as it is typed.
-  const rent = Number(v.rent_amount || 0);
-  const off = Math.min(rent, v.discount_type === 'percent' ? (rent * Number(v.discount_value || 0)) / 100 : Number(v.discount_value || 0));
+  const putDiscount = (i, patch) => setV((now) => ({ ...now, discounts: now.discounts.map((d, j) => (j === i ? { ...d, ...patch } : d)) }));
 
   // One step at a time. A step is done once what it must have is filled in, and a later
   // step opens only when those before it are done.
@@ -502,6 +506,32 @@ function BookingForm({ start, preset, onDone, onCancel }) {
               </label>
             )}
           </div>
+          {/* Discounts off the monthly rent, each between dates of its own: empty dates are the whole lease. One agreed
+              during the lease starts on a later date, so the rent already billed stays as it is. */}
+          {v.discounts.length > 0 && <p className="mb-1 mt-4 text-xs font-medium text-txt/80">Discounts <span className="font-normal text-mute">· off the rent each month · empty dates: the whole lease</span></p>}
+          {v.discounts.map((d, i) => (
+            <div key={i} className="mb-2 flex flex-wrap items-end gap-2">
+              <label className="block w-36">
+                <span className="mb-1 block text-xs text-txt/80">Discount ({currency()})</span>
+                <input type="number" min="0" step="any" value={d.amount} onChange={(e) => putDiscount(i, { amount: e.target.value })} required className={FIELD} />
+              </label>
+              <label className="block w-40">
+                <span className="mb-1 block text-xs text-txt/80">Start · empty: move-in</span>
+                <DateField value={d.from || ''} onChange={(e) => putDiscount(i, { from: e.target.value })} min={v.start_date || undefined} max={d.until || v.end_date || undefined} aria-label="Discount start" className={FIELD} />
+              </label>
+              <label className="block w-40">
+                <span className="mb-1 block text-xs text-txt/80">End · empty: to the end</span>
+                <DateField value={d.until || ''} onChange={(e) => putDiscount(i, { until: e.target.value })} min={d.from || v.start_date || undefined} max={v.end_date || undefined} aria-label="Discount end" className={FIELD} />
+              </label>
+              <label className="block min-w-[10rem] flex-1">
+                <span className="mb-1 block text-xs text-txt/80">Reason</span>
+                <input value={d.note || ''} onChange={(e) => putDiscount(i, { note: e.target.value })} placeholder="e.g. tenant asked, long stay" className={FIELD} />
+              </label>
+              <button type="button" onClick={() => setV({ ...v, discounts: v.discounts.filter((_, j) => j !== i) })} aria-label="Remove this discount"
+                className="mb-0.5 grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={15} /></button>
+            </div>
+          ))}
+          <button type="button" onClick={() => setV({ ...v, discounts: [...v.discounts, { amount: '', from: '', until: '', note: '' }] })} className={`${GHOST} ${v.discounts.length ? '' : 'mt-3'}`}><Plus size={13} /> Add a discount</button>
         </Group>
         {/* A lease that starts after the 1st can charge its part month by the day, then rent on the 1st. */}
         {onTheFirst && v.payment_frequency === 'monthly' && v.start_date && !v.start_date.endsWith('-01') && (
@@ -573,19 +603,6 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             )}
           </Group>
         ))}
-        <Group title="Discount" hint={`off the rent per ${v.rent_period}`}
-          extra={<span className="ml-auto"><Pick value={v.discount_type} onPick={(k) => setV({ ...v, discount_type: k })} options={[['percent', 'Percent'], ['amount', currency()]]} /></span>}>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Label text={`Discount (${v.discount_type === 'percent' ? '%' : currency()})`}>
-              <input type="number" min="0" max={v.discount_type === 'percent' ? 99.99 : undefined} step="any" value={v.discount_value} onChange={set('discount_value')} placeholder="None" className={FIELD} />
-            </Label>
-            <label className="block sm:col-span-2">
-              <span className="mb-1 block text-xs text-txt/80">Reason</span>
-              <input value={v.discount_note} onChange={set('discount_note')} disabled={!Number(v.discount_value)} placeholder="e.g. early payment, long stay" className={`${FIELD} disabled:opacity-50`} />
-            </label>
-          </div>
-          {off > 0 && <p className="mt-2 text-xs text-mute">Takes {aed(off)} off, so the rent is <span className="font-medium text-txt">{aed(rent - off)}</span> a {v.rent_period}.</p>}
-        </Group>
         <Group title={taxName} hint="on the rent and the other charges, never on the deposit">
           <div className="flex flex-wrap items-center gap-2">
             <Pick value={v.tax_percent === '' ? 'none' : 'taxed'} onPick={(k) => setV({ ...v, tax_percent: k === 'none' ? '' : v.tax_percent || region().tax_percent || 5 })}
@@ -651,7 +668,10 @@ function BookingForm({ start, preset, onDone, onCancel }) {
               {sum.fees.filter((f) => Number(f.amount) > 0).map((f, i) => <Row key={i} k={f.label || 'Other charge'}>{aed(Number(f.amount))}</Row>)}
               {sum.firstTax > 0 && <Row k={`${taxName} ${Number(v.tax_percent)}%`}>{aed(sum.firstTax)}</Row>}
               <Row k="Rent and charges" strong>{aed(sum.charges)}</Row>
-              {sum.discount > 0 && <Row k="Discount, already taken off">−{aed(sum.discount)}</Row>}
+              {v.discounts.filter((d) => Number(d.amount) > 0).map((d, i) => (
+                <Row key={i} k={`Discount${d.from && d.from > v.start_date ? ` from ${fmt(d.from)}` : ''}${d.until ? ` to ${fmt(d.until)}` : ''}`}>−{aed(Number(d.amount))} a month</Row>
+              ))}
+              {sum.discount > 0 && <Row k="Discounts, whole stay · already taken off">−{aed(sum.discount)}</Row>}
               {sum.second && <Row k={`Prorated rent · on ${fmt(sum.second.due)}`}>{aed(sum.second.amount)}</Row>}
               {sum.payments > 1 && <Row k={`Whole stay · ${sum.payments} payments`}>{aed(sum.total)}</Row>}
               {sum.payments > 1 && sum.tax > 0 && <Row k={`Of which ${taxName}`}>{aed(sum.tax)}</Row>}
@@ -750,6 +770,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
   const [label, tone] = STAGE[b.stage];
   const stay = `${nights(b.start_date, b.end_date)} nights · ${b.type === 'lease' ? 'Lease' : 'Short stay'}`;
   const terms = [FREQ.find(([k]) => k === b.payment_frequency)?.[1], b.discount_type && `${b.discount_type === 'percent' ? `${b.discount_value}%` : aed(b.discount_value)} off`,
+    ...(b.discounts || []).map((d) => `${aed(d.amount)} off${d.from && d.from > b.start_date ? ` from ${fmt(d.from)}` : ''}${d.until ? ` to ${fmt(d.until)}` : ''}`),
     b.tax_percent && `+ ${region().tax_name} ${b.tax_percent}%`, b.prorate && 'prorated'].filter(Boolean).join(' · ');
   const rent = <>{aed(b.rent_amount)} / {b.rent_period} <span className="text-xs text-mute">· {terms}</span></>;
   // A lease confirmed with no move-in (by Riley, or imported), whose tenant now has the unit: how they found it is not written down.

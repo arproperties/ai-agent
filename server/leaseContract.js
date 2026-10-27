@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { db } from './db.js';
 import { DATA_DIR } from './config.js';
 import { saveFile } from './properties.js';
-import { bad, bookingRef, dayNo, getBooking, monthlyRent, money } from './leasing.js';
+import { bad, bookingRef, dayNo, discountsOf, getBooking, monthlyRent, money, schedule } from './leasing.js';
 import { region } from './leasingRegion.js';
 import { usDate, usPhone } from './usFormat.js';
 
@@ -39,7 +39,10 @@ function partMonth(b) {
   const days = new Date(Date.UTC(+b.start_date.slice(0, 4), +b.start_date.slice(5, 7), 0)).getUTCDate();
   const last = `${b.start_date.slice(0, 8)}${String(days).padStart(2, '0')}`;
   const upTo = b.end_date < last ? b.end_date : last;
-  const amount = Number(b.part_month_amount) > 0 ? Number(b.part_month_amount) : money((monthlyRent(b) * (dayNo(upTo) - dayNo(b.start_date) + 1)) / days);
+  // The schedule's own figure for it, so a discount is taken off as the bills take it.
+  const rows = b.billed_from ? [] : schedule(b);
+  const row = b.prorate === 'second' && rows.length > 1 ? rows[1] : rows[0];
+  const amount = row ? money(row.amount - (row.tax || 0)) : Number(b.part_month_amount) > 0 ? Number(b.part_month_amount) : money((monthlyRent(b) * (dayNo(upTo) - dayNo(b.start_date) + 1)) / days);
   return [amount, b.prorate];
 }
 
@@ -302,6 +305,8 @@ export async function renderContract(p) {
     field(sym, amt(monthlyRent(p)), L + pad, t - 26, c1 - pad);
     let note = '';
     if (p.discount_type) note = `After a discount of ${p.discount_type === 'percent' ? `${Number(p.discount_value)}%` : `${sym} ${amt(p.discount_value)}`}${p.discount_note ? ` (${p.discount_note})` : ''}.`;
+    const us = (s) => `${s.slice(5, 7)}/${s.slice(8, 10)}/${s.slice(0, 4)}`;
+    for (const d of discountsOf(p)) note += ` Less ${sym} ${amt(d.amount)} a month${d.from && d.from > p.start_date ? ` from ${us(d.from)}` : ''}${d.until ? ` until ${us(d.until)}` : ''}.`;
     if (Number(p.tax_percent) > 0) note += ` Plus ${region().tax_name} of ${Number(p.tax_percent)}%.`;
     if (note) small(note.trim(), L + pad, t - 36, { width: c1 - L - 2 * pad });
     page.drawLine({ start: { x: L, y: t - 46 }, end: { x: c1, y: t - 46 }, thickness: 0.7, color: red });

@@ -26,6 +26,11 @@ const REPORT = { rent_roll: 'rent-roll', overdue: 'aging', collections: 'collect
 const ASK = 'Use only what the user has told you: ask for anything missing, and never invent a name, a phone number, a price or a date.';
 const INSPECT_FIRST = 'Ask the user how they found the unit and write it down with leasing_record_inspection (or they can do it on the screens: Leasing, the lease, Move-in inspection), then confirm the lease.';
 const str = { type: 'string' };
+// A lease's discounts off the monthly rent, each between dates of its own (leasing.js bookingFields).
+const DISCOUNTS = { type: 'array', maxItems: 10, items: { type: 'object', properties: { amount: { type: 'number', description: 'Off the rent each month.' },
+  from: { ...str, description: 'YYYY-MM-DD: the first rent it comes off; leave out for the lease start.' },
+  until: { ...str, description: 'YYYY-MM-DD: the last rent it comes off; leave out to run to the lease end.' },
+  note: { ...str, description: 'Why it was given.' } }, required: ['amount'] } };
 
 export const LEASING_TOOLS = [
   {
@@ -163,8 +168,7 @@ export const LEASING_TOOLS = [
         rent_amount: { type: 'number' }, rent_period: { type: 'string', enum: ['month', 'year'], description: 'Whether rent_amount is per month or per year. Default month.' },
         payment_frequency: { type: 'string', enum: ['monthly', 'quarterly', 'every_6_months', 'yearly', 'upfront'], description: 'Default monthly.' },
         security_deposit: { type: 'number' },
-        discount_percent: { type: 'number', description: 'A discount off the rent, in percent. Only when the user gives one.' },
-        discount_amount: { type: 'number', description: 'A discount as an amount off rent_amount (off the month, or off the year). Give this or discount_percent, never both.' }, discount_note: { ...str, description: 'Why the discount was given.' },
+        discounts: { ...DISCOUNTS, description: 'Discounts off the monthly rent, in money, each between dates of its own. Only when the user gives one.' },
         tax_percent: { type: 'number', description: "Tax (VAT) on the rent and the charges, in percent; the deposit is never taxed. Left out, the lease gets the region's usual tax, as the lease form does: say so in the answer. 0 only when the user says there is no tax." },
         charges: { type: 'array', maxItems: 10, items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: every month. false: once.' }, from: { type: 'string', description: 'YYYY-MM-DD, monthly charges only: first day it is billed; leave out for the lease start.' }, until: { type: 'string', description: 'YYYY-MM-DD, monthly charges only: it stops after the month this falls in; leave out to run to the lease end.' } }, required: ['name', 'amount'] } },
         source: { ...str, description: 'Where the tenant came from (walk-in, referral, a listing site…), as in leasing_list sources. Only when the user says; a new one is added to that list.' },
@@ -210,8 +214,8 @@ export const LEASING_TOOLS = [
         rent_amount: { type: 'number' }, rent_period: { type: 'string', enum: ['month', 'year'] },
         payment_frequency: { type: 'string', enum: ['monthly', 'quarterly', 'every_6_months', 'yearly', 'upfront'] },
         security_deposit: { type: 'number' },
-        discount_percent: { type: 'number', description: 'A discount off the rent, in percent. 0 takes the discount off.' },
-        discount_amount: { type: 'number', description: 'A discount as an amount off rent_amount (off the month, or off the year). Give this or discount_percent, never both. 0 takes the discount off.' }, discount_note: { ...str, description: 'Why the discount was given.' },
+        discounts: { ...DISCOUNTS, description: "The lease's whole list of discounts off the monthly rent, as it is to be: those it has (leasing_list shows them) and any new one. An empty list takes them all off. "
+          + 'Rent already paid cannot change, so a discount agreed during the lease starts from the next rent still unpaid.' },
         tax_percent: { type: 'number', description: 'Tax (VAT) on the rent and the charges, in percent; the deposit is never taxed. 0 takes the tax off.' },
         set_charges: { type: 'array', maxItems: 10, description: 'Charges to add, or to re-price if the lease already has one of that name. The others stay as they are.',
           items: { type: 'object', properties: { name: str, amount: { type: 'number' }, repeats: { type: 'boolean', description: 'true: every month. false: once.' }, from: { type: 'string', description: 'YYYY-MM-DD, monthly charges only: first day it is billed; leave out for the lease start.' }, until: { type: 'string', description: 'YYYY-MM-DD, monthly charges only: it stops after the month this falls in; leave out to run to the lease end.' } }, required: ['name', 'amount'] } },
@@ -307,6 +311,7 @@ function terms(input) {
   if (input.discount_percent != null) Object.assign(out, { discount_type: 'percent', discount_value: input.discount_percent });
   else if (input.discount_amount != null) Object.assign(out, { discount_type: 'amount', discount_value: input.discount_amount });
   if (input.discount_note != null) out.discount_note = input.discount_note;
+  if (Array.isArray(input.discounts)) out.discounts = input.discounts;
   if (input.tax_percent != null) out.tax_percent = input.tax_percent;
   return out;
 }
@@ -316,7 +321,8 @@ async function sourceOf(name) {
   const has = typed && (await listSources()).find((s) => s.name.toLowerCase() === typed.toLowerCase());
   return { name: has ? has.name : typed, fresh: !!typed && !has };
 }
-const discountLine = (b) => (b.discount_type ? `discount ${b.discount_type === 'percent' ? `${b.discount_value}%` : cash(b.discount_value)}${b.discount_note ? ` (${b.discount_note})` : ''}` : '');
+const discountLine = (b) => [b.discount_type && `discount ${b.discount_type === 'percent' ? `${b.discount_value}%` : cash(b.discount_value)}${b.discount_note ? ` (${b.discount_note})` : ''}`,
+  ...(b.discounts || []).map((d) => `discount ${cash(d.amount)} a month${d.from ? ` from ${d.from}` : ''}${d.until ? ` until ${d.until}` : ''}${d.note ? ` (${d.note})` : ''}`)].filter(Boolean).join(', ');
 const taxLine = (b) => (b.tax_percent ? `${region().tax_name} ${b.tax_percent}%` : '');
 
 const chargesLine = (fees) => (fees.length ? fees.map((f) => `${f.label} ${cash(f.amount)}${f.repeats ? ` every month${f.from ? ` from ${f.from}` : ''}${f.until ? ` until ${f.until}` : ''}` : ' once'}`).join(', ') : 'none');
@@ -328,7 +334,7 @@ const inspected = (b) => (b.status === 'draft' ? (b.renewed_from ? ', a renewal:
 /** A booking in one line, as Riley is told it. */
 const bookingLine = (b) => `${b.ref} (${b.stage}${inspected(b)}): ${b.tenant}, unit ${b.unit_no}, ${b.building}, ${b.start_date} to ${b.end_date}, `
   + `${cash(b.rent_amount)} per ${b.rent_period}, paid ${b.payment_frequency.replace(/_/g, ' ')}; deposit ${b.security_deposit == null ? 'none' : cash(b.security_deposit)}; charges: ${chargesLine(b.fees)}`
-  + (b.discount_type || b.tax_percent ? `; ${discountLine(b) || 'discount none'}; ${taxLine(b) || `${region().tax_name} none`}` : '')
+  + (b.discount_type || b.discounts?.length || b.tax_percent ? `; ${discountLine(b) || 'discount none'}; ${taxLine(b) || `${region().tax_name} none`}` : '')
   + (b.source ? `; source: ${b.source}` : '')
   + (b.tenant_energy_account ? "; energy on the tenant's own account" : '');
 

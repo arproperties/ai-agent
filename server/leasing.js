@@ -107,7 +107,7 @@ export async function removeTenant(id) {
 
 const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amount, b.rent_period, b.payment_frequency,
     b.security_deposit, b.status, b.contract_no, b.source, b.referred_by, rt.full_name AS referred_by_name, b.tenant_energy_account, b.cancel_reason, b.notes, b.created_at,
-    b.fees, b.discount_type, b.discount_value, b.discount_note, b.tax_percent, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
+    b.fees, b.discounts, b.discount_type, b.discount_value, b.discount_note, b.tax_percent, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
     (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
     (b.import_batch IS NOT NULL OR EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete)) AS moved_in,
@@ -136,7 +136,7 @@ export function bookingStage(b, today = todayHere()) {
 }
 
 const num = (v) => (v == null ? null : Number(v));
-const shape = (b, today) => b && { ...b, fees: JSON.parse(b.fees || '[]'), discount_value: num(b.discount_value), tax_percent: num(b.tax_percent), part_month_amount: num(b.part_month_amount),
+const shape = (b, today) => b && { ...b, fees: JSON.parse(b.fees || '[]'), discounts: JSON.parse(b.discounts || '[]'), discount_value: num(b.discount_value), tax_percent: num(b.tax_percent), part_month_amount: num(b.part_month_amount),
   ref: bookingRef(b), stage: bookingStage(b, today) };
 
 /** A lease is a year or more (end on or after the day before the same date next year). */
@@ -223,6 +223,19 @@ function bookingFields(body = {}, { partial = false } = {}) {
     }
   }
   if ('discount_note' in body) out.discount_note = text(body.discount_note);
+  // Discounts off the monthly rent, each between dates of its own: none is from the start, or to the end.
+  if ('discounts' in body) {
+    const list = (Array.isArray(body.discounts) ? body.discounts : []).filter((d) => d && (Number(d.amount) || d.from || d.until || d.note));
+    if (list.length > 10) throw bad('At most ten discounts.');
+    const day = (s, name) => { if (!s) return null; if (!isDate(s)) throw bad(`${name} is not a date.`); return s; };
+    out.discounts = JSON.stringify(list.map((d) => {
+      if (!(Number(d.amount) > 0)) throw bad('Each discount needs an amount above zero.');
+      const from = day(d.from, 'A discount’s start'), until = day(d.until, 'A discount’s end');
+      if (from && until && until < from) throw bad('A discount ends before it starts.');
+      const note = text(d.note, 200);
+      return { amount: money(Number(d.amount)), ...(from ? { from } : {}), ...(until ? { until } : {}), ...(note ? { note } : {}) };
+    }));
+  }
   // Tax on the rent and the other charges. Empty or zero is a booking with no tax.
   if ('tax_percent' in body) {
     const v = body.tax_percent;
@@ -269,7 +282,10 @@ const PRORATE = new Set(['first', 'second']);
 const mustProrateMonthly = (b) => { if (b.prorate && b.payment_frequency !== 'monthly') throw bad('Proration needs monthly payments.'); };
 
 /** An amount taken off the rent has to leave some rent. */
-const mustLeaveRent = (b) => { if (b.discount_type === 'amount' && Number(b.discount_value) >= Number(b.rent_amount)) throw bad('The discount must be less than the rent.'); };
+const mustLeaveRent = (b) => {
+  if (b.discount_type === 'amount' && Number(b.discount_value) >= Number(b.rent_amount)) throw bad('The discount must be less than the rent.');
+  if (discountsOf(b).some((d) => d.amount >= monthlyRent(b))) throw bad('A discount must be less than the rent for a month.');
+};
 
 /**
  * The confirmed booking of this unit that shares a day with these dates, if any; or one that
@@ -385,12 +401,21 @@ export async function updateBooking(id, body = {}, by) {
     if (fixed && await db.prepare('SELECT 1 FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id WHERE i.booking_id = ? LIMIT 1').get(old.id)) {
       throw bad('Payments are recorded on this lease, so its start date, rent, discount, tax and payment frequency cannot change (nor how its first month is charged). Cancel it and make a new lease instead.', 409);
     }
+    // A discount agreed later may change rent still to be paid, never rent that has money against it.
+    if ('discounts' in row && row.discounts !== JSON.stringify(old.discounts)) {
+      const paid = await db.prepare(`SELECT DISTINCT to_char(i.due_date, 'YYYY-MM-DD') AS due FROM lease_installments i JOIN lease_payments p ON p.installment_id = i.id
+        WHERE i.booking_id = ? AND i.kind = 'rent' ORDER BY 1`).all(old.id);
+      const was = new Map(schedule(old).map((r) => [r.due, r.amount]));
+      const hit = schedule({ ...old, ...row, start_date: start, end_date: end }).find((r) => paid.some((p) => p.due === r.due) && r.amount !== was.get(r.due));
+      const usDate = (s) => `${s.slice(5, 7)}/${s.slice(8, 10)}/${s.slice(0, 4)}`;
+      if (hit) throw bad(`The rent due ${usDate(hit.due)} is already paid, so a discount cannot change it. Start the discount after it.`, 409);
+    }
     const cols = Object.keys(row);
     if (cols.length) await db.prepare(`UPDATE lease_bookings SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => row[c]), old.id);
     const now = await getBooking(id);
     if (now.status === 'confirmed') await writeSchedule(now);
     if ('fees' in row) await learnPrices(now.fees, now.building_id);
-    const same = (c) => (c === 'fees' ? row.fees === JSON.stringify(old.fees) : String(row[c] ?? '') === String(old[c] ?? '') || (row[c] != null && Number(row[c]) === Number(old[c])));
+    const same = (c) => (c === 'fees' || c === 'discounts' ? row[c] === JSON.stringify(old[c]) : String(row[c] ?? '') === String(old[c] ?? '') || (row[c] != null && Number(row[c]) === Number(old[c])));
     const changed = cols.filter((c) => c !== 'renewed_from' && !same(c)).map((c) => c.replace(/_id$/, '').replace(/_/g, ' '));
     if (changed.length) await logEvent(old.id, 'changed', changed.join(', '), by);
     if (row.renewed_from) await logEvent(old.id, 'changed', await logFollowOn(row.renewed_from, now, by), by);
@@ -575,6 +600,10 @@ export const netRent = (b) => {
   return b.discount_type === 'percent' ? rent - (rent * off) / 100 : b.discount_type === 'amount' ? rent - off : rent;
 };
 export const monthlyRent = (b) => netRent(b) / (b.rent_period === 'year' ? 12 : 1);
+/** A booking's dated discounts, whether still the JSON it is kept as or already read. */
+export const discountsOf = (b) => (typeof b.discounts === 'string' ? JSON.parse(b.discounts) : b.discounts || []);
+/** What the dated discounts take off the rent of the month billed on `due`. */
+const offOn = (b, due) => discountsOf(b).reduce((t, d) => t + ((!d.from || due >= d.from) && (!d.until || due <= d.until) ? Number(d.amount) : 0), 0);
 /** The tax on an amount, at the booking's rate; nothing when it has none. */
 export const taxOn = (b, amount) => money((amount * (Number(b.tax_percent) || 0)) / 100);
 /** How many months a stay covers; a part month counts as a month. An end date written as the
@@ -604,7 +633,10 @@ export function schedule(b) {
   // does not divide by twelve still adds up to exactly itself.
   const upTo = (n) => money(monthlyRent(b) * n);
   for (let k = 0; k < months; k += step) {
-    const rent = money(upTo(Math.min(k + step, months)) - upTo(k));
+    // Less the dated discounts of each month the payment covers.
+    let off = 0;
+    for (let j = k; j < Math.min(k + step, months); j++) off += offOn(b, addMonths(b.start_date, j));
+    const rent = money(Math.max(0, upTo(Math.min(k + step, months)) - upTo(k) - off));
     const tax = taxOn(b, rent);
     out.push({ due: addMonths(b.start_date, k), amount: money(rent + tax), ...(tax ? { tax } : {}), share: Math.min(step, months - k) });
   }
@@ -639,7 +671,9 @@ function proratedSchedule(b) {
   else if (head) rows.unshift({ ...head, part: true });
   return rows.map(({ due, share, part }) => {
     // The part month at the amount typed for it, when one was (Rent Manager's own figure).
-    const rent = part && Number(b.part_month_amount) > 0 ? money(Number(b.part_month_amount)) : money(monthlyRent(b) * share);
+    // A dated discount comes off a part month by its days, as the rent does.
+    const off = offOn(b, due) * share;
+    const rent = money(Math.max(0, part && Number(b.part_month_amount) > 0 ? Number(b.part_month_amount) - off : (monthlyRent(b) - offOn(b, due)) * share));
     const tax = taxOn(b, rent);
     return { due, amount: money(rent + tax), ...(tax ? { tax } : {}), share };
   });
@@ -655,7 +689,8 @@ function importedSchedule(b) {
   const step = STEP[b.payment_frequency] || firsts.length;
   const out = [];
   for (let k = 0; k < firsts.length; k += step) {
-    const rent = money(monthlyRent(b) * Math.min(step, firsts.length - k));
+    const off = firsts.slice(k, k + step).reduce((t, d) => t + offOn(b, d), 0);
+    const rent = money(Math.max(0, monthlyRent(b) * Math.min(step, firsts.length - k) - off));
     const tax = taxOn(b, rent);
     out.push({ due: firsts[k], amount: money(rent + tax), ...(tax ? { tax } : {}), share: Math.min(step, firsts.length - k) });
   }

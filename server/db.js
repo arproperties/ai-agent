@@ -1431,6 +1431,9 @@ await db.exec(`
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS tax_percent NUMERIC;
   ALTER TABLE lease_installments ADD COLUMN IF NOT EXISTS tax NUMERIC NOT NULL DEFAULT 0;
 `);
+// Discounts that come off the monthly rent between dates of their own, as JSON [{ amount, from?, until?, note? }]:
+// no `from` is from the start, no `until` to the end. They take the place of the single discount above on the form.
+await db.exec("ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS discounts TEXT NOT NULL DEFAULT '[]'");
 
 // Where a booking's tenant came from (a walk-in, a referral, a listing site…). lease_sources is
 // the one list for the whole app, picked from on the booking form; a booking keeps the name
