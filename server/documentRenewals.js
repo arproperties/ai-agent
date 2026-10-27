@@ -18,6 +18,7 @@ import { imapAccount } from './imap.js';
 import { createDraft, decideDraft, draftOut, getDraft } from './drafts.js';
 import { keepFiles } from './draftFiles.js';
 import { kick } from './outbox.js';
+import { listAddresses } from './addressBook.js';
 
 // Document Renewals, the screen (client/src/components/DocumentRenewals.jsx): every
 // categorised Shelf file this person may read, by the employee or the company it is for,
@@ -300,7 +301,7 @@ const money = (n) => (n == null ? null : `AED ${Number(n).toLocaleString('en-US'
  * the terms, the documents attached, and HR's note. A termination goes to the employee: their
  * contract ends, the last working day and notice; the reason and HR's note stay with HR.
  */
-function emailText(c, user, e, pros = []) {
+function emailText(c, user, e) {
   const t = c.proposal?.terms || {};
   const company = e?.company || '';
   const lines = [];
@@ -312,7 +313,7 @@ function emailText(c, user, e, pros = []) {
     lines.push('', 'HR will contact you about your final settlement and the cancellation of your visa and labour card.',
       'Thank you for your work with us.');
   } else {
-    lines.push(`Dear ${pros.length === 1 ? pros[0].name : 'PRO team'},`, '');
+    lines.push('Dear PRO team,', '');
     lines.push(`Please process the renewal of the labour contract of ${c.employee_name}${c.employee_code ? ` (${c.employee_code})` : ''}${company ? `, ${company}` : ''}.`, '');
     if (t.new_start) lines.push(`New contract: 2 years, ${longDay(t.new_start)} to ${longDay(t.new_end)}`);
     lines.push(c.proposal?.mode === 'update' ? 'Terms: updated as below' : 'Terms: same as the current contract');
@@ -329,6 +330,17 @@ function emailText(c, user, e, pros = []) {
   return lines.join('\n').trim();
 }
 
+// The addresses the email's To and Cc lists offer: the company address book, then staff
+// emails that are not in it. Anything else can still be typed.
+async function addressChoices() {
+  const book = await listAddresses();
+  const users = await staff();
+  const named = new Map(users.filter((u) => u.email).map((u) => [u.email.toLowerCase(), u.name]));
+  const list = [...book.builtIn, ...book.added.map((r) => r.email)];
+  for (const a of named.keys()) if (!list.includes(a)) list.push(a);
+  return [...new Set(list)].map((email) => ({ email, name: named.get(email) || null }));
+}
+
 // The documents a renewal email can carry: the employee's own. A termination carries none.
 async function attachable(user, c) {
   if (c.kind === 'cancel' || !c.employee_code) return [];
@@ -336,9 +348,10 @@ async function attachable(user, c) {
 }
 
 /**
- * The draft the person sees after saving a proposal. A renewal: to the PROs named in
- * Settings, with the employee's documents to tick. A termination: to the employee (their
- * email from saifsys, when it has one), with nothing attached.
+ * The draft the person sees after saving a proposal. A renewal: the person picks the PRO's
+ * address from the list (the company address book and staff emails), with the employee's
+ * documents to tick. A termination: to the employee (their email from saifsys, when it has
+ * one), with nothing attached.
  */
 export async function caseEmail(user, caseId, { mailbox = imapAccount, lookup = askSaifsys } = {}) {
   const c = await cases.getCase(user, caseId);
@@ -346,15 +359,15 @@ export async function caseEmail(user, caseId, { mailbox = imapAccount, lookup = 
   const acc = await mailbox(user.id);
   const docs = await attachable(user, c);
   const e = c.employee_code ? await lookup('hr', 'employee', { q: c.employee_code }).then((r) => r.employee || null, () => null) : null;
-  const pros = c.kind === 'cancel' ? [] : (await people((await cases.caseSettings()).pro_ids)).filter((p) => p.email);
-  const to = c.kind === 'cancel' ? (e?.email ? [String(e.email).trim().toLowerCase()] : []) : pros.map((p) => p.email.toLowerCase());
+  const to = c.kind === 'cancel' ? (e?.email ? [String(e.email).trim().toLowerCase()] : []) : [];
   return {
     to,
+    addresses: await addressChoices(),
     to_who: c.kind === 'cancel' ? 'employee' : 'pro',
     subject: c.kind === 'cancel'
       ? `Your labour contract termination${e?.company ? ` – ${e.company}` : ''}`
       : `Labour contract renewal – ${c.employee_name}${c.employee_code ? ` (${c.employee_code})` : ''}`,
-    body: emailText(c, user, e, pros),
+    body: emailText(c, user, e),
     from: acc?.can_write && acc.smtp_host ? acc.email : null,
     documents: docs.map((d) => ({ id: d.id, type: d.type, name: d.name, expires_on: d.expires_on, available: !!d.path || d.saifsys_has_file !== false })),
   };
@@ -430,9 +443,8 @@ documentRenewalRoutes.get('/unlinked', wrap(async (req, res) => {
 
 
 const caseUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-const people = async (ids) => (ids?.length
-  ? db.prepare('SELECT id, name, email FROM users WHERE id = ANY(?::int[]) ORDER BY lower(name)').all(ids)
-  : []);
+// Who can be given a PRO task: any of our own staff (never an external user).
+const staff = () => db.prepare('SELECT id, name, email FROM users WHERE NOT external ORDER BY lower(name)').all();
 
 /** A case as its page shows it: the document, the employee from saifsys, pay against payroll, the timeline. */
 async function casePage(user, id) {
@@ -454,8 +466,7 @@ async function casePage(user, id) {
     WHERE t.case_id = ? ORDER BY t.id`).all(c.id);
   const files = tasks.flatMap((t) => t.evidence?.files || []);
   const returned = files.length ? await db.prepare(`SELECT id, title, name, expires_on, path IS NOT NULL AS has_file FROM documents WHERE id = ANY(?::int[])`).all(files) : [];
-  const settings = await cases.caseSettings();
-  return { case: c, document: doc, employee, compare, events, tasks, returned, pros: await people(settings.pro_ids), master: isMaster(user) };
+  return { case: c, document: doc, employee, compare, events, tasks, returned, pros: await staff(), master: isMaster(user) };
 }
 
 documentRenewalRoutes.get('/cases', wrap(async (req, res) => { res.json({ cases: await cases.listCases(req.user) }); }));
@@ -477,11 +488,9 @@ documentRenewalRoutes.get('/cases/:id/email', wrap(async (req, res) => { res.jso
 documentRenewalRoutes.post('/cases/:id/email', wrap(async (req, res) => { res.json(await sendCaseEmail(req.user, req.params.id, req.body || {})); }));
 documentRenewalRoutes.post('/cases/:id/verify', step((req) => cases.verify(req.user, req.params.id, req.body || {})));
 
-// The case settings: the PROs, when a contract opens a case. The master sets them.
+// The case settings: when a contract opens a case, and whether sending is on. The master sets them.
 documentRenewalRoutes.get('/case-settings', wrap(async (req, res) => {
-  const s = await cases.caseSettings();
-  const staff = isMaster(req.user) ? await db.prepare('SELECT id, name, email FROM users WHERE NOT external ORDER BY lower(name)').all() : [];
-  res.json({ ...s, staff });
+  res.json(await cases.caseSettings());
 }));
 documentRenewalRoutes.put('/case-settings', wrap(async (req, res) => {
   res.json(await cases.saveCaseSettings(req.user, req.body || {}));

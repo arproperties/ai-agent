@@ -277,33 +277,28 @@ function ContractModal({ code, name, kind, onClose, onError }) {
   );
 }
 
-// Addresses typed one at a time: Enter, comma or leaving the box adds one; × takes it off.
-function Addresses({ label, value, onChange }) {
-  const [text, setText] = useState('');
-  const add = () => {
+// Addresses picked from the list (company address book and staff), several at once; one
+// that is not in the list can be typed and used as it is.
+function Addresses({ label, value, onChange, choices }) {
+  const options = [
+    ...choices.map((c) => ({ value: c.email, label: c.email, hint: c.name || undefined })),
+    ...value.filter((a) => !choices.some((c) => c.email === a)).map((a) => ({ value: a, label: a })),
+  ];
+  const add = (text) => {
     const more = text.split(/[,;\s]+/).map(cleanEmail).filter(Boolean);
     if (more.length) onChange([...new Set([...value, ...more])]);
-    setText('');
   };
   return (
-    <label className="block space-y-1">
+    <div className="space-y-1">
       <span className="text-xs text-mute">{label}</span>
-      <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-stroke bg-black/10 px-2 py-1.5 focus-within:border-p1/60">
-        {value.map((a) => (
-          <span key={a} className="flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-0.5 text-xs">
-            {a}<button type="button" onClick={() => onChange(value.filter((x) => x !== a))} aria-label={`Remove ${a}`} className="text-mute hover:text-txt"><X size={12} /></button>
-          </span>
-        ))}
-        <input value={text} onChange={(e) => setText(e.target.value)} onBlur={add} type="email"
-          onKeyDown={(e) => { if (['Enter', ',', ';'].includes(e.key)) { e.preventDefault(); add(); } else if (e.key === 'Backspace' && !text && value.length) onChange(value.slice(0, -1)); }}
-          placeholder={value.length ? '' : 'name@company.com'} className="min-w-[10rem] flex-1 bg-transparent px-1 py-1 text-sm outline-none placeholder:text-mute/70" />
-      </div>
-    </label>
+      <Picker multi value={value} onChange={onChange} options={options} onNew={add}
+        placeholder="Choose the addresses" searchPlaceholder="Search or type an address" />
+    </div>
   );
 }
 
 /**
- * After the proposal is saved: the email to send about it. The person types who it goes to
+ * After the proposal is saved: the email to send about it. The person picks who it goes to
  * and who is copied; a renewal attaches the employee's documents (ticked ones only), a
  * termination none. Send sends it from their own mailbox.
  */
@@ -337,12 +332,11 @@ function CaseEmail({ caseId, renew }) {
       <h3 className="flex items-center gap-2 text-sm font-medium"><Send size={15} /> {renew ? 'Email to the PRO' : 'Email to the employee'}</h3>
       {!d ? (error ? <Problem text={error} /> : <Spinner />) : (
         <>
-          {renew && !d.to.length && <p className="text-xs text-warn">No PRO with an email is set yet: the master adds the PROs under Settings on this screen, or type the address below.</p>}
           {!renew && !d.to.length && <p className="text-xs text-warn">saifsys has no email for this employee: type it below.</p>}
           {!d.from && <Problem text="Your email is not connected with sending turned on, so this cannot be sent yet (Settings, Email)." />}
           {d.from && <p className="text-xs text-mute">From {d.from}</p>}
-          <Addresses label="To" value={to} onChange={setTo} />
-          <Addresses label="Cc" value={cc} onChange={setCc} />
+          <Addresses label="To" value={to} onChange={setTo} choices={d.addresses || []} />
+          <Addresses label="Cc" value={cc} onChange={setCc} choices={d.addresses || []} />
           <label className="block space-y-1"><span className="text-xs text-mute">Subject</span><input value={subject} onChange={(e) => setSubject(e.target.value)} className={field} /></label>
           <label className="block space-y-1"><span className="text-xs text-mute">Message</span><textarea value={body} onChange={(e) => setBody(e.target.value)} rows={10} className={field} /></label>
           {renew && d.documents.length > 0 && (
@@ -518,7 +512,7 @@ function SendSwitch({ s, onChange }) {
   );
 }
 
-/** The master's settings: whether sending is on, who the PROs are, when a contract opens a case, and the alert days. */
+/** The master's settings: whether sending is on, when a contract opens a case, and the alert days. */
 function SettingsSheet({ onClose }) {
   const [s, setS] = useState(null);
   const [alerts, setAlerts] = useState(null);
@@ -526,19 +520,18 @@ function SettingsSheet({ onClose }) {
   const [error, setError] = useState('');
   useEffect(() => {
     Promise.all([api.get('/document-renewals/case-settings'), api.get('/document-renewals/alert-settings')])
-      .then(([c, a]) => { setS({ ...c, saved_on: !!c.send_on, pro_ids: c.pro_ids.map(String) }); setAlerts({ ...a, days: a.days.join(', ') }); })
+      .then(([c, a]) => { setS({ ...c, saved_on: !!c.send_on }); setAlerts({ ...a, days: a.days.join(', ') }); })
       .catch((e) => setError(e.message));
   }, []);
   const save = async () => {
     setBusy(true); setError('');
     try {
-      await api.put('/document-renewals/case-settings', { open_days: Number(s.open_days), pro_ids: s.pro_ids.map(Number), send_on: !!s.send_on });
+      await api.put('/document-renewals/case-settings', { open_days: Number(s.open_days), send_on: !!s.send_on });
       await api.put('/document-renewals/alert-settings', { days: alerts.days.split(/[^\d]+/).filter(Boolean).map(Number), overdue_every_days: Number(alerts.overdue_every_days), hour: Number(alerts.hour) });
       onClose();
     } catch (e) { setError(e.message); }
     setBusy(false);
   };
-  const staff = (s?.staff || []).map((u) => ({ value: String(u.id), label: u.name || u.email, hint: u.email }));
   const field = 'w-full rounded-xl border border-stroke bg-black/10 px-3 py-2.5 text-sm outline-none focus:border-p1/60';
   return (
     <Sheet title="Document Renewals settings" onClose={onClose}>
@@ -546,8 +539,6 @@ function SettingsSheet({ onClose }) {
         {!s || !alerts ? (error ? <Problem text={error} /> : <Spinner />) : (
           <>
             <SendSwitch s={s} onChange={(on) => setS({ ...s, send_on: on })} />
-            <label className="block space-y-1"><span className="text-xs text-mute">PROs</span>
-              <Picker multi value={s.pro_ids} onChange={(v) => setS({ ...s, pro_ids: v })} options={staff} placeholder="Choose the PROs" /></label>
             <label className="block space-y-1"><span className="text-xs text-mute">A contract opens a case this many days before it ends</span>
               <input inputMode="numeric" value={s.open_days} onChange={(e) => setS({ ...s, open_days: e.target.value })} className={field} /></label>
             <label className="block space-y-1"><span className="text-xs text-mute">Alerts this many days before expiry</span>

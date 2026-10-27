@@ -24,7 +24,6 @@ async function approvedCase({ propose = true } = {}) {
   const staff = { id: await makeUser('Staff'), role: 'user' };
   await cats.seedCategories();
   await setModuleAccess(hr.id, ['document_renewals']);
-  await db.prepare('INSERT INTO doc_renewal_case_settings (id, pro_ids) VALUES (1, ?)').run([pro.id]);
   const t = (await db.prepare("SELECT id FROM document_types WHERE label = 'Residence Visa'").get()).id;
   const visa = await makeDoc(staff.id, null, 'visa.pdf');
   await db.prepare(`UPDATE documents SET type_id = ?, category_id = (SELECT category_id FROM document_types WHERE id = ?),
@@ -53,8 +52,10 @@ test('a task goes to a PRO, moves the case on and tells them without any documen
   assert.deepEqual(o.sent[0].ids, [pro.id]);
   assert.equal(o.sent[0].url, `/?protask=${t.id}`);
   assert.doesNotMatch(JSON.stringify(o.sent[0]), /visa\.pdf|E-0042/, 'a link, not the papers');
-  const staff = { id: await makeUser('Nobody'), role: 'user' };
-  await assert.rejects(tasks.createTask(hr, c.id, { assignee_id: staff.id, kind: 'x', due_date: plus(7) }, { push: quiet }), (e) => e.status === 400, 'only a PRO from the settings');
+  const outsider = { id: await makeUser('Outsider'), role: 'user' };
+  await db.prepare('UPDATE users SET external = true WHERE id = ?').run(outsider.id);
+  await assert.rejects(tasks.createTask(hr, c.id, { assignee_id: outsider.id, kind: 'x', due_date: plus(7) }, { push: quiet }), (e) => e.status === 400, 'never an external user');
+  await assert.rejects(tasks.createTask(hr, c.id, { assignee_id: 999999, kind: 'x', due_date: plus(7) }, { push: quiet }), (e) => e.status === 400, 'nor someone who does not exist');
 });
 
 test('PRO sees only their own task\'s case', async () => {
@@ -181,7 +182,6 @@ test('a verified cancellation marks the document not renewing and closes', async
   await db.prepare(`UPDATE users SET role = 'master' WHERE id = ?`).run(boss.id);
   const pro = { id: await makeUser('Pro'), role: 'user' };
   await cats.seedCategories();
-  await db.prepare('INSERT INTO doc_renewal_case_settings (id, pro_ids) VALUES (1, ?)').run([pro.id]);
   const t = (await db.prepare("SELECT id FROM document_types WHERE label = 'Residence Visa'").get()).id;
   const visa = await makeDoc(boss.id, null, 'visa.pdf');
   await db.prepare(`UPDATE documents SET type_id = ?, category_id = (SELECT category_id FROM document_types WHERE id = ?),

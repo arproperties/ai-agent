@@ -347,7 +347,7 @@ export async function verify(user, id, { document_id } = {}) {
   await closeCase(c.id, user.id, c.kind === 'renew' ? `Renewed: runs to ${d.expires_on}` : 'Cancelled');
 }
 
-/** The master's settings: when a contract opens a case, who the PROs are, and whether sending is on. */
+/** The master's settings: when a contract opens a case, and whether sending is on. (pro_ids is no longer set from the screen: the PRO is picked on each case.) */
 export async function saveCaseSettings(user, { open_days, pro_ids, send_on } = {}) {
   if (!isMaster(user)) throw bad('Only the master changes these settings', 403);
   const cur = await caseSettings();
