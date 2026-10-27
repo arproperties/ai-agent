@@ -326,6 +326,14 @@ export default function BookingPayments({ booking }) {
     try { await api.del(`/leasing/charges/${r.id}`); load(); } catch (e) { setError(e.message); }
   };
   const takes = !booking.no_payments; // ticked "Don't accept payments" on the lease: none can be recorded
+  // Late fees on this lease, on or off at a touch: off takes those not paid off; on works them out again.
+  const [lateOn, setLateOn] = useState(!booking.no_late_fees);
+  const flipLate = async () => {
+    const on = !lateOn;
+    if (!on && !confirm('Turn off late fees on this lease? Late fees not paid yet come off, and no new ones are added.')) return;
+    setError('');
+    try { await api.put(at, { no_late_fees: !on }); setLateOn(on); booking.no_late_fees = !on; load(); } catch (e) { setError(e.message); }
+  };
 
   if (!rows || !deposit) return error ? <p className="text-sm text-bad">{error}</p> : <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
   // The deposit is not income: its line sits in its own card, and the figures on top are rent and charges only.
@@ -405,6 +413,15 @@ export default function BookingPayments({ booking }) {
           ))}
         </span>
         <span className="flex-1" />
+        {booking.status === 'confirmed' && (
+          <button type="button" role="switch" aria-checked={lateOn} onClick={flipLate} title={lateOn ? 'Late fees are charged on this lease' : 'No late fees on this lease'}
+            className="flex items-center gap-2 rounded-full border border-stroke/70 py-1 pl-3 pr-1 text-xs text-mute hover:text-txt">
+            Late fees {lateOn ? 'on' : 'off'}
+            <span className={`relative h-5 w-9 rounded-full transition ${lateOn ? 'bg-p1' : 'bg-white/15'}`}>
+              <span className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-all ${lateOn ? 'left-[18px]' : 'left-0.5'}`} />
+            </span>
+          </button>
+        )}
         {booking.status === 'confirmed' && open?.as !== 'charge' && <button onClick={() => setOpen({ as: 'charge' })} className={GHOST}><Plus size={13} /> Add a charge</button>}
         {/* Several months paid together: one amount, spread over what is owed, oldest first. */}
         {owedInAll > 0 && takes && open?.as !== 'all' && <button onClick={() => setOpen({ as: 'all' })} title="Paid for more than one at once? It goes on the extra charges due first, then the rent." className={GHOST}><Banknote size={13} /> Record a payment</button>}

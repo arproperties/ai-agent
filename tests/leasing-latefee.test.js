@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, closeDb, db, makeUser } from './helpers/db.js';
 import { create } from '../server/properties.js';
-import { createBooking, bookingPayments, recordPayment, bookingHistory, addWeekdays, iso, dayNo } from '../server/leasing.js';
+import { createBooking, updateBooking, bookingPayments, recordPayment, bookingHistory, addWeekdays, iso, dayNo } from '../server/leasing.js';
 import { runAlerts, saveSettings, getSettings } from '../server/leasingAlerts.js';
 
 test.after(() => closeDb());
@@ -61,6 +61,22 @@ test('a lease marked no late fees is never charged', async () => {
   const { bk } = await sara({ no_late_fees: true });
   await saveSettings({ latefee: { on: true } }, '2026-09-01');
   assert.deepEqual(await fees(bk.id, '2026-09-30'), []);
+});
+
+test('the switch on a lease: off takes its unpaid late fees off, on works them out again', async () => {
+  const { staff, bk } = await sara();
+  await saveSettings({ latefee: { on: true } }, '2026-09-01');
+  assert.equal((await fees(bk.id, '2026-10-23')).length, 2);
+  await updateBooking(bk.id, { no_late_fees: true }, staff);
+  assert.deepEqual(await fees(bk.id, '2026-10-23'), []);
+  await updateBooking(bk.id, { no_late_fees: false }, staff);
+  assert.deepEqual(await fees(bk.id, '2026-10-23'), [['2026-09-15', '2026-09-19', 105], ['2026-10-15', '2026-10-21', 60]]);
+
+  // A late fee with money against it stays when switched off, and grows no more.
+  const fee = (await bookingPayments(bk.id, '2026-10-23')).find((r) => r.kind === 'late');
+  await recordPayment(fee.id, { amount: 20, method: 'cash', received_on: '2026-10-23' }, staff, '2026-10-23');
+  await updateBooking(bk.id, { no_late_fees: true }, staff);
+  assert.deepEqual(await fees(bk.id, '2026-10-30'), [['2026-09-15', '2026-09-19', 105]]);
 });
 
 test('the tenant is emailed when the fee goes on, then every 5th day while it is owed', async () => {

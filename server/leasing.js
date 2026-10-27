@@ -414,6 +414,11 @@ export async function updateBooking(id, body = {}, by) {
     if (cols.length) await db.prepare(`UPDATE lease_bookings SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => row[c]), old.id);
     const now = await getBooking(id);
     if (now.status === 'confirmed') await writeSchedule(now);
+    // Late fees switched off on this lease: those not paid come off (a paid one stays, as money was taken for it).
+    // Switched back on, applyLateFees() works them out again the next time the schedule is looked at.
+    if (now.no_late_fees && !old.no_late_fees) {
+      await db.prepare("DELETE FROM lease_installments i WHERE i.booking_id = ? AND i.kind = 'late' AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)").run(old.id);
+    }
     if ('fees' in row) await learnPrices(now.fees, now.building_id);
     const same = (c) => (c === 'fees' || c === 'discounts' ? row[c] === JSON.stringify(old[c]) : String(row[c] ?? '') === String(old[c] ?? '') || (row[c] != null && Number(row[c]) === Number(old[c])));
     const changed = cols.filter((c) => c !== 'renewed_from' && !same(c)).map((c) => c.replace(/_id$/, '').replace(/_/g, ' '));
