@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from './db.js';
 import { requireMaster } from './auth.js';
-import { snapshot, dayNo, total, todayHere, bad, dueName, logEvent, isWeekend, weekdaysBetween } from './leasing.js';
+import { snapshot, dayNo, total, todayHere, bad, dueName, logEvent } from './leasing.js';
 import { region, hourHere, dayOf, cash } from './leasingRegion.js';
 import { usDate } from './usFormat.js';
 import { register } from './properties.js';
@@ -31,8 +31,8 @@ const DEFAULTS = {
   workorder: { on: true },                               // a work order past its scheduled day, and a new urgent one
   summary: { on: true },                                 // the morning's one-line total, to the master
   quiet: { from: 22, to: 8 },                            // no buzz between these hours (the business's time zone)
-  // A fee on rent still unpaid after the days of grace (weekdays): fixed or a share of the rent, then `daily` each weekday
-  // to the month's end, at most `cap` a month for that part; the tenant is emailed every `email` weekdays (0: never).
+  // A fee on rent still unpaid after the days of grace (weekdays): fixed or a share of the rent, then `daily` each day
+  // to the month's end, at most `cap` a month for that part; the tenant is emailed every `email` days (0: never).
   latefee: { on: false, days: 3, amount: 50, percent: 0, daily: 5, cap: 100, email: 5 },
   tenant: { on: false, before: 3 },                      // email the tenant the reminder automatically: this many days before (0: not before), on the due day and the overdue days
 };
@@ -251,13 +251,12 @@ export async function runAlerts(today = todayHere(), hour = hourHere(), { mail }
 }
 
 /**
- * The late fee, emailed to the tenant: on the weekday it goes on, then every `email` weekdays after
- * while the fee or its rent is still owed, with everything they owe listed. Never on a Saturday or
- * a Sunday, and one email a lease a day at most, shared with the reminder above.
+ * The late fee, emailed to the tenant: on the day it goes on, then every `email` days after while
+ * the fee or its rent is still owed, with everything they owe listed. One email a lease a day at
+ * most, shared with the reminder above.
  */
 async function emailLateFees(today, cfg, mail) {
   const T = dayNo(today);
-  if (isWeekend(T)) return;
   if (!mail) {
     const m = await import('./mailer.js');
     if (!m.mailReady()) return;
@@ -271,7 +270,7 @@ async function emailLateFees(today, cfg, mail) {
     JOIN prop_units u ON u.id = b.unit_id JOIN prop_buildings bl ON bl.id = u.building_id
     WHERE f.kind = 'late' AND b.status = 'confirmed' AND f.due_date <= ?::date ORDER BY f.due_date`).all(today);
   for (const f of fees) {
-    if (!f.email || !(Number(f.owed) > 0.004) || weekdaysBetween(dayNo(f.on_day), T) % cfg.latefee.email !== 0) continue;
+    if (!f.email || !(Number(f.owed) > 0.004) || (T - dayNo(f.on_day)) % cfg.latefee.email !== 0) continue;
     const fresh = await db.prepare('INSERT INTO lease_tenant_notices (booking_id, day) VALUES (?, ?) ON CONFLICT DO NOTHING').run(f.booking_id, today);
     if (!fresh.changes) continue;
     try {

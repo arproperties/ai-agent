@@ -757,19 +757,13 @@ export function addWeekdays(n, k) {
   for (let left = k; left > 0;) { d++; if (!isWeekend(d)) left--; }
   return d;
 }
-/** How many weekdays fall after day `from` up to and including day `to`. */
-export function weekdaysBetween(from, to) {
-  let n = 0;
-  for (let d = from + 1; d <= to; d++) if (!isWeekend(d)) n++;
-  return n;
-}
 
 /**
- * The late fee, when the master has set one (Alert rules), counted in weekdays only (Saturday and
- * Sunday never count). Rent not received in full within the days of grace gets a fee on the next
- * weekday: a fixed amount or a share of that rent. Each weekday after it, to the end of the month
- * the rent fell due in, `daily` more is added while the rent is still not paid in full, at most
- * `cap` a month for that part. Each month's rent has its own. The fee is one row on the schedule,
+ * The late fee, when the master has set one (Alert rules). The days of grace are weekdays (a
+ * Saturday or Sunday inside them does not count); rent not received in full within them gets a fee
+ * the day after the last: a fixed amount or a share of that rent. Each day after it, weekends too,
+ * to the end of the month the rent fell due in, `daily` more is added while the rent is still not
+ * paid in full, at most `cap` a month for that part. Each month's rent has its own. The fee is one row on the schedule,
  * due the day it went on, whose amount grows. Only rent falling due since the rule was switched on
  * is charged, so old arrears are not all fined at once. A fee put on because a payment was written
  * down late, when the money had come in time, comes off again.
@@ -792,7 +786,7 @@ export async function applyLateFees(today) {
     // The day the rent was paid in full, if it has been.
     let sum = 0, full = null;
     for (const p of pays) if (p.installment_id === r.id && full == null && (sum += Number(p.amount)) >= Number(r.amount) - 0.004) full = dayNo(p.on_day);
-    const feeDay = addWeekdays(dayNo(r.due), grace + 1);
+    const feeDay = addWeekdays(dayNo(r.due), grace) + 1;
     const fee = await db.prepare("SELECT id FROM lease_installments WHERE booking_id = ? AND kind = 'late' AND label = ?").get(r.booking_id, r.due);
     if (full != null && full < feeDay) {
       // In time after all: the fee comes off, unless money was already taken against it.
@@ -800,10 +794,10 @@ export async function applyLateFees(today) {
       continue;
     }
     if (T < feeDay) continue;
-    // Each weekday after the fee went on, to the month's end, while the rent was still owed.
+    // Each day after the fee went on, weekends too, to the month's end, while the rent was still owed.
     const monthEnd = dayNo(lastOfMonth(r.due));
     const upTo = Math.min(T, monthEnd, full != null ? full - 1 : Infinity);
-    const extra = Math.min(cap, daily * Math.max(0, weekdaysBetween(feeDay, upTo)));
+    const extra = Math.min(cap, daily * Math.max(0, upTo - feeDay));
     const amount = money(Number(rule.amount || 0) + (Number(r.amount) * Number(rule.percent || 0)) / 100 + extra);
     if (!(amount > 0)) continue;
     if (fee) await db.prepare(`UPDATE lease_installments SET amount = GREATEST(?, ${paid}), due_date = ? WHERE id = ?`).run(amount, iso(feeDay), fee.id);
