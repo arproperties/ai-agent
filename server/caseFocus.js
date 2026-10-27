@@ -12,6 +12,7 @@ import { needsModule } from './modules.js';
 import { casesIn, allCases, sameCase, names } from './primaryCase.js';
 import { caseKey, searchTerm } from './caseMatch.js';
 import { dubaiDate } from './saifsys/client.js';
+import { deadlinesFor } from './caseDeadlines.js';
 
 /** The cases this person has of their own: their case folders, and legal cases if they have Legal. */
 export async function knownCases(user, modules = []) {
@@ -198,6 +199,16 @@ caseFocusRoutes.get('/:conversationId/files', wrap(async (req, res) => {
   if (!out) return res.status(404).json({ error: 'Not found' });
   res.json(out);
 }));
+
+// The case's legal dates, read from its files and emails (caseDeadlines.js). force: Check again.
+const deadlines = (force) => wrap(async (req, res) => {
+  const focus = await focusOf(req.user.id, req.params.conversationId);
+  if (!focus?.primary) return res.status(404).json({ error: 'Not found' });
+  const { files } = await caseFiles(req.user.id, req.params.conversationId);
+  res.json(await deadlinesFor(req.user.id, focus.primary, files, { force }));
+});
+caseFocusRoutes.get('/:conversationId/deadlines', deadlines(false));
+caseFocusRoutes.post('/:conversationId/deadlines/scan', deadlines(true));
 
 caseFocusRoutes.get('/:conversationId/time', wrap(async (req, res) => {
   const focus = await focusOf(req.user.id, req.params.conversationId);

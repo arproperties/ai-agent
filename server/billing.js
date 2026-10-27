@@ -56,6 +56,7 @@ export const JOBS = {
   checklists: { name: 'Checklists', about: 'Making the points of a job' },
   notices: { name: 'Tenant notices', about: 'Writing notices to tenants' },
   setup: { name: 'Setting up', about: 'Making agents and other setup' },
+  cases: { name: 'Case deadlines', about: "Reading a case's files and emails for its legal dates" },
   other: { name: 'Other', about: 'Anything else' },
 };
 
@@ -63,6 +64,7 @@ const PATHS = [
   [/^\/(chat|conversations|messages|memories|suggestions|team-reminders|responsibilities|replies|address-book)\b/, 'chat'],
   [/^\/(documents|imports|file-access)\b/, 'files'],
   [/^\/lease-renewals\b/, 'renewals'],
+  [/^\/case-focus\b/, 'cases'],
   [/^\/tenant-care\b/, 'tenantcare'],
   [/^\/(mail-routing|shared-inbox|email|imap|outlook)\b/, 'mail'],
   [/^\/messenger\b/, 'messenger'],

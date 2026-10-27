@@ -86,6 +86,81 @@ export function useCaseFiles(convId, primary, refresh) {
 }
 
 // 24 Oct, or 24 Oct 2025 when it is not this year
+/**
+ * The case's legal dates, read by Reem from its files and emails (server/caseDeadlines.js).
+ * The first look starts the reading, which takes a little while, so the page asks again until it is done.
+ */
+export function useCaseDeadlines(convId, primary, refresh) {
+  const [state, setState] = useState(null);
+  const timer = useRef();
+  const load = useCallback((force) => {
+    if (!convId || !primary) return;
+    clearTimeout(timer.current);
+    (force ? api.post(`/case-focus/${convId}/deadlines/scan`) : api.get(`/case-focus/${convId}/deadlines`))
+      .then((s) => { setState(s); if (s.scanning) timer.current = setTimeout(() => load(false), 4000); })
+      .catch(() => {});
+  }, [convId, primary?.number]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(false); return () => clearTimeout(timer.current); }, [load, refresh]);
+  return { ...state, checkAgain: () => load(true) };
+}
+
+const DAY_MS = 86400000;
+const daysFrom = (today, due) => Math.round((Date.parse(`${due}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / DAY_MS);
+const leftLabel = (n) => (n === 0 ? 'today' : n === 1 ? 'tomorrow' : n > 0 ? `in ${n} days` : n === -1 ? 'yesterday' : `${-n} days ago`);
+const dueLabel = (due) => new Date(`${due}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+function DeadlineRow({ d, today, onOpen }) {
+  const [open, setOpen] = useState(false);
+  const n = daysFrom(today, d.due);
+  const tone = n < 0 ? 'text-mute' : n <= 7 ? 'text-bad' : n <= 30 ? 'text-warn' : 'text-txt';
+  return (
+    <li className={`rounded-lg border px-2.5 py-2 ${n >= 0 && n <= 7 ? 'border-bad/40 bg-bad/[0.07]' : 'border-stroke/60'}`}>
+      <button onClick={() => setOpen((o) => !o)} className="block w-full text-left">
+        <span className={`flex items-baseline justify-between gap-2 text-xs font-medium ${tone}`}>
+          <span>{dueLabel(d.due)}</span><span className="shrink-0">{leftLabel(n)}</span>
+        </span>
+        <span className="mt-0.5 block text-[13px] leading-snug">{d.what}</span>
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1 border-t border-stroke/60 pt-1.5 text-[11px] text-mute">
+          <p className="italic">“{d.quote}”</p>
+          {d.basis && <p>Worked out: {d.basis}</p>}
+          <p className="truncate" title={d.source_name}>From {d.source_name}</p>
+          {d.doc_id && <button onClick={() => onOpen(d.doc_id)} className="text-p1 hover:underline">Open the source</button>}
+        </div>
+      )}
+    </li>
+  );
+}
+
+export function CaseDeadlines({ deadlines: s, onOpen }) {
+  const [showPast, setShowPast] = useState(false);
+  if (!s?.today) return <p className="text-xs text-mute">Loading…</p>;
+  const list = s.deadlines || [];
+  const coming = list.filter((d) => daysFrom(s.today, d.due) >= 0);
+  const past = list.filter((d) => daysFrom(s.today, d.due) < 0).reverse(); // most recent first
+  return (
+    <div className="space-y-2">
+      {s.scanning && <p className="text-xs text-p1">Reading the case files and emails…</p>}
+      {!s.scanning && s.error && <p className="text-xs text-bad">{s.error}</p>}
+      {!s.scanning && !list.length && !s.error && <p className="text-xs text-mute">No legal dates found in the case papers.</p>}
+      {coming.length > 0 && <ul className="space-y-1.5">{coming.map((d) => <DeadlineRow key={d.id} d={d} today={s.today} onOpen={onOpen} />)}</ul>}
+      {past.length > 0 && (
+        <>
+          <button onClick={() => setShowPast((v) => !v)} className="text-xs text-mute hover:text-txt">
+            {showPast ? 'Hide' : 'Show'} {past.length} passed
+          </button>
+          {showPast && <ul className="space-y-1.5">{past.map((d) => <DeadlineRow key={d.id} d={d} today={s.today} onOpen={onOpen} />)}</ul>}
+        </>
+      )}
+      <div className="flex items-center justify-between gap-2 pt-0.5">
+        <p className="text-[10px] leading-tight text-mute">Found by Reem in the case papers. Check the source before relying on a date.</p>
+        {!s.scanning && <button onClick={s.checkAgain} className="shrink-0 text-[11px] text-p1 hover:underline">Check again</button>}
+      </div>
+    </div>
+  );
+}
+
 const when = (at) => {
   const d = new Date(at * 1000);
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(d.getFullYear() !== new Date().getFullYear() && { year: 'numeric' }) });
