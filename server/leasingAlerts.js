@@ -268,7 +268,7 @@ async function emailLateFees(today, cfg, mail) {
            FROM lease_installments r WHERE r.booking_id = f.booking_id AND r.kind = 'rent' AND to_char(r.due_date, 'YYYY-MM-DD') = f.label), 0) AS owed
     FROM lease_installments f JOIN lease_bookings b ON b.id = f.booking_id JOIN lease_tenants t ON t.id = b.tenant_id
     JOIN prop_units u ON u.id = b.unit_id JOIN prop_buildings bl ON bl.id = u.building_id
-    WHERE f.kind = 'late' AND b.status = 'confirmed' AND f.due_date <= ?::date ORDER BY f.due_date`).all(today);
+    WHERE f.kind = 'late' AND b.status = 'confirmed' AND NOT b.no_emails AND f.due_date <= ?::date ORDER BY f.due_date`).all(today);
   for (const f of fees) {
     if (!f.email || !(Number(f.owed) > 0.004) || (T - dayNo(f.on_day)) % cfg.latefee.email !== 0) continue;
     const fresh = await db.prepare('INSERT INTO lease_tenant_notices (booking_id, day) VALUES (?, ?) ON CONFLICT DO NOTHING').run(f.booking_id, today);
@@ -305,7 +305,7 @@ async function emailTenants(s, cfg, mail) {
   for (const p of s.dues) if (p.left && !oldest.has(p.booking_id) && goes(s.T - dayNo(p.due))) oldest.set(p.booking_id, p);
   for (const [bookingId, p] of oldest) {
     const b = s.bookingOf.get(bookingId);
-    if (!b.tenant_email) continue;
+    if (!b.tenant_email || b.no_emails) continue; // no email, or emails switched off on this lease
     const fresh = await db.prepare('INSERT INTO lease_tenant_notices (booking_id, day) VALUES (?, ?) ON CONFLICT DO NOTHING').run(bookingId, s.today);
     if (!fresh.changes) continue;
     try {

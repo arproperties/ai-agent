@@ -47,6 +47,7 @@ const TICKS = [
   ['no_partial_payments', 'Don’t accept partial payments', 'A payment must cover all that is due by its date'],
   ['no_payments', 'Don’t accept payments', 'No payment can be recorded on this lease'],
   ['no_twa', 'Don’t allow TWA payments', 'Kept for the record'],
+  ['no_emails', 'Don’t email the tenant', 'No automatic reminder or late fee email on this lease'],
 ];
 
 const nights = (a, b) => Math.round((new Date(`${b}T00:00:00`) - new Date(`${a}T00:00:00`)) / 86400000) + 1;

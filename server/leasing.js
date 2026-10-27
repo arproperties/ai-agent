@@ -115,7 +115,7 @@ const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amou
     to_char(b.lease_sign_date, 'YYYY-MM-DD') AS lease_sign_date, to_char(b.move_in_date, 'YYYY-MM-DD') AS move_in_date,
     to_char(b.notice_date, 'YYYY-MM-DD') AS notice_date, to_char(b.expected_move_out, 'YYYY-MM-DD') AS expected_move_out,
     to_char(b.deposit_due, 'YYYY-MM-DD') AS deposit_due,
-    b.no_late_fees, b.no_checks, b.no_partial_payments, b.no_payments, b.no_twa,
+    b.no_late_fees, b.no_checks, b.no_partial_payments, b.no_payments, b.no_twa, b.no_emails,
     EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_out' AND i.complete) AS moved_out,
     to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
     u.unit_no, u.floor, u.type AS unit_type, bl.id AS building_id, bl.name AS building, c.id AS company_id, c.name AS company,
@@ -268,7 +268,7 @@ function bookingFields(body = {}, { partial = false } = {}) {
 }
 
 const DATES = [['lease_sign_date', 'Lease sign date'], ['move_in_date', 'Move-in date'], ['notice_date', 'Notice date'], ['expected_move_out', 'Expected move-out'], ['deposit_due', 'Deposit date']];
-export const TICKS = ['no_late_fees', 'no_checks', 'no_partial_payments', 'no_payments', 'no_twa'];
+export const TICKS = ['no_late_fees', 'no_checks', 'no_partial_payments', 'no_payments', 'no_twa', 'no_emails'];
 
 /** The tenant named as having sent this one must be on the list, and not the lease's own tenant. */
 async function mustRefer(referredBy, tenantId) {
@@ -1272,7 +1272,7 @@ export async function snapshot({ company_id, building_id } = {}, today = todayHe
   const bookings = (await db.prepare(`SELECT b.id, b.unit_id, b.tenant_id, b.status, b.type, b.rent_amount, b.rent_period, b.payment_frequency, b.contract_no, b.discount_type, b.discount_value,
       b.created_at, b.created_by, to_char(b.start_date, 'YYYY-MM-DD') AS start_date, to_char(b.end_date, 'YYYY-MM-DD') AS end_date,
       b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
-      t.full_name AS tenant, t.email AS tenant_email, t.phone AS tenant_phone, w.name AS added_by,
+      t.full_name AS tenant, t.email AS tenant_email, t.phone AS tenant_phone, w.name AS added_by, b.no_emails,
       (b.contract_no IS NOT NULL OR EXISTS (SELECT 1 FROM lease_documents d WHERE d.booking_id = b.id AND d.title ILIKE '%contract%' AND NOT d.generated)) AS has_contract
     FROM lease_bookings b JOIN lease_tenants t ON t.id = b.tenant_id LEFT JOIN users w ON w.id = b.created_by
     ORDER BY b.start_date, b.id`).all()).filter((b) => unitOf.has(b.unit_id));

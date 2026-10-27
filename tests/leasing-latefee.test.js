@@ -99,6 +99,13 @@ test('the tenant is emailed when the fee goes on, then every 5th day while it is
   await runAlerts('2026-10-04', 9, { mail }); // 15 days on: a day to email, but nothing is owed
   assert.equal(mails.length, 2);
 
+  // Emails switched off on the lease: neither the late fee email nor the reminder goes.
+  const { bk: quiet } = await sara({ no_emails: true });
+  await saveSettings({ latefee: { on: true }, tenant: { on: true }, quiet: { from: 0, to: 0 } }, '2026-09-01');
+  const none = [];
+  for (const day of ['2026-09-16', '2026-09-18', '2026-09-19', '2026-09-24']) await runAlerts(day, 9, { mail: async (...m) => { none.push(m); } });
+  assert.deepEqual([none.length, (await fees(quiet.id, '2026-09-24')).length], [0, 1], 'the fee is still charged; only the email is off');
+
   // 0: never emailed.
   await saveSettings({ latefee: { email: 0 } }, '2026-09-01');
   assert.equal((await getSettings()).latefee.email, 0);

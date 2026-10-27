@@ -1511,6 +1511,8 @@ await db.exec(`
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_partial_payments BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_payments BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_twa BOOLEAN NOT NULL DEFAULT false;
+  -- no_emails: the tenant of this lease gets none of the automatic emails (dues reminders, late fees).
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_emails BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_payments ADD COLUMN IF NOT EXISTS batch TEXT;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS deposit_due DATE;
   ALTER TABLE lease_installments ADD COLUMN IF NOT EXISTS held BOOLEAN NOT NULL DEFAULT false;
