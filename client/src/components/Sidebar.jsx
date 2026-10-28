@@ -41,7 +41,7 @@ const Label = ({ children, action }) => (
   </div>
 );
 
-export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, translateOpen, onTranslate, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, renewalsOpen, onRenewals, modules, petOn, onPet, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose }) {
+export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, translateOpen, onTranslate, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, renewalsOpen, onRenewals, modules, petOn, onPet, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose, onCollapse }) {
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
   const [q, setQ] = useState('');
   const [searching, setSearching] = useState(false);
@@ -99,6 +99,8 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
         <span>REEM</span>
         <span className="flex items-center gap-3"><Clock />
           <button onClick={onClose} aria-label="Close menu" className="-mr-2 grid size-8 place-items-center rounded-full hover:bg-white/10 md:hidden"><Icon name="x" size={18} /></button>
+          {/* On a computer the menu can be folded away to give the chat the whole width. */}
+          <button onClick={onCollapse} aria-label="Hide menu" title="Hide menu" className="-mr-2 hidden size-8 place-items-center rounded-full hover:bg-white/10 hover:text-txt md:grid"><Icon name="railClose" size={18} /></button>
         </span>
       </header>
 

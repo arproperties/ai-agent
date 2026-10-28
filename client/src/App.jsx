@@ -67,6 +67,14 @@ export default function App() {
   const [sharedInbox, setSharedInbox] = useState(false); // whether Mail routing passes emails on to them
   const [chat, setChat] = useState({ key: 0, id: null });
   const [drawer, setDrawer] = useState(false);
+  // Desktop only: the person can fold the left menu away; remembered on this device.
+  const [railHidden, setRailHidden] = useState(() => { try { return localStorage.getItem('reem:rail-hidden') === '1'; } catch { return false; } });
+  const toggleRail = (hide) => {
+    setRailHidden(hide);
+    try { if (hide) localStorage.setItem('reem:rail-hidden', '1'); else localStorage.removeItem('reem:rail-hidden'); } catch { /* private mode */ }
+  };
+  // The menu button opens the drawer on a phone and brings the folded menu back on a computer.
+  const openMenu = () => { if (window.matchMedia('(min-width: 768px)').matches) toggleRail(false); else setDrawer(true); };
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
   const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewals ? 'renewals' : notifiedDocRenewal ? 'docrenewals' : notifiedLegal ? 'legal' : notifiedBuilding ? 'buildings' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
@@ -195,7 +203,7 @@ export default function App() {
   return (
     <div className="relative z-10 flex h-dvh">
       {drawer && <div className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden" onClick={() => setDrawer(false)} />}
-      <aside className={`max-md:liquid-glass rail-wash fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`max-md:liquid-glass rail-wash fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'} ${railHidden ? 'md:hidden' : ''}`}>
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
           onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} petOn={petOn} onPet={togglePet}
@@ -218,7 +226,7 @@ export default function App() {
           modules={modules || []}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
-          onLogout={logout} onClose={() => setDrawer(false)} />
+          onLogout={logout} onClose={() => setDrawer(false)} onCollapse={() => toggleRail(true)} />
       </aside>
 
       <main className="relative flex min-w-0 flex-1 flex-col">
@@ -226,14 +234,14 @@ export default function App() {
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice}
             firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
             due={due} onDueChanged={loadDue} onOpenLists={() => setPanel('todos')}
-            onConversation={onConversation} onMenu={() => setDrawer(true)} onNewChat={() => openChat(null)} menuBadge={dm.unread} />
+            onConversation={onConversation} onMenu={openMenu} onNewChat={() => openChat(null)} menuBadge={dm.unread} railHidden={railHidden} />
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —
           // otherwise there is no way back to the sidebar (or to sign out) on mobile.
           <div className="flex h-full flex-col">
             <header className="flex items-center gap-1 border-b border-stroke/60 px-2 pb-2 pt-safe md:px-4">
-              <button onClick={() => setDrawer(true)} aria-label={dm.unread ? 'Menu (new messages)' : 'Menu'} title="Menu"
-                className="relative grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt md:hidden">
+              <button onClick={openMenu} aria-label={dm.unread ? 'Menu (new messages)' : 'Menu'} title="Menu"
+                className={`relative grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt ${railHidden ? '' : 'md:hidden'}`}>
                 <Icon name="menu" />
                 {dm.unread > 0 && <span className="absolute right-1.5 top-1.5 size-2.5 rounded-full bg-emerald-400 ring-2 ring-bg" />}
               </button>
