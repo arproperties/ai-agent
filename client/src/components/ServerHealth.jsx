@@ -26,8 +26,9 @@ const dayName = (d) => new Date(`${d}T12:00:00`).toLocaleDateString([], { day: '
 const DOT = { green: 'bg-ok', amber: 'bg-warn', red: 'bg-bad' };
 const WORD = { green: 'OK', amber: 'Keep an eye on it', red: 'Act soon' };
 
+// Border only: the theme fills any bordered card (index.css); this page wants the ground to show.
 const Card = ({ title, hint, children }) => (
-  <section className="h-full space-y-3 rounded-3xl border border-stroke p-5">
+  <section className="h-full space-y-3 rounded-3xl border border-stroke bg-transparent p-5">
     {title && (
       <div>
         <h2 className="font-medium">{title}</h2>
@@ -42,7 +43,7 @@ const LIGHT_TEXT = { green: 'text-ok', amber: 'text-warn', red: 'text-bad' };
 
 function Tile({ icon: I, label, light, value, sub, bar }) {
   return (
-    <div className="flex flex-col gap-3 rounded-3xl border border-stroke p-5">
+    <div className="flex flex-col gap-3 rounded-3xl border border-stroke bg-transparent p-5">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-2.5 text-sm text-mute">
           <span className="grid size-9 place-items-center rounded-2xl bg-chart/15 text-chart"><I size={18} strokeWidth={1.75} /></span>
