@@ -27,7 +27,7 @@ const DOT = { green: 'bg-ok', amber: 'bg-warn', red: 'bg-bad' };
 const WORD = { green: 'OK', amber: 'Keep an eye on it', red: 'Act soon' };
 
 const Card = ({ title, hint, children }) => (
-  <section className="h-full space-y-3 rounded-3xl border border-stroke bg-white/[0.03] p-5">
+  <section className="h-full space-y-3 py-2">
     {title && (
       <div>
         <h2 className="font-medium">{title}</h2>
@@ -42,7 +42,7 @@ const LIGHT_TEXT = { green: 'text-ok', amber: 'text-warn', red: 'text-bad' };
 
 function Tile({ icon: I, label, light, value, sub, bar }) {
   return (
-    <div className="flex flex-col gap-3 rounded-3xl border border-stroke bg-white/[0.03] p-5">
+    <div className="flex flex-col gap-3 py-2">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-2.5 text-sm text-mute">
           <span className="grid size-9 place-items-center rounded-2xl bg-chart/15 text-chart"><I size={18} strokeWidth={1.75} /></span>
@@ -67,7 +67,7 @@ function Tile({ icon: I, label, light, value, sub, bar }) {
 
 function Stat({ icon: I, value, label, warn }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl bg-white/[0.04] p-3">
+    <div className="flex items-center gap-3 py-2">
       <span className={`grid size-9 shrink-0 place-items-center rounded-xl ${warn ? 'bg-warn/15 text-warn' : 'bg-chart/15 text-chart'}`}><I size={17} strokeWidth={1.75} /></span>
       <div className="min-w-0">
         <p className={`text-lg leading-tight tabular-nums ${warn ? 'text-warn' : ''}`}>{value}</p>
@@ -132,11 +132,11 @@ function Growth({ history }) {
         <span className="text-mute">{dayName(pick.day)}: </span>{size(s.value(pick))}
         {s.of && <span className="text-mute"> of {size(s.of(pick))} ({pct(s.value(pick), s.of(pick))})</span>}
       </p>
-      <div className="flex h-44 items-end gap-1" onMouseLeave={() => setOn(null)}>
+      <div className="flex h-44 items-end gap-1 border-b border-stroke" onMouseLeave={() => setOn(null)}>
         {list.map((d, i) => (
           <button key={d.day} disabled={d.empty} onMouseEnter={() => setOn(i)} onClick={() => setOn(i)}
             aria-label={d.empty ? `${dayName(d.day)}: no reading` : `${dayName(d.day)}: ${size(s.value(d))}`}
-            className="flex h-full flex-1 items-end rounded-md bg-white/[0.04]">
+            className="flex h-full flex-1 items-end">
             {!d.empty && (
               <span className={`block w-full rounded-md bg-gradient-to-t from-chart/70 to-chart transition-opacity ${on === null || on === i ? 'opacity-100' : 'opacity-45'}`}
                 style={{ height: `${Math.max(3, (s.value(d) / max) * 100)}%` }} />
@@ -207,11 +207,11 @@ export default function ServerHealth({ onBack }) {
   return (
     <Page title="Server health" onBack={onBack}
       action={<button onClick={load} aria-label="Refresh" className="rounded-full p-2 text-mute hover:bg-white/5"><RefreshCw size={17} className={busy ? 'animate-spin' : ''} /></button>}>
-      <div className="mx-auto max-w-7xl space-y-4">
+      <div className="mx-auto max-w-7xl space-y-8">
         {error && <p className="text-sm text-bad">{error}</p>}
         {!now ? <Loader2 className="mx-auto my-10 animate-spin text-mute" /> : (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-x-10 gap-y-6 sm:grid-cols-2 xl:grid-cols-4">
               <Tile icon={HardDrive} label="Disk" light={now.disk.light} value={pct(now.disk.used, now.disk.total)} bar={now.disk.used / now.disk.total}
                 sub={`${size(now.disk.free)} free of ${size(now.disk.total)}`} />
               <Tile icon={MemoryStick} label="Memory" light={now.memory.light} value={pct(memUsed, now.memory.total)} bar={memUsed / now.memory.total}
@@ -229,7 +229,7 @@ export default function ServerHealth({ onBack }) {
               </Card>
             )}
 
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-x-10 gap-y-8 lg:grid-cols-3">
               <div className="lg:col-span-2">
                 <Card title="Growth" hint="One bar per day, from the hourly readings. This is what tells you when to act.">
                   <Growth history={data.history} />
@@ -247,7 +247,7 @@ export default function ServerHealth({ onBack }) {
               </Card>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-x-10 gap-y-8 lg:grid-cols-3">
               <Card title="What takes the disk" hint={now.folders ? `Counted ${ago(now.folders.at)}.` : 'Being counted, check back in a minute.'}>
                 {now.folders && <Ranked rows={Object.entries(now.folders.sizes).filter(([, b]) => b > 1e6).sort((a, b) => b[1] - a[1])
                   .map(([name, bytes]) => ({ name, bytes, label: FOLDER_NAMES[name] }))} />}
