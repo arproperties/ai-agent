@@ -14,8 +14,12 @@ import { clientsClaim } from 'workbox-core';
 // Nothing secret lives here. The file is served to every browser, so the notice arrives
 // already written by the server and this only shows it.
 
-// ---------- the app's files (job one, unchanged in behaviour) ----------
-self.skipWaiting();
+// ---------- the app's files (job one) ----------
+// A new version waits here until the person taps Update in the app (src/lib/update.js),
+// which sends this message. Taking over by itself would reload the page under them.
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+});
 clientsClaim();
 cleanupOutdatedCaches();
 precacheAndRoute(self.__WB_MANIFEST);
