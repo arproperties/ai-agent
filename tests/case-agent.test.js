@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
 import { pickAgent } from '../server/router.js';
 import { agentCases, caseHome } from '../server/caseFocus.js';
+import { setAgentCase } from '../server/agents.js';
 
 test.after(() => closeDb());
 
@@ -34,6 +35,26 @@ test('an agent bound to a case gets every chat on it and answers nothing else', 
   assert.equal((await pickAgent({ ...base, agents: [general, soutex], text: '@Soutex hi', caseKey: 'e999999' })).agent.id, general.id);
   // Never picked on its own for a chat that is not its case.
   assert.equal((await pickAgent({ ...base, agents: [general, soutex], text: 'proverbs please', currentAgentId: soutex.id })).agent.id, general.id);
+});
+
+test("the person an agent is given to alone may set its case; not a shared one, not someone else's", async () => {
+  await reset();
+  const boss = { id: await makeUser('Boss'), role: 'master' };
+  await db.prepare(`UPDATE users SET role = 'master' WHERE id = ?`).run(boss.id);
+  const jeff = { id: await makeUser('Jeff'), role: 'user' };
+  const sara = { id: await makeUser('Sara'), role: 'user' };
+  const mine = await makeAgent(boss.id, 'Frazier');
+  const shared = await makeAgent(boss.id, 'Expert');
+  const give = (u, a) => db.prepare(`INSERT INTO agent_assignments (user_id, agent_id, mode) VALUES (?, ?, 'chat')`).run(u, a);
+  await give(jeff.id, mine);
+  await give(jeff.id, shared);
+  await give(sara.id, shared);
+
+  assert.equal((await setAgentCase(jeff, mine, 'B2017947')).case_key, 'b2017947');
+  await assert.rejects(setAgentCase(jeff, shared, '123456'), (e) => e.status === 403);
+  await assert.rejects(setAgentCase(sara, mine, '999999'), (e) => e.status === 404);
+  assert.equal((await setAgentCase(boss, shared, '123456')).case_number, '123456', 'the master may always');
+  assert.equal((await setAgentCase(jeff, mine, '')).case_key, null, 'emptied: any chat again');
 });
 
 test('without the case agent, a case chat routes as before', async () => {
