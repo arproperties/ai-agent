@@ -65,11 +65,12 @@ export function expiry(d) {
 const expiryTone = (e) => (e.gone ? 'text-bad' : e.soon ? 'text-warn' : 'text-mute');
 
 // ---------- data ----------
-function useFiles(agentId) {
-  const [docs, setDocs] = useState(null);
+// off: nothing to load (Case Home without an agent of its own), rather than the whole Shelf.
+export function useFiles(agentId, { off = false } = {}) {
+  const [docs, setDocs] = useState(off ? [] : null);
   const [uploading, setUploading] = useState(false);
   const [notes, setNotes] = useState([]);
-  const load = () => api.get(`/documents${agentId ? `?agent=${agentId}` : ''}`).then(setDocs);
+  const load = () => (off ? Promise.resolve() : api.get(`/documents${agentId ? `?agent=${agentId}` : ''}`).then(setDocs));
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // files attached in chat are organised in the background: refresh until they are done.
@@ -106,7 +107,7 @@ function useFiles(agentId) {
   return { docs, load, upload, write, uploading, notes };
 }
 
-function NoteSheet({ onSave, onClose }) {
+export function NoteSheet({ onSave, onClose }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const save = async (e) => {
