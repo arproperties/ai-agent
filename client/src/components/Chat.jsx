@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ListTodo, Lightbulb, X, Bell, Scale } from 'lucide-react';
 import { api, streamChat } from '../lib/api';
-import { speakText, stopSpeaking, togglePause } from '../lib/voice';
+import { speakPieces, stopSpeaking, togglePause } from '../lib/voice';
 import { cutSelection } from '../lib/cut';
 import Icon from './Icon';
 import Orb from './Orb';
@@ -57,6 +57,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [status, setStatus] = useState('');
   const [toast, setToast] = useState('');
   const [voice, setVoice] = useState({ id: null, state: 'idle' }); // reply being read aloud
+  const [readNow, setReadNow] = useState(null); // a spoken question's reply, to read once it shows
   const [live, setLive] = useState(false); // hands-free voice mode is open
   const [viewer, setViewer] = useState(null); // file open in the full-screen viewer
   const [details, setDetails] = useState(null); // file open in the details sheet
@@ -135,14 +136,16 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const openFile = (id) => api.get(`/documents/${id}`).then(setViewer).catch((e) => flash(e.message));
   const showChatFiles = () => api.get(`/documents?ids=${docIds.join(',')}`).then(setChatFiles).catch((e) => flash(e.message));
 
-  // Tapping the reply that is already talking pauses or resumes it; tapping one
-  // that is still being generated gives up on it. Anything else starts fresh.
-  const say = (text, id, agentId) => {
-    if (voice.id === id) {
+  // Without pieces: the reply already talking pauses or resumes, one still being generated
+  // is given up on. With pieces (from the top, from where it stopped, or from a tapped
+  // word): reading starts there, even on the reply already talking.
+  const say = (id, agentId, pieces) => {
+    if (!pieces) {
+      if (voice.id !== id) return;
       if (voice.state === 'loading') return stopSpeaking();
       return togglePause();
     }
-    speakText(text, agentId, (s) => {
+    speakPieces(pieces, agentId, (s) => {
       if (s === 'error') { flash("Couldn't play that out loud. Please try again."); s = 'idle'; }
       setVoice(s === 'idle' ? { id: null, state: 'idle' } : { id, state: s });
       setOrb(s === 'speaking' ? 'speaking' : s === 'loading' ? 'thinking' : 'idle');
@@ -236,7 +239,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     setBusy(false); setOrb('idle'); setStatus('');
     setAnswered((n) => n + 1);
     onConversation(null);
-    if (voice && reply) say(reply, aid, agentId);
+    if (voice && reply) setReadNow(aid); // the reply reads itself, from what it shows
     return { reply, agentId }; // live voice mode reads the reply out itself
   };
 
@@ -460,7 +463,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
               <Message key={m.id} msg={m} agent={byId[m.agent_id]} voiceEnabled={voiceEnabled} onOpenFile={openFile}
                 savedId={shareIdOf(m)} drawingFrom={exportAsked(m.content) ? drawingUpTo(messages, i) : undefined}
                 voice={voice.id === m.id ? voice.state : 'idle'} onStopSpeak={stopSpeaking}
-                onSpeak={() => say(m.content, m.id, m.agent_id)}
+                onSpeak={(pieces) => say(m.id, m.agent_id, pieces)}
+                readNow={readNow === m.id} onReadStarted={() => setReadNow(null)}
                 onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined}
                 onDelete={savedIdOf(m) && !m.streaming ? () => removeMessage(m) : undefined}
                 onReplyTo={m.role === 'assistant' ? setQuote : undefined}
