@@ -286,7 +286,8 @@ export default function AgentSheet({ agent, config, me, modules = [], onClose, o
   // (all of it), any other on the cases discussed with it.
   const cases = agent.id && modules.includes('case_focus');
   const first = cases ? (agent.case_key ? [['case', `Case ${agent.case_number}`]] : [['cases', 'Cases']]) : [];
-  const tabs = agent.id ? [...first, ['persona', 'About'], ['files', 'Agent files']] : [];
+  // A bound agent's own files are listed and uploaded on its case tab: one place for files.
+  const tabs = agent.id ? [...first, ['persona', 'About'], ...(first[0]?.[0] === 'case' ? [] : [['files', 'Agent files']])] : [];
   const [tab, setTab] = useState(first[0]?.[0] || 'persona');
   return (
     <Page onBack={onClose}
@@ -305,7 +306,7 @@ export default function AgentSheet({ agent, config, me, modules = [], onClose, o
       <div className={tab === 'case' ? '' : 'mx-auto max-w-2xl'}>
       {tab === 'case' ? (
         <CaseHomeBody caseKey={agent.case_key} number={agent.case_number} folders={config.folders || []} me={me}
-          newChat={`@${agent.name} `} onOpenChat={onOpenChat} onOpenShelf={onOpenShelf} />
+          newChat={`@${agent.name} `} agentId={agent.id} onOpenChat={onOpenChat} onOpenShelf={onOpenShelf} />
       ) : tab === 'cases' ? (
         <CasesTab agent={agent} onOpenChat={onOpenChat} onOpenCase={onOpenCase} />
       ) : tab === 'persona' ? (

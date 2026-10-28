@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
-import { MessageSquare, Plus } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Loader2, MessageSquare, PenLine, Plus, Upload } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '../lib/api';
 import Page from './Page';
-import { FileViewer, FileDetail } from './Knowledge';
+import { FileViewer, FileDetail, FILE_TYPES, NoteSheet, useFiles } from './Knowledge';
 import { CaseFiles, CaseDeadlines, useCaseFiles, useCaseDeadlines, span } from './CaseRails';
 
 // Case Home: everything about one case in one place (server/caseFocus.js caseHome) - its brief,
@@ -114,7 +114,7 @@ export default function CaseHomePage({ caseKey, folders, me, onBack, onOpenChat,
  * where it is narrow: compact puts it in one column. number: the bound case, so it opens
  * before the case has a chat.
  */
-export function CaseHomeBody({ caseKey, number = '', folders, me, onOpenChat, onOpenShelf, compact = false, newChat }) {
+export function CaseHomeBody({ caseKey, number = '', folders, me, onOpenChat, onOpenShelf, compact = false, newChat, agentId }) {
   const [c, setC] = useState(null);
   const [error, setError] = useState('');
   const [viewer, setViewer] = useState(null);
@@ -125,8 +125,17 @@ export function CaseHomeBody({ caseKey, number = '', folders, me, onOpenChat, on
   }, [caseKey, number]);
   const latest = c?.chats[0]?.id;
   const primary = c && { number: c.number };
-  const files = useCaseFiles(latest, primary);
+  const caseFiles = useCaseFiles(latest, primary);
   const deadlines = useCaseDeadlines(latest, primary);
+  // An agent bound to the case: its own files are the case's too, so they are listed here and
+  // uploaded from here, rather than on a separate Agent files tab (AgentSheet).
+  const own = useFiles(agentId, { off: !agentId });
+  const [writing, setWriting] = useState(false);
+  const uploadRef = useRef();
+  const fromCase = latest ? caseFiles : [];
+  const files = !agentId ? fromCase : fromCase && own.docs
+    ? [...fromCase, ...own.docs.filter((d) => !fromCase.some((f) => f.id === d.id)).map((d) => ({ ...d, agentFile: true }))]
+    : null;
   const openFile = (id) => api.get(`/documents/${id}`).then(setViewer).catch((e) => setError(e.message));
 
   const parties = c && (c.partyA || c.partyB ? `${c.partyA || '?'} vs ${c.partyB || '?'}` : c.title);
@@ -171,7 +180,21 @@ export function CaseHomeBody({ caseKey, number = '', folders, me, onOpenChat, on
           <div className="space-y-6">
             <section>
               <b className={heading}>Files</b>
-              <CaseFiles files={latest ? files : []} number={c.number} onOpen={openFile} onOpenShelf={onOpenShelf} />
+              {agentId && (
+                <div className="mb-3 flex gap-2">
+                  <input ref={uploadRef} type="file" multiple hidden accept={FILE_TYPES} onChange={(e) => { own.upload(e.target.files); e.target.value = ''; }} />
+                  <button onClick={() => uploadRef.current.click()} disabled={own.uploading}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-dashed border-p1/50 py-2 text-sm text-p1 hover:bg-p1/10 disabled:opacity-60">
+                    {own.uploading ? <><Loader2 size={14} className="animate-spin" /> Reading…</> : <><Upload size={14} /> Upload files</>}
+                  </button>
+                  <button onClick={() => setWriting(true)} disabled={own.uploading}
+                    className="flex items-center justify-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute hover:bg-white/5 hover:text-txt disabled:opacity-60">
+                    <PenLine size={14} /> Note
+                  </button>
+                </div>
+              )}
+              {own.notes.map((n) => <p key={n} className="mb-2 text-sm text-warn">{n}</p>)}
+              <CaseFiles files={files} number={c.number} onOpen={openFile} onOpenShelf={onOpenShelf} />
             </section>
             <section>
               <b className={heading}>Legal dates</b>
@@ -187,7 +210,8 @@ export function CaseHomeBody({ caseKey, number = '', folders, me, onOpenChat, on
         </div>
       )}
       {viewer && <FileViewer d={viewer} onClose={() => setViewer(null)} onInfo={(d) => { setViewer(null); setDetails(d); }} />}
-      {details && <FileDetail d={details} folders={folders} me={me} onClose={() => setDetails(null)} onChanged={() => {}} />}
+      {details && <FileDetail d={details} folders={folders} me={me} onClose={() => setDetails(null)} onChanged={own.load} />}
+      {writing && <NoteSheet onSave={own.write} onClose={() => setWriting(false)} />}
     </>
   );
 }
