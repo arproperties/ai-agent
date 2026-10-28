@@ -371,5 +371,5 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .seek::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 4px rgb(167 139 250 / 0.25); }
 .seek:hover::-webkit-slider-thumb, .seek:active::-webkit-slider-thumb { transform: scale(1.2); }
 
-/* The word being read aloud (lib/highlight.js). */
-::highlight(reading) { background-color: color-mix(in srgb, var(--color-p1) 55%, transparent); color: #fff; }
+/* What has been read aloud so far, in yellow (lib/highlight.js). */
+::highlight(reading) { background-color: #facc15; color: #1a1a1a; }
