@@ -164,8 +164,9 @@ app.post('/api/agents', requireMaster, wrap(async (req, res) => {
   const { id } = await tx(async () => {
     // One case agent per owner: ticking it on another agent takes it off the old one.
     if (a.handles_cases) await db.prepare('UPDATE agents SET handles_cases = false WHERE user_id = ?').run(req.user.id);
-    return db.prepare('INSERT INTO agents (user_id, name, icon, color, persona, model, voice, starters, private, handles_cases) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id')
-      .run(req.user.id, a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, a.private, a.handles_cases);
+    return db.prepare(`INSERT INTO agents (user_id, name, icon, color, persona, model, voice, starters, private, handles_cases, case_number, case_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+      .run(req.user.id, a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, a.private, a.handles_cases, a.case_number, a.case_key);
   });
   res.json(agentOut(await own('agents', id, req.user.id), req.user));
 }));
@@ -174,8 +175,9 @@ app.put('/api/agents/:id', requireMaster, wrap(async (req, res) => {
   const a = agentIn(req.body);
   await tx(async () => {
     if (a.handles_cases) await db.prepare('UPDATE agents SET handles_cases = false WHERE user_id = ? AND id <> ?').run(req.user.id, Number(req.params.id));
-    await db.prepare('UPDATE agents SET name = ?, icon = ?, color = ?, persona = ?, model = ?, voice = ?, starters = ?, private = ?, handles_cases = ? WHERE id = ?')
-      .run(a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, a.private, a.handles_cases, Number(req.params.id));
+    await db.prepare(`UPDATE agents SET name = ?, icon = ?, color = ?, persona = ?, model = ?, voice = ?, starters = ?, private = ?, handles_cases = ?,
+      case_number = ?, case_key = ? WHERE id = ?`)
+      .run(a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, a.private, a.handles_cases, a.case_number, a.case_key, Number(req.params.id));
     // Made private: it stops being lent out as a hidden shelf. The people it is ticked for keep it.
     if (a.private) await db.prepare("DELETE FROM agent_assignments WHERE agent_id = ? AND mode = 'knowledge'").run(Number(req.params.id));
   });

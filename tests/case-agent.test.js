@@ -15,14 +15,29 @@ const attorney = { id: 2, name: 'Soutex Case Attorney', persona: 'cases', handle
 
 test('a case chat goes to the case agent; @Name still wins', async () => {
   const base = { agents: [general, attorney], userId: 0, recent: [], currentAgentId: general.id };
-  assert.equal((await pickAgent({ ...base, text: 'what next?', onCase: true })).agent.id, attorney.id);
-  assert.equal((await pickAgent({ ...base, text: '@Reem draft a reply', onCase: true })).agent.id, general.id);
+  assert.equal((await pickAgent({ ...base, text: 'what next?', caseKey: 'e205791' })).agent.id, attorney.id);
+  assert.equal((await pickAgent({ ...base, text: '@Reem draft a reply', caseKey: 'e205791' })).agent.id, general.id);
   // The master's private case agent counts too: they can reach it.
-  assert.equal((await pickAgent({ ...base, agents: [general], byName: [attorney], text: 'next', onCase: true })).agent.id, attorney.id);
+  assert.equal((await pickAgent({ ...base, agents: [general], byName: [attorney], text: 'next', caseKey: 'e205791' })).agent.id, attorney.id);
+});
+
+test('an agent bound to a case gets every chat on it and answers nothing else', async () => {
+  const soutex = { id: 3, name: 'Soutex', persona: 'x', case_key: 'e205791', case_number: 'E-205791' };
+  const howard = { id: 4, name: 'Howard', persona: 'x', case_key: 'e198822', case_number: '198822' };
+  const base = { agents: [general, soutex, howard], userId: 0, recent: [] };
+  // A chat on the case: Soutex, even when Howard or Reem is named, or Reem had it.
+  assert.equal((await pickAgent({ ...base, text: 'next?', caseKey: 'e205791', currentAgentId: general.id })).agent.id, soutex.id);
+  assert.equal((await pickAgent({ ...base, text: '@Howard help', caseKey: 'e205791' })).agent.id, soutex.id);
+  // Named in a chat with no case yet: it answers (chat.js then gives the chat its case).
+  assert.equal((await pickAgent({ ...base, text: '@Soutex hi' })).agent.id, soutex.id);
+  // Named in another case's chat with no agent of its own: refused, the rest route as usual.
+  assert.equal((await pickAgent({ ...base, agents: [general, soutex], text: '@Soutex hi', caseKey: 'e999999' })).agent.id, general.id);
+  // Never picked on its own for a chat that is not its case.
+  assert.equal((await pickAgent({ ...base, agents: [general, soutex], text: 'proverbs please', currentAgentId: soutex.id })).agent.id, general.id);
 });
 
 test('without the case agent, a case chat routes as before', async () => {
-  const out = await pickAgent({ agents: [general], userId: 0, text: 'case 205791', recent: [], onCase: true });
+  const out = await pickAgent({ agents: [general], userId: 0, text: 'case 205791', recent: [], caseKey: 'e205791' });
   assert.equal(out.agent.id, general.id);
 });
 

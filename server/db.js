@@ -361,6 +361,10 @@ await db.exec(`
 await db.exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS private BOOLEAN NOT NULL DEFAULT false;`);
 // The agent every chat about a case goes to (router.js), e.g. Soutex Case Attorney. One per owner.
 await db.exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS handles_cases BOOLEAN NOT NULL DEFAULT false;`);
+// An agent bound to one case (router.js): every chat about that case goes to it, and it answers
+// nothing else. case_key is case_number in the form that matches across spellings (caseMatch.js).
+await db.exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS case_number TEXT;
+  ALTER TABLE agents ADD COLUMN IF NOT EXISTS case_key TEXT;`);
 
 // Sending. The mailbox row gains its SMTP side and one switch: can_write. It defaults to
 // false so every connection made before this feature existed stays read-only — write

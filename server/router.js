@@ -29,14 +29,28 @@ export async function teamDocuments(userId, agentIds) {
  */
 // `byName` are agents never picked on their own - the master's private ones. They answer
 // when @named, and keep a conversation they were named into until another agent is named.
-// `onCase`: this chat has a primary case. It then goes to the case agent (handles_cases) and
-// stays there, so work on one case is never split across agents. @Name still wins.
-export async function pickAgent({ agents, byName = [], userId, text, attachments = [], recent, currentAgentId, onCase = false }) {
+// `caseKey`: the key of this chat's primary case, if it has one. Work on one case is never split
+// across agents:
+// - an agent bound to a case (agents.case_key) gets every chat about that case, and answers
+//   nothing else - not picked for other chats, and not even when @named in another case's chat;
+// - a case chat with no agent of its own goes to the case agent (handles_cases).
+export async function pickAgent({ agents, byName = [], userId, text, attachments = [], recent, currentAgentId, caseKey = null }) {
   const lower = text.toLowerCase();
-  const mentioned = [...agents, ...byName].find((a) => lower.startsWith(`@${a.name.toLowerCase()}`));
-  if (mentioned) return { agent: mentioned, why: 'You asked for this agent' };
-  const caseAgent = onCase && [...agents, ...byName].find((a) => a.handles_cases);
+  const everyone = [...agents, ...byName];
+  const mentioned = everyone.find((a) => lower.startsWith(`@${a.name.toLowerCase()}`));
+  const bound = caseKey && everyone.find((a) => a.case_key === caseKey);
+  if (bound) {
+    const why = mentioned && mentioned.id !== bound.id ? `${bound.name} works on this case` : bound.id === currentAgentId ? null : 'Case chat';
+    return { agent: bound, why };
+  }
+  // Another case's agent is never asked; one named in a chat with no case yet brings its case.
+  const free = (a) => !a.case_key || (!caseKey && a === mentioned);
+  if (mentioned && free(mentioned)) return { agent: mentioned, why: 'You asked for this agent' };
+  const caseAgent = caseKey && everyone.find((a) => a.handles_cases && !a.case_key);
   if (caseAgent) return { agent: caseAgent, why: caseAgent.id === currentAgentId ? null : 'Case chat' };
+  agents = agents.filter((a) => !a.case_key);
+  byName = byName.filter((a) => !a.case_key);
+  if (!agents.length && !byName.length) return { agent: everyone[0], why: null }; // nobody else to ask
   const kept = byName.find((a) => a.id === currentAgentId);
   if (kept || !agents.length) return { agent: kept || byName[0], why: null };
 

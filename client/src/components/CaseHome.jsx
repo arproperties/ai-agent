@@ -102,13 +102,27 @@ function CaseTime({ convId }) {
 }
 
 export default function CaseHomePage({ caseKey, folders, me, onBack, onOpenChat, onOpenShelf }) {
+  return (
+    <Page title="Case" onBack={onBack}>
+      <CaseHomeBody caseKey={caseKey} folders={folders} me={me} onOpenChat={onOpenChat} onOpenShelf={onOpenShelf} />
+    </Page>
+  );
+}
+
+/**
+ * Everything about one case. Also the first tab of an agent bound to the case (AgentSheet),
+ * where it is narrow: compact puts it in one column. number: the bound case, so it opens
+ * before the case has a chat.
+ */
+export function CaseHomeBody({ caseKey, number = '', folders, me, onOpenChat, onOpenShelf, compact = false, newChat }) {
   const [c, setC] = useState(null);
   const [error, setError] = useState('');
   const [viewer, setViewer] = useState(null);
   const [details, setDetails] = useState(null);
   useEffect(() => {
-    api.get(`/case-focus/case/${encodeURIComponent(caseKey)}`).then(setC).catch((e) => setError(e.message));
-  }, [caseKey]);
+    api.get(`/case-focus/case/${encodeURIComponent(caseKey)}${number ? `?number=${encodeURIComponent(number)}` : ''}`)
+      .then(setC).catch((e) => setError(e.message));
+  }, [caseKey, number]);
   const latest = c?.chats[0]?.id;
   const primary = c && { number: c.number };
   const files = useCaseFiles(latest, primary);
@@ -117,24 +131,28 @@ export default function CaseHomePage({ caseKey, folders, me, onBack, onOpenChat,
 
   const parties = c && (c.partyA || c.partyB ? `${c.partyA || '?'} vs ${c.partyB || '?'}` : c.title);
   return (
-    <Page title={c ? `Case ${c.number}` : 'Case'} onBack={onBack}
-      action={c && (
-        <button onClick={() => onOpenChat(null, `Case ${c.number}: `)}
-          className="flex items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white">
-          <Plus size={15} /> New chat
-        </button>
-      )}>
+    <>
       {error && <p className="text-sm text-bad">{error}</p>}
       {!c && !error && <p className="text-sm text-mute">Loading…</p>}
       {c && (
-        <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className={`mx-auto grid max-w-6xl gap-6 ${compact ? '' : 'lg:grid-cols-[minmax(0,1fr)_340px]'}`}>
           <div className="space-y-6">
-            {parties && <p className="text-base text-txt/90">{parties}</p>}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-lg font-light">Case {c.number}</p>
+                {parties && <p className="text-sm text-txt/80">{parties}</p>}
+              </div>
+              <button onClick={() => onOpenChat(null, newChat || `Case ${c.number}: `)}
+                className="flex items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white">
+                <Plus size={15} /> New chat
+              </button>
+            </div>
             <section className="rounded-2xl border border-stroke bg-white/[0.03]">
               <CaseBrief c={c} className="p-4" onChange={(b) => setC((x) => ({ ...x, ...b }))} />
             </section>
             <section>
               <b className={heading}>Chats on this case · {c.chats.length}</b>
+              {!c.chats.length && <p className="text-sm text-mute">No chats yet. Press New chat to start one.</p>}
               <div className="space-y-1">
                 {c.chats.map((ch) => (
                   <button key={ch.id} onClick={() => onOpenChat(ch.id)}
@@ -153,21 +171,23 @@ export default function CaseHomePage({ caseKey, folders, me, onBack, onOpenChat,
           <div className="space-y-6">
             <section>
               <b className={heading}>Files</b>
-              <CaseFiles files={files} number={c.number} onOpen={openFile} onOpenShelf={onOpenShelf} />
+              <CaseFiles files={latest ? files : []} number={c.number} onOpen={openFile} onOpenShelf={onOpenShelf} />
             </section>
             <section>
               <b className={heading}>Legal dates</b>
-              <CaseDeadlines deadlines={deadlines} onOpen={openFile} />
+              {latest ? <CaseDeadlines deadlines={deadlines} onOpen={openFile} /> : <p className="text-xs text-mute">Reem reads the dates from the case papers once the case has a chat.</p>}
             </section>
-            <section>
-              <b className={heading}>Time on this case</b>
-              <CaseTime convId={latest} />
-            </section>
+            {latest && (
+              <section>
+                <b className={heading}>Time on this case</b>
+                <CaseTime convId={latest} />
+              </section>
+            )}
           </div>
         </div>
       )}
       {viewer && <FileViewer d={viewer} onClose={() => setViewer(null)} onInfo={(d) => { setViewer(null); setDetails(d); }} />}
       {details && <FileDetail d={details} folders={folders} me={me} onClose={() => setDetails(null)} onChanged={() => {}} />}
-    </Page>
+    </>
   );
 }
