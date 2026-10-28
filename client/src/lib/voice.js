@@ -26,26 +26,19 @@ let current = null;
 
 const tell = (job, state) => { if (current === job) job.onState(state); };
 
-// ---------- each word as it is said, for the highlighter ----------
-// The voice service does not say when each word is spoken, so the server transcribes the
-// finished audio with word times (GET /voice/words/:key). Those arrive a moment after
-// playback starts; the highlight catches up then. Listeners get { word } in spoken order,
-// or { reset: true } when a new reading starts or reading stops.
-const wordListeners = new Set();
-export function onSpokenWord(fn) { wordListeners.add(fn); return () => wordListeners.delete(fn); }
-const emit = (e) => wordListeners.forEach((fn) => fn(e));
+// ---------- where the voice is, for the highlighter ----------
+// The voice service does not say when each word is spoken, so the server transcribes each
+// piece's finished audio with word times (GET /voice/words/:key). Listeners get, every frame
+// while playing, { index, time, words }: which piece, how far into it, and its word times once
+// they have arrived. Also { finished: true } when the last piece has been read.
+const progressListeners = new Set();
+export function onSpeechProgress(fn) { progressListeners.add(fn); return () => progressListeners.delete(fn); }
+const emit = (e) => progressListeners.forEach((fn) => fn(e));
 
 function wordsOf(piece) {
   if (!piece?.key || piece.wordsAsked) return;
   piece.wordsAsked = true;
   api.get(`/voice/words/${piece.key}`).then((r) => { piece.words = r.words || []; }).catch(() => { piece.words = []; });
-}
-
-// Hand over every word of this piece said by now. Runs every frame while playing.
-function catchUp(piece, t) {
-  if (!piece?.words) return;
-  piece.shown ??= 0;
-  while (piece.shown < piece.words.length && piece.words[piece.shown].s <= t) emit({ word: piece.words[piece.shown++].w });
 }
 
 // One loop per reading: 'playing' fires again after every stall, and must not start another.
@@ -54,7 +47,7 @@ function tick(job) {
   job.ticking = true;
   const step = () => {
     if (current !== job || !audio || audio.paused) { job.ticking = false; return; }
-    catchUp(job.chunks[job.at], audio.currentTime);
+    emit({ index: job.at, time: audio.currentTime, words: job.chunks[job.at]?.words });
     requestAnimationFrame(step);
   };
   step();
@@ -68,7 +61,6 @@ export function stopSpeaking() {
   audio.removeAttribute('src');
   audio.load();            // drops whatever is still downloading
   job.onState('idle');
-  emit({ reset: true });
   job.onDone?.();          // lets anything awaiting this reply carry on
 }
 
@@ -79,11 +71,10 @@ export function togglePause() {
   else { audio.pause(); tell(current, 'paused'); }
 }
 
-// One request can only carry so much text, so a long reply is read in pieces.
-// The limit is deliberately close to the server's own cap: most replies stay a
-// single piece and play without a seam, and only a very long one is split — at a
-// sentence end, where a short pause sounds natural anyway.
-const CHUNK = 3500;
+// A long reply is read in pieces, split at a sentence end where a short pause sounds
+// natural. Kept well short of the server's cap: given a long text, the voice model
+// tends to stop partway, and the reading would just end mid-reply.
+const CHUNK = 900;
 
 export function splitForSpeech(text) {
   const out = [];
@@ -134,7 +125,6 @@ async function playFrom(job) {
 
 function advance(job) {
   if (current !== job) return;
-  catchUp(job.chunks[job.at], Infinity); // the rest of this piece was said
   job.at++;
   if (job.at < job.chunks.length) {
     playFrom(job).catch(() => { tell(job, 'error'); if (current === job) current = null; });
@@ -142,9 +132,9 @@ function advance(job) {
   }
   job.playing = false;
   if (job.streaming) return tell(job, 'loading'); // the reply is still being written
+  emit({ finished: true });
   tell(job, 'idle');
   current = null;
-  emit({ reset: true });
   job.onDone?.();
 }
 
@@ -155,14 +145,18 @@ function attach(job) {
   audio.onended = () => advance(job);
 }
 
-export async function speakText(text, agentId, onState) {
+export function speakText(text, agentId, onState) {
+  return speakPieces(splitForSpeech(String(text || '')), agentId, onState);
+}
+
+/** Reads these pieces in order. Progress reports each one by its place in this list. */
+export async function speakPieces(pieces, agentId, onState) {
   if (!audio) return;
   stopSpeaking();
-  const chunks = splitForSpeech(String(text || '')).map((t) => ({ text: t }));
+  const chunks = pieces.filter(Boolean).map((t) => ({ text: t }));
   if (!chunks.length) return;
   const job = { onState, agentId, chunks, at: 0, streaming: false };
   current = job;
-  emit({ reset: true });
   onState('loading');
   try {
     attach(job);
@@ -200,7 +194,6 @@ export function speakAsItArrives(agentId, onState) {
   stopSpeaking();
   const job = { onState, agentId, chunks: [], at: 0, streaming: true, playing: false };
   current = job;
-  emit({ reset: true });
   onState('loading');
   attach(job);
 
