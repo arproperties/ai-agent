@@ -487,8 +487,13 @@ export async function chat(req, res) {
   const { blocks, meta } = await readAttachments(user, convId, files, send, team, text);
   const savedFiles = meta.map(({ snippet, whole, firstPart, ...m }) => m);
   if (savedFiles.length) send('files', savedFiles); // lets the app link the just-sent attachments
+  // The case this chat is about (caseFocus.js): set once, by the first message naming one.
+  // Worked out before the agent is picked, because a case chat always goes to the case agent.
+  const focus = modules.includes('case_focus')
+    ? await focusTurn(user, convId, { text, fileNames: meta.map((f) => f.name), modules }) : null;
+  if (focus?.changed) send('primaryCase', { primary: focus.primary, references: focus.references });
   send('status', { label: 'Choosing the best agent…' });
-  const { agent, why } = await pickAgent({ agents: team, byName, userId: user.id, text, attachments: meta, recent: prior, currentAgentId });
+  const { agent, why } = await pickAgent({ agents: team, byName, userId: user.id, text, attachments: meta, recent: prior, currentAgentId, onCase: Boolean(focus?.primary) });
   send('agent', { id: agent.id, why });
   // A private agent reads only this person's own files, never the company's shared ones.
   const reader = agent.private ? { ...user, ownFilesOnly: true } : user;
@@ -555,11 +560,7 @@ export async function chat(req, res) {
     }));
   }
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
-  // The case this chat is about (caseFocus.js): set once, by the first message naming one.
-  const focus = modules.includes('case_focus')
-    ? await focusTurn(user, convId, { text, fileNames: meta.map((f) => f.name), modules }) : null;
-  if (focus?.changed) send('primaryCase', { primary: focus.primary, references: focus.references });
-  // Its number goes into the search too, so the case's own files come up first.
+  // The case's number goes into the search too, so the case's own files come up first.
   const { memories, knowledge } = await recall(reader, [text || meta.map((f) => f.name).join(' '), focus?.primary?.number].filter(Boolean).join(' '));
   const library = await libraryCatalog(reader); // same every turn, so read it once
   // Chats brought in by this message, plus any brought in earlier: once a chat is carried

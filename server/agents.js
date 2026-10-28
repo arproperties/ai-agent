@@ -38,4 +38,5 @@ export const agentIn = (b) => ({
   voice: VOICES.includes(b.voice) ? b.voice : 'alloy',
   starters: JSON.stringify((Array.isArray(b.starters) ? b.starters : []).map(String).filter(Boolean).slice(0, 8)),
   private: b.private === true,
+  handles_cases: b.handles_cases === true,
 });
