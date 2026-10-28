@@ -160,7 +160,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
     if (!reading) return;
     const h = makeHighlighter(() => bodyRef.current);
     const off = onSpokenWord((e) => (e.reset ? h.clear() : h.word(e.word)));
-    return () => { off(); h.clear(); };
+    return () => { off(); h.stop(); };
   }, [reading]);
 
   if (msg.role === 'user') {

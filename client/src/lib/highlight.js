@@ -1,4 +1,5 @@
-// Highlights the word being read aloud, in the reply as it is shown. The spoken words come
+// Highlights what has been read aloud so far, in the reply as it is shown: every word up to
+// the one being said stays lit, so the read part grows like a marker pen. The spoken words come
 // from a transcription of the audio, so they are matched to the words on screen in order,
 // looking a little ahead: a word said differently ("22/10" read as a date) is skipped
 // and the next one that matches carries on. Painted with the CSS Highlight API, so the
@@ -6,11 +7,31 @@
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]/gu, '');
 const AHEAD = 15;
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+
+// The box the reply scrolls in (the chat's own list), or null for the page itself.
+const scrollerOf = (el) => {
+  for (let p = el; p && p !== document.body; p = p.parentElement) {
+    const y = getComputedStyle(p).overflowY;
+    if ((y === 'auto' || y === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+};
 
 export function makeHighlighter(getRoot) {
   let pos = 0;      // the next word on screen we expect to hear
   let words = [];   // { node, start, end, key } for each word on screen, in order
   let seen = '';    // the text they were collected from: a reply still arriving grows
+  let follow = true; // keep the spoken word in sight, until the person scrolls themselves
+
+  // Their own scrolling wins: once they wheel, swipe or press a scroll key, the page stays
+  // where they put it for the rest of this reading instead of being pulled back to the voice.
+  // Typing in the chat box does not count.
+  const letGo = () => { follow = false; };
+  const onKey = (e) => { if (SCROLL_KEYS.has(e.key) && !e.target.closest?.('input, textarea, [contenteditable]')) follow = false; };
+  window.addEventListener('wheel', letGo, { passive: true });
+  window.addEventListener('touchmove', letGo, { passive: true });
+  window.addEventListener('keydown', onKey);
 
   const collect = () => {
     const root = getRoot();
@@ -28,13 +49,24 @@ export function makeHighlighter(getRoot) {
 
   const paint = (w) => {
     if (typeof Highlight === 'undefined' || !CSS.highlights) return;
-    const r = new Range();
-    r.setStart(w.node, w.start);
-    r.setEnd(w.node, w.end);
-    CSS.highlights.set('reading', new Highlight(r));
-    // Keep it in sight, but only scroll once it has left the screen.
-    const box = r.getBoundingClientRect();
-    if (box.bottom > window.innerHeight - 140 || box.top < 80) w.node.parentElement?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // From the first word to this one, so a word the matching skipped is lit too.
+    const read = new Range();
+    read.setStart(words[0].node, words[0].start);
+    read.setEnd(w.node, w.end);
+    CSS.highlights.set('reading', new Highlight(read));
+    if (!follow) return;
+    // Keep the spoken word in sight, but only scroll once it has left the screen, and to
+    // the word itself: centring its whole paragraph would jump back to the paragraph's top.
+    const word = new Range();
+    word.setStart(w.node, w.start);
+    word.setEnd(w.node, w.end);
+    const box = word.getBoundingClientRect();
+    const scroller = scrollerOf(w.node.parentElement);
+    const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    if (box.bottom > view.bottom - 140 || box.top < view.top + 80) {
+      const by = box.top - (view.top + view.bottom) / 2;
+      (scroller || window).scrollBy({ top: by, behavior: 'smooth' });
+    }
   };
 
   return {
@@ -51,8 +83,17 @@ export function makeHighlighter(getRoot) {
         }
       }
     },
+    // A new start of the audio: nothing read yet, and the voice may be followed again.
     clear() {
       pos = 0;
+      follow = true;
+      CSS.highlights?.delete('reading');
+    },
+    // The reading is over: stop listening for the person's scrolling.
+    stop() {
+      window.removeEventListener('wheel', letGo);
+      window.removeEventListener('touchmove', letGo);
+      window.removeEventListener('keydown', onKey);
       CSS.highlights?.delete('reading');
     },
   };
