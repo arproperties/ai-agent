@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Globe } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -127,9 +128,13 @@ function SelectionBar({ rootRef, onListen, onReply, onRemove }) {
         if (!text || !root || !root.contains(s.anchorNode) || !root.contains(s.focusNode)) return setSel(null);
         const range = s.getRangeAt(0);
         const box = range.getBoundingClientRect();
-        const below = window.matchMedia('(pointer: coarse)').matches;
-        const x = Math.min(Math.max(box.left + box.width / 2, 130), window.innerWidth - 130);
-        setSel({ text, from: { node: range.startContainer, offset: range.startOffset }, x, y: below ? box.bottom + 12 : box.top - 52 });
+        // Over the selection's first line, not the middle of a selection spanning many; below
+        // it when that would leave the window (or on a phone, as above).
+        const line = range.getClientRects()[0] || box;
+        const below = window.matchMedia('(pointer: coarse)').matches || line.top - 52 < 8;
+        const x = Math.min(Math.max(line.left + line.width / 2, 140), window.innerWidth - 140);
+        const y = below ? Math.min(line.bottom + 12, window.innerHeight - 52) : line.top - 52;
+        setSel({ text, from: { node: range.startContainer, offset: range.startOffset }, x, y });
       });
     };
     document.addEventListener('selectionchange', read);
@@ -140,14 +145,17 @@ function SelectionBar({ rootRef, onListen, onReply, onRemove }) {
   if (!sel) return null;
   const act = (fn, what = 'text') => () => { fn(sel[what]); window.getSelection()?.removeAllRanges(); setSel(null); };
   const btn = 'flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition hover:bg-white/10';
-  return (
+  // Drawn on the page itself: inside the chat, a panel with a blur or transform turns
+  // "fixed" into "relative to that panel", and the bar lands far from the selection.
+  return createPortal(
     // mousedown is stopped so tapping a button does not clear the selection first
     <div onMouseDown={(e) => e.preventDefault()} style={{ left: sel.x, top: Math.max(sel.y, 8) }}
       className="fixed z-40 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-stroke bg-surface-2/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
       {onListen && <button type="button" onClick={act(onListen, 'from')} className={btn}><Icon name="speaker" size={14} /> Listen</button>}
       {onReply && <button type="button" onClick={act(onReply)} className={btn}><Icon name="reply" size={14} /> Reply</button>}
       {onRemove && <button type="button" onClick={act(onRemove)} className={`${btn} hover:text-bad`}><Icon name="trash" size={14} /> Remove</button>}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -197,9 +205,11 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
     listen(null);
   }, [readNow, msg.streaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // While it is being read, tapping a word jumps the reading to it.
+  // While it is being read, a tap on the text pauses it right there. Once paused, tapping a
+  // word reads on from that word (the play button carries on from where it paused).
   const jump = (e) => {
     if (!reading || e.target.closest('a, button') || !window.getSelection()?.isCollapsed) return;
+    if (voice === 'speaking') return onSpeak();
     const p = pointAt(e.clientX, e.clientY);
     if (p && bodyRef.current?.contains(p.node)) listen(p);
   };
@@ -263,7 +273,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
         <div className="rounded-2xl border border-bad/30 bg-bad/10 px-4 py-3 text-sm">{msg.error}</div>
       ) : msg.content ? (
         <div ref={bodyRef} onClick={jump} className={reading ? 'cursor-pointer' : undefined}
-          title={reading ? 'Tap a word to read from there' : undefined}>
+          title={voice === 'speaking' ? 'Tap to pause' : reading ? 'Tap a word to read from there' : undefined}>
           <Reply content={msg.content} savedId={savedId} />
           {!msg.streaming && (voiceEnabled || onReplyTo || onRemoveText) && (
             <SelectionBar rootRef={bodyRef} onListen={voiceEnabled ? listen : undefined} onReply={onReplyTo} onRemove={onRemoveText} />
