@@ -2,7 +2,6 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import Crash from './components/Crash';
-import UpdateBar from './components/UpdateBar';
 import { watchForErrors } from './lib/report';
 import { startTheme } from './lib/theme';
 import { startUpdates } from './lib/update';
@@ -19,7 +18,6 @@ createRoot(document.getElementById('root')).render(
         returns early from App, and the background should be there for it too. */}
     <Crash>
       <App />
-      <UpdateBar />
     </Crash>
   </StrictMode>
 );
