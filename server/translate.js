@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { db } from './db.js';
 import { transcribe, ask } from './ai.js';
+import { hasKey } from './aiKeys.js';
 
 // Live Translator: two people who share no language, talking over one phone. Each taps
 // their own button and speaks; this hears it in their language, puts it into the other
@@ -186,7 +187,7 @@ const gone = (res) => res.status(404).json({ error: 'Conversation not found' });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
 
 // Before '/:id', or "languages" would be read as an id.
-translateRoutes.get('/languages', (req, res) => res.json({ languages: LANGUAGES, voice: !!process.env.OPENAI_API_KEY }));
+translateRoutes.get('/languages', (req, res) => res.json({ languages: LANGUAGES, voice: hasKey('openai', req.user?.id) }));
 translateRoutes.get('/', wrap(async (req, res) => res.json(await listTranslations(req.user.id))));
 translateRoutes.post('/turns', upload.single('audio'), wrap(async (req, res) => {
   const { id, langA, langB, side } = req.body;

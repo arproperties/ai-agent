@@ -2148,6 +2148,24 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_ai_costs_at ON ai_costs(at);
   CREATE INDEX IF NOT EXISTS idx_ai_costs_user ON ai_costs(user_id, at);
+  ALTER TABLE ai_costs ADD COLUMN IF NOT EXISTS key_source TEXT;
+`);
+
+// The AI keys the master types in (server/aiKeys.js): the company's (owner_id 0) and any
+// person's own, which wins for that person. Stored encrypted; .env stays the last fallback.
+// failed_at/failed_reason: the last time the provider turned the key down, shown on screen.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS ai_keys (
+    owner_id INTEGER NOT NULL,
+    provider TEXT NOT NULL CHECK (provider IN ('anthropic', 'openai')),
+    secret   TEXT NOT NULL,
+    last4    TEXT NOT NULL,
+    set_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    set_at   BIGINT NOT NULL DEFAULT ${NOW},
+    failed_at BIGINT,
+    failed_reason TEXT,
+    PRIMARY KEY (owner_id, provider)
+  );
 `);
 
 // Case folders for an external user (server/caseFolders.js): their inbox sorted by case number.

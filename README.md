@@ -15,8 +15,9 @@ Needs Node 22+ and PostgreSQL 14+. Keys live in `.env` at the project root:
 | Key | Used for |
 |---|---|
 | `DATABASE_URL` | Postgres, e.g. `postgres://user:pass@127.0.0.1:5432/aiagent`. The schema is created on first boot. |
-| `CLAUDE_API_KEY` | Chat, reading attachments, learning memories |
-| `OPENAI_API_KEY` | Voice only: mic (speech→text) and read-aloud (text→speech) |
+| `CLAUDE_API_KEY` | Chat, reading attachments, learning memories. The last fallback: the master can set the keys in Settings → AI keys, and per person in People → AI keys (own key → company key → this one). |
+| `OPENAI_API_KEY` | Voice only: mic (speech→text) and read-aloud (text→speech). Same fallback order as the Claude key. |
+| `AI_KEYS_SECRET` | Optional: encrypts the AI keys set on screen. Without it a secret is made once in `data/ai-keys.secret`; losing either means setting the keys again (`.env` keeps working). |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`, `APP_URL` | Email for "Forgot password?" links (any SMTP provider). If unset, the reset link is printed in the server console. |
 | `EMAIL_KEY` | Encrypts saved email passwords (32 random bytes, base64: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`). Changing it means reconnecting email. |
 | `EMAIL_SEND_PER_HOUR` | Sends allowed per user per hour, once they have turned sending on for a mailbox (default 20) |

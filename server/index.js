@@ -26,6 +26,7 @@ import { addressRoutes } from './addressBook.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
+import { aiKeyRoutes, hasKey } from './aiKeys.js';
 import { docCategoryRoutes, seedCategories } from './docCategories.js';
 import { documentRenewalRoutes, proTaskRoutes } from './documentRenewals.js';
 import { startSaifsysDocSync } from './saifsysDocSync.js';
@@ -116,6 +117,7 @@ app.use('/api/case-focus', caseFocusRoutes); // the case a chat is about, its re
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
+app.use('/api/ai-keys', aiKeyRoutes); // the company's AI keys and anyone's own (master only)
 app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
 app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
@@ -127,7 +129,7 @@ const own = (table, id, userId) => db.prepare(`SELECT * FROM ${table} WHERE id =
 const notFound = (res) => res.status(404).json({ error: 'Not found' });
 const ilike = (q) => `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
-app.get('/api/config', (req, res) => res.json({ models: MODELS, voices: VOICES, folders: FOLDERS, voice: !!process.env.OPENAI_API_KEY }));
+app.get('/api/config', (req, res) => res.json({ models: MODELS, voices: VOICES, folders: FOLDERS, voice: hasKey('openai', req.user?.id) }));
 
 // ---------- agents ----------
 app.get('/api/agents', wrap(async (req, res) => {
@@ -398,7 +400,7 @@ app.post('/api/voice/transcribe', upload.single('audio'), wrap(async (req, res) 
 }));
 // Reading a reply aloud is two calls: register the text, then stream the audio.
 app.post('/api/voice/speak', wrap(async (req, res) => {
-  if (!process.env.OPENAI_API_KEY) return res.status(400).json({ error: 'Voice is not configured (OPENAI_API_KEY missing)' });
+  if (!hasKey('openai', req.user.id)) return res.status(400).json({ error: 'Voice is not configured (no OpenAI key in Settings → AI keys)' });
   const agent = (await canUseAgent(req.user, req.body.agentId))
     ? await db.prepare('SELECT * FROM agents WHERE id = ?').get(Number(req.body.agentId))
     : null;

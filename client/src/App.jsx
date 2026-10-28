@@ -19,6 +19,7 @@ import TranslatePage from './components/Translate';
 import TenantCarePage from './components/TenantCare';
 import MailRoutingPage from './components/MailRouting';
 import AddressBookPage from './components/AddressBook';
+import AiKeysPage from './components/AiKeys';
 import BillingPage from './components/Billing';
 import SharedInboxPage from './components/SharedInbox';
 import ResponsibilitiesPage from './components/Responsibilities';
@@ -217,6 +218,7 @@ export default function App() {
           mailRoutingOpen={panel === 'mailrouting'} onMailRouting={() => { setPanel('mailrouting'); setDrawer(false); }}
           addressBookOpen={panel === 'addressbook'} onAddressBook={() => { setPanel('addressbook'); setDrawer(false); }}
           billingOpen={panel === 'billing'} onBilling={() => { setPanel('billing'); setDrawer(false); }}
+          aiKeysOpen={panel === 'aikeys'} onAiKeys={() => { setPanel('aikeys'); setDrawer(false); }}
           sharedInbox={sharedInbox} sharedInboxOpen={panel === 'sharedinbox'} onSharedInbox={() => { setPanel('sharedinbox'); setDrawer(false); }}
           dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
@@ -274,6 +276,7 @@ export default function App() {
         {panel === 'mailrouting' && me.role === 'master' && <MailRoutingPage onBack={() => setPanel(null)} />}
         {panel === 'addressbook' && me.role === 'master' && <AddressBookPage onBack={() => setPanel(null)} />}
         {panel === 'billing' && me.role === 'master' && <BillingPage onBack={() => setPanel(null)} />}
+        {panel === 'aikeys' && me.role === 'master' && <AiKeysPage onBack={() => setPanel(null)} />}
         {panel === 'sharedinbox' && <SharedInboxPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
         {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}
