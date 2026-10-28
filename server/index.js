@@ -38,6 +38,7 @@ import { caseRoutes } from './caseRoutes.js';
 import { startCaseFolders } from './caseWatch.js';
 import { caseShareRoutes, publicCaseRoutes } from './caseShare.js';
 import { caseFocusRoutes } from './caseFocus.js';
+import { startCaseBriefs } from './caseBrief.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
 import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
@@ -501,6 +502,9 @@ app.listen(PORT, '0.0.0.0', () => {
   billAs({ userId: null, job: 'other' }, startLegalCases); // tells people when a cooling period is about to end, or has run over
   billAs({ userId: null, job: 'mail' }, startMailRouting); // does nothing until the shared mailbox is connected
   startCaseFolders(); // external users' case folders take in new case mail; each folder is billed to its owner
+  // Case brief suggestions from quiet case chats, billed to each chat's owner. Live only unless
+  // asked for: a local copy of the live database would pay to read every real case chat.
+  if (process.env.NODE_ENV === 'production' || process.env.CASE_BRIEFS === 'on') startCaseBriefs();
   billAs({ userId: null, job: 'buildings' }, startBuildings); // buzzes a building's administrator when a staff job needs them
   billAs({ userId: null, job: 'other' }, startRecurringPayments); // creates each recurring payment's line on its day of the month
   // meeting recordings that were still waiting to be transcribed when the server stopped

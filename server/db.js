@@ -2277,4 +2277,30 @@ await db.exec(`
     doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL
   );
   CREATE INDEX IF NOT EXISTS idx_case_deadlines ON case_deadlines(user_id, case_key, due);
+
+  -- The case brief (server/caseBrief.js): what has been settled on a case, per person, handed
+  -- to every new chat on it. Written only when the person approves a suggestion or edits it.
+  -- brief_upto: the last message of a chat already read for a suggestion.
+  CREATE TABLE IF NOT EXISTS case_briefs (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_key TEXT NOT NULL,
+    case_number TEXT NOT NULL,
+    body TEXT NOT NULL,
+    updated_at BIGINT,
+    PRIMARY KEY (user_id, case_key)
+  );
+  -- status: pending | approved | dismissed | replaced (a newer suggestion was written on top of it)
+  CREATE TABLE IF NOT EXISTS case_brief_suggestions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_key TEXT NOT NULL,
+    case_number TEXT NOT NULL,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    body TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at BIGINT DEFAULT ${NOW},
+    decided_at BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_case_brief_suggestions ON case_brief_suggestions(user_id, case_key, status);
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brief_upto INTEGER;
 `);

@@ -22,6 +22,7 @@ import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
 import { chatAgents, privateAgents, isExternal, isMaster } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
 import { focusTurn } from './caseFocus.js';
+import { briefOf, keyOf as briefKey } from './caseBrief.js';
 import { primaryCaseBlock, labelExcerpt, sameCase } from './primaryCase.js';
 import { userModules } from './modules.js';
 import { pictureTag, makePicture, pictureKit } from './pictures.js';
@@ -236,7 +237,7 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   // The case this chat is about, and the others it has mentioned: a reference case's dates
   // must not end up in the primary one. Excerpts say which case their file belongs to.
   const primary = focus?.primary;
-  if (primary) context.push(primaryCaseBlock(user.name, primary, focus.references));
+  if (primary) context.push(primaryCaseBlock(user.name, primary, focus.references, focus.brief));
   const excerpts = primary ? knowledge.map((k) => labelExcerpt(k, primary, focus.references)) : knowledge;
   if (excerpts.length) context.push(`<knowledge>\nExcerpts from the user's files that may be relevant:\n${excerpts.join('\n---\n')}\n</knowledge>`);
   // Chats the user deliberately brought into this one — the material for pulling several
@@ -492,6 +493,8 @@ export async function chat(req, res) {
   const focus = modules.includes('case_focus')
     ? await focusTurn(user, convId, { text, fileNames: meta.map((f) => f.name), modules }) : null;
   if (focus?.changed) send('primaryCase', { primary: focus.primary, references: focus.references });
+  // What earlier chats on the case settled, once the person approved it: a new chat starts from it.
+  if (focus?.primary) focus.brief = (await briefOf(user.id, briefKey(focus.primary))).brief?.body || '';
   send('status', { label: 'Choosing the best agent…' });
   const { agent, why } = await pickAgent({ agents: team, byName, userId: user.id, text, attachments: meta, recent: prior, currentAgentId, onCase: Boolean(focus?.primary) });
   send('agent', { id: agent.id, why });
