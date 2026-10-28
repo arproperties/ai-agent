@@ -11,10 +11,9 @@ const field = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p
 const label = 'mb-1.5 block text-xs font-medium tracking-wide text-mute';
 
 /**
- * What an agent looks like to someone who was given it rather than made it: its name,
- * what it is for, and nothing to press. Every control in the editable version is
- * refused by the server for a non-master, so offering them would only ever produce an
- * error - and the persona is master-authored configuration they are not shown anyway.
+ * What an agent looks like to someone who was given it rather than made it: its name, its
+ * case, its persona to read, and nothing to press. Every control in the editable version is
+ * refused by the server for a non-master, so offering them would only ever produce an error.
  */
 function PersonaReadOnly({ agent }) {
   return (
@@ -31,6 +30,12 @@ function PersonaReadOnly({ agent }) {
           Every chat about case {agent.case_number} goes to {agent.name}, and {agent.name} answers nothing else.
           A chat you start with it is about this case, even if you do not type the number.
         </p>
+      )}
+      {agent.persona && (
+        <div>
+          <span className={label}>WHAT IT DOES · ITS INSTRUCTIONS</span>
+          <p className="max-h-[40dvh] overflow-y-auto whitespace-pre-wrap rounded-xl bg-white/5 px-3 py-2.5 text-sm leading-relaxed text-txt/85">{agent.persona}</p>
+        </div>
       )}
       {agent.starters?.length > 0 && (
         <div>
