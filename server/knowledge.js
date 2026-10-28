@@ -417,8 +417,16 @@ export function retrievalScope(userId, t = 't') {
  * company-wide, so a personal agent's answers never mix in the team's paperwork.
  * chat.js marks the turn's user `ownFilesOnly` when the agent answering is private.
  */
+//
+// user.otherCaseAgents: agents bound to a case (agents.case_key) other than the one answering.
+// Their own shelf files are about their case, so they stay out of every other agent's chats.
 export const agentScope = (user, t = 't') =>
-  (user.ownFilesOnly ? { sql: `${t}.user_id = ?`, params: [user.id] } : retrievalScope(user.id, t));
+  notOtherCases(user, user.ownFilesOnly ? { sql: `${t}.user_id = ?`, params: [user.id] } : retrievalScope(user.id, t), t);
+
+export function notOtherCases(user, scope, t = 't') {
+  if (!user.otherCaseAgents?.length) return scope;
+  return { sql: `(${scope.sql}) AND (${t}.agent_id IS NULL OR ${t}.agent_id <> ALL(?::int[]))`, params: [...scope.params, user.otherCaseAgents] };
+}
 
 /**
  * What this app remembers about one person. Memories are facts about a person, never
