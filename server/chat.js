@@ -1,6 +1,7 @@
 import { db } from './db.js';
 import { billNote } from './billing.js';
 import { claude } from './ai.js';
+import { isKeyError, keysFor } from './aiKeys.js';
 import { pickAgent } from './router.js';
 import { extractText, readVideo, recall, learn } from './knowledge.js';
 import { saveUpload, processDocument, isImage, isVideo, fileName, libraryCatalog } from './files.js';
@@ -587,6 +588,7 @@ export async function chat(req, res) {
 
   try {
     let prevType = null;
+    let rekeyed = false;
     const { model, auto } = chatModel(user, agent);
     if (mailbox) await loadAddresses(); // the master may have added one since the last message
     const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto, focus);
@@ -620,7 +622,17 @@ export async function chat(req, res) {
           for (const r of block.content) if (r.url && !searched.has(r.url)) searched.set(r.url, { url: r.url, title: r.title });
         }
       });
-      const msg = await stream.finalMessage();
+      let msg;
+      try {
+        msg = await stream.finalMessage();
+      } catch (e) {
+        // The API key was turned down before a word came: ask once more, on the next key
+        // (aiKeys.js has already moved this one to the back).
+        if (turn !== 0 || rekeyed || reply || !isKeyError(e) || keysFor('anthropic', user.id).length < 2) throw e;
+        rekeyed = true;
+        turn--;
+        continue;
+      }
       if (msg.stop_reason === 'refusal' && !reply) send('error', { message: "I can't help with that request." });
       if (msg.stop_reason === 'tool_use') {
         convo.push({ role: 'assistant', content: msg.content });

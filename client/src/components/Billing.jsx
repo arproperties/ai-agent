@@ -131,6 +131,7 @@ function Calls({ who, range, rate, onClose }) {
                       {when(r.at)} · {r.jobName} · {r.modelName}
                       {r.provider === 'anthropic' ? ` · ${tokens(r.input)} in, ${tokens(r.output)} out` : ''}
                       {r.searches ? ` · ${r.searches} web search${r.searches > 1 ? 'es' : ''}` : ''}
+                      {KEY_PAID[r.key_source] ? ` · ${KEY_PAID[r.key_source]}` : ''}
                     </p>
                   </div>
                   <p className="shrink-0 text-sm tabular-nums">{small(r.usd)}</p>
@@ -170,6 +171,9 @@ function Prices({ prices, rate }) {
     </Card>
   );
 }
+
+// Which key paid for a call (server/aiKeys.js). Older calls were made before keys were noted.
+const KEY_PAID = { own: 'their own key', company: 'company key', server: 'server key (.env)' };
 
 export default function Billing({ onBack }) {
   const [range, setRange] = useState('week');

@@ -89,6 +89,9 @@ export function billAs(who, fn) {
   return ctx.run({ ...ctx.getStore(), ...who }, fn);
 }
 
+/** Who the work in progress is for (null for background work nobody asked for in person). */
+export const billedUserId = () => ctx.getStore()?.userId ?? null;
+
 /** A few words saying what this call was for, shown beside its price (a question, a file name). */
 export function billNote(note) {
   const s = ctx.getStore();
@@ -143,10 +146,10 @@ function shares(msg) {
 const unknownSeen = new Set();
 async function save(who, row) {
   try {
-    await db.prepare(`INSERT INTO ai_costs (user_id, job, note, provider, model, input_tokens, output_tokens, cache_read, cache_write, searches, units, usd)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    await db.prepare(`INSERT INTO ai_costs (user_id, job, note, provider, model, input_tokens, output_tokens, cache_read, cache_write, searches, units, usd, key_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(who?.userId ?? null, who?.job || 'other', who?.note || null, row.provider, row.model,
-        row.input || 0, row.output || 0, row.read || 0, row.write || 0, row.searches || 0, row.units || 0, row.usd);
+        row.input || 0, row.output || 0, row.read || 0, row.write || 0, row.searches || 0, row.units || 0, row.usd, who?.key || null);
   } catch (e) {
     console.warn('[billing] could not save a cost:', e.message);
   }
@@ -171,30 +174,34 @@ function recordClaude(who, msg) {
   }
 }
 
-/** A voice or picture call: minutes, characters or pictures, at OpenAI's price for that model. */
-export function recordOpenAI(model, { minutes = 0, chars = 0, pictures = 0 } = {}) {
+/**
+ * A voice or picture call: minutes, characters or pictures, at OpenAI's price for that model.
+ * key: which key paid ('own', 'company' or 'server', see aiKeys.js).
+ */
+export function recordOpenAI(model, { minutes = 0, chars = 0, pictures = 0 } = {}, key = null) {
   const p = OPENAI_PRICES.find((x) => String(model).startsWith(x.id));
   const usd = p ? minutes * (p.perMinute || 0) + chars * (p.perChar || 0) + pictures * (p.perPicture || 0) : 0;
-  save(ctx.getStore(), { provider: 'openai', model, units: minutes || chars || pictures, usd });
+  save({ ...ctx.getStore(), key }, { provider: 'openai', model, units: minutes || chars || pictures, usd });
 }
 
 /**
  * Count every call the Claude client makes from here on. Plain calls are counted when the
  * answer arrives; streamed ones when they finish, or with what had come when they are stopped
- * (a person leaving mid-answer still costs what was written).
+ * (a person leaving mid-answer still costs what was written). key: which key the client
+ * holds ('own', 'company' or 'server', see aiKeys.js), noted beside each cost.
  */
-export function watch(client) {
+export function watch(client, key = null) {
   const wrap = (target) => {
     const create = target.create.bind(target);
     target.create = (...args) => {
-      const who = ctx.getStore();
+      const who = { ...ctx.getStore(), key };
       const p = create(...args);
       p.then((res) => { if (res?.usage) recordClaude(who, res); }, () => {});
       return p;
     };
     const stream = target.stream.bind(target);
     target.stream = (...args) => {
-      const who = ctx.getStore();
+      const who = { ...ctx.getStore(), key };
       const s = stream(...args);
       let done = false;
       const once = (msg) => { if (!done && msg) { done = true; recordClaude(who, msg); } };
@@ -263,7 +270,7 @@ billingRoutes.get('/calls', wrapR(async (req, res) => {
   if (none) where.push('c.user_id IS NULL');
   else if (user) { where.push('c.user_id = ?'); args.push(user); }
   if (req.query.job) { where.push('c.job = ?'); args.push(String(req.query.job)); }
-  const rows = await db.prepare(`SELECT c.id, c.at, c.job, c.note, c.provider, c.model, c.input_tokens + c.cache_read + c.cache_write AS input,
+  const rows = await db.prepare(`SELECT c.id, c.at, c.job, c.note, c.provider, c.model, c.key_source, c.input_tokens + c.cache_read + c.cache_write AS input,
       c.output_tokens AS output, c.searches, c.units, c.usd
     FROM ai_costs c WHERE ${where.join(' AND ')} ORDER BY c.id DESC LIMIT 300`).all(...args);
   res.json(rows.map((r) => ({

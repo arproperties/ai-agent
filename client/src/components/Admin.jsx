@@ -7,6 +7,7 @@ import Sheet from './Sheet';
 import { ResponsibilitiesEditor } from './Responsibilities';
 import HrLink from './HrLink';
 import FileAccess from './FileAccess';
+import { PersonAiKeys } from './AiKeys';
 
 /**
  * One agent, as a card in a grid. The same shape whether it is being picked as the
@@ -252,8 +253,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   // "AI chats" and "Team chat" sit next to each other, so neither may be called just
   // "Chats": the whole point of the pair is which side of the app a message came from.
   const TABS = [['agents', 'Agents'], ['modules', 'Modules'], ['duties', 'Responsibilities'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
-    ['messages', 'Team chat'], ['memory', 'Memory'], ['saifsys', 'saifsys']]
-    .filter(([k]) => !external || ['agents', 'modules'].includes(k)); // the rest is theirs alone, closed to the master too
+    ['messages', 'Team chat'], ['memory', 'Memory'], ['saifsys', 'saifsys'], ['aikeys', 'AI keys']]
+    .filter(([k]) => !external || ['agents', 'modules', 'aikeys'].includes(k)); // the rest is theirs alone, closed to the master too
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -312,6 +313,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
         {tab === 'memory' && <Memories person={person} />}
         {tab === 'saifsys' && <><HrLink person={person} /><SaifsysModules person={person} /></>}
         {tab === 'modules' && <Modules person={person} />}
+        {tab === 'aikeys' && <PersonAiKeys person={person} />}
         {tab === 'documents' && !external && <FileAccess person={person} />}
         {(tab === 'documents' || tab === 'conversations' || tab === 'messages') && <Browse person={person} kind={tab} />}
 
