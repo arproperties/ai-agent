@@ -431,7 +431,7 @@ export async function editReply(userId, id, content) {
 export async function pictureTurn({ user, team, convId, text, asked, send, res }, { make = makePicture } = {}) {
   const prior = await recentMessages(convId);
   const current = [...prior].reverse().find((m) => m.agent_id)?.agent_id;
-  const agent = team.find((a) => a.id === current) ?? team[0];
+  const agent = team.find((a) => a.id === current) ?? team.find((a) => !a.case_key) ?? team[0]; // not another case's agent
   send('agent', { id: agent.id, why: 'Picture' });
   const { id: userMessageId, repeat } = await saveQuestion(convId, text, []);
   if (repeat) send('repeat', { userMessageId });
@@ -506,7 +506,9 @@ export async function chat(req, res) {
   if (focus?.primary) focus.brief = (await briefOf(user.id, briefKey(focus.primary))).brief?.body || '';
   send('agent', { id: agent.id, why });
   // A private agent reads only this person's own files, never the company's shared ones.
-  const reader = agent.private ? { ...user, ownFilesOnly: true } : user;
+  // Nor does any agent read the own files of an agent bound to another case.
+  const otherCaseAgents = [...team, ...byName].filter((a) => a.case_key && a.id !== agent.id).map((a) => a.id);
+  const reader = { ...user, ...(agent.private && { ownFilesOnly: true }), ...(otherCaseAgents.length && { otherCaseAgents }) };
 
   // 2. Context: recalled memories + relevant file excerpts
   send('status', { label: `${agent.name} is thinking…` });

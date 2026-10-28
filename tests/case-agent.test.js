@@ -57,6 +57,28 @@ test("the person an agent is given to alone may set its case; not a shared one, 
   assert.equal((await setAgentCase(jeff, mine, '')).case_key, null, 'emptied: any chat again');
 });
 
+test("another case's agent's own files stay out of the search", async () => {
+  const { agentScope } = await import('../server/knowledge.js');
+  await reset();
+  const jeff = await makeUser('Jeff');
+  const soutex = await makeAgent(jeff, 'Soutex');
+  const frazier = await makeAgent(jeff, 'Frazier');
+  const put = async (agentId, text) => {
+    const doc = (await db.prepare(`INSERT INTO documents (user_id, agent_id, name, status) VALUES (?, ?, ?, 'ready') RETURNING id`).run(jeff, agentId, text)).id;
+    await db.prepare('INSERT INTO chunks (user_id, agent_id, document_id, text) VALUES (?, ?, ?, ?)').run(jeff, agentId, doc, text);
+  };
+  await put(soutex, 'soutex easement');
+  await put(frazier, 'frazier insurance');
+  await put(null, 'shared note');
+  const seen = async (user) => {
+    const s = agentScope(user);
+    return (await db.prepare(`SELECT text FROM chunks t WHERE ${s.sql} ORDER BY text`).all(...s.params)).map((r) => r.text);
+  };
+  // Frazier answering, Soutex bound to another case: Soutex's own file is not read.
+  assert.deepEqual(await seen({ id: jeff, ownFilesOnly: true, otherCaseAgents: [soutex] }), ['frazier insurance', 'shared note']);
+  assert.deepEqual(await seen({ id: jeff, ownFilesOnly: true }), ['frazier insurance', 'shared note', 'soutex easement']);
+});
+
 test('without the case agent, a case chat routes as before', async () => {
   const out = await pickAgent({ agents: [general], userId: 0, text: 'case 205791', recent: [], caseKey: 'e205791' });
   assert.equal(out.agent.id, general.id);
