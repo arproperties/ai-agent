@@ -21,7 +21,7 @@ import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
 import { chatAgents, privateAgents, isExternal, isMaster } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
-import { focusTurn } from './caseFocus.js';
+import { focusTurn, claimCase } from './caseFocus.js';
 import { briefOf, keyOf as briefKey } from './caseBrief.js';
 import { primaryCaseBlock, labelExcerpt, sameCase } from './primaryCase.js';
 import { userModules } from './modules.js';
@@ -490,17 +490,16 @@ export async function chat(req, res) {
   if (savedFiles.length) send('files', savedFiles); // lets the app link the just-sent attachments
   // The case this chat is about (caseFocus.js): set once, by the first message naming one.
   // Worked out before the agent is picked, because a case chat always goes to the case agent.
-  let focus = modules.includes('case_focus')
+  // Tagging an agent bound to a case settles it first: its case wins over any guess from the
+  // words, and another case in the same message (CITGO beside E-205791) is a reference.
+  const tagged = [...team, ...byName].find((a) => a.case_key && text.toLowerCase().startsWith(`@${a.name.toLowerCase()}`));
+  const claimed = modules.includes('case_focus') && tagged && await claimCase(user.id, convId, tagged);
+  const focus = modules.includes('case_focus')
     ? await focusTurn(user, convId, { text, fileNames: meta.map((f) => f.name), modules }) : null;
+  if (claimed && focus) focus.changed = true;
   send('status', { label: 'Choosing the best agent…' });
   const { agent, why } = await pickAgent({ agents: team, byName, userId: user.id, text, attachments: meta, recent: prior, currentAgentId,
     caseKey: focus?.primary ? briefKey(focus.primary) : null });
-  // Talking to an agent bound to a case is talking about that case, number typed or not.
-  if (focus && !focus.primary && agent.case_key) {
-    const primary = (await db.prepare(`UPDATE conversations SET primary_case = ?::jsonb WHERE id = ? AND primary_case IS NULL RETURNING primary_case`)
-      .get(JSON.stringify({ number: agent.case_number, key: agent.case_key, source: 'agent' }), convId))?.primary_case;
-    if (primary) focus = { primary, references: focus.references || [], changed: true };
-  }
   if (focus?.changed) send('primaryCase', { primary: focus.primary, references: focus.references });
   // What earlier chats on the case settled, once the person approved it: a new chat starts from it.
   if (focus?.primary) focus.brief = (await briefOf(user.id, briefKey(focus.primary))).brief?.body || '';

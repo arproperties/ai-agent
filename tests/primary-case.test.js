@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
-import { focusTurn, focusOf } from '../server/caseFocus.js';
+import { focusTurn, focusOf, claimCase } from '../server/caseFocus.js';
 import { recapOf } from '../server/chatRecap.js';
 
 test.after(() => closeDb());
@@ -64,6 +64,24 @@ test('a message naming two cases settles nothing', async () => {
   const next = await focusTurn(user, conv, { text: 'start with case 198822' });
   assert.equal(next.primary.number, '198822');
   assert.deepEqual(next.references.map((r) => r.number), ['205791']);
+});
+
+test("tagging a case's agent wins over the words; the other case is a reference", async () => {
+  await reset();
+  const user = { id: await makeUser('Jeff'), name: 'Jeff' };
+  const conv = await makeConv(user.id);
+  // Left to the words this would be CITGO: only "case E-200132" has the word case before it.
+  const text = '@Soutex re-open E-205791, with its ties to the CITGO case E-200132';
+  const soutex = { case_number: 'E-205791', case_key: 'e205791' };
+  assert.equal(await claimCase(user.id, conv, soutex), true);
+  const f = await focusTurn(user, conv, { text });
+  assert.equal(f.primary.number, 'E-205791');
+  assert.deepEqual(f.references.map((r) => r.number), ['E-200132']);
+  // A chat that already has its case keeps it.
+  assert.equal(await claimCase(user.id, conv, { case_number: '111222', case_key: '111222' }), false);
+  assert.equal((await focusOf(user.id, conv)).primary.number, 'E-205791');
+  // Never someone else's chat.
+  assert.equal(await claimCase(await makeUser('Sara'), await makeConv(user.id), soutex), false);
 });
 
 test("only the person's own case folders are matched", async () => {

@@ -82,6 +82,17 @@ export async function focusTurn(user, conversationId, { text = '', fileNames = [
   return { primary, references: more, changed: true };
 }
 
+/**
+ * A chat with no case yet, started by tagging an agent bound to one: that case is the chat's.
+ * Never changes a case already set. Returns true when it set it.
+ */
+export async function claimCase(userId, conversationId, agent) {
+  const row = await db.prepare(`UPDATE conversations SET primary_case = ?::jsonb
+    WHERE id = ? AND user_id = ? AND primary_case IS NULL RETURNING id`)
+    .get(JSON.stringify({ number: agent.case_number, key: agent.case_key, source: 'agent' }), conversationId, userId);
+  return Boolean(row);
+}
+
 const saveRefs = (conversationId, refs) =>
   db.prepare('UPDATE conversations SET reference_cases = ?::jsonb WHERE id = ?').run(JSON.stringify(refs.map(({ number, key }) => ({ number, key }))), conversationId);
 
