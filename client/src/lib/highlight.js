@@ -73,7 +73,7 @@ export function readingPlan(root, from) {
     }
     add(w, newBlock ? '\n' : ' '); // a line break between paragraphs reads as a pause
   }
-  return { pieces: pieces.filter((p) => p.words.some((w) => w.key)) };
+  return { root, pieces: pieces.filter((p) => p.words.some((w) => w.key)) };
 }
 
 // The words heard, pinned to the words on screen they match, in order. A word that does not
@@ -147,7 +147,9 @@ export function makeHighlighter(plan) {
     word.setStart(w.node, w.start);
     word.setEnd(w.node, w.end);
     const box = word.getBoundingClientRect();
-    const scroller = scrollerOf(w.node.parentElement);
+    // Looked for from the reply, not the word: a table sits in a box of its own that scrolls
+    // sideways, and from a word in it that box was found and scrolled instead of the chat.
+    const scroller = scrollerOf(plan.root);
     const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
     if (box.bottom > view.bottom - 140 || box.top < view.top + 80) {
       const by = box.top - (view.top + view.bottom) / 2;
