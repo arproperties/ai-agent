@@ -203,7 +203,9 @@ export default function App() {
   return (
     <div className="relative z-10 flex h-dvh">
       {drawer && <div className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden" onClick={() => setDrawer(false)} />}
-      <aside className={`max-md:liquid-glass rail-wash fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-transform duration-300 md:static md:z-auto md:w-72 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'} ${railHidden ? 'md:hidden' : ''}`}>
+      {/* Folding slides the width to nothing; the inner box keeps its full width so nothing squashes while it moves. */}
+      <aside className={`max-md:liquid-glass rail-wash fixed inset-y-0 left-0 z-40 w-[86%] max-w-[320px] border-r border-stroke transition-[transform,width,border-color] duration-300 ease-out md:static md:z-auto md:shrink-0 md:overflow-hidden md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full'} ${railHidden ? 'md:w-0 md:border-transparent' : 'md:w-72'}`}>
+        <div className="h-full md:w-72">
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
           onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} petOn={petOn} onPet={togglePet}
@@ -227,6 +229,7 @@ export default function App() {
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} onCollapse={() => toggleRail(true)} />
+        </div>
       </aside>
 
       <main className="relative flex min-w-0 flex-1 flex-col">
