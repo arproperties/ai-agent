@@ -49,7 +49,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '' }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '', onOpenCase }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -350,6 +350,9 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         <aside className="hidden w-44 shrink-0 overflow-y-auto border-r border-stroke/60 px-3 py-4 lg:block xl:w-56 2xl:w-64">
           <b className="mb-2 block px-1 text-xs font-medium uppercase tracking-wide text-mute">Case files</b>
           <CaseFiles files={caseFiles} number={focus.primary.number} onOpen={openFile} onOpenShelf={onOpenFiles} />
+          {onOpenCase && focus.primary.key && (
+            <button onClick={() => onOpenCase(focus.primary.key)} className="mt-3 px-1 text-xs text-p1 hover:underline">Open Case Home</button>
+          )}
         </aside>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -548,6 +551,10 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           {focusOpen === 'time' && <CaseTimer timer={timer} />}
           {focusOpen === 'dates' && <CaseDeadlines deadlines={deadlines} onOpen={(id) => { setFocusOpen(false); openFile(id); }} />}
           {focusOpen === 'case' && <div className="space-y-4 text-sm">
+            {onOpenCase && focus.primary.key && (
+              <button onClick={() => { setFocusOpen(false); onOpenCase(focus.primary.key); }}
+                className="w-full rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 font-medium text-white">Open Case Home</button>
+            )}
             {(focus.primary.partyA || focus.primary.partyB || focus.primary.title) && (
               <p>{focus.primary.partyA || focus.primary.partyB
                 ? `${focus.primary.partyA || 'Party A unknown'} vs ${focus.primary.partyB || 'Party B unknown'}` : focus.primary.title}</p>

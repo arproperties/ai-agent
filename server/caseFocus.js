@@ -219,6 +219,26 @@ export async function agentCases(userId, agentId, today = dubaiDate()) {
   }));
 }
 
+/**
+ * Case Home: one case of this person's, by its key, with every chat about it whichever agent
+ * answered, and its brief. Its files, dates and time come from the chat routes above, asked
+ * with the newest chat's id. Null when they have no chat about the case.
+ */
+export async function caseHome(userId, key) {
+  const chats = (await db.prepare(`SELECT c.id, c.title, c.updated_at, c.primary_case,
+      (SELECT a.name FROM messages m JOIN agents a ON a.id = m.agent_id WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) agent_name
+    FROM conversations c WHERE c.user_id = ? AND c.primary_case IS NOT NULL
+    ORDER BY c.updated_at DESC NULLS LAST, c.id DESC`).all(userId))
+    .filter((c) => keyOf(c.primary_case) === key);
+  if (!chats.length) return null;
+  const p = chats[0].primary_case;
+  return {
+    key, number: p.number, partyA: p.partyA || null, partyB: p.partyB || null, title: p.title || null,
+    chats: chats.map(({ id, title, updated_at, agent_name }) => ({ id, title, updated_at, agent: agent_name })),
+    ...(await briefOf(userId, key)),
+  };
+}
+
 // ---------- routes ----------
 
 const wrap = (fn) => (req, res, next) => fn(req, res).catch(next);
@@ -235,6 +255,12 @@ caseFocusRoutes.get('/time', wrap(async (req, res) => {
 
 caseFocusRoutes.get('/agent/:agentId/cases', wrap(async (req, res) => {
   res.json(await agentCases(req.user.id, req.params.agentId));
+}));
+
+caseFocusRoutes.get('/case/:key', wrap(async (req, res) => {
+  const out = await caseHome(req.user.id, req.params.key);
+  if (!out) return res.status(404).json({ error: 'Not found' });
+  res.json(out);
 }));
 
 // The case brief (caseBrief.js): always the person's own, by the case's key.
