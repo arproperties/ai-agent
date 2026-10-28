@@ -133,8 +133,9 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
 
   return (
     <div className="flex h-full flex-col pt-safe">
+      <UpdateButton />
       <header className="flex items-center justify-between px-4 pb-2 pt-2 text-xs tracking-[0.14em] text-mute">
-        <span className="flex items-center gap-3">REEM <UpdateButton /></span>
+        <span>REEM</span>
         <span className="flex items-center gap-3"><Clock />
           <button onClick={onClose} aria-label="Close menu" className="-mr-2 grid size-8 place-items-center rounded-full hover:bg-white/10 md:hidden"><Icon name="x" size={18} /></button>
           {/* On a computer the menu can be folded away to give the chat the whole width. */}
