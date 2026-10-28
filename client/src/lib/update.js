@@ -12,12 +12,12 @@ import { registerSW } from 'virtual:pwa-register';
 // itself would throw away whatever the person was in the middle of. Instead <UpdateButton>
 // appears on its own line at the top of the menu, and the page reloads only when they tap it.
 let ready = false;
-let apply = null;
+let registration = null;
 const watchers = new Set();
 
 export function startUpdates() {
   if (!('serviceWorker' in navigator)) return;
-  apply = registerSW({
+  registerSW({
     immediate: true,
     onNeedRefresh() {
       ready = true;
@@ -25,6 +25,7 @@ export function startUpdates() {
     },
     onRegisteredSW(_url, reg) {
       if (!reg) return;
+      registration = reg;
       const check = () => {
         if (document.visibilityState === 'visible' && navigator.onLine) reg.update().catch(() => {});
       };
@@ -42,4 +43,14 @@ export function onUpdateReady(fn) {
 }
 
 // Switch to the new version: the waiting worker takes over and the page reloads onto it.
-export function applyUpdate() { apply?.(true); }
+// The reload is done here rather than left to the plugin, which only reloads a page the old
+// worker was running — after a hard refresh it was not, and the button sat on "Updating…"
+// for ever. If the takeover is never heard, the page reloads anyway after a few seconds.
+export function applyUpdate() {
+  let gone = false;
+  const reload = () => { if (!gone) { gone = true; window.location.reload(); } };
+  navigator.serviceWorker.addEventListener('controllerchange', reload);
+  const waiting = registration?.waiting;
+  if (waiting) waiting.postMessage({ type: 'SKIP_WAITING' });
+  setTimeout(reload, waiting ? 4000 : 0);
+}
