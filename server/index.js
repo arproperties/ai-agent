@@ -232,6 +232,15 @@ app.get('/api/conversations/:id/messages', wrap(async (req, res) => {
     FROM messages m WHERE m.conversation_id = ? ORDER BY m.id`).all(Number(req.params.id));
   res.json(rows.map((m) => ({ ...m, files: JSON.parse(m.files), sources: JSON.parse(m.sources || '[]'), carried: m.carried || [] })));
 }));
+// Renamed from the chat list. The title is only ever set when a chat starts, so a new
+// name is kept from then on.
+app.patch('/api/conversations/:id', wrap(async (req, res) => {
+  const title = String(req.body.title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (!title) return res.status(400).json({ error: 'Give the chat a name' });
+  const r = await db.prepare('UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?').run(title, Number(req.params.id), req.user.id);
+  if (!r.changes) return notFound(res);
+  res.json({ ok: true, title });
+}));
 app.delete('/api/conversations/:id', wrap(async (req, res) => {
   await db.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?').run(Number(req.params.id), req.user.id);
   res.json({ ok: true });
