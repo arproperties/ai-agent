@@ -38,6 +38,7 @@ import { caseRoutes } from './caseRoutes.js';
 import { startCaseFolders } from './caseWatch.js';
 import { caseShareRoutes, publicCaseRoutes } from './caseShare.js';
 import { caseFocusRoutes } from './caseFocus.js';
+import { serverHealthRoutes, startServerHealth } from './serverHealth.js';
 import { startCaseBriefs } from './caseBrief.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
 import { fromSaifsys } from './fromSaifsys.js';
@@ -123,6 +124,7 @@ app.use('/api', docCategoryRoutes); // Document Renewals: the categories and typ
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
 app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
 app.use('/api/billing', requireMaster, billingRoutes); // what the AI cost: by person, job and model (master only)
+app.use('/api/server-health', requireMaster, serverHealthRoutes); // disk, memory, database, backups and their growth (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -521,6 +523,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));
+  startServerHealth(); // an hourly reading of disk, memory and database, for the master's Server health screen
   // The saifsys morning checkout reminder (startArs in server/saifsys/ars.js) is on hold
   // by the user's choice, 2026-09-25: they ask Reem instead. The tool still works.
   console.log(`Reem server → http://localhost:${PORT}`);

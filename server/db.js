@@ -2308,3 +2308,20 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_case_brief_suggestions ON case_brief_suggestions(user_id, case_key, status);
   ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brief_upto INTEGER;
 `);
+
+// One reading an hour of the numbers that grow (server/serverHealth.js), so the master's
+// Server health screen can show how fast the disk, memory and database are filling up.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS server_health (
+    id SERIAL PRIMARY KEY,
+    at BIGINT NOT NULL DEFAULT ${NOW},
+    disk_used BIGINT NOT NULL,
+    disk_total BIGINT NOT NULL,
+    mem_used BIGINT NOT NULL,
+    mem_total BIGINT NOT NULL,
+    app_mem BIGINT NOT NULL,
+    db_bytes BIGINT NOT NULL,
+    uploads_bytes BIGINT NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_server_health_at ON server_health(at);
+`);
