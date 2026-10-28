@@ -192,7 +192,7 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     if (mailbox.canWrite) {
       parts.push(`You can also act on this mailbox. create_draft and reply_email write an email and put it in front of ${user.name} with ` +
         'Approve and Reject buttons — you never send anything yourself, and send_email cannot bypass that. Prefer reply_email over create_draft ' +
-        'when answering an email that already exists, so it threads. mark_read, mark_unread and move_email take effect immediately. ' +
+        'when answering an email that already exists, so it threads; if you no longer have its id, find it again with search_email first. mark_read, mark_unread and move_email take effect immediately. ' +
         'Both can carry attachments: a saved file from <file_library> or one attached in this chat, by its file name, or a file from an email ' +
         '(its email id and attachment name) to forward it. Attach only what they asked for, and name the attached files in your reply. ' +
         `When you draft something, say so plainly and tell ${user.name} it is waiting for their approval. Never claim an email has been sent.`);

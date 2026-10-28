@@ -345,10 +345,10 @@ function TaskForm({ pros, c, busy, onCreate }) {
   const [pro, setPro] = useState('');
   const [instructions, setInstructions] = useState('');
   const [due, setDue] = useState(() => new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10));
-  if (!pros.length) return <Box title="Give it to the PRO"><p className="text-sm text-warn">No PRO is set yet. The master adds the PROs under Settings on the Document Renewals screen.</p></Box>;
+  if (!pros.length) return <Box title="Give it to the PRO"><p className="text-sm text-warn">There is no staff member to give it to yet.</p></Box>;
   return (
     <Box title="Give it to the PRO" icon={<Send size={15} />}>
-      <Picker value={pro} onChange={setPro} options={pros.map((p) => ({ value: String(p.id), label: p.name || p.email }))} placeholder="Choose the PRO" />
+      <Picker value={pro} onChange={setPro} options={pros.map((p) => ({ value: String(p.id), label: p.name || p.email, hint: p.email || undefined }))} placeholder="Choose the PRO" />
       <Field label="Instructions"><textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={3} className={input}
         placeholder={c.kind === 'cancel' ? 'Terminate the visa and labour card…' : 'Renew the visa at ICP, bring back the new visa page…'} /></Field>
       <Field label="Due"><input type="date" value={due} onChange={(e) => setDue(e.target.value)} className={input} /></Field>

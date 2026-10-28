@@ -40,16 +40,20 @@ async function office() {
 const mailbox = async () => ({ email: 'hr@example.com', can_write: true, smtp_host: 'smtp.example.com' });
 const lookup = async () => ({ employee: { code: 'E-0042', email: 'Ahmed@Example.com', company: 'AAR Properties' } });
 
-test('a renewal email goes to the PRO: their address in To, who and the new period, the documents to attach', async () => {
+test('a renewal email goes to the PRO: addresses to pick from, who and the new period, the documents to attach', async () => {
   const { boss, caseId, contract, passport, visa } = await office();
   const pro = await makeUser('Pro Person');
   await db.prepare(`UPDATE users SET email = 'Pro@Example.com' WHERE id = ?`).run(pro);
-  await db.prepare(`INSERT INTO doc_renewal_case_settings (id, pro_ids) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET pro_ids = EXCLUDED.pro_ids`).run([pro]);
+  await db.prepare(`INSERT INTO company_addresses (email) VALUES ('pro@ainalreempro.com')`).run();
   const d = await caseEmail(boss, caseId, { mailbox, lookup });
-  assert.deepEqual(d.to, ['pro@example.com'], 'the PRO, not the employee');
+  assert.deepEqual(d.to, [], 'the person picks the PRO\'s address');
+  const offered = d.addresses.map((a) => a.email);
+  assert.ok(offered.includes('pro@ainalreempro.com'), 'the address book, with what the master added');
+  assert.ok(offered.includes('hr@ainalreempro.com'));
+  assert.deepEqual(d.addresses.find((a) => a.email === 'pro@example.com'), { email: 'pro@example.com', name: 'Pro Person' }, 'and staff emails');
   assert.equal(d.to_who, 'pro');
   assert.match(d.subject, /Labour contract renewal – Ahmed Khan \(E-0042\)/);
-  assert.match(d.body, /^Dear Pro Person,/);
+  assert.match(d.body, /^Dear PRO team,/);
   assert.match(d.body, /Please process the renewal of the labour contract of Ahmed Khan \(E-0042\), AAR Properties/);
   assert.match(d.body, /New contract: 2 years, 20 Nov 2026 to 20 Nov 2028/);
   assert.match(d.body, /Terms: same as the current contract/);

@@ -35,7 +35,7 @@ import { readReply, readDocs, advise, caseSummary, rewriteReply } from './leaseR
 //              the person sends it back with a tap, or marks the papers OK.
 //   Convert    saifsys makes the new lease and its cheques with its own code, once; the
 //              tenant is told, and the person gets a to-do for the cheques and the Ejari.
-//   Silence    Reem reminds a silent tenant by itself, a week apart, twice; then the renewal
+//   Silence    Reem reminds a silent tenant by itself, ten days apart, twice; then the renewal
 //              says No answer and waits for a person.
 //
 //   Advisors   the agents the master picks (Lawyer, Property Manager, RDC...) each read the
@@ -65,7 +65,7 @@ const DAYS_AHEAD = 150;   // the list: far enough ahead to give the RERA index b
 const SEND_AT = 120;      // days before the end the offer goes
 const AUTO_FIXES = 3;
 const DEFAULT_ADMIN = 1500; // the admin fee a renewal starts with     // papers sent back by Reem before a person looks
-const REMIND_AFTER = 7;   // days of silence before each reminder
+const REMIND_AFTER = 10;  // days of silence before each reminder
 const REMINDERS = 2;
 const EVERY = 3 * 60_000;
 const DIR = `${DATA_DIR}/lease-renewals`;
@@ -1022,7 +1022,7 @@ export async function casePack(r) {
 
 // ---------- silence ----------
 
-/** Reminders after a week of silence, twice, by Reem itself; then No answer, for a person. */
+/** Reminders after ten days of silence, twice, by Reem itself; then No answer, for a person. */
 export async function chase() {
   const s = await settings();
   if (!s.reminders) return;

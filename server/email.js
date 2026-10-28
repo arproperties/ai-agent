@@ -227,11 +227,19 @@ function writeTools(ctx) {
       const acc = await imapAccount(userId);
       // in_reply_to is optional here and best-effort: a draft that cannot be threaded is
       // still a draft worth showing, so a failed lookup loses the headers, not the email.
-      const thread = in_reply_to ? await imapActions.original(userId, in_reply_to).catch(() => null) : null;
+      let thread = in_reply_to ? await imapActions.original(userId, in_reply_to).catch(() => null) : null;
+      // A "Re: …" with no id is the agent answering an email whose id it no longer has (chat
+      // history keeps only words). Without the headers it would open a new thread on the
+      // other side, so the email it answers is found by subject and recipient instead.
+      let replyToId = in_reply_to ?? null;
+      if (!thread && /^\s*re\s*:/i.test(subject || '')) {
+        const found = await imapActions.findThread(userId, { to, subject }).catch(() => null);
+        if (found) { thread = found; replyToId = found.id; }
+      }
       const d = show(await draftWith(userId, attachments, {
         agentId: ctx.agentId, conversationId: ctx.conversationId,
         to, cc, subject, body, from: acc?.email ?? null,
-        inReplyTo: thread?.messageId ?? null, refs: thread?.refs ?? null, replyToId: in_reply_to ?? null,
+        inReplyTo: thread?.messageId ?? null, refs: thread?.refs ?? null, replyToId,
       }));
       await drafted(userId, d);
       return waiting(d) + await replace(userId, replaces);

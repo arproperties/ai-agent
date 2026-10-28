@@ -491,6 +491,56 @@ async function original(userId, id) {
   });
 }
 
+/**
+ * The email a "Re: …" draft answers, when the agent wrote it with create_draft and no id:
+ * chat history keeps only the words of earlier turns, so by the time someone says "reply to
+ * that", the id search_email gave is often gone. Pure, so it is testable.
+ * mails: [{ id, messageId, refs, subject, from: [address], to: [address], at: Date }]
+ * The newest mail in the same subject that is from one of the recipients (inbox) or went to
+ * one of them (Sent); null when nothing fits.
+ */
+export function pickThread(mails, { to = [], subject = '' }) {
+  const subj = bareSubject(subject);
+  const want = new Set(to.map((a) => String(a || '').trim().toLowerCase()).filter(Boolean));
+  if (subj.length < 4 || !want.size) return null;
+  return mails
+    .filter((m) => m.messageId && bareSubject(m.subject) === subj && [...m.from, ...m.to].some((a) => want.has(a)))
+    .sort((a, b) => b.at - a.at)[0] || null;
+}
+
+const THREAD_DAYS = 120;
+
+/** pickThread over the inbox and Sent of the last few months. Read-only. */
+async function findThread(userId, { to, subject }) {
+  const subj = bareSubject(subject);
+  if (subj.length < 4 || !to?.length) return null;
+  const acc = await imapAccount(userId);
+  if (!acc) return null;
+  return withMailbox(acc, async (c) => {
+    const sent = await sentPath(c);
+    const mails = [];
+    for (const path of ['INBOX', ...(sent ? [sent] : [])]) {
+      const lock = await c.getMailboxLock(path, { readOnly: true });
+      try {
+        // The server's SUBJECT search is a substring match, so the exact check is pickThread's.
+        const since = new Date(Date.now() - THREAD_DAYS * 86400000);
+        const uids = ((await c.search({ subject: subj, since }, { uid: true })) || []).slice(-50);
+        if (!uids.length) continue;
+        for await (const m of c.fetch(uids, { uid: true, envelope: true, internalDate: true, headers: ['references'] }, { uid: true })) {
+          const e = m.envelope || {};
+          mails.push({
+            id: `${path}:${m.uid}`, messageId: e.messageId || null,
+            refs: buildRefs(String(m.headers || '').replace(/^references:/i, '').trim(), e.messageId),
+            subject: e.subject || '', from: addr(e.from), to: [...addr(e.to), ...addr(e.cc)],
+            at: new Date(e.date || m.internalDate || 0),
+          });
+        }
+      } finally { lock.release(); }
+    }
+    return pickThread(mails, { to, subject });
+  });
+}
+
 /** The copy in Sent. Byte-identical to what went out, so the reply threads onto it. */
 async function appendToSent(userId, raw) {
   await withMailbox(await imapAccount(userId), async (c) => {
@@ -500,4 +550,4 @@ async function appendToSent(userId, raw) {
   });
 }
 
-export const imapActions = { markSeen, moveMessage, original, appendToSent };
+export const imapActions = { markSeen, moveMessage, original, findThread, appendToSent };

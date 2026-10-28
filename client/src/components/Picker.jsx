@@ -12,8 +12,11 @@ import { Check, ChevronDown, Search } from 'lucide-react';
  *
  * `multi`: several can be chosen. value is then a list, each tap ticks or unticks a row,
  * and the list stays open until a tap outside it.
+ *
+ * `onNew`: what is typed in the search box can be used even when no row matches (an email
+ * address not in the list): a "Use …" row, or Enter, hands the text to onNew.
  */
-export default function Picker({ value, onChange, options, none, icon, multi = false, placeholder = 'Choose', searchPlaceholder = 'Search', className = '' }) {
+export default function Picker({ value, onChange, options, none, icon, multi = false, onNew, placeholder = 'Choose', searchPlaceholder = 'Search', className = '' }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [at, setAt] = useState(0); // the row the arrow keys are on
@@ -47,11 +50,14 @@ export default function Picker({ value, onChange, options, none, icon, multi = f
     const list = value || [];
     onChange(list.includes(o.value) ? list.filter((v) => v !== o.value) : [...list, o.value]);
   };
+  const typed = q.trim();
+  const fresh = onNew && typed && !all.some((o) => String(o.value).toLowerCase() === typed.toLowerCase()) ? typed : '';
+  const useNew = () => { onNew(fresh); setQ(''); };
   const key = (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
     if (e.key === 'ArrowDown') { e.preventDefault(); setAt((n) => Math.min(shown.length - 1, n + 1)); }
     if (e.key === 'ArrowUp') { e.preventDefault(); setAt((n) => Math.max(0, n - 1)); }
-    if (e.key === 'Enter') { e.preventDefault(); if (shown[at]) pick(shown[at]); }
+    if (e.key === 'Enter') { e.preventDefault(); if (shown[at]) pick(shown[at]); else if (fresh) useNew(); }
   };
 
   return (
@@ -88,7 +94,10 @@ export default function Picker({ value, onChange, options, none, icon, multi = f
                 </li>
               </Fragment>
             ))}
-            {shown.length === 0 && <li className="px-2.5 py-3 text-center text-sm text-mute">Nothing matches "{q.trim()}"</li>}
+            {fresh && (
+              <li><button type="button" onClick={useNew} className="w-full rounded-lg px-2.5 py-2 text-left text-sm text-p1 hover:bg-white/10">Use "{fresh}"</button></li>
+            )}
+            {shown.length === 0 && !fresh && <li className="px-2.5 py-3 text-center text-sm text-mute">Nothing matches "{q.trim()}"</li>}
           </ul>
         </div>
       )}

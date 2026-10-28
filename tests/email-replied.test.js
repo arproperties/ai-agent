@@ -38,3 +38,27 @@ test('a new message after the reply is still open', () => {
 });
 
 test.after(() => closeDb());
+
+// ---------- pickThread: the email a "Re: …" draft with no id answers ----------
+import { pickThread } from '../server/imap.js';
+
+const box = (id, o = {}) => ({ id, messageId: `<t${id}@x>`, refs: `<t${id}@x>`, subject: 'Unit 608 extension', from: ['jessa@x.com'], to: ['me@x.com'], at: d('2026-10-22T07:00Z'), ...o });
+
+test('a Re: draft finds the newest email in that subject with that person', () => {
+  const hit = pickThread([box('INBOX:1'), box('INBOX:2', { at: d('2026-10-24T07:00Z') }), box('Sent:3', { from: ['me@x.com'], to: ['jessa@x.com'], at: d('2026-10-23T07:00Z') })],
+    { to: ['Jessa@x.com'], subject: 'RE: Unit 608 extension' });
+  assert.equal(hit.id, 'INBOX:2');
+});
+
+test('my own last email in the thread counts too', () => {
+  const hit = pickThread([box('INBOX:1'), box('Sent:3', { from: ['me@x.com'], to: ['jessa@x.com'], at: d('2026-10-23T07:00Z') })],
+    { to: ['jessa@x.com'], subject: 'Re: Unit 608 extension' });
+  assert.equal(hit.id, 'Sent:3');
+});
+
+test('another person, another subject, or a too-short subject finds nothing', () => {
+  assert.equal(pickThread([box('INBOX:1')], { to: ['rona@x.com'], subject: 'Re: Unit 608 extension' }), null);
+  assert.equal(pickThread([box('INBOX:1')], { to: ['jessa@x.com'], subject: 'Re: Unit 608 extension, part 2' }), null);
+  assert.equal(pickThread([box('INBOX:1', { subject: 'Hi' })], { to: ['jessa@x.com'], subject: 'Re: Hi' }), null);
+  assert.equal(pickThread([box('INBOX:1', { messageId: null })], { to: ['jessa@x.com'], subject: 'Re: Unit 608 extension' }), null);
+});

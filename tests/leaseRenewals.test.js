@@ -293,18 +293,18 @@ test('not renewing: saifsys rejects its renewal and the tenant is thanked', asyn
 
 // ---------- silence ----------
 
-test('silence: Reem reminds by itself a week apart, twice, then says No answer', async () => {
+test('silence: Reem reminds by itself ten days apart, twice, then says No answer', async () => {
   const boss = await setup();
   stub();
   const r = await start(boss);
   const day = 86400000;
-  world.now = NOW + 6 * day; await R.chase();
-  assert.equal(world.sent.length, 1, 'six days is not yet a week');
-  world.now = NOW + 7 * day; await R.chase();
+  world.now = NOW + 9 * day; await R.chase();
+  assert.equal(world.sent.length, 1, 'nine days is not yet ten');
+  world.now = NOW + 10 * day; await R.chase();
   assert.match(lastMail(), /A reminder about the renewal/);
-  world.now = NOW + 14 * day; await R.chase();
+  world.now = NOW + 20 * day; await R.chase();
   assert.equal(world.sent.length, 3);
-  world.now = NOW + 21 * day; await R.chase();
+  world.now = NOW + 30 * day; await R.chase();
   assert.equal(world.sent.length, 3, 'no third reminder');
   assert.equal((await R.getRenewal(r.id)).waiting, 'no_answer');
   assert.match(world.pushes.at(-1), /No answer from the tenant/);
@@ -316,7 +316,7 @@ test('reminders can be switched off', async () => {
   stub();
   await start(boss);
   await db.prepare('UPDATE lease_renewal_settings SET reminders = false').run();
-  world.now = NOW + 8 * 86400000; await R.chase();
+  world.now = NOW + 11 * 86400000; await R.chase();
   assert.equal(world.sent.length, 1);
 });
 

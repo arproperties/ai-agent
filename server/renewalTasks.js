@@ -1,11 +1,11 @@
 import { db } from './db.js';
 import { sendPush } from './push.js';
 import { saveUpload } from './files.js';
-import { getCase, caseSettings, event } from './renewalCases.js';
+import { getCase, event } from './renewalCases.js';
 import { dubaiDate } from './saifsys/client.js';
 
 // The PRO's part of a renewal case: after approval, a task with instructions and a due date.
-// The PRO is a Reem user the master named in the settings. While their task is open they see
+// The PRO is any of our own staff (never an external user), picked on the case. While their task is open they see
 // that case's papers and nothing else - not the case page, not the employee's other files -
 // and the access ends with the task. Their notification is a link, never a document. What
 // they bring back is uploaded onto the Shelf, linked to the case, and checked by HR.
@@ -19,10 +19,10 @@ const OWNER_AFTER_DAYS = 3; // this many days late, the case's owner hears too
 export async function createTask(user, caseId, { assignee_id, kind, instructions, due_date } = {}, { push = sendPush } = {}) {
   const c = await getCase(user, caseId);
   if (!['approved', 'with_pro'].includes(c.status)) throw bad('A PRO task comes after the proposal is saved');
-  const { pro_ids } = await caseSettings();
   const pro = Number(assignee_id);
-  if (!pro_ids?.length) throw bad('Name the PRO in the Document Renewals settings first');
-  if (!pro_ids.includes(pro)) throw bad('Give the task to one of the PROs in the settings');
+  if (!Number.isInteger(pro) || !await db.prepare('SELECT 1 FROM users WHERE id = ? AND NOT external').get(pro)) {
+    throw bad('Give the task to one of the staff');
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(due_date || ''))) throw bad('Give a due date');
   const what = String(kind || '').trim().slice(0, 60) || 'task';
   const { id } = await db.prepare(`INSERT INTO doc_renewal_case_tasks (case_id, assignee_id, kind, instructions, due_date)
