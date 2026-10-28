@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Check, ChevronDown, ChevronRight, MessageSquare, Plus, Scale, Sparkles } from 'lucide-react';
 import Sheet from './Sheet';
-import { CaseBrief } from './CaseHome';
+import { CaseBrief, CaseHomeBody } from './CaseHome';
 import Picker from './Picker';
 import { FilesPanel } from './Knowledge';
 import Avatar, { AGENT_ICONS, AGENT_COLORS } from './Avatar';
@@ -23,9 +23,15 @@ function PersonaReadOnly({ agent }) {
         <Avatar icon={agent.icon} color={agent.color} size={48} />
         <div className="min-w-0">
           <p className="truncate text-lg font-light">{agent.name}</p>
-          <p className="text-xs text-mute">One of your agents</p>
+          <p className="text-xs text-mute">{agent.case_number ? `Works only on case ${agent.case_number}` : 'One of your agents'}</p>
         </div>
       </div>
+      {agent.case_number && (
+        <p className="rounded-xl bg-p1/10 px-3 py-2.5 text-sm text-txt/90">
+          Every chat about case {agent.case_number} goes to {agent.name}, and {agent.name} answers nothing else.
+          A chat you start with it is about this case, even if you do not type the number.
+        </p>
+      )}
       {agent.starters?.length > 0 && (
         <div>
           <span className={label}>THINGS TO ASK IT</span>
@@ -138,6 +144,7 @@ function PersonaTab({ agent, config, onSaved }) {
     starters: (agent.starters || []).join('\n'),
     private: !!agent.private,
     handles_cases: !!agent.handles_cases,
+    case_number: agent.case_number || '',
   });
   const [picker, setPicker] = useState(false);
   const [more, setMore] = useState(false);
@@ -218,6 +225,13 @@ function PersonaTab({ agent, config, onSaved }) {
         Only the people you tick it for in People can use it. Nobody else sees it or reads its shelf,
         and your own chats use it only when you type @{f.name || 'its name'}.
       </Toggle>
+      <div>
+        <label className={label}>WORKS ONLY ON CASE</label>
+        <input value={f.case_number} onChange={set('case_number')} placeholder="Case number, e.g. E-205791. Empty = any chat" className={field} />
+        <p className="mt-1 text-xs text-mute">
+          Every chat about this case goes to {f.name || 'this agent'}, and it answers nothing else. Tapping it opens the case.
+        </p>
+      </div>
       <Toggle on={f.handles_cases} onClick={() => setF({ ...f, handles_cases: !f.handles_cases })} title="Handles case chats">
         Every chat about a case goes to {f.name || 'this agent'} and stays with it. Only one agent can have this;
         ticking it here takes it off any other.
@@ -261,14 +275,19 @@ function PersonaTab({ agent, config, onSaved }) {
 }
 
 export default function AgentSheet({ agent, config, me, modules = [], onClose, onSaved, onOpenChat, onOpenCase }) {
-  // The case agent opens on its cases: that is what someone tapping it wants to see.
-  const casesTab = agent.id && agent.handles_cases && modules.includes('case_focus');
-  const [tab, setTab] = useState(casesTab ? 'cases' : 'persona');
+  // An agent opens on its work, not its settings: an agent bound to a case opens on that case
+  // (all of it), any other on the cases discussed with it.
+  const cases = agent.id && modules.includes('case_focus');
+  const first = cases ? (agent.case_key ? [['case', `Case ${agent.case_number}`]] : [['cases', 'Cases']]) : [];
+  const [tab, setTab] = useState(first[0]?.[0] || 'persona');
   return (
-    <Sheet title={agent.id ? agent.name : 'New agent'} onClose={onClose} tab={tab} onTab={setTab}
-      tabs={agent.id ? [...(casesTab ? [['cases', 'Cases']] : []), ['persona', 'About'], ['files', 'Agent files']] : []}
+    <Sheet title={agent.id ? agent.name : 'New agent'} onClose={onClose} tab={tab} onTab={setTab} wide={tab === 'case'}
+      tabs={agent.id ? [...first, ['persona', 'About'], ['files', 'Agent files']] : []}
       icon={agent.id && <Avatar icon={agent.icon} color={agent.color} size={32} className="shadow-none" />}>
-      {tab === 'cases' ? (
+      {tab === 'case' ? (
+        <CaseHomeBody caseKey={agent.case_key} number={agent.case_number} folders={config.folders || []} me={me}
+          newChat={`@${agent.name} `} onOpenChat={onOpenChat} onOpenShelf={() => onOpenCase(agent.case_key)} />
+      ) : tab === 'cases' ? (
         <CasesTab agent={agent} onOpenChat={onOpenChat} onOpenCase={onOpenCase} />
       ) : tab === 'persona' ? (
         me?.role === 'master'

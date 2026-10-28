@@ -1,6 +1,7 @@
 import { MODELS, VOICES, COLORS } from './config.js';
 import { db } from './db.js';
 import { isMaster } from './access.js';
+import { caseKey } from './caseMatch.js';
 
 /**
  * What still points at this agent from someone other than its owner.
@@ -39,4 +40,12 @@ export const agentIn = (b) => ({
   starters: JSON.stringify((Array.isArray(b.starters) ? b.starters : []).map(String).filter(Boolean).slice(0, 8)),
   private: b.private === true,
   handles_cases: b.handles_cases === true,
+  ...boundCase(b.case_number),
 });
+
+/** The one case an agent works on, or none: { case_number, case_key }. */
+export function boundCase(number) {
+  const n = String(number || '').trim().slice(0, 100);
+  const key = n && caseKey(n);
+  return key ? { case_number: n, case_key: key } : { case_number: null, case_key: null };
+}
