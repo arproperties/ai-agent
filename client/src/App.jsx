@@ -303,14 +303,16 @@ export default function App() {
         {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
         {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
+        {/* An agent is a page over whatever is open, last so it is on top. */}
+        {editing && (
+          <AgentSheet key={editing.id || 'new'} agent={editing} config={config} me={me} modules={modules || []} onClose={() => setEditing(null)}
+            onSaved={() => { setEditing(null); loadAgents(); }}
+            onOpenChat={(id, draft) => { setEditing(null); openChat(id, draft); }}
+            onOpenCase={(key) => { setEditing(null); openCase(key); }}
+            onOpenShelf={() => { setEditing(null); setPanel('files'); }} />
+        )}
       </main>
 
-      {editing && (
-        <AgentSheet agent={editing} config={config} me={me} modules={modules || []} onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); loadAgents(); }}
-          onOpenChat={(id, draft) => { setEditing(null); openChat(id, draft); }}
-          onOpenCase={(key) => { setEditing(null); openCase(key); }} />
-      )}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
       <NotifyPrompt />
       {me.role === 'master' && petOn && (

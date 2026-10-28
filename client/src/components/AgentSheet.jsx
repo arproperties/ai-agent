@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Check, ChevronDown, ChevronRight, MessageSquare, Plus, Scale, Sparkles } from 'lucide-react';
-import Sheet from './Sheet';
+import Page from './Page';
 import { CaseBrief, CaseHomeBody } from './CaseHome';
 import Picker from './Picker';
 import { FilesPanel } from './Knowledge';
@@ -279,19 +279,33 @@ function PersonaTab({ agent, config, onSaved }) {
   );
 }
 
-export default function AgentSheet({ agent, config, me, modules = [], onClose, onSaved, onOpenChat, onOpenCase }) {
+// An agent is a full page, not a popup: a case's brief, chats and files need the whole screen,
+// which a dialog does not give on a tablet.
+export default function AgentSheet({ agent, config, me, modules = [], onClose, onSaved, onOpenChat, onOpenCase, onOpenShelf }) {
   // An agent opens on its work, not its settings: an agent bound to a case opens on that case
   // (all of it), any other on the cases discussed with it.
   const cases = agent.id && modules.includes('case_focus');
   const first = cases ? (agent.case_key ? [['case', `Case ${agent.case_number}`]] : [['cases', 'Cases']]) : [];
+  const tabs = agent.id ? [...first, ['persona', 'About'], ['files', 'Agent files']] : [];
   const [tab, setTab] = useState(first[0]?.[0] || 'persona');
   return (
-    <Sheet title={agent.id ? agent.name : 'New agent'} onClose={onClose} tab={tab} onTab={setTab} wide={tab === 'case'}
-      tabs={agent.id ? [...first, ['persona', 'About'], ['files', 'Agent files']] : []}
-      icon={agent.id && <Avatar icon={agent.icon} color={agent.color} size={32} className="shadow-none" />}>
+    <Page onBack={onClose}
+      title={<span className="flex min-w-0 items-center gap-2.5">
+        {agent.id && <Avatar icon={agent.icon} color={agent.color} size={32} className="shadow-none" />}
+        <span className="truncate">{agent.id ? agent.name : 'New agent'}</span>
+      </span>}>
+      {tabs.length > 0 && (
+        <div className="mx-auto mb-4 grid max-w-6xl rounded-full bg-white/5 p-1 text-sm" style={{ gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}>
+          {tabs.map(([k, l]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className={`truncate rounded-full px-2 py-2 transition ${tab === k ? 'bg-white/15 text-txt' : 'text-mute'}`}>{l}</button>
+          ))}
+        </div>
+      )}
+      <div className={tab === 'case' ? '' : 'mx-auto max-w-2xl'}>
       {tab === 'case' ? (
         <CaseHomeBody caseKey={agent.case_key} number={agent.case_number} folders={config.folders || []} me={me}
-          newChat={`@${agent.name} `} onOpenChat={onOpenChat} onOpenShelf={() => onOpenCase(agent.case_key)} />
+          newChat={`@${agent.name} `} onOpenChat={onOpenChat} onOpenShelf={onOpenShelf} />
       ) : tab === 'cases' ? (
         <CasesTab agent={agent} onOpenChat={onOpenChat} onOpenCase={onOpenCase} />
       ) : tab === 'persona' ? (
@@ -301,6 +315,7 @@ export default function AgentSheet({ agent, config, me, modules = [], onClose, o
       ) : (
         <FilesPanel agentId={agent.id} folders={config.folders || []} me={me} hint={`Only ${agent.name} uses these files. They also help Reem know when to pick ${agent.name}.`} />
       )}
-    </Sheet>
+      </div>
+    </Page>
   );
 }
