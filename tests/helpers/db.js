@@ -47,7 +47,7 @@ const TABLES = [
   'document_texts', 'document_copies', 'company_addresses', 'address_proposals', 'ai_costs', 'ai_keys', 'saifsys_doc_links', 'doc_renewal_case_tasks', 'doc_renewal_case_events', 'doc_renewal_cases', 'doc_renewal_case_settings', 'document_alerts', 'document_alert_settings', 'document_types', 'document_categories',
   'legal_case_settings', 'legal_cases', 'legal_case_events', 'legal_case_files', 'legal_case_alerts',
   'case_settings', 'case_folders', 'case_emails', 'case_proposals', 'case_time', 'case_deadline_scans', 'case_deadlines',
-  'case_briefs', 'case_brief_suggestions',
+  'case_briefs', 'case_brief_suggestions', 'server_health',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */
