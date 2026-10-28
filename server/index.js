@@ -6,7 +6,7 @@ import { db, tx } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo, timingsFor } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
-import { agentOut, agentIn, agentLinks } from './agents.js';
+import { agentOut, agentIn, agentLinks, setAgentCase } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
 import { deleteMessage, editReply, chat } from './chat.js';
 import { addMemory } from './knowledge.js';
@@ -182,6 +182,15 @@ app.put('/api/agents/:id', requireMaster, wrap(async (req, res) => {
     if (a.private) await db.prepare("DELETE FROM agent_assignments WHERE agent_id = ? AND mode = 'knowledge'").run(Number(req.params.id));
   });
   res.json(agentOut(await own('agents', req.params.id, req.user.id), req.user));
+}));
+// The case an agent works on: also for the person it was given to, when it is theirs alone.
+app.put('/api/agents/:id/case', wrap(async (req, res) => {
+  try {
+    res.json(agentOut(await setAgentCase(req.user, req.params.id, req.body?.case_number), req.user));
+  } catch (e) {
+    if (!e.status) throw e;
+    res.status(e.status).json({ error: e.message });
+  }
 }));
 app.delete('/api/agents/:id', requireMaster, wrap(async (req, res) => {
   const id = Number(req.params.id);

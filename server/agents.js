@@ -44,6 +44,25 @@ export const agentIn = (b) => ({
   ...boundCase(b.case_number),
 });
 
+/**
+ * Sets the one case an agent works on. Its owner (the master) may always; anyone else only
+ * for an agent given to them alone, since the binding moves every chat of everyone who has
+ * it. Returns the agent row, or throws with a status the route passes on.
+ */
+export async function setAgentCase(user, agentId, number) {
+  const id = Number(agentId) || 0;
+  const agent = await db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
+  if (!agent) throw Object.assign(new Error('Not found'), { status: 404 });
+  if (!(isMaster(user) && agent.user_id === user.id)) {
+    const { mine, others } = await db.prepare(`SELECT count(*) FILTER (WHERE user_id = ?)::int mine,
+      count(*) FILTER (WHERE user_id <> ?)::int others FROM agent_assignments WHERE agent_id = ? AND mode = 'chat'`).get(user.id, user.id, id);
+    if (!mine) throw Object.assign(new Error('Not found'), { status: 404 });
+    if (others) throw Object.assign(new Error('Other people use this agent too, so only the administrator can change its case'), { status: 403 });
+  }
+  const b = boundCase(number);
+  return db.prepare('UPDATE agents SET case_number = ?, case_key = ? WHERE id = ? RETURNING *').get(b.case_number, b.case_key, id);
+}
+
 /** The one case an agent works on, or none: { case_number, case_key }. */
 export function boundCase(number) {
   const n = String(number || '').trim().slice(0, 100);

@@ -15,7 +15,35 @@ const label = 'mb-1.5 block text-xs font-medium tracking-wide text-mute';
  * case, its persona to read, and nothing to press. Every control in the editable version is
  * refused by the server for a non-master, so offering them would only ever produce an error.
  */
-function PersonaReadOnly({ agent }) {
+/**
+ * "Works only on case", for the person an agent was given to: they know which case each of
+ * their attorneys is for. The server refuses it for an agent other people use too.
+ */
+function CaseField({ agent, onSaved }) {
+  const [number, setNumber] = useState(agent.case_number || '');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true); setMsg('');
+    try { onSaved(await api.put(`/agents/${agent.id}/case`, { case_number: number })); } catch (err) { setMsg(err.message); }
+    setBusy(false);
+  };
+  return (
+    <form onSubmit={save}>
+      <label className={label}>WORKS ONLY ON CASE</label>
+      <div className="flex gap-2">
+        <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Case number, e.g. E-205791. Empty = any chat" className={field} />
+        <button disabled={busy || number.trim() === (agent.case_number || '')}
+          className="shrink-0 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 text-sm font-medium text-white disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>
+      </div>
+      <p className="mt-1 text-xs text-mute">Every chat about this case goes to {agent.name}, and it answers nothing else. Tapping it opens the case.</p>
+      {msg && <p className="mt-1 text-sm text-bad">{msg}</p>}
+    </form>
+  );
+}
+
+function PersonaReadOnly({ agent, onSaved }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -25,6 +53,7 @@ function PersonaReadOnly({ agent }) {
           <p className="text-xs text-mute">{agent.case_number ? `Works only on case ${agent.case_number}` : 'One of your agents'}</p>
         </div>
       </div>
+      <CaseField agent={agent} onSaved={onSaved} />
       {agent.case_number && (
         <p className="rounded-xl bg-p1/10 px-3 py-2.5 text-sm text-txt/90">
           Every chat about case {agent.case_number} goes to {agent.name}, and {agent.name} answers nothing else.
@@ -312,7 +341,7 @@ export default function AgentSheet({ agent, config, me, modules = [], onClose, o
       ) : tab === 'persona' ? (
         me?.role === 'master'
           ? <PersonaTab agent={agent} config={config} onSaved={onSaved} />
-          : <PersonaReadOnly agent={agent} />
+          : <PersonaReadOnly agent={agent} onSaved={onSaved} />
       ) : (
         <FilesPanel agentId={agent.id} folders={config.folders || []} me={me} hint={`Only ${agent.name} uses these files. They also help Reem know when to pick ${agent.name}.`} />
       )}
