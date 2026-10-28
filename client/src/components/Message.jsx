@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Globe } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -127,9 +128,13 @@ function SelectionBar({ rootRef, onListen, onReply, onRemove }) {
         if (!text || !root || !root.contains(s.anchorNode) || !root.contains(s.focusNode)) return setSel(null);
         const range = s.getRangeAt(0);
         const box = range.getBoundingClientRect();
-        const below = window.matchMedia('(pointer: coarse)').matches;
-        const x = Math.min(Math.max(box.left + box.width / 2, 130), window.innerWidth - 130);
-        setSel({ text, from: { node: range.startContainer, offset: range.startOffset }, x, y: below ? box.bottom + 12 : box.top - 52 });
+        // Over the selection's first line, not the middle of a selection spanning many; below
+        // it when that would leave the window (or on a phone, as above).
+        const line = range.getClientRects()[0] || box;
+        const below = window.matchMedia('(pointer: coarse)').matches || line.top - 52 < 8;
+        const x = Math.min(Math.max(line.left + line.width / 2, 140), window.innerWidth - 140);
+        const y = below ? Math.min(line.bottom + 12, window.innerHeight - 52) : line.top - 52;
+        setSel({ text, from: { node: range.startContainer, offset: range.startOffset }, x, y });
       });
     };
     document.addEventListener('selectionchange', read);
@@ -140,14 +145,17 @@ function SelectionBar({ rootRef, onListen, onReply, onRemove }) {
   if (!sel) return null;
   const act = (fn, what = 'text') => () => { fn(sel[what]); window.getSelection()?.removeAllRanges(); setSel(null); };
   const btn = 'flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition hover:bg-white/10';
-  return (
+  // Drawn on the page itself: inside the chat, a panel with a blur or transform turns
+  // "fixed" into "relative to that panel", and the bar lands far from the selection.
+  return createPortal(
     // mousedown is stopped so tapping a button does not clear the selection first
     <div onMouseDown={(e) => e.preventDefault()} style={{ left: sel.x, top: Math.max(sel.y, 8) }}
       className="fixed z-40 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-stroke bg-surface-2/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
       {onListen && <button type="button" onClick={act(onListen, 'from')} className={btn}><Icon name="speaker" size={14} /> Listen</button>}
       {onReply && <button type="button" onClick={act(onReply)} className={btn}><Icon name="reply" size={14} /> Reply</button>}
       {onRemove && <button type="button" onClick={act(onRemove)} className={`${btn} hover:text-bad`}><Icon name="trash" size={14} /> Remove</button>}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
