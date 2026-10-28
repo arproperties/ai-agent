@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import { Check, ChevronDown, Sparkles } from 'lucide-react';
+import { Check, ChevronDown, MessageSquare, Plus, Scale, Sparkles } from 'lucide-react';
 import Sheet from './Sheet';
 import Picker from './Picker';
 import { FilesPanel } from './Knowledge';
@@ -40,12 +40,95 @@ function PersonaReadOnly({ agent }) {
   );
 }
 
+function Toggle({ on, onClick, title, children }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} onClick={onClick}
+      className={`flex w-full items-start gap-3 rounded-2xl border p-3 text-left transition ${on ? 'border-p1/50 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.06]'}`}>
+      <span className={`mt-0.5 grid size-[18px] shrink-0 place-items-center rounded-md transition ${on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/20'}`}>
+        {on && <Check size={12} strokeWidth={3.5} />}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className="block text-xs leading-relaxed text-mute">{children}</span>
+      </span>
+    </button>
+  );
+}
+
+const hours = (s) => (s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m` : `${Math.round(s / 60)}m`);
+const day = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const ago = (t) => (t ? new Date(t * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
+
+/**
+ * The cases this person has worked on with the case agent (server/caseFocus.js agentCases):
+ * what they open the agent to see. A case opens to its chats; one tap goes back into one.
+ */
+function CasesTab({ agent, onOpenChat }) {
+  const [cases, setCases] = useState(null);
+  const [open, setOpen] = useState(null); // the case key shown with its chats
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get(`/case-focus/agent/${agent.id}/cases`).then(setCases).catch((e) => { setError(e.message); setCases([]); });
+  }, [agent.id]);
+
+  if (!cases) return <p className="text-sm text-mute">Loading cases…</p>;
+  return (
+    <div className="space-y-3">
+      <button type="button" onClick={() => onOpenChat(null, `@${agent.name} `)}
+        className="flex w-full items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white">
+        <Plus size={15} /> New case chat
+      </button>
+      {error && <p className="text-sm text-bad">{error}</p>}
+      {!cases.length && !error && (
+        <p className="text-sm text-mute">No cases yet. Start a chat and name the case number, or attach its file, and it will appear here.</p>
+      )}
+      {cases.map((c) => (
+        <div key={c.key} className="rounded-2xl border border-stroke bg-white/[0.03]">
+          <button type="button" onClick={() => setOpen(open === c.key ? null : c.key)} className="w-full p-3 text-left">
+            <div className="flex items-center gap-2">
+              <Scale size={15} className="shrink-0 text-p1" />
+              <span className="font-medium">{c.number}</span>
+              <ChevronDown size={14} className={`ml-auto shrink-0 text-mute transition ${open === c.key ? 'rotate-180' : ''}`} />
+            </div>
+            {(c.partyA || c.partyB || c.title) && (
+              <p className="mt-1 text-sm text-txt/85">{c.partyA || c.partyB ? `${c.partyA || '?'} vs ${c.partyB || '?'}` : c.title}</p>
+            )}
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-mute">
+              <span>{c.chats.length} {c.chats.length === 1 ? 'chat' : 'chats'}</span>
+              <span>{c.files} {c.files === 1 ? 'file' : 'files'}</span>
+              {c.seconds > 0 && <span>{hours(c.seconds)} spent</span>}
+              {c.next && <span className="text-p1">Next: {c.next.what} · {day(c.next.due)}</span>}
+            </div>
+          </button>
+          {open === c.key && (
+            <div className="rise space-y-1 border-t border-stroke/60 p-2">
+              {c.chats.map((ch) => (
+                <button type="button" key={ch.id} onClick={() => onOpenChat(ch.id)}
+                  className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm hover:bg-white/5">
+                  <MessageSquare size={14} className="shrink-0 text-mute" />
+                  <span className="min-w-0 flex-1 truncate">{ch.title}</span>
+                  <span className="shrink-0 text-xs text-mute">{ago(ch.updated_at)}</span>
+                </button>
+              ))}
+              <button type="button" onClick={() => onOpenChat(null, `Case ${c.number}: `)}
+                className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm text-p1 hover:bg-p1/10">
+                <Plus size={14} /> New chat on this case
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PersonaTab({ agent, config, onSaved }) {
   const [f, setF] = useState({
     name: agent.name || '', icon: agent.icon || 'sparkles', color: agent.color || 'violet', persona: agent.persona || '',
     model: agent.model || config.models[0]?.id, voice: agent.voice || 'alloy',
     starters: (agent.starters || []).join('\n'),
     private: !!agent.private,
+    handles_cases: !!agent.handles_cases,
   });
   const [picker, setPicker] = useState(false);
   const [more, setMore] = useState(false);
@@ -122,19 +205,14 @@ function PersonaTab({ agent, config, onSaved }) {
           className={`${field} resize-none leading-relaxed`} />
       </div>
 
-      <button type="button" role="switch" aria-checked={f.private} onClick={() => setF({ ...f, private: !f.private })}
-        className={`flex w-full items-start gap-3 rounded-2xl border p-3 text-left transition ${f.private ? 'border-p1/50 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.06]'}`}>
-        <span className={`mt-0.5 grid size-[18px] shrink-0 place-items-center rounded-md transition ${f.private ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/20'}`}>
-          {f.private && <Check size={12} strokeWidth={3.5} />}
-        </span>
-        <span className="min-w-0">
-          <span className="block text-sm font-medium">Private agent</span>
-          <span className="block text-xs leading-relaxed text-mute">
-            Only the people you tick it for in People can use it. Nobody else sees it or reads its shelf,
-            and your own chats use it only when you type @{f.name || 'its name'}.
-          </span>
-        </span>
-      </button>
+      <Toggle on={f.private} onClick={() => setF({ ...f, private: !f.private })} title="Private agent">
+        Only the people you tick it for in People can use it. Nobody else sees it or reads its shelf,
+        and your own chats use it only when you type @{f.name || 'its name'}.
+      </Toggle>
+      <Toggle on={f.handles_cases} onClick={() => setF({ ...f, handles_cases: !f.handles_cases })} title="Handles case chats">
+        Every chat about a case goes to {f.name || 'this agent'} and stays with it. Only one agent can have this;
+        ticking it here takes it off any other.
+      </Toggle>
 
       <button type="button" onClick={() => setMore(!more)} className="flex items-center gap-1 text-xs text-mute hover:text-txt">
         <ChevronDown size={14} className={`transition ${more ? 'rotate-180' : ''}`} /> More options
@@ -173,13 +251,17 @@ function PersonaTab({ agent, config, onSaved }) {
   );
 }
 
-export default function AgentSheet({ agent, config, me, onClose, onSaved }) {
-  const [tab, setTab] = useState('persona');
+export default function AgentSheet({ agent, config, me, modules = [], onClose, onSaved, onOpenChat }) {
+  // The case agent opens on its cases: that is what someone tapping it wants to see.
+  const casesTab = agent.id && agent.handles_cases && modules.includes('case_focus');
+  const [tab, setTab] = useState(casesTab ? 'cases' : 'persona');
   return (
     <Sheet title={agent.id ? agent.name : 'New agent'} onClose={onClose} tab={tab} onTab={setTab}
-      tabs={agent.id ? [['persona', 'Persona'], ['files', 'Shelf']] : []}
+      tabs={agent.id ? [...(casesTab ? [['cases', 'Cases']] : []), ['persona', 'About'], ['files', 'Agent files']] : []}
       icon={agent.id && <Avatar icon={agent.icon} color={agent.color} size={32} className="shadow-none" />}>
-      {tab === 'persona' ? (
+      {tab === 'cases' ? (
+        <CasesTab agent={agent} onOpenChat={onOpenChat} />
+      ) : tab === 'persona' ? (
         me?.role === 'master'
           ? <PersonaTab agent={agent} config={config} onSaved={onSaved} />
           : <PersonaReadOnly agent={agent} />

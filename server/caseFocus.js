@@ -180,6 +180,36 @@ export async function timeByCase(userId, from, to) {
   return rows;
 }
 
+// ---------- the cases worked on with one agent ----------
+
+/**
+ * For the Cases tab on an agent: every case this person has discussed with this agent, newest
+ * first, with its chats, how many files it has, its next legal date and the time spent on it.
+ * Only their own chats: an agent shared by many people shows each of them only their cases.
+ */
+export async function agentCases(userId, agentId, today = dubaiDate()) {
+  const convs = await db.prepare(`SELECT c.id, c.title, c.updated_at, c.primary_case FROM conversations c
+    WHERE c.user_id = ? AND c.primary_case IS NOT NULL
+      AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.agent_id = ?)
+    ORDER BY c.updated_at DESC NULLS LAST, c.id DESC`).all(userId, Number(agentId) || 0);
+  const byKey = new Map();
+  for (const c of convs) {
+    const key = keyOf(c.primary_case);
+    if (!byKey.has(key)) byKey.set(key, { key, ...c.primary_case, chats: [] });
+    byKey.get(key).chats.push({ id: c.id, title: c.title, updated_at: c.updated_at });
+  }
+  return Promise.all([...byKey.values()].map(async (k) => {
+    const [{ files }, next, { seconds }] = await Promise.all([
+      caseFiles(userId, k.chats[0].id),
+      db.prepare(`SELECT due::text due, what FROM case_deadlines WHERE user_id = ? AND case_key = ? AND due >= ?::date
+        ORDER BY due LIMIT 1`).get(userId, k.key, today),
+      db.prepare('SELECT coalesce(sum(seconds), 0)::int seconds FROM case_time WHERE user_id = ? AND case_key = ?').get(userId, k.key),
+    ]);
+    return { key: k.key, number: k.number, partyA: k.partyA || null, partyB: k.partyB || null, title: k.title || null,
+      chats: k.chats, files: files.length, next: next || null, seconds };
+  }));
+}
+
 // ---------- routes ----------
 
 const wrap = (fn) => (req, res, next) => fn(req, res).catch(next);
@@ -194,7 +224,11 @@ caseFocusRoutes.get('/time', wrap(async (req, res) => {
   res.json({ from, to, cases: await timeByCase(req.user.id, from, to) });
 }));
 
-caseFocusRoutes.get('/:conversationId/files', wrap(async (req, res) => {
+caseFocusRoutes.get('/agent/:agentId/cases', wrap(async (req, res) => {
+  res.json(await agentCases(req.user.id, req.params.agentId));
+}));
+
+caseFocusRoutes.get('/:conversationId/files',wrap(async (req, res) => {
   const out = await caseFiles(req.user.id, req.params.conversationId);
   if (!out) return res.status(404).json({ error: 'Not found' });
   res.json(out);

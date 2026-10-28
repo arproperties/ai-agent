@@ -29,10 +29,14 @@ export async function teamDocuments(userId, agentIds) {
  */
 // `byName` are agents never picked on their own - the master's private ones. They answer
 // when @named, and keep a conversation they were named into until another agent is named.
-export async function pickAgent({ agents, byName = [], userId, text, attachments = [], recent, currentAgentId }) {
+// `onCase`: this chat has a primary case. It then goes to the case agent (handles_cases) and
+// stays there, so work on one case is never split across agents. @Name still wins.
+export async function pickAgent({ agents, byName = [], userId, text, attachments = [], recent, currentAgentId, onCase = false }) {
   const lower = text.toLowerCase();
   const mentioned = [...agents, ...byName].find((a) => lower.startsWith(`@${a.name.toLowerCase()}`));
   if (mentioned) return { agent: mentioned, why: 'You asked for this agent' };
+  const caseAgent = onCase && [...agents, ...byName].find((a) => a.handles_cases);
+  if (caseAgent) return { agent: caseAgent, why: caseAgent.id === currentAgentId ? null : 'Case chat' };
   const kept = byName.find((a) => a.id === currentAgentId);
   if (kept || !agents.length) return { agent: kept || byName[0], why: null };
 

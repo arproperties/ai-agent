@@ -10,8 +10,8 @@ const withQuote = (quote, said) => (quote
   ? `Draft a reply email for this:\n\n${quote.split('\n').map((l) => `> ${l}`).join('\n')}${said ? `\n\n${said}` : ''}`
   : said);
 
-export default function Composer({ busy, voiceEnabled, carry = [], quote = '', onDropQuote, onPickChats, onDropChat, onSend, onStop, onVoiceState, onError }) {
-  const [text, setText] = useState('');
+export default function Composer({ busy, voiceEnabled, carry = [], quote = '', draft = '', onDropQuote, onPickChats, onDropChat, onSend, onStop, onVoiceState, onError }) {
+  const [text, setText] = useState(draft); // draft: "New chat on this case" starts with the case number typed
   const [files, setFiles] = useState([]);
   const [rec, setRec] = useState(null); // null | 'recording' | 'transcribing'
   const [queued, setQueued] = useState(null); // spoken while a reply was still arriving

@@ -49,7 +49,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '' }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -511,7 +511,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             <span className="truncate">Using {carrying.join(' · ')}</span>
           </div>
         )}
-        <Composer busy={busy} voiceEnabled={voiceEnabled} carry={carry} onPickChats={() => setPicking(true)}
+        <Composer busy={busy} voiceEnabled={voiceEnabled} carry={carry} draft={draft} onPickChats={() => setPicking(true)}
           quote={quote} onDropQuote={() => setQuote('')}
           onDropChat={(id) => setCarry((c) => c.filter((x) => x.id !== id))}
           onSend={send} onStop={() => abortRef.current?.abort()}

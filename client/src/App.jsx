@@ -183,7 +183,8 @@ export default function App() {
     if (modules && PANEL_MODULE[panel] && !modules.includes(PANEL_MODULE[panel])) setPanel(null);
   }, [modules, panel]);
 
-  const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setPanel(null); };
+  // draft: what the new chat's box starts with, e.g. the case number from an agent's Cases tab.
+  const openChat = (id, draft = '') => { setChat({ key: Date.now(), id, draft }); setDrawer(false); setPanel(null); };
   const onConversation = (id) => { if (id) setChat((c) => ({ ...c, id })); loadConvs(); };
   const deleteConv = async (id) => {
     if (!confirm('Delete this chat?')) return;
@@ -243,7 +244,7 @@ export default function App() {
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice}
             firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
             due={due} onDueChanged={loadDue} onOpenLists={() => setPanel('todos')}
-            onConversation={onConversation} onMenu={openMenu} onNewChat={() => openChat(null)} menuBadge={dm.unread} railHidden={railHidden} />
+            onConversation={onConversation} onMenu={openMenu} onNewChat={() => openChat(null)} menuBadge={dm.unread} railHidden={railHidden} draft={chat.draft || ''} />
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —
           // otherwise there is no way back to the sidebar (or to sign out) on mobile.
@@ -297,8 +298,9 @@ export default function App() {
       </main>
 
       {editing && (
-        <AgentSheet agent={editing} config={config} me={me} onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); loadAgents(); }} />
+        <AgentSheet agent={editing} config={config} me={me} modules={modules || []} onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); loadAgents(); }}
+          onOpenChat={(id, draft) => { setEditing(null); openChat(id, draft); }} />
       )}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
       <NotifyPrompt />
