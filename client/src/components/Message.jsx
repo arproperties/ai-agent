@@ -205,9 +205,11 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
     listen(null);
   }, [readNow, msg.streaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // While it is being read, tapping a word jumps the reading to it.
+  // While it is being read, a tap on the text pauses it right there. Once paused, tapping a
+  // word reads on from that word (the play button carries on from where it paused).
   const jump = (e) => {
     if (!reading || e.target.closest('a, button') || !window.getSelection()?.isCollapsed) return;
+    if (voice === 'speaking') return onSpeak();
     const p = pointAt(e.clientX, e.clientY);
     if (p && bodyRef.current?.contains(p.node)) listen(p);
   };
@@ -271,7 +273,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
         <div className="rounded-2xl border border-bad/30 bg-bad/10 px-4 py-3 text-sm">{msg.error}</div>
       ) : msg.content ? (
         <div ref={bodyRef} onClick={jump} className={reading ? 'cursor-pointer' : undefined}
-          title={reading ? 'Tap a word to read from there' : undefined}>
+          title={voice === 'speaking' ? 'Tap to pause' : reading ? 'Tap a word to read from there' : undefined}>
           <Reply content={msg.content} savedId={savedId} />
           {!msg.streaming && (voiceEnabled || onReplyTo || onRemoveText) && (
             <SelectionBar rootRef={bodyRef} onListen={voiceEnabled ? listen : undefined} onReply={onReplyTo} onRemove={onRemoveText} />
