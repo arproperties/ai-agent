@@ -10,7 +10,7 @@ import { registerSW } from 'virtual:pwa-register';
 // Now the app asks the server for a new version on start and every time it comes back to
 // the front. A new version is downloaded but never switched to on its own: reloading by
 // itself would throw away whatever the person was in the middle of. Instead <UpdateButton>
-// appears at the top of the menu, and the page reloads only when they tap it.
+// appears on its own line at the top of the menu, and the page reloads only when they tap it.
 let ready = false;
 let apply = null;
 const watchers = new Set();
