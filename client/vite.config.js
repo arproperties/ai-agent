@@ -39,7 +39,8 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.js',
-      registerType: 'autoUpdate',
+      // A new version waits until the person taps Update (src/lib/update.js), never reloads by itself.
+      registerType: 'prompt',
       includeAssets: ['icons/apple-touch-icon.png', 'icons/favicon.svg'],
       manifest: {
         name: 'Reem',

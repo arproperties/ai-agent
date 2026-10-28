@@ -8,13 +8,21 @@ import { registerSW } from 'virtual:pwa-register';
 // to see a change was to delete the home-screen icon and install again.
 //
 // Now the app asks the server for a new version on start and every time it comes back to
-// the front. When one is there, the new worker takes over (src/sw.js skips waiting) and
-// the page reloads itself onto it — at the moment the person returns, not halfway
-// through something they are doing.
+// the front. A new version is downloaded but never switched to on its own: reloading by
+// itself would throw away whatever the person was in the middle of. Instead <UpdateBar>
+// offers it, and the page reloads only when they tap Update.
+let ready = false;
+let apply = null;
+const watchers = new Set();
+
 export function startUpdates() {
   if (!('serviceWorker' in navigator)) return;
-  registerSW({
+  apply = registerSW({
     immediate: true,
+    onNeedRefresh() {
+      ready = true;
+      watchers.forEach((fn) => fn(true));
+    },
     onRegisteredSW(_url, reg) {
       if (!reg) return;
       const check = () => {
@@ -25,3 +33,13 @@ export function startUpdates() {
     },
   });
 }
+
+// Whether a new version is waiting; `fn` hears when one arrives.
+export function updateReady() { return ready; }
+export function onUpdateReady(fn) {
+  watchers.add(fn);
+  return () => watchers.delete(fn);
+}
+
+// Switch to the new version: the waiting worker takes over and the page reloads onto it.
+export function applyUpdate() { apply?.(true); }
