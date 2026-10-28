@@ -20,14 +20,15 @@ export async function agentLinks(ownerId, agentId) {
 }
 
 /**
- * An agent as the API returns it. persona and model are master-authored configuration:
- * a normal user is shown the agent, not how it was built.
+ * An agent as the API returns it. Anyone given the agent may read its persona, so they know
+ * what it does and how it was told to work (Francis, 2026-10-28); only the master edits it.
+ * The model stays the master's choice and is not shown.
  */
 export function agentOut(a, user) {
   if (!a) return a;
-  const { persona, model, user_id, ...rest } = a;
+  const { model, user_id, ...rest } = a;
   const base = { ...rest, starters: JSON.parse(a.starters || '[]') };
-  return isMaster(user) ? { ...base, persona, model } : base;
+  return isMaster(user) ? { ...base, model } : base;
 }
 
 export const agentIn = (b) => ({

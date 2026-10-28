@@ -21,11 +21,11 @@ test('master sees the full agent', () => {
   assert.deepEqual(out.starters, ['Draft a notice']);
 });
 
-test('a normal user does not receive persona or model', () => {
+test('a normal user may read the persona, but not the model', () => {
   const out = agentOut(row, plain);
   assert.equal(out.name, 'Lawyer');
   assert.deepEqual(out.starters, ['Draft a notice']);
-  assert.ok(!('persona' in out), 'persona is master-authored and must not be exposed');
+  assert.equal(out.persona, row.persona, 'shown read-only, so they know what the agent does');
   assert.ok(!('model' in out), 'model choice is master-only');
 });
 
