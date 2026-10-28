@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, makeAgent, closeDb } from './helpers/db.js';
 import { pickAgent } from '../server/router.js';
-import { agentCases } from '../server/caseFocus.js';
+import { agentCases, caseHome } from '../server/caseFocus.js';
 
 test.after(() => closeDb());
 
@@ -53,4 +53,22 @@ test("the Cases tab shows one person's own cases with the agent, grouped by case
   assert.equal(cases[0].seconds, 90);
   assert.deepEqual(cases[0].next, { due: '2026-11-05', what: 'Hearing' });
   assert.deepEqual((await agentCases(sara, agent)).map((c) => c.number), ['555666']);
+});
+
+test("Case Home has every chat on the case, whichever agent answered, and only the person's own", async () => {
+  await reset();
+  const jeff = await makeUser('Jeff');
+  const sara = await makeUser('Sara');
+  const attorney = await makeAgent(jeff, 'Soutex Case Attorney');
+  const reem = await makeAgent(jeff, 'Reem');
+  const a = await conv(jeff, 'E-205791', attorney);
+  const b = await conv(jeff, 'E-205791', reem);
+  await conv(jeff, '198822', attorney);
+  await conv(sara, 'E-205791', attorney);
+  const home = await caseHome(jeff, 'e205791');
+  assert.equal(home.number, 'E-205791');
+  assert.deepEqual(home.chats.map((c) => c.id).sort(), [a, b].sort());
+  assert.deepEqual(home.chats.map((c) => c.agent).sort(), ['Reem', 'Soutex Case Attorney']);
+  assert.equal(home.brief, null);
+  assert.equal(await caseHome(jeff, 'nope'), null);
 });
