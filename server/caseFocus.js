@@ -13,6 +13,7 @@ import { casesIn, allCases, sameCase, names } from './primaryCase.js';
 import { caseKey, searchTerm } from './caseMatch.js';
 import { dubaiDate } from './saifsys/client.js';
 import { deadlinesFor } from './caseDeadlines.js';
+import { briefOf, saveBrief, approve, dismiss } from './caseBrief.js';
 
 /** The cases this person has of their own: their case folders, and legal cases if they have Legal. */
 export async function knownCases(user, modules = []) {
@@ -96,8 +97,10 @@ const FILE_COLS = 'id, title, name, created_at, case_folder_id';
 
 /**
  * The person's own Shelf files that belong to the chat's primary case: what its case folder
- * made (the summary first), and any file whose title or name has the case number. Never a
- * reference case's files: the panel is the one case the chat is about.
+ * made (the summary first), anything attached in any of their chats about the case (a
+ * "scan_001.pdf" has no number in its name, but was sent to the case), and any file whose
+ * title or name has the case number. Never a reference case's files: the panel is the one
+ * case the chat is about.
  */
 export async function caseFiles(userId, conversationId) {
   const focus = await focusOf(userId, conversationId);
@@ -108,6 +111,11 @@ export async function caseFiles(userId, conversationId) {
   const inFolders = folders.length
     ? await db.prepare(`SELECT ${FILE_COLS} FROM documents WHERE user_id = ? AND case_folder_id = ANY(?::int[])`).all(userId, folders.map((f) => f.id))
     : [];
+  const chats = (await db.prepare('SELECT id, primary_case FROM conversations WHERE user_id = ? AND primary_case IS NOT NULL').all(userId))
+    .filter((c) => keyOf(c.primary_case) === keyOf(p)).map((c) => c.id);
+  const inChats = chats.length
+    ? await db.prepare(`SELECT ${FILE_COLS} FROM documents WHERE user_id = ? AND conversation_id = ANY(?::int[])`).all(userId, chats)
+    : [];
   // The database narrows by the number's digits; names() then checks it is this case and not a longer number.
   const digits = searchTerm(p.number);
   const byName = digits.length >= 4
@@ -115,7 +123,7 @@ export async function caseFiles(userId, conversationId) {
       .filter((d) => names(d.title || '', p.number) || names(d.name || '', p.number))
     : [];
   const summaries = new Set(folders.map((f) => f.summary_doc_id).filter(Boolean));
-  const files = [...new Map([...inFolders, ...byName].map((d) => [d.id, d])).values()]
+  const files = [...new Map([...inFolders, ...inChats, ...byName].map((d) => [d.id, d])).values()]
     .map((d) => ({ ...d, summary: summaries.has(d.id) }))
     .sort((a, b) => (b.summary - a.summary) || (b.created_at - a.created_at) || (b.id - a.id));
   return { number: p.number, files };
@@ -199,14 +207,15 @@ export async function agentCases(userId, agentId, today = dubaiDate()) {
     byKey.get(key).chats.push({ id: c.id, title: c.title, updated_at: c.updated_at });
   }
   return Promise.all([...byKey.values()].map(async (k) => {
-    const [{ files }, next, { seconds }] = await Promise.all([
+    const [{ files }, next, { seconds }, { brief, suggestion }] = await Promise.all([
       caseFiles(userId, k.chats[0].id),
       db.prepare(`SELECT due::text due, what FROM case_deadlines WHERE user_id = ? AND case_key = ? AND due >= ?::date
         ORDER BY due LIMIT 1`).get(userId, k.key, today),
       db.prepare('SELECT coalesce(sum(seconds), 0)::int seconds FROM case_time WHERE user_id = ? AND case_key = ?').get(userId, k.key),
+      briefOf(userId, k.key),
     ]);
     return { key: k.key, number: k.number, partyA: k.partyA || null, partyB: k.partyB || null, title: k.title || null,
-      chats: k.chats, files: files.length, next: next || null, seconds };
+      chats: k.chats, files: files.length, next: next || null, seconds, brief, suggestion };
   }));
 }
 
@@ -226,6 +235,29 @@ caseFocusRoutes.get('/time', wrap(async (req, res) => {
 
 caseFocusRoutes.get('/agent/:agentId/cases', wrap(async (req, res) => {
   res.json(await agentCases(req.user.id, req.params.agentId));
+}));
+
+// The case brief (caseBrief.js): always the person's own, by the case's key.
+caseFocusRoutes.get('/brief/:key', wrap(async (req, res) => res.json(await briefOf(req.user.id, req.params.key))));
+caseFocusRoutes.put('/brief/:key', wrap(async (req, res) => {
+  const body = String(req.body?.body || '').trim();
+  const number = String(req.body?.number || '').trim();
+  if (!number) return res.status(400).json({ error: 'Which case?' });
+  if (!caseKey(number) || caseKey(number) !== req.params.key) return res.status(400).json({ error: 'That is not this case' });
+  if (!body) {
+    await db.prepare('DELETE FROM case_briefs WHERE user_id = ? AND case_key = ?').run(req.user.id, req.params.key);
+  } else await saveBrief(req.user.id, req.params.key, number, body);
+  res.json(await briefOf(req.user.id, req.params.key));
+}));
+caseFocusRoutes.post('/brief/:key/suggestions/:id/approve', wrap(async (req, res) => {
+  const out = await approve(req.user.id, req.params.key, req.params.id, typeof req.body?.body === 'string' ? req.body.body : undefined);
+  if (!out) return res.status(404).json({ error: 'That suggestion is no longer waiting' });
+  res.json(out);
+}));
+caseFocusRoutes.post('/brief/:key/suggestions/:id/dismiss', wrap(async (req, res) => {
+  const out = await dismiss(req.user.id, req.params.key, req.params.id);
+  if (!out) return res.status(404).json({ error: 'That suggestion is no longer waiting' });
+  res.json(out);
 }));
 
 caseFocusRoutes.get('/:conversationId/files',wrap(async (req, res) => {

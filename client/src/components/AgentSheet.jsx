@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Check, ChevronDown, MessageSquare, Plus, Scale, Sparkles } from 'lucide-react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import Sheet from './Sheet';
 import Picker from './Picker';
 import { FilesPanel } from './Knowledge';
@@ -60,6 +62,69 @@ const day = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day:
 const ago = (t) => (t ? new Date(t * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
 
 /**
+ * The case brief (server/caseBrief.js): what earlier chats on the case settled, handed to every
+ * new chat on it. Reem only suggests; it goes into the brief when the person approves it,
+ * as it is or edited.
+ */
+function CaseBrief({ c, onChange }) {
+  const [editing, setEditing] = useState(null); // 'brief' | 'suggestion' | null
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const { brief, suggestion } = c;
+  const call = async (p) => {
+    setBusy(true); setError('');
+    try { onChange(await p); setEditing(null); } catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+  const base = `/case-focus/brief/${encodeURIComponent(c.key)}`;
+  const edit = (what, body) => { setText(body || ''); setEditing(what); };
+  const btn = 'rounded-full px-3 py-1 text-xs transition disabled:opacity-50';
+
+  return (
+    <div className="space-y-2 border-t border-stroke/60 p-3">
+      {suggestion && editing !== 'suggestion' && (
+        <div className="rounded-xl border border-p1/40 bg-p1/10 p-3">
+          <p className="mb-1.5 text-xs font-medium tracking-wide text-p1">SUGGESTED UPDATE TO THE BRIEF</p>
+          <div className="md text-sm"><Markdown remarkPlugins={[remarkGfm]}>{suggestion.body}</Markdown></div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" disabled={busy} onClick={() => call(api.post(`${base}/suggestions/${suggestion.id}/approve`, {}))}
+              className={`${btn} bg-gradient-to-br from-p1 to-p2 text-white`}>Approve</button>
+            <button type="button" disabled={busy} onClick={() => edit('suggestion', suggestion.body)} className={`${btn} bg-white/10 hover:bg-white/15`}>Edit</button>
+            <button type="button" disabled={busy} onClick={() => call(api.post(`${base}/suggestions/${suggestion.id}/dismiss`, {}))}
+              className={`${btn} text-mute hover:bg-white/10`}>Dismiss</button>
+          </div>
+        </div>
+      )}
+      {editing ? (
+        <div className="space-y-2">
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} className={`${field} resize-y text-sm leading-relaxed`} />
+          <div className="flex gap-2">
+            <button type="button" disabled={busy}
+              onClick={() => call(editing === 'suggestion'
+                ? api.post(`${base}/suggestions/${suggestion.id}/approve`, { body: text })
+                : api.put(base, { number: c.number, body: text }))}
+              className={`${btn} bg-gradient-to-br from-p1 to-p2 text-white`}>{editing === 'suggestion' ? 'Approve' : 'Save'}</button>
+            <button type="button" disabled={busy} onClick={() => setEditing(null)} className={`${btn} text-mute hover:bg-white/10`}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-xs font-medium tracking-wide text-mute">CASE BRIEF</span>
+            <button type="button" onClick={() => edit('brief', brief?.body)} className="text-xs text-p1 hover:underline">{brief ? 'Edit' : 'Write'}</button>
+          </div>
+          {brief
+            ? <div className="md text-sm text-txt/90"><Markdown remarkPlugins={[remarkGfm]}>{brief.body}</Markdown></div>
+            : <p className="text-xs text-mute">No brief yet. After a chat on this case, Reem suggests one here for you to approve. New chats on the case start from it.</p>}
+        </div>
+      )}
+      {error && <p className="text-sm text-bad">{error}</p>}
+    </div>
+  );
+}
+
+/**
  * The cases this person has worked on with the case agent (server/caseFocus.js agentCases):
  * what they open the agent to see. A case opens to its chats; one tap goes back into one.
  */
@@ -98,8 +163,12 @@ function CasesTab({ agent, onOpenChat }) {
               <span>{c.files} {c.files === 1 ? 'file' : 'files'}</span>
               {c.seconds > 0 && <span>{hours(c.seconds)} spent</span>}
               {c.next && <span className="text-p1">Next: {c.next.what} · {day(c.next.due)}</span>}
+              {c.suggestion && <span className="text-p1">Brief update waiting</span>}
             </div>
           </button>
+          {open === c.key && (
+            <CaseBrief c={c} onChange={(b) => setCases((all) => all.map((x) => (x.key === c.key ? { ...x, ...b } : x)))} />
+          )}
           {open === c.key && (
             <div className="rise space-y-1 border-t border-stroke/60 p-2">
               {c.chats.map((ch) => (
