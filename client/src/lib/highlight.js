@@ -18,6 +18,7 @@ const ENOUGH = 200;    // a piece shorter than this takes in the next paragraph 
 const MAX_PIECE = 600; // a paragraph longer than this is read in more than one piece
 const CHARS_PER_SEC = 14; // the voice's usual pace, for before the word times arrive
 const AHEAD = 6;
+const HOLD_MS = 4000; // after the person scrolls, how long before the page follows the voice again
 const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
 // The box the reply scrolls in (the chat's own list), or null for the page itself.
@@ -117,14 +118,16 @@ function wordAt(piece, time, said) {
 }
 
 export function makeHighlighter(plan) {
-  let follow = true; // keep the spoken word in sight, until the person scrolls themselves
+  let heldUntil = 0; // until then the person's own scrolling wins over following the voice
   let lit = null;
 
-  // Their own scrolling wins: once they wheel, swipe or press a scroll key, the page stays
-  // where they put it for the rest of this reading instead of being pulled back to the voice.
+  // Their own scrolling wins: when they wheel, swipe or press a scroll key, the page stays
+  // where they put it for a few seconds instead of being pulled back to the voice. Then it
+  // follows again: stopping for the rest of the reading meant a stray touch (a tap to pause
+  // moves the finger a little) left the voice reading off the bottom of the screen.
   // Typing in the chat box does not count.
-  const letGo = () => { follow = false; };
-  const onKey = (e) => { if (SCROLL_KEYS.has(e.key) && !e.target.closest?.('input, textarea, [contenteditable]')) follow = false; };
+  const letGo = () => { heldUntil = Date.now() + HOLD_MS; };
+  const onKey = (e) => { if (SCROLL_KEYS.has(e.key) && !e.target.closest?.('input, textarea, [contenteditable]')) letGo(); };
   window.addEventListener('wheel', letGo, { passive: true });
   window.addEventListener('touchmove', letGo, { passive: true });
   window.addEventListener('keydown', onKey);
@@ -137,7 +140,7 @@ export function makeHighlighter(plan) {
     read.setStart(first.node, first.start);
     read.setEnd(w.node, w.end);
     CSS.highlights.set('reading', new Highlight(read));
-    if (!follow) return;
+    if (Date.now() < heldUntil) return;
     // Keep the spoken word in sight, but only scroll once it has left the screen, and to
     // the word itself: centring its whole paragraph would jump back to the paragraph's top.
     const word = new Range();
