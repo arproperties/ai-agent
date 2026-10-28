@@ -27,7 +27,7 @@ const DOT = { green: 'bg-ok', amber: 'bg-warn', red: 'bg-bad' };
 const WORD = { green: 'OK', amber: 'Keep an eye on it', red: 'Act soon' };
 
 const Card = ({ title, hint, children }) => (
-  <section className="h-full space-y-3 py-2">
+  <section className="h-full space-y-3 rounded-3xl border border-stroke p-5">
     {title && (
       <div>
         <h2 className="font-medium">{title}</h2>
@@ -42,7 +42,7 @@ const LIGHT_TEXT = { green: 'text-ok', amber: 'text-warn', red: 'text-bad' };
 
 function Tile({ icon: I, label, light, value, sub, bar }) {
   return (
-    <div className="flex flex-col gap-3 py-2">
+    <div className="flex flex-col gap-3 rounded-3xl border border-stroke p-5">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-2.5 text-sm text-mute">
           <span className="grid size-9 place-items-center rounded-2xl bg-chart/15 text-chart"><I size={18} strokeWidth={1.75} /></span>
@@ -207,11 +207,11 @@ export default function ServerHealth({ onBack }) {
   return (
     <Page title="Server health" onBack={onBack}
       action={<button onClick={load} aria-label="Refresh" className="rounded-full p-2 text-mute hover:bg-white/5"><RefreshCw size={17} className={busy ? 'animate-spin' : ''} /></button>}>
-      <div className="mx-auto max-w-7xl space-y-8">
+      <div className="mx-auto max-w-7xl space-y-4">
         {error && <p className="text-sm text-bad">{error}</p>}
         {!now ? <Loader2 className="mx-auto my-10 animate-spin text-mute" /> : (
           <>
-            <div className="grid grid-cols-1 gap-x-10 gap-y-6 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <Tile icon={HardDrive} label="Disk" light={now.disk.light} value={pct(now.disk.used, now.disk.total)} bar={now.disk.used / now.disk.total}
                 sub={`${size(now.disk.free)} free of ${size(now.disk.total)}`} />
               <Tile icon={MemoryStick} label="Memory" light={now.memory.light} value={pct(memUsed, now.memory.total)} bar={memUsed / now.memory.total}
@@ -229,7 +229,7 @@ export default function ServerHealth({ onBack }) {
               </Card>
             )}
 
-            <div className="grid gap-x-10 gap-y-8 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-3">
               <div className="lg:col-span-2">
                 <Card title="Growth" hint="One bar per day, from the hourly readings. This is what tells you when to act.">
                   <Growth history={data.history} />
@@ -247,7 +247,7 @@ export default function ServerHealth({ onBack }) {
               </Card>
             </div>
 
-            <div className="grid gap-x-10 gap-y-8 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-3">
               <Card title="What takes the disk" hint={now.folders ? `Counted ${ago(now.folders.at)}.` : 'Being counted, check back in a minute.'}>
                 {now.folders && <Ranked rows={Object.entries(now.folders.sizes).filter(([, b]) => b > 1e6).sort((a, b) => b[1] - a[1])
                   .map(([name, bytes]) => ({ name, bytes, label: FOLDER_NAMES[name] }))} />}
