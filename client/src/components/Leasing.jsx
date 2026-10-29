@@ -671,18 +671,6 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             )}
           </Group>
         ))}
-        <Group title={taxName} hint="on the rent and the other charges, never on the deposit">
-          <div className="flex flex-wrap items-center gap-2">
-            <Pick value={v.tax_percent === '' ? 'none' : 'taxed'} onPick={(k) => setV({ ...v, tax_percent: k === 'none' ? '' : v.tax_percent || region().tax_percent || 5 })}
-              options={[['none', `No ${taxName}`], ['taxed', `Charge ${taxName}`]]} />
-            {v.tax_percent !== '' && (
-              <span className="flex items-center gap-2">
-                <input type="number" min="0" max="100" step="any" value={v.tax_percent} onChange={set('tax_percent')} required aria-label={`${taxName} percent`} className={`${FIELD} max-w-[6rem]`} />
-                <span className="text-sm text-mute">%</span>
-              </span>
-            )}
-          </div>
-        </Group>
       </Section>}
 
       {step === 3 && <Section title="Contract & notes">

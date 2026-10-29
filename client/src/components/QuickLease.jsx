@@ -42,7 +42,6 @@ export default function QuickLease({ unit, where, preset, onSaved, onFull, onCan
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (f) => (e) => setV((now) => ({ ...now, [f]: e.target.value }));
-  const taxName = region().tax_name;
 
   useEffect(() => { api.get('/leasing/tenants').then(setTenants).catch(() => {}); }, []);
 
@@ -117,15 +116,12 @@ export default function QuickLease({ unit, where, preset, onSaved, onFull, onCan
       ))}
 
       <button type="button" onClick={() => setMore(!more)} aria-expanded={more} className="flex items-center gap-1 text-xs text-mute hover:text-txt">
-        <ChevronDown size={14} className={`transition ${more ? 'rotate-180' : ''}`} /> Paid {FREQ.find(([k]) => k === v.payment_frequency)[1].toLowerCase()}, {Number(v.security_deposit) > 0 ? 'with a deposit' : 'no deposit'}, {Number(v.tax_percent) > 0 ? `${taxName} ${Number(v.tax_percent)}%` : `no ${taxName}`}
+        <ChevronDown size={14} className={`transition ${more ? 'rotate-180' : ''}`} /> Paid {FREQ.find(([k]) => k === v.payment_frequency)[1].toLowerCase()}, {Number(v.security_deposit) > 0 ? 'with a deposit' : 'no deposit'}
       </button>
       {more && (
         <div className="space-y-2">
           <Label text="Paid"><Select value={v.payment_frequency} onChange={set('payment_frequency')} className={FIELD} options={FREQ} /></Label>
-          <div className="grid grid-cols-2 gap-2">
-            <Label text={`Deposit (${currency()})`}><input type="number" min="0" step="any" value={v.security_deposit} onChange={set('security_deposit')} placeholder="None" className={FIELD} /></Label>
-            <Label text={`${taxName} (%)`}><input type="number" min="0" max="100" step="any" value={v.tax_percent} onChange={set('tax_percent')} placeholder="None" className={FIELD} /></Label>
-          </div>
+          <Label text={`Deposit (${currency()})`}><input type="number" min="0" step="any" value={v.security_deposit} onChange={set('security_deposit')} placeholder="None" className={FIELD} /></Label>
         </div>
       )}
 
