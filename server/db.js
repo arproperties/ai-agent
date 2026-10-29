@@ -1551,7 +1551,7 @@ await db.exec(`
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS expected_move_out DATE;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS leasing_agent TEXT;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS part_month_amount NUMERIC;
-  -- rent_amount_2: the rent's second part (Amount 2). rent_amount stays the whole rent, both parts together.
+  -- rent_amount_2: the part of the rent HUD or an agency pays; the rest is the tenant's. rent_amount stays the whole rent, both parts together.
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS rent_amount_2 NUMERIC;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_late_fees BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_checks BOOLEAN NOT NULL DEFAULT false;

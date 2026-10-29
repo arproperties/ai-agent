@@ -142,11 +142,20 @@ async function lateRent(tenantId, today) {
   const pays = await db.prepare(`SELECT p.installment_id, p.amount, to_char(p.received_on, 'YYYY-MM-DD') AS received_on
     FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id JOIN lease_bookings b ON b.id = i.booking_id
     WHERE b.tenant_id = ? AND i.kind = 'rent' ORDER BY p.received_on, p.id`).all(tenantId);
-  return rents.flatMap((r) => {
-    const amount = Number(r.amount);
+  // A month's rent billed in two parts (Tenant + HUD/Agency) is one rent here, late or not as a whole.
+  const months = new Map();
+  for (const r of rents) {
+    const key = `${r.booking_id}|${r.due_date}`;
+    const m = months.get(key) || { ...r, amount: 0, ids: new Set() };
+    m.amount += Number(r.amount);
+    m.ids.add(r.id);
+    months.set(key, m);
+  }
+  return [...months.values()].flatMap((r) => {
+    const amount = money(r.amount);
     let paid = 0;
     let paidOn = null;
-    for (const p of pays.filter((x) => x.installment_id === r.id)) {
+    for (const p of pays.filter((x) => r.ids.has(x.installment_id))) {
       paid = money(paid + Number(p.amount));
       if (!paidOn && paid >= amount) paidOn = p.received_on;
     }

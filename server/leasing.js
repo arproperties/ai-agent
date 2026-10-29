@@ -189,9 +189,9 @@ function bookingFields(body = {}, { partial = false } = {}) {
   // The rent can be typed in two parts: rent_amount is both together, rent_amount_2 the second. Empty: one part.
   if ('rent_amount_2' in body) {
     const v = body.rent_amount_2;
-    if (v !== '' && v != null && !(Number(v) >= 0)) throw bad('Amount 2 must be a number.');
+    if (v !== '' && v != null && !(Number(v) >= 0)) throw bad('The HUD/Agency amount must be a number.');
     out.rent_amount_2 = Number(v) > 0 ? money(Number(v)) : null;
-    if (out.rent_amount_2 && 'rent_amount' in out && out.rent_amount_2 > out.rent_amount) throw bad('Amount 2 is more than the whole rent.');
+    if (out.rent_amount_2 && 'rent_amount' in out && out.rent_amount_2 > out.rent_amount) throw bad('The HUD/Agency amount is more than the whole rent.');
   }
   if ('rent_period' in body) { if (!PERIODS.has(body.rent_period)) throw bad('Rent is per month or per year.'); out.rent_period = body.rent_period; }
   if ('payment_frequency' in body) { if (!FREQUENCIES.has(body.payment_frequency)) throw bad('Unknown payment frequency.'); out.payment_frequency = body.payment_frequency; }
@@ -419,9 +419,9 @@ export async function updateBooking(id, body = {}, by) {
     if (old.status === 'confirmed') await mustBeFree(row.unit_id || old.unit_id, start, end, old.id, row.renewed_from);
     // The schedule is rebuilt around the rows already paid, which only holds if they still fit it.
     const fixed = ['start_date', 'rent_period', 'payment_frequency', 'discount_type', 'prorate'].some((f) => f in row && row[f] !== old[f])
-      || ['rent_amount', 'discount_value', 'tax_percent', 'part_month_amount'].some((f) => f in row && row[f] !== num(old[f]));
+      || ['rent_amount', 'rent_amount_2', 'discount_value', 'tax_percent', 'part_month_amount'].some((f) => f in row && row[f] !== num(old[f]));
     if (fixed && await db.prepare('SELECT 1 FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id WHERE i.booking_id = ? LIMIT 1').get(old.id)) {
-      throw bad('Payments are recorded on this lease, so its start date, rent, discount, tax and payment frequency cannot change (nor how its first month is charged). Cancel it and make a new lease instead.', 409);
+      throw bad('Payments are recorded on this lease, so its start date, rent (and its Tenant / HUD split), discount, tax and payment frequency cannot change (nor how its first month is charged). Cancel it and make a new lease instead.', 409);
     }
     // A discount agreed later may change rent still to be paid, never rent that has money against it.
     if ('discounts' in row && row.discounts !== JSON.stringify(old.discounts)) {
@@ -643,7 +643,24 @@ function monthsOf(b) {
 }
 /** What a row of the schedule is for, in words: Rent, Security deposit, or the charge's own name. */
 export const dueName = (i) => (i.kind === 'deposit' ? 'Security deposit' : i.kind === 'fee' || i.kind === 'charge' ? i.label : i.kind === 'late' ? `Late fee (rent due ${i.label})`
-  : i.kind === 'credit' ? 'Credit (paid ahead)' : 'Rent');
+  : i.kind === 'credit' ? 'Credit (paid ahead)' : i.label ? `Rent · ${i.label}` : 'Rent');
+/** The label of a rent row for the part HUD or an agency pays (rent_amount_2); the tenant's part keeps no label.
+    With no HUD/Agency part (0 or empty) the rent is one row, as before. */
+const RENT_2 = 'HUD/Agency';
+/** A rent row split into its two parts, as the rent was typed (Tenant + HUD/Agency): each takes its share of the
+    amount and the tax, and the two add up to the row exactly. A rent typed in one part stays one row. */
+function rentParts(b, p) {
+  const r2 = Number(b.rent_amount_2) || 0;
+  if (!(r2 > 0) || !(Number(b.rent_amount) > r2)) return [{ kind: 'rent', label: '', ...p }];
+  const share = r2 / Number(b.rent_amount);
+  const tax = p.tax || 0;
+  const tax2 = money(tax * share);
+  const amount2 = money((p.amount - tax) * share + tax2);
+  return [
+    { kind: 'rent', label: '', ...p, amount: money(p.amount - amount2), ...(tax ? { tax: money(tax - tax2) } : {}) },
+    { kind: 'rent', label: RENT_2, ...p, amount: amount2, ...(tax ? { tax: tax2 } : {}) },
+  ];
+}
 /** The rows writeSchedule() leaves alone: late fees, charges added by hand, and money kept as a credit. */
 const KEPT = "('late', 'charge', 'credit')";
 
@@ -754,7 +771,8 @@ async function writeSchedule(b) {
     await db.prepare("UPDATE lease_installments SET due_date = ? WHERE booking_id = ? AND kind = 'fee' AND label = ? AND due_date <> ?::date").run(f.on || first, b.id, f.label, f.on || first);
   }
   const rows = [
-    ...rent.map((p) => ({ kind: 'rent', label: '', ...p })),
+    // Rent typed in two parts is billed as two rows each time, one per part.
+    ...rent.flatMap((p) => rentParts(b, p)),
     ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: depositDue, amount: Number(b.security_deposit) }] : []),
     // A monthly charge is due in full each month, a part month too: Rent Manager bills
     // water/trash at its whole price on the prorated month (Francis, 2026-10-17).
@@ -807,16 +825,25 @@ export async function applyLateFees(today) {
   const daily = Number(rule.daily) || 0;
   const cap = Number(rule.cap) > 0 ? Number(rule.cap) : Infinity;
   const T = dayNo(today);
-  const rents = await db.prepare(`SELECT r.id, r.booking_id, to_char(r.due_date, 'YYYY-MM-DD') AS due, r.amount FROM lease_installments r JOIN lease_bookings b ON b.id = r.booking_id
+  const rows = await db.prepare(`SELECT r.id, r.booking_id, to_char(r.due_date, 'YYYY-MM-DD') AS due, r.amount FROM lease_installments r JOIN lease_bookings b ON b.id = r.booking_id
     WHERE r.kind = 'rent' AND b.status = 'confirmed' AND NOT b.no_late_fees AND r.due_date >= ?::date AND r.due_date < ?::date`).all(rule.since || today, today);
-  if (!rents.length) return;
+  if (!rows.length) return;
   const pays = await db.prepare(`SELECT installment_id, to_char(received_on, 'YYYY-MM-DD') AS on_day, amount FROM lease_payments
-    WHERE installment_id IN (${rents.map(() => '?').join(', ')}) ORDER BY received_on, id`).all(...rents.map((r) => r.id));
+    WHERE installment_id IN (${rows.map(() => '?').join(', ')}) ORDER BY received_on, id`).all(...rows.map((r) => r.id));
+  // A month's rent billed in two parts (Tenant + HUD/Agency) is one rent here: one fee, on both together.
+  const months = new Map();
+  for (const r of rows) {
+    const key = `${r.booking_id}|${r.due}`;
+    const m = months.get(key) || { booking_id: r.booking_id, due: r.due, amount: 0, ids: new Set() };
+    m.amount += Number(r.amount);
+    m.ids.add(r.id);
+    months.set(key, m);
+  }
   const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';
-  for (const r of rents) {
+  for (const r of months.values()) {
     // The day the rent was paid in full, if it has been.
     let sum = 0, full = null;
-    for (const p of pays) if (p.installment_id === r.id && full == null && (sum += Number(p.amount)) >= Number(r.amount) - 0.004) full = dayNo(p.on_day);
+    for (const p of pays) if (r.ids.has(p.installment_id) && full == null && (sum += Number(p.amount)) >= r.amount - 0.004) full = dayNo(p.on_day);
     const feeDay = addWeekdays(dayNo(r.due), grace) + 1;
     const fee = await db.prepare("SELECT id FROM lease_installments WHERE booking_id = ? AND kind = 'late' AND label = ?").get(r.booking_id, r.due);
     if (full != null && full < feeDay) {
@@ -852,7 +879,9 @@ export async function bookingPayments(bookingId, today = todayHere()) {
     const amount = Number(i.amount);
     const paid = total(payments);
     const status = paid >= amount ? 'paid' : i.due_date < today ? 'overdue' : paid > 0 ? 'partly_paid' : i.due_date === today ? 'due' : 'upcoming';
-    return { ...i, name: dueName(i), amount, tax: Number(i.tax), paid, left: money(Math.max(0, amount - paid)), status, payments };
+    // Rent in two parts: the tenant's row is named for it too, beside "Rent · HUD/Agency".
+    const name = i.kind === 'rent' && !i.label && Number(b.rent_amount_2) > 0 ? 'Rent · Tenant' : dueName(i);
+    return { ...i, name, amount, tax: Number(i.tax), paid, left: money(Math.max(0, amount - paid)), status, payments };
   });
 }
 
