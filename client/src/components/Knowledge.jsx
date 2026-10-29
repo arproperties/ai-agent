@@ -932,27 +932,37 @@ export function FilesPanel({ agentId, hint, folders, me }) {
 
 // ---------- memory ----------
 export function MemoryPanel() {
-  const [items, setItems] = useState(null);
+  // One page of memories at a time; the search runs on the server so it reaches every page.
+  const [data, setData] = useState(null); // { items, total, page, pages }
+  const [page, setPage] = useState(1);
   const [text, setText] = useState('');
   const [q, setQ] = useState('');
+  const [searched, setSearched] = useState(''); // q, once typing pauses
   const [history, setHistory] = useState({}); // memory id -> its earlier versions, while open
-  const load = () => api.get('/memories').then(setItems);
+  const load = (p = page, s = searched) =>
+    api.get(`/memories?page=${p}&q=${encodeURIComponent(s)}`).then((d) => { setData(d); setPage(d.page); });
   const toggleHistory = async (id) => {
     if (history[id]) return setHistory(({ [id]: _, ...rest }) => rest);
     const versions = await api.get(`/memories/${id}/history`);
     setHistory((h) => ({ ...h, [id]: versions }));
   };
-  // Every word typed must appear somewhere in the memory, in any order.
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = items?.filter((m) => words.every((w) => m.text.toLowerCase().includes(w)));
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const t = setTimeout(() => setSearched(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
+  useEffect(() => { load(1, searched); }, [searched]); // a new search starts from page 1
+  const go = (p) => { load(p); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const shown = data?.items;
+  // Whether this person has any memory at all, so a search with no hits isn't read as "nothing learned".
+  const [hasAny, setHasAny] = useState(false);
+  useEffect(() => { if (!searched && data) setHasAny(data.total > 0); }, [data, searched]);
 
   const add = async (e) => {
     e.preventDefault();
     if (!text.trim()) return;
     await api.post('/memories', { text });
     setText('');
-    load();
+    load(1);
   };
 
   return (
@@ -963,10 +973,10 @@ export function MemoryPanel() {
           className="glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70" />
         <button className="shrink-0 rounded-xl bg-p1/25 px-4 text-sm text-txt hover:bg-p1/40">Add</button>
       </form>
-      {items?.length > 0 && <SearchBox value={q} onChange={setQ} placeholder="Search memory" />}
+      {hasAny && <SearchBox value={q} onChange={setQ} placeholder="Search memory" />}
       <ul className="space-y-2">
-        {items?.length === 0 && <li className="py-4 text-center text-sm text-mute">Nothing learned yet. Just start chatting.</li>}
-        {items?.length > 0 && shown.length === 0 && <li className="py-4 text-center text-sm text-mute">No memory matches “{q}”.</li>}
+        {data && !hasAny && <li className="py-4 text-center text-sm text-mute">Nothing learned yet. Just start chatting.</li>}
+        {hasAny && shown?.length === 0 && <li className="py-4 text-center text-sm text-mute">No memory matches “{searched}”.</li>}
         {shown?.map((m) => (
           <li key={m.id} className="rounded-xl bg-white/5 py-2 pl-3.5 pr-1.5 text-sm">
             <div className="flex items-start gap-2">
@@ -997,6 +1007,15 @@ export function MemoryPanel() {
           </li>
         ))}
       </ul>
+      {data?.pages > 1 && (
+        <div className="flex items-center justify-between gap-2 text-sm">
+          <button onClick={() => go(page - 1)} disabled={page <= 1}
+            className="flex items-center gap-1 rounded-full px-3 py-1.5 text-mute hover:text-txt disabled:opacity-30"><ChevronLeft size={16} /> Newer</button>
+          <span className="text-xs text-mute">Page {page} of {data.pages} · {data.total} memories</span>
+          <button onClick={() => go(page + 1)} disabled={page >= data.pages}
+            className="flex items-center gap-1 rounded-full px-3 py-1.5 text-mute hover:text-txt disabled:opacity-30">Older <ChevronLeft size={16} className="rotate-180" /></button>
+        </div>
+      )}
     </div>
   );
 }

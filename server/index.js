@@ -408,15 +408,23 @@ app.get('/api/access', wrap(async (req, res) => {
 
 // ---------- memory (shared by all of the user's agents) ----------
 app.use('/api/memories', needsModule('memory'));
-// Current memories only; `versions` counts the earlier ones a memory replaced, for its History link.
+// Current memories only, newest first, one page at a time; `versions` counts the earlier
+// ones a memory replaced, for its History link. `q` keeps memories holding every word of it,
+// searched here rather than in the page so it reaches memories on other pages.
+const MEMORY_PAGE = 20;
 app.get('/api/memories', wrap(async (req, res) => {
-  res.json(await db.prepare(`
-    WITH RECURSIVE older AS (
-      SELECT id AS head, id FROM memories WHERE user_id = ? AND replaced_at IS NULL
-      UNION SELECT o.head, m.id FROM memories m JOIN older o ON m.replaced_by = o.id
-    )
-    SELECT m.id, m.text, m.created_at, (SELECT COUNT(*)::int - 1 FROM older o WHERE o.head = m.id) AS versions
-    FROM memories m WHERE m.user_id = ? AND m.replaced_at IS NULL ORDER BY m.id DESC`).all(req.user.id, req.user.id));
+  const words = String(req.query.q || '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+  const where = ['m.user_id = ?', 'm.replaced_at IS NULL', ...words.map(() => "m.text ILIKE ? ESCAPE '\\'")].join(' AND ');
+  const params = [req.user.id, ...words.map((w) => `%${w.replace(/[\\%_]/g, '\\$&')}%`)];
+  const { total } = await db.prepare(`SELECT COUNT(*)::int total FROM memories m WHERE ${where}`).get(...params);
+  const page = Math.max(1, Math.min(Number(req.query.page) || 1, Math.ceil(total / MEMORY_PAGE) || 1));
+  const items = await db.prepare(`
+    SELECT m.id, m.text, m.created_at, (
+      WITH RECURSIVE older AS (
+        SELECT m.id AS id UNION SELECT o2.id FROM memories o2 JOIN older o ON o2.replaced_by = o.id
+      ) SELECT COUNT(*)::int - 1 FROM older) AS versions
+    FROM memories m WHERE ${where} ORDER BY m.id DESC LIMIT ${MEMORY_PAGE} OFFSET ${(page - 1) * MEMORY_PAGE}`).all(...params);
+  res.json({ items, total, page, pages: Math.ceil(total / MEMORY_PAGE) });
 }));
 app.get('/api/memories/:id/history', wrap(async (req, res) => {
   res.json(await memoryChain(req.user.id, Number(req.params.id)));
