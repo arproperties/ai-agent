@@ -4,6 +4,13 @@ import { isMaster } from './access.js';
 // What a person may change: Add, Edit, Delete, ticked once on their People profile and
 // good for every module they hold. Modules decide what they see (server/modules.js);
 // these decide what they may change in it. The master may do all three.
+//
+// A new feature joins without anyone remembering a list: every route under COVERED is
+// checked by its method. Only three things need a thought, and a test fails until each is
+// done (tests/actions.test.js): a POST that changes something already there goes in
+// OVERRIDES; a new Riley tool that changes something goes in TOOL_ACTIONS
+// (server/leasingKit.js); a new button that adds, edits or deletes is shown with canDo
+// (client/src/lib/actions.js).
 
 export const ACTIONS = [
   { key: 'add', label: 'Add' },
