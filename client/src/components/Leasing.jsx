@@ -248,7 +248,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [buildingId, setBuildingId] = useState(init.building_id || '');
   const [v, setV] = useState({
     start_date: init.start_date || '', end_date: init.end_date || '', unit_id: init.unit_id || '',
-    rent_amount: start?.rent_amount ?? '', rent_period: start?.rent_period || 'year', payment_frequency: start?.payment_frequency || 'monthly',
+    rent_amount: start?.rent_amount ?? '', rent_period: start?.rent_period || 'month', payment_frequency: start?.payment_frequency || 'monthly',
     security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], discounts: start?.discounts || [], source: start?.source || preset?.source || '',
     // Made from a prospect: the saved lease marks it leased (server/prospects.js).
     ...(!start && preset?.prospect_id ? { prospect_id: preset.prospect_id } : {}), referred_by: start?.referred_by || '', tenant_energy_account: !!start?.tenant_energy_account,
