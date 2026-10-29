@@ -800,6 +800,24 @@ await db.exec(`
   );
 `);
 
+// What each person may change in the modules they hold: 'add', 'edit', 'delete', one row
+// each (server/actions.js). The master may do all of it and is never listed. When the
+// table first appears, everyone who is not a master gets add and edit, which is what staff
+// could do before; delete was the master's alone. Someone new after that starts with none.
+export async function ensureActionAccess() {
+  const fresh = !(await db.prepare(`SELECT to_regclass('action_access') AS t`).get()).t;
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS action_access (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      PRIMARY KEY (user_id, action)
+    );
+  `);
+  if (fresh) await db.exec(`INSERT INTO action_access (user_id, action)
+    SELECT id, a FROM users, unnest(ARRAY['add', 'edit']) AS a WHERE role IS DISTINCT FROM 'master' ON CONFLICT DO NOTHING`);
+}
+await ensureActionAccess();
+
 // An ARS booking Riley has got ready in chat, waiting for the person to tap Create.
 //   status: pending (the card is showing), creating (Create was tapped; the lock that
 //     stops a double tap making two bookings), created, cancelled, failed.

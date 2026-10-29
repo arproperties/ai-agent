@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { db, tx } from './db.js';
 import { sendPasswordReset } from './mailer.js';
 import { userModules } from './modules.js';
+import { userActions } from './actions.js';
 
 const scryptAsync = promisify(scrypt);
 const SESSION_DAYS = 60;
@@ -46,8 +47,9 @@ const fail = (key) => {
   attempts.set(key, a && a.until > Date.now() ? { ...a, count: a.count + 1 } : { count: 1, until: Date.now() + 15 * 60000 });
 };
 
-// `modules` is what the menu is drawn from (server/modules.js); the server checks each request again.
-const publicUser = async (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, modules: await userModules(u) });
+// `modules` is what the menu is drawn from (server/modules.js), `actions` which buttons it
+// offers (server/actions.js); the server checks each request again.
+const publicUser = async (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, modules: await userModules(u), actions: await userActions(u) });
 
 export async function currentUser(req) {
   const token = readCookie(req, COOKIE);

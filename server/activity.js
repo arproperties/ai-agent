@@ -36,6 +36,7 @@ export const LABELS = {
   prop_documents: { name: 'Property document', about: (r) => r.title || r.file_name },
   users: { name: 'Person', about: (r) => r.name },
   module_access: { name: 'Module access', about: (r) => r.module },
+  action_access: { name: 'Action access', about: (r) => r.action },
   qb_connection: { name: 'QuickBooks connection', about: (r) => (r.enabled ? 'on' : 'off'),
     fields: { enabled: 'On', company_file: 'Company file' } },
   qb_settings: { name: 'QuickBooks setting', about: (r) => r.key },

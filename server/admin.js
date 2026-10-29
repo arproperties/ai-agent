@@ -5,6 +5,7 @@ import { inlineType } from './files.js';
 import { recentErrors, errorCount } from './errors.js';
 import { MSG_SELECT, messageOut } from './messenger.js';
 import { listModuleAccess, setModuleAccess } from './modules.js';
+import { listAppActions, setAppActions } from './actions.js';
 import { listAccess, setAccess, setActionAccess } from './saifsys/index.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
@@ -362,6 +363,15 @@ adminRoutes.get('/users/:id/modules', wrap(async (req, res) => {
 
 adminRoutes.put('/users/:id/modules', wrap(async (req, res) => {
   res.json({ ok: true, modules: await setModuleAccess(req.params.id, req.body.modules) });
+}));
+
+// What a person may change in those modules: Add, Edit, Delete. The master has all three.
+adminRoutes.get('/users/:id/actions', wrap(async (req, res) => {
+  res.json(await listAppActions(req.params.id));
+}));
+
+adminRoutes.put('/users/:id/actions', wrap(async (req, res) => {
+  res.json({ ok: true, actions: await setAppActions(req.params.id, req.body.actions) });
 }));
 
 // Disabling keeps the data and revokes every session. Deleting a user cascades away
