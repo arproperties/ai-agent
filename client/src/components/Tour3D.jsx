@@ -37,7 +37,7 @@ const STOPS = [
     hint: 'Riley, and your team chat', about: 'Ask Riley anything about the business, in words or by voice, and talk to the rest of the team in the same place.' },
   { id: 'leasing', Ico: ClipboardList, label: 'Leasing', tw: 'from-emerald-400 to-cyan-500', color: ['#34d399', '#06b6d4'],
     hint: 'Leases, the 3D view and the calendar', about: 'Every lease, from draft to move-out, with its payments and papers. The same units stand as a building in the 3D view, and by date on the calendar.',
-    subs: [['bookings', 'Leases'], ['3d', '3D view'], ['calendar', 'Calendar']] },
+    subs: [['bookings', 'Leases'], ['vacant', 'Vacant'], ['3d', '3D view'], ['calendar', 'Calendar']] },
   { id: 'tenants', Ico: Users, label: 'Tenants', tw: 'from-rose-400 to-pink-600', color: ['#fb7185', '#db2777'],
     hint: 'The people and companies renting', about: 'The people and companies renting from you, each with everything they have ever leased, paid and asked to be repaired.' },
   { id: 'workorders', Ico: Wrench, label: 'Work orders', tw: 'from-sky-400 to-cyan-600', color: ['#38bdf8', '#0891b2'],

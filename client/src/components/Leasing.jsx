@@ -1158,6 +1158,77 @@ function Tenants({ onHistory }) {
   );
 }
 
+/**
+ * The empty units, the longest empty first, each with a way to let it. A unit that already has a
+ * draft lease opens that draft instead, so it is not leased twice; one let from a later date says so.
+ */
+function Vacant({ onNew, onOpen }) {
+  const [d, setD] = useState(null);
+  const [leases, setLeases] = useState([]);
+  const [q, setQ] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get('/leasing/overview?company_id=&building_id=&months=1').then(setD).catch((e) => setError(e.message));
+    api.get('/leasing/bookings?q=').then(setLeases).catch(() => {});
+  }, []);
+
+  const companyOf = new Map((d?.filters.buildings || []).map((b) => [b.id, b.company_id]));
+  const draftOf = new Map(leases.filter((b) => b.stage === 'draft').map((b) => [b.unit_id, b]));
+  const nextOf = new Map();
+  for (const b of leases.filter((x) => x.stage === 'upcoming').sort((a, b) => a.start_date.localeCompare(b.start_date))) if (!nextOf.has(b.unit_id)) nextOf.set(b.unit_id, b);
+  const all = d && d.buildings.flatMap((b) => b.floors.flat()).filter((u) => u.status === 'vacant')
+    .sort((a, b) => (b.days_vacant ?? Infinity) - (a.days_vacant ?? Infinity) || a.building.localeCompare(b.building) || String(a.unit_no).localeCompare(String(b.unit_no), undefined, { numeric: true }));
+  const words = q.trim().toLowerCase();
+  const shown = all && (words ? all.filter((u) => [u.unit_no, u.building, u.company, u.type, u.floor].join(' ').toLowerCase().includes(words)) : all);
+  const paged = usePaged(shown, q);
+  const empty = (u) => (u.days_vacant == null ? 'Never let' : `${u.days_vacant} day${u.days_vacant === 1 ? '' : 's'}`);
+  const action = (u) => {
+    const draft = draftOf.get(u.unit_id);
+    if (draft) return <button onClick={() => onOpen(draft)} className="flex items-center gap-1.5 rounded-full border border-dashed border-p1/70 px-3 py-1.5 text-xs text-p1 hover:bg-p1/10"><Pencil size={13} /> Open draft</button>;
+    return canDo('add') && <button onClick={() => onNew({ company_id: companyOf.get(u.building_id), building_id: u.building_id, unit_id: u.unit_id })} className="flex items-center gap-1.5 rounded-full bg-p1 px-3 py-1.5 text-xs text-white hover:opacity-90"><Plus size={13} /> New lease</button>;
+  };
+
+  return (
+    <div className="space-y-4">
+      <label className="relative block">
+        <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by unit, building, company or type" className={`${FIELD} pl-10`} />
+      </label>
+      {shown && <p className="text-xs text-mute">{shown.length} vacant unit{shown.length === 1 ? '' : 's'}</p>}
+      {error && <p className="text-sm text-bad">{error}</p>}
+      {!shown ? (!error && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />)
+        : shown.length === 0 ? <p className="py-3 text-sm text-mute">{all.length ? 'No vacant units match.' : 'No vacant units: every unit is let.'}</p>
+          : (
+            <>
+              <div className="overflow-x-auto rounded-2xl border border-stroke">
+                <table className="w-full whitespace-nowrap text-sm">
+                  <thead><tr className={HEAD}>{['Unit', 'Building', 'Type', 'Floor', 'Empty since', 'Empty for', 'Next lease', ''].map((h) => <th key={h} className={TH}>{h}</th>)}</tr></thead>
+                  <tbody className="divide-y divide-stroke/60">
+                    {paged.rows.map((u) => {
+                      const next = nextOf.get(u.unit_id);
+                      return (
+                        <tr key={u.unit_id}>
+                          <td className="px-3 py-2.5 font-medium">{u.unit_no}</td>
+                          <td className="px-3 py-2.5"><p>{u.building}</p><p className="text-xs text-mute">{u.company}</p></td>
+                          <td className={`px-3 py-2.5 ${u.type ? '' : 'text-mute/50'}`}>{u.type || '—'}</td>
+                          <td className={`px-3 py-2.5 ${u.floor ? '' : 'text-mute/50'}`}>{u.floor || '—'}</td>
+                          <td className={`px-3 py-2.5 ${u.vacant_since ? '' : 'text-mute/50'}`}>{u.vacant_since ? fmt(u.vacant_since) : '—'}</td>
+                          <td className="px-3 py-2.5">{empty(u)}</td>
+                          <td className="px-3 py-2.5">{next ? <><p>{fmt(next.start_date)}</p><p className="text-xs text-mute">{next.tenant}</p></> : <span className="text-mute/50">—</span>}</td>
+                          <td className="px-2 py-1.5"><div className="flex justify-end">{action(u)}</div></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <Pager {...paged.pager} />
+            </>
+          )}
+    </div>
+  );
+}
+
 const BAR = {
   active: 'bg-p1/70 text-white', upcoming: 'bg-p3/60 text-white', ended: 'bg-white/15 text-txt/70',
   draft: 'border border-dashed border-p1/70 bg-p1/10 text-p1',
@@ -1315,7 +1386,7 @@ function Calendar({ onEdit, onNew }) {
 // Leasing is several pages, each with its own row in the sidebar: the overview, Bookings (which
 // has the 3D View and the calendar beside it as tabs), Tenants, Reports, Alerts and Documents. Which one
 // is open is the app's to hold, as `tab`, so the sidebar can open any of them.
-const BOOKING_TABS = [['bookings', 'Leasing'], ['3d', 'Building (3D view)'], ['calendar', 'Calendar']];
+const BOOKING_TABS = [['bookings', 'Leasing'], ['vacant', 'Vacant'], ['3d', 'Building (3D view)'], ['calendar', 'Calendar']];
 
 // The module an alert's link leads into: the screen that deals with it.
 const alertModule = (a) => ({ documents: 'documents', tenants: 'tenants', workorder: 'workorders', prospects: 'prospects' }[a.open] || 'leasing');
@@ -1407,6 +1478,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
           </Suspense>
         )
         : tab === 'calendar' ? <Calendar key={key} onEdit={(b) => setForm(b)} onNew={(preset) => setForm({ preset })} />
+        : tab === 'vacant' ? <Vacant key={key} onNew={(preset) => setForm({ preset })} onOpen={(b) => setForm(b)} />
         : <Bookings key={key} fresh={fresh} onEdit={(b) => setForm(b)} onDocs={(b) => setForm({ docsOf: b })} onPay={(b) => setForm({ payOf: b })} onEnd={(b) => setForm({ endOf: b })} onInspect={(b, start) => setForm({ inspectOf: b, start })} onWork={(b) => setForm({ workOf: { scope: { booking_id: b.id }, title: `Work orders · ${b.ref}`, preset: { unit_id: b.unit_id } } })} />}
     </Page>
   );

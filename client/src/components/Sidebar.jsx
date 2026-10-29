@@ -52,7 +52,7 @@ export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodo
     { module: 'overview', Ico: LayoutDashboard, color: 'amber', label: 'Overview', hint: 'Occupancy, rent and what needs attention', here: leasingOpen && leasingTab === 'overview', onClick: () => onLeasing('overview') },
     { module: 'chats', Ico: MessagesSquare, color: 'from-cyan-400 to-blue-600 shadow-cyan-500/30', label: 'Chats', hint: 'Riley, and your team chat', here: chatsOpen, onClick: onChats, badge: unreadMessages },
     { module: 'leasing', Ico: ClipboardList, color: 'teal', label: 'Leasing', hint: 'Leases, the 3D view and the calendar',
-      here: leasingOpen && ['bookings', '3d', 'calendar'].includes(leasingTab), onClick: () => onLeasing(['3d', 'calendar'].includes(leasingTab) ? leasingTab : 'bookings') },
+      here: leasingOpen && ['bookings', 'vacant', '3d', 'calendar'].includes(leasingTab), onClick: () => onLeasing(['vacant', '3d', 'calendar'].includes(leasingTab) ? leasingTab : 'bookings') },
     { module: 'tenants', Ico: Users, color: 'rose', label: 'Tenants', hint: 'The people and companies renting', here: leasingOpen && leasingTab === 'tenants', onClick: () => onLeasing('tenants') },
     { module: 'prospects', Ico: UserPlus, color: 'amber', label: 'Prospects', hint: 'People interested in a unit', here: leasingOpen && leasingTab === 'prospects', onClick: () => onLeasing('prospects') },
     { module: 'workorders', Ico: Wrench, color: 'from-sky-400 to-cyan-600 shadow-sky-500/30', label: 'Work orders', hint: 'Repairs: what is open, and who has it', here: leasingOpen && leasingTab === 'workorders', onClick: () => onLeasing('workorders') },

@@ -166,7 +166,7 @@ export default function App() {
   };
   // While the Tour is open, a place in the sidebar is flown to first, and then opened over it.
   const visit = (stop, sub) => { setPanel(null); setDrawer(false); setAsk({ stop, sub, n: Date.now() }); };
-  const LEASES = ['bookings', '3d', 'calendar']; // Leasing's own stop, and its ways in
+  const LEASES = ['bookings', 'vacant', '3d', 'calendar']; // Leasing's own stop, and its ways in
   const openLeasing = (tab = 'overview', sub) => (tour ? visit(LEASES.includes(tab) ? 'leasing' : tab, LEASES.includes(tab) ? tab : sub) : showLeasing(tab, sub));
   const showLeasing = (tab, sub) => {
     setLeasingTab(tab);
