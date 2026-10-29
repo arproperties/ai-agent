@@ -89,7 +89,18 @@ function Transactions({ bookingId, stamp: version }) {
               {l.rows.map((r, i) => (
                 <tr key={i}>
                   <td className="whitespace-nowrap px-4 py-2 tabular-nums">{fmt(r.date)}</td>
-                  <td className={`px-3 py-2 ${r.kind === 'payment' ? 'text-ok' : ''}`}>{r.description}</td>
+                  <td className={`px-3 py-2 ${r.kind === 'payment' ? 'text-ok' : ''}`}>{r.description}
+                    {/* A payment's slip and receipt(s): one receipt for each row the money went to. */}
+                    {r.kind === 'payment' && (
+                      <span className="ml-2 inline-flex flex-wrap gap-x-2 text-xs">
+                        {r.slip && <a href={`/api/leasing/payments/${r.slip}/file`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-p1 hover:underline"><Paperclip size={12} /> Slip</a>}
+                        {r.parts?.map((p) => (
+                          <a key={p.id} href={`/api/leasing/payments/${p.id}/receipt`} target="_blank" rel="noreferrer" title={`Receipt ${p.receipt_no} · ${p.name} · ${aed(p.amount)}`}
+                            className="inline-flex items-center gap-1 text-p1 hover:underline"><FileText size={12} /> {r.parts.length > 1 ? `${p.name} ${aed(p.amount)}` : 'Receipt'}</a>
+                        ))}
+                      </span>
+                    )}
+                  </td>
                   <td className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${r.kind === 'payment' ? 'text-ok' : ''}`}>{signed(r.amount)}</td>
                   <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums">{signed(r.balance)}</td>
                 </tr>

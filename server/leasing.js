@@ -999,14 +999,17 @@ export async function ledger(bookingId, today = todayHere()) {
   const charges = rows.map((r, n) => ({ date: r.due_date, kind: 'charge', description: r.name, amount: r.amount, order: n }))
     .filter((r) => r.date <= today && r.amount > 0);
   const paid = new Map();
-  for (const p of rows.flatMap((r) => r.payments)) {
+  for (const r of rows) for (const p of r.payments) {
     const key = p.batch || `p${p.id}`;
+    // Each row the money went to has its own receipt; the slip is the payment's, on whichever row holds it.
+    const part = { id: p.id, receipt_no: p.receipt_no, name: r.name, amount: p.amount, has_file: !!p.has_file };
     const at = paid.get(key);
-    if (at) at.amount = money(at.amount + p.amount);
-    else paid.set(key, { date: p.received_on, kind: 'payment', amount: p.amount, method: p.method, reference: p.reference, order: p.id });
+    if (at) { at.amount = money(at.amount + p.amount); at.parts.push(part); at.order = Math.min(at.order, p.id); }
+    else paid.set(key, { date: p.received_on, kind: 'payment', amount: p.amount, method: p.method, reference: p.reference, order: p.id, parts: [part] });
   }
   const payments = [...paid.values()].map((p) => ({
     date: p.date, kind: 'payment', order: p.order, method: p.method, reference: p.reference, amount: -p.amount,
+    parts: p.parts.sort((a, b) => a.id - b.id), slip: p.parts.find((x) => x.has_file)?.id ?? null,
     description: ['Payment', METHODS.find(([k]) => k === p.method)?.[1], p.reference].filter(Boolean).join(' · '),
   }));
   // Charges first on a day, then payments; each in the order it was made.
