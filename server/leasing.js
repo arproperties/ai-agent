@@ -104,7 +104,7 @@ export async function removeTenant(id) {
 
 // ---------- bookings ----------
 
-const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amount, b.rent_amount_2, b.rent_period, b.payment_frequency,
+const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amount, b.rent_amount_2, b.rent_lines, b.rent_period, b.payment_frequency,
     b.security_deposit, b.status, b.contract_no, b.source, b.referred_by, rt.full_name AS referred_by_name, b.tenant_energy_account, b.cancel_reason, b.notes, b.created_at,
     b.fees, b.discounts, b.discount_type, b.discount_value, b.discount_note, b.tax_percent, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
@@ -136,7 +136,7 @@ export function bookingStage(b, today = todayHere()) {
 
 const num = (v) => (v == null ? null : Number(v));
 const shape = (b, today) => b && { ...b, fees: JSON.parse(b.fees || '[]'), discounts: JSON.parse(b.discounts || '[]'), discount_value: num(b.discount_value), tax_percent: num(b.tax_percent), part_month_amount: num(b.part_month_amount),
-  rent_amount_2: num(b.rent_amount_2), ref: bookingRef(b), stage: bookingStage(b, today) };
+  rent_amount_2: num(b.rent_amount_2), rent_lines: b.rent_lines ? JSON.parse(b.rent_lines) : null, ref: bookingRef(b), stage: bookingStage(b, today) };
 
 /** A lease is a year or more (end on or after the day before the same date next year). */
 export function suggestType(start, end) {
@@ -193,6 +193,19 @@ function bookingFields(body = {}, { partial = false } = {}) {
     out.rent_amount_2 = Number(v) > 0 ? money(Number(v)) : null;
     if (out.rent_amount_2 && 'rent_amount' in out && out.rent_amount_2 > out.rent_amount) throw bad('The HUD/Agency amount is more than the whole rent.');
   }
+  // The rent as dated lines (the HUD/Agency part changing during the lease). A rent typed as one amount clears them.
+  if ('rent_lines' in body) {
+    const list = (Array.isArray(body.rent_lines) ? body.rent_lines : []).filter((f) => f && (f.label || Number(f.amount)));
+    if (list.length > 10) throw bad('At most ten rent lines.');
+    const day = (s, name) => { if (!s) return null; if (!isDate(s)) throw bad(`${name} is not a date.`); return s; };
+    const lines = list.map((f) => {
+      if (f.amount === '' || f.amount == null || !(Number(f.amount) >= 0)) throw bad(`${text(f.label, 60) || 'A rent line'} needs an amount.`);
+      const from = day(f.from, 'A rent line’s start'), until = day(f.until, 'A rent line’s end');
+      if (from && until && until < from) throw bad(`${text(f.label, 60) || 'A rent line'} ends before it starts.`);
+      return { label: text(f.label, 60) || 'Rent', amount: money(Number(f.amount)), ...(from ? { from } : {}), ...(until ? { until } : {}), ...(isTrue(f.hud) ? { hud: true } : {}) };
+    });
+    out.rent_lines = lines.length ? JSON.stringify(lines) : null;
+  } else if ('rent_amount' in body) out.rent_lines = null;
   if ('rent_period' in body) { if (!PERIODS.has(body.rent_period)) throw bad('Rent is per month or per year.'); out.rent_period = body.rent_period; }
   if ('payment_frequency' in body) { if (!FREQUENCIES.has(body.payment_frequency)) throw bad('Unknown payment frequency.'); out.payment_frequency = body.payment_frequency; }
   if ('type' in body && body.type) { if (!TYPES.has(body.type)) throw bad('Unknown lease type.'); out.type = body.type; }
@@ -423,6 +436,16 @@ export async function updateBooking(id, body = {}, by) {
     if (fixed && await db.prepare('SELECT 1 FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id WHERE i.booking_id = ? LIMIT 1').get(old.id)) {
       throw bad('Payments are recorded on this lease, so its start date, rent (and its Tenant / HUD split), discount, tax and payment frequency cannot change (nor how its first month is charged). Cancel it and make a new lease instead.', 409);
     }
+    // A rent line changed (HUD's part from a later date): rent still to be paid may change, never a rent row with money against it.
+    if ('rent_lines' in row && row.rent_lines !== (old.rent_lines ? JSON.stringify(old.rent_lines) : null)) {
+      const paid = await db.prepare(`SELECT DISTINCT to_char(i.due_date, 'YYYY-MM-DD') AS due, i.label FROM lease_installments i JOIN lease_payments p ON p.installment_id = i.id
+        WHERE i.booking_id = ? AND i.kind = 'rent' ORDER BY 1`).all(old.id);
+      const rows = (b) => new Map(schedule(b).flatMap((p) => rentParts(b, p)).map((r) => [`${r.due}|${r.label}`, r.amount]));
+      const was = rows(old), will = rows({ ...old, ...row, start_date: start, end_date: end });
+      const hit = paid.find((p) => was.get(`${p.due}|${p.label}`) !== will.get(`${p.due}|${p.label}`));
+      const usDate = (s) => `${s.slice(5, 7)}/${s.slice(8, 10)}/${s.slice(0, 4)}`;
+      if (hit) throw bad(`The rent due ${usDate(hit.due)} is already paid, so the rent lines cannot change it. Start the change after it.`, 409);
+    }
     // A discount agreed later may change rent still to be paid, never rent that has money against it.
     if ('discounts' in row && row.discounts !== JSON.stringify(old.discounts)) {
       const paid = await db.prepare(`SELECT DISTINCT to_char(i.due_date, 'YYYY-MM-DD') AS due FROM lease_installments i JOIN lease_payments p ON p.installment_id = i.id
@@ -442,7 +465,7 @@ export async function updateBooking(id, body = {}, by) {
       await db.prepare("DELETE FROM lease_installments i WHERE i.booking_id = ? AND i.kind = 'late' AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)").run(old.id);
     }
     if ('fees' in row) await learnPrices(now.fees, now.building_id);
-    const same = (c) => (c === 'fees' || c === 'discounts' ? row[c] === JSON.stringify(old[c]) : String(row[c] ?? '') === String(old[c] ?? '') || (row[c] != null && Number(row[c]) === Number(old[c])));
+    const same = (c) => (c === 'rent_lines' ? row[c] === (old[c] ? JSON.stringify(old[c]) : null) : c === 'fees' || c === 'discounts' ? row[c] === JSON.stringify(old[c]) : String(row[c] ?? '') === String(old[c] ?? '') || (row[c] != null && Number(row[c]) === Number(old[c])));
     const changed = cols.filter((c) => c !== 'renewed_from' && !same(c)).map((c) => c.replace(/_id$/, '').replace(/_/g, ' '));
     if (changed.length) await logEvent(old.id, 'changed', changed.join(', '), by);
     if (row.renewed_from) await logEvent(old.id, 'changed', await logFollowOn(row.renewed_from, now, by), by);
@@ -627,6 +650,15 @@ export const netRent = (b) => {
   return b.discount_type === 'percent' ? rent - (rent * off) / 100 : b.discount_type === 'amount' ? rent - off : rent;
 };
 export const monthlyRent = (b) => netRent(b) / (b.rent_period === 'year' ? 12 : 1);
+/** A booking's dated rent lines, whether still the JSON it is kept as or already read; none: one rent all along. */
+const rentLinesOf = (b) => (typeof b.rent_lines === 'string' ? JSON.parse(b.rent_lines) : b.rent_lines) || [];
+/** The rent of the month billed on `due`, and the HUD/Agency part of it: the dated lines it falls in, or the one rent. */
+function rentOn(b, due) {
+  const lines = rentLinesOf(b);
+  if (!lines.length) return { rent: monthlyRent(b), hud: Number(b.rent_amount_2) || 0, lines: false };
+  const on = lines.filter((l) => (!l.from || due >= l.from) && (!l.until || due <= l.until));
+  return { rent: on.reduce((t, l) => t + Number(l.amount), 0), hud: on.filter((l) => l.hud).reduce((t, l) => t + Number(l.amount), 0), lines: true };
+}
 /** A booking's dated discounts, whether still the JSON it is kept as or already read. */
 export const discountsOf = (b) => (typeof b.discounts === 'string' ? JSON.parse(b.discounts) : b.discounts || []);
 /** What the dated discounts take off the rent of the month billed on `due`. */
@@ -650,9 +682,12 @@ const RENT_2 = 'HUD/Agency';
 /** A rent row split into its two parts, as the rent was typed (Tenant + HUD/Agency): each takes its share of the
     amount and the tax, and the two add up to the row exactly. A rent typed in one part stays one row. */
 function rentParts(b, p) {
-  const r2 = Number(b.rent_amount_2) || 0;
-  if (!(r2 > 0) || !(Number(b.rent_amount) > r2)) return [{ kind: 'rent', label: '', ...p }];
-  const share = r2 / Number(b.rent_amount);
+  const on = rentOn(b, p.due), lines = on.lines, r2 = on.hud;
+  const r = lines ? on.rent : Number(b.rent_amount); // one rent: the split as it was typed
+  // A month only HUD/an agency pays (dated lines) is their row alone.
+  if (lines && r2 > 0 && r2 >= r) return [{ kind: 'rent', label: RENT_2, ...p }];
+  if (!(r2 > 0) || !(r > r2)) return [{ kind: 'rent', label: '', ...p }];
+  const share = r2 / r;
   const tax = p.tax || 0;
   const tax2 = money(tax * share);
   const amount2 = money((p.amount - tax) * share + tax2);
@@ -676,11 +711,12 @@ export function schedule(b) {
   // Each payment is the rent up to its end less the rent up to its start, so a yearly rent that
   // does not divide by twelve still adds up to exactly itself.
   const upTo = (n) => money(monthlyRent(b) * n);
+  const dated = rentLinesOf(b).length > 0;
   for (let k = 0; k < months; k += step) {
-    // Less the dated discounts of each month the payment covers.
-    let off = 0;
-    for (let j = k; j < Math.min(k + step, months); j++) off += offOn(b, addMonths(b.start_date, j));
-    const rent = money(Math.max(0, upTo(Math.min(k + step, months)) - upTo(k) - off));
+    // Less the dated discounts of each month the payment covers; with dated rent lines, each month's own rent.
+    let off = 0, own = 0;
+    for (let j = k; j < Math.min(k + step, months); j++) { off += offOn(b, addMonths(b.start_date, j)); own += rentOn(b, addMonths(b.start_date, j)).rent; }
+    const rent = money(Math.max(0, (dated ? own : upTo(Math.min(k + step, months)) - upTo(k)) - off));
     const tax = taxOn(b, rent);
     out.push({ due: addMonths(b.start_date, k), amount: money(rent + tax), ...(tax ? { tax } : {}), share: Math.min(step, months - k) });
   }
@@ -717,7 +753,7 @@ function proratedSchedule(b) {
     // The part month at the amount typed for it, when one was (Rent Manager's own figure).
     // A dated discount comes off a part month by its days, as the rent does.
     const off = offOn(b, due) * share;
-    const rent = money(Math.max(0, part && Number(b.part_month_amount) > 0 ? Number(b.part_month_amount) - off : (monthlyRent(b) - offOn(b, due)) * share));
+    const rent = money(Math.max(0, part && Number(b.part_month_amount) > 0 ? Number(b.part_month_amount) - off : (rentOn(b, due).rent - offOn(b, due)) * share));
     const tax = taxOn(b, rent);
     return { due, amount: money(rent + tax), ...(tax ? { tax } : {}), share };
   });
@@ -734,7 +770,7 @@ function importedSchedule(b) {
   const out = [];
   for (let k = 0; k < firsts.length; k += step) {
     const off = firsts.slice(k, k + step).reduce((t, d) => t + offOn(b, d), 0);
-    const rent = money(Math.max(0, monthlyRent(b) * Math.min(step, firsts.length - k) - off));
+    const rent = money(Math.max(0, firsts.slice(k, k + step).reduce((t, d) => t + rentOn(b, d).rent, 0) - off));
     const tax = taxOn(b, rent);
     out.push({ due: firsts[k], amount: money(rent + tax), ...(tax ? { tax } : {}), share: Math.min(step, firsts.length - k) });
   }
@@ -772,7 +808,8 @@ async function writeSchedule(b) {
   }
   const rows = [
     // Rent typed in two parts is billed as two rows each time, one per part.
-    ...rent.flatMap((p) => rentParts(b, p)),
+    // A month no dated rent line covers bills no rent.
+    ...rent.flatMap((p) => rentParts(b, p)).filter((r) => r.amount > 0),
     ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: depositDue, amount: Number(b.security_deposit) }] : []),
     // A monthly charge is due in full each month, a part month too: Rent Manager bills
     // water/trash at its whole price on the prorated month (Francis, 2026-10-17).

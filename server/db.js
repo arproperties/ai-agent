@@ -1553,6 +1553,9 @@ await db.exec(`
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS part_month_amount NUMERIC;
   -- rent_amount_2: the part of the rent HUD or an agency pays; the rest is the tenant's. rent_amount stays the whole rent, both parts together.
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS rent_amount_2 NUMERIC;
+  -- rent_lines: the rent as dated lines (JSON [{label, amount, from, until, hud}]); each month bills the lines it falls in,
+  -- hud ones as the HUD/Agency part. Empty: rent_amount every month, as before. rent_amount/rent_amount_2 stay the rent at the start.
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS rent_lines TEXT;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_late_fees BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_checks BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS no_partial_payments BOOLEAN NOT NULL DEFAULT false;

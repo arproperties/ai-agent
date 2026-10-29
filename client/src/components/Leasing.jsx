@@ -181,19 +181,22 @@ function plan(v) {
   // The dated discounts come off each month they cover.
   const offs = dues.map((d) => Math.min(monthly, offOn(v, d)));
   const dated = offs.reduce((t, o) => t + o, 0);
-  const firstRent = monthly * Math.min(step, months) - offs.slice(0, step).reduce((t, o) => t + o, 0);
+  // Each month's own rent: the dated rent lines it falls in, or the one rent.
+  const rentOf = (d) => rentAt(v, d, monthly);
+  const allRent = dues.reduce((t, d) => t + rentOf(d), 0);
+  const firstRent = dues.slice(0, step).reduce((t, d) => t + rentOf(d), 0) - offs.slice(0, step).reduce((t, o) => t + o, 0);
   // A one-time charge with a later date of its own is not owed at move-in.
   const billsFirst = (f) => (f.repeats ? chargeDays(f, dues)[0] === v.start_date : !f.on || f.on <= v.start_date);
   const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (billsFirst(f) ? 1 : 0), 0);
   const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? chargeDays(f, dues).length : 1), 0);
   const firstTax = (firstRent + firstFees) * rate;
-  const tax = (monthly * months - dated + allFees) * rate;
+  const tax = (allRent - dated + allFees) * rate;
   return {
     payments, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: billsFirst(f) ? f.amount : 0 })), firstTax, tax, discount: (off / per) * months + dated,
     // The deposit is held for the tenant and given back, so it is never part of what the stay costs.
     charges: firstRent + firstFees + firstTax,
     first: firstRent + deposit + firstFees + firstTax,
-    total: monthly * months - dated + allFees + tax,
+    total: allRent - dated + allFees + tax,
   };
 }
 /** plan() for a lease that prorates its first month. `head` is the part month; `second`, when the part
@@ -211,7 +214,7 @@ function proratedPlan(v) {
   const atStart = rows[0]?.due === v.start_date ? rows[0].share : 0;
   // A row's rent: the part month at its typed amount when one was typed, the rest by the day; a dated discount comes off by the day too.
   const offOf = (r) => Math.min(monthly, offOn(v, r.due)) * r.share;
-  const rentOf = (r) => Math.max(0, (r.part && typedPart(v) ? typedPart(v) : monthly * r.share) - offOf(r));
+  const rentOf = (r) => Math.max(0, (r.part && typedPart(v) ? typedPart(v) : rentAt(v, r.due, monthly) * r.share) - offOf(r));
   const allRent = rows.reduce((t, r) => t + rentOf(r), 0);
   const firstRent = rows[0]?.due === v.start_date ? rentOf(rows[0]) : 0;
   // A monthly charge is its whole price each month, the part month too, as Rent Manager bills it.
@@ -231,21 +234,26 @@ function proratedPlan(v) {
     total: allRent + allFees + tax,
   };
 }
-/** The rent is typed as monthly charges named "Rent…", the deposit as a one-time charge named "Security deposit".
-    The lease keeps them as it always has: rent_amount the rent lines together, rent_amount_2 the HUD/Agency part. */
+/** The rent is typed as monthly charges named "Rent…", each between dates of its own (rent_lines: HUD's part
+    changing during the lease), the deposit as a one-time charge named "Security deposit". rent_amount and
+    rent_amount_2 stay the rent at the start and its HUD/Agency part, as everything else reads them. */
 const isRent = (f) => f.repeats && /^rent\b/i.test(String(f.label || '').trim());
 const isDeposit = (f) => !f.repeats && /^security deposit/i.test(String(f.label || '').trim());
 const RENT_NAMES = ['Rent', 'Rent – Tenant', 'Rent – HUD/Agency'];
+/** Whether a dated line is billed in the month due on `due`. */
+const coversDay = (f, due) => (!f.from || due >= f.from) && (!f.until || due <= f.until);
 /** A lease's rent and deposit as charge lines, ahead of its other charges, for the form. */
 function chargeLines(b) {
   const r = Number(b?.rent_amount), r2 = Number(b?.rent_amount_2) || 0;
-  const rent = b?.rent_amount == null || b.rent_amount === '' ? [{ label: 'Rent', amount: '', repeats: true }]
-    : r2 > 0 ? [{ label: 'Rent – Tenant', amount: String(Math.round((r - r2) * 100) / 100), repeats: true }, { label: 'Rent – HUD/Agency', amount: String(r2), repeats: true }]
-      : [{ label: 'Rent', amount: String(r), repeats: true }];
+  const rent = b?.rent_lines?.length ? b.rent_lines.map(({ label, amount, from, until }) => ({ label, amount: String(amount), repeats: true, from: from || '', until: until || '' }))
+    : b?.rent_amount == null || b.rent_amount === '' ? [{ label: 'Rent', amount: '', repeats: true }]
+      : r2 > 0 ? [{ label: 'Rent – Tenant', amount: String(Math.round((r - r2) * 100) / 100), repeats: true }, { label: 'Rent – HUD/Agency', amount: String(r2), repeats: true }]
+        : [{ label: 'Rent', amount: String(r), repeats: true }];
   const deposit = Number(b?.security_deposit) > 0 ? [{ label: 'Security deposit', amount: String(b.security_deposit), on: b.deposit_due || '' }] : [];
   return [...rent, ...(b?.fees || []), ...deposit];
 }
-/** The form's lines back into what the lease keeps: the rent, its HUD/Agency part, the deposit and its day, and the other charges. */
+/** The form's lines back into what the lease keeps: the dated rent lines, the rent at the start and its HUD/Agency
+    part, the deposit and its day, and the other charges. */
 function fromLines(v) {
   const rent = v.fees.filter(isRent);
   const deposit = v.fees.find(isDeposit);
@@ -253,13 +261,21 @@ function fromLines(v) {
   const total = (list) => Math.round(list.reduce((t, f) => t + Number(f.amount || 0), 0) * 100) / 100;
   // The HUD/Agency part: the rent lines named for it, or else every rent line after the first (the tenant's).
   const named = rent.filter((f) => /hud|agency/i.test(f.label));
-  const second = total(named.length ? named : rent.slice(1));
+  const hud = (f) => (named.length ? named.includes(f) : rent.indexOf(f) > 0);
+  // The rent at the start: the lines on the first day, or else on the first day any line starts.
+  const days = [v.start_date, ...rent.map((f) => f.from).filter(Boolean).sort()].filter(Boolean);
+  const at = days.find((d) => total(rent.filter((f) => coversDay(f, d))) > 0);
+  const now = at ? rent.filter((f) => coversDay(f, at)) : rent;
+  const second = total(now.filter(hud));
   return {
-    ...v, rent_amount: typed.length ? total(rent) : '', rent_amount_2: second > 0 ? second : '',
+    ...v, rent_amount: typed.length ? total(now) : '', rent_amount_2: second > 0 ? second : '',
+    rent_lines: typed.map((f) => ({ label: f.label, amount: f.amount, from: f.from || '', until: f.until || '', hud: hud(f) })),
     security_deposit: deposit && Number(deposit.amount) > 0 ? deposit.amount : '', deposit_due: deposit?.on || '',
     fees: v.fees.filter((f) => !isRent(f) && f !== deposit),
   };
 }
+/** The rent of the month due on `due`: the dated rent lines it falls in, or the one rent less its old-style discount. */
+const rentAt = (v, due, flat) => (v.rent_lines?.length ? v.rent_lines.filter((f) => coversDay(f, due)).reduce((t, f) => t + Number(f.amount || 0), 0) : flat);
 
 /** Two or three choices side by side, one of them on. */
 const Pick = ({ value, onPick, options }) => (
@@ -580,7 +596,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         {/* Three lists only: the monthly charges (the rent among them), those due once (the deposit among them), and the prorated part month. */}
         {/* Other charges in two lists: monthly ones, each with its own start and end, then those due once. One list
             (v.fees) holds both; `repeats` says which. */}
-        {[[true, 'Recurring charges', 'billed every month · the rent too: a line named Rent (a second, Rent – HUD/Agency, for their part)', 'Add a monthly charge'],
+        {[[true, 'Recurring charges', 'billed every month between its dates · the rent too: a line named Rent (a second, Rent – HUD/Agency, for their part; a new line from the day it changes)', 'Add a monthly charge'],
           [false, 'One-time charges', 'security deposit, pet fee, application fee…, due once, on the first day or a date you choose', 'Add a one-time charge']].map(([monthly, title, hint, add]) => (
           <Group key={title} title={title} hint={hint}>
             {v.fees.map((f, i) => {
@@ -612,9 +628,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
                       <DateField value={f.on || ''} onChange={(e) => put({ on: e.target.value })} aria-label="Due on" className={FIELD} />
                     </label>
                   )}
-                  {/* The rent runs the whole lease: no dates of its own. */}
-                  {monthly && isRent(f) && <span className="mb-2.5 text-xs text-mute">Rent · the whole lease</span>}
-                  {monthly && !isRent(f) && (
+                  {monthly && (
                     <>
                       <label className="block w-40">
                         <span className="mb-1 block text-xs text-txt/80">Start date</span>
