@@ -952,7 +952,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
 function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork }) {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState('');
-  const [stage, setStage] = useState('');
+  const [stage, setStage] = useState('active');
   const [error, setError] = useState('');
   const [importing, setImporting] = useState(false); // the leases from Rent Manager's Rent Roll
   const [view, see] = useView('bookings');
@@ -986,7 +986,7 @@ function Bookings({ fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork }) {
       {importing && <LeaseImport onClose={() => setImporting(false)} onDone={load} />}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="flex flex-wrap gap-1.5 text-xs">
-          {[['', 'All', dated?.length || 0], ...['active', 'upcoming', 'draft', 'ended', 'cancelled'].map((k) => [k, STAGE[k][0], count(k)])].map(([k, l, n]) => (
+          {[...['active', 'upcoming', 'draft', 'ended', 'cancelled'].map((k) => [k, STAGE[k][0], count(k)]), ['', 'All', dated?.length || 0]].map(([k, l, n]) => (
             <button key={k} onClick={() => setStage(k)} className={`rounded-full px-3 py-1 ${stage === k ? 'bg-p1/20 text-p1' : 'text-mute hover:bg-white/5 hover:text-txt'}`}>{l} <span className="opacity-60">{n}</span></button>
           ))}
         </div>
