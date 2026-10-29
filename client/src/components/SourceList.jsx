@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Plus, Pencil, Trash2, Check, X } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 
 // Where tenants come from (a walk-in, a referral, a listing site…): the one list, for every
@@ -57,8 +58,8 @@ export default function SourceList({ sources, onChange, onRenamed, onError }) {
               {editing === s.id ? editor : (
                 <div className="flex items-center gap-1">
                   <p className="min-w-0 flex-1 truncate text-sm">{s.name}</p>
-                  <button type="button" onClick={() => open(s)} aria-label={`Rename ${s.name}`} title="Rename" className={`${ICON} hover:text-txt`}><Pencil size={15} /></button>
-                  <button type="button" onClick={() => remove(s)} aria-label={`Remove ${s.name}`} title="Remove from the list" className={`${ICON} hover:text-bad`}><Trash2 size={15} /></button>
+                  {canDo('edit') && <button type="button" onClick={() => open(s)} aria-label={`Rename ${s.name}`} title="Rename" className={`${ICON} hover:text-txt`}><Pencil size={15} /></button>}
+                  {canDo('delete') && <button type="button" onClick={() => remove(s)} aria-label={`Remove ${s.name}`} title="Remove from the list" className={`${ICON} hover:text-bad`}><Trash2 size={15} /></button>}
                 </div>
               )}
             </li>

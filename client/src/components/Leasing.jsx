@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Loader2, Plus, Pencil, Trash2, Search, CalendarDays, DoorOpen, Check, X, ChevronLeft, ChevronRight, Paperclip, Banknote, RefreshCw, LayoutGrid, List, BedDouble, BedSingle, Lock, History, ClipboardCheck, LogIn, Wrench, Upload } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { can } from '../lib/modules';
 import { money as aed, currency, region } from '../lib/region';
@@ -859,10 +860,10 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
     // A draft is confirmed after its move-in inspection; a renewal has none to do.
     moveInDue || (b.status === 'draft' && !b.moved_in && !b.renewed_from) ? [LogIn, 'Move-in inspection', () => onInspect('move_in'), 'How the tenant finds the unit. The lease is confirmed after it']
       : [ClipboardCheck, 'Inspections', () => onInspect(), 'The unit’s condition: make-ready, move-in and move-out'],
-    b.status === 'draft' && (b.moved_in || b.renewed_from) && [Check, 'Confirm', () => act(() => api.post(`/leasing/bookings/${b.id}/confirm`))],
-    b.status !== 'cancelled' && [Pencil, 'Edit', onEdit],
-    b.status === 'draft' && [Trash2, 'Delete', () => confirm('Delete this draft?') && act(() => api.del(`/leasing/bookings/${b.id}`)), '', true],
-    b.status === 'confirmed' && [X, 'Cancel lease', () => { const reason = prompt('Why is this lease cancelled? (What is already due stays owed; later payments are taken off.)'); if (reason) act(() => api.post(`/leasing/bookings/${b.id}/cancel`, { reason })); }, '', true],
+    canDo('edit') && b.status === 'draft' && (b.moved_in || b.renewed_from) && [Check, 'Confirm', () => act(() => api.post(`/leasing/bookings/${b.id}/confirm`))],
+    canDo('edit') && b.status !== 'cancelled' && [Pencil, 'Edit', onEdit],
+    canDo('delete') && b.status === 'draft' && [Trash2, 'Delete', () => confirm('Delete this draft?') && act(() => api.del(`/leasing/bookings/${b.id}`)), '', true],
+    canDo('edit') && b.status === 'confirmed' && [X, 'Cancel lease', () => { const reason = prompt('Why is this lease cancelled? (What is already due stays owed; later payments are taken off.)'); if (reason) act(() => api.post(`/leasing/bookings/${b.id}/cancel`, { reason })); }, '', true],
   ].filter(Boolean);
 
   if (list) return (
@@ -1073,8 +1074,8 @@ function Tenants({ onHistory }) {
   const tools = (t) => (
     <>
       <button onClick={() => onHistory(t)} aria-label="History" title="History: late rent, complaints, maintenance" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><History size={15} /></button>
-      <button onClick={() => { setAdding(false); setEditing(t.id); }} aria-label="Edit" title="Edit" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>
-      <button onClick={() => remove(t)} aria-label="Delete" title="Delete" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
+      {canDo('edit') && <button onClick={() => { setAdding(false); setEditing(t.id); }} aria-label="Edit" title="Edit" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>}
+      {canDo('delete') && <button onClick={() => remove(t)} aria-label="Delete" title="Delete" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
     </>
   );
   const open = shown?.find((t) => t.id === editing);
@@ -1092,7 +1093,7 @@ function Tenants({ onHistory }) {
           <DateRange from={from} to={to} onChange={(a, b) => { setFrom(a); setTo(b); }} placeholder="Added any date" className="glass rounded-xl bg-surface px-3.5 py-2 text-sm outline-none" />
           <ViewToggle view={view} onView={see} />
           <button onClick={() => { setEditing(null); setAdding(false); setImporting(true); }} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke/70 px-4 py-2 text-sm text-mute hover:bg-white/5 hover:text-txt"><Upload size={16} /> Import</button>
-          <button onClick={() => { setEditing(null); setImporting(false); setAdding(true); }} className={PRIMARY}><Plus size={16} /> Add tenant</button>
+          {canDo('add') && <button onClick={() => { setEditing(null); setImporting(false); setAdding(true); }} className={PRIMARY}><Plus size={16} /> Add tenant</button>}
         </span>
       </div>
       {error && <p className="text-sm text-bad">{error}</p>}
@@ -1385,7 +1386,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   );
 
   // These stand alone: their own page and title, with none of Leasing's tabs.
-  const add = can('leasing') && <button onClick={() => setForm({ preset: null })} className={PRIMARY}><Plus size={16} /> New lease</button>;
+  const add = can('leasing') && canDo('add') && <button onClick={() => setForm({ preset: null })} className={PRIMARY}><Plus size={16} /> New lease</button>;
   if (BOOKING_TABS.some(([k]) => k === tab)) return (
     <Page title="Leasing" onBack={onBack} action={add}>
       <div className="mb-4 flex gap-5 overflow-x-auto border-b border-stroke text-sm">

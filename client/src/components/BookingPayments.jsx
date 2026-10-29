@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight, Banknote, Copy, FileText, Loader2, Mail, MessageCircle, Paperclip, Plus, Trash2, Undo2 } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { money as aed, currency, today, region } from '../lib/region';
 import { usDate as fmt, usPhone } from '../lib/usFormat';
@@ -379,8 +380,8 @@ export default function BookingPayments({ booking }) {
             <p className="text-xs text-mute">{r.name} · due {fmt(r.due_date)}{r.tax > 0 && ` · includes ${region().tax_name} ${aed(r.tax)}`}</p>
           </div>
           {owing && !is(r, 'remind') && <button onClick={() => setOpen({ id: r.id, as: 'remind' })} className={GHOST}><MessageCircle size={13} /> Remind tenant</button>}
-          {owing && takes && !is(r, 'pay') && <button onClick={() => setOpen({ id: r.id, as: 'pay' })} className={GHOST}><Plus size={13} /> Record payment</button>}
-          {r.kind === 'charge' && r.paid === 0 && <button onClick={() => unCharge(r)} aria-label={`Take off ${r.name}`} title="Take off this charge" className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
+          {canDo('add') && owing && takes && !is(r, 'pay') && <button onClick={() => setOpen({ id: r.id, as: 'pay' })} className={GHOST}><Plus size={13} /> Record payment</button>}
+          {canDo('delete') && r.kind === 'charge' && r.paid === 0 && <button onClick={() => unCharge(r)} aria-label={`Take off ${r.name}`} title="Take off this charge" className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
         </div>
         {r.payments.map((p) => (
           <div key={p.id} className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-lg bg-white/[0.04] px-3 py-2 text-sm">
@@ -395,7 +396,7 @@ export default function BookingPayments({ booking }) {
               <input type="file" accept="application/pdf,image/*" className="hidden" onChange={(e) => { attach(p, e.target.files?.[0]); e.target.value = ''; }} />
             </label>
             <a href={`/api/leasing/payments/${p.id}/receipt`} target="_blank" rel="noreferrer" title={`Receipt ${p.receipt_no}`} className={GHOST}><FileText size={13} /> Receipt</a>
-            <button onClick={() => remove(p)} aria-label="Delete payment" className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
+            {canDo('delete') && <button onClick={() => remove(p)} aria-label="Delete payment" className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
           </div>
         ))}
         {is(r, 'pay') && <PayForm row={r} onDone={done} onCancel={() => setOpen(null)} />}
@@ -429,9 +430,9 @@ export default function BookingPayments({ booking }) {
           {toggle('Late fees', lateOn, flipLate, lateOn ? 'Late fees are charged on this lease' : 'No late fees on this lease')}
           {toggle('Emails', mailOn, flipMail, mailOn ? 'The tenant gets the automatic reminder and late fee emails' : 'No automatic emails to this tenant')}
         </>}
-        {booking.status === 'confirmed' && open?.as !== 'charge' && <button onClick={() => setOpen({ as: 'charge' })} className={GHOST}><Plus size={13} /> Add a charge</button>}
+        {canDo('add') && booking.status === 'confirmed' && open?.as !== 'charge' && <button onClick={() => setOpen({ as: 'charge' })} className={GHOST}><Plus size={13} /> Add a charge</button>}
         {/* Several months paid together: one amount, spread over what is owed, oldest first. */}
-        {owedInAll > 0 && takes && open?.as !== 'all' && <button onClick={() => setOpen({ as: 'all' })} title="Paid for more than one at once? It goes on the extra charges due first, then the rent." className={GHOST}><Banknote size={13} /> Record a payment</button>}
+        {canDo('add') && owedInAll > 0 && takes && open?.as !== 'all' && <button onClick={() => setOpen({ as: 'all' })} title="Paid for more than one at once? It goes on the extra charges due first, then the rent." className={GHOST}><Banknote size={13} /> Record a payment</button>}
       </div>
       {open?.as === 'charge' && <ChargeForm bookingId={booking.id} onDone={done} onCancel={() => setOpen(null)} />}
       {open?.as === 'all' && <PayForm row={{ left: dueNow || owedInAll, max: owedInAll }} url={`${at}/payments`} onDone={done} onCancel={() => setOpen(null)} />}

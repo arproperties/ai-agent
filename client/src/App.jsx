@@ -27,6 +27,7 @@ import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { loadRegion, onRegion } from './lib/region';
 import { setModules, can, moduleOf } from './lib/modules';
+import { setActions } from './lib/actions';
 import { NotifyPrompt } from './components/Notifications';
 import MessageToast from './components/MessageToast';
 import Orb from './components/Orb';
@@ -188,6 +189,7 @@ export default function App() {
   };
 
   setModules(me?.modules); // before anything below is drawn, so every `can` in this render is today's
+  setActions(me?.actions); // and every `canDo`
   if (me === undefined) return null;
   const resetting = new URLSearchParams(window.location.search).has('reset'); // opened a password-reset link
   if (!me || resetting) return <Auth onAuthed={(u) => {

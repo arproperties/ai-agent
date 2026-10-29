@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowDown, Ban, Bug, Check, CheckCheck, ChevronLeft, ChevronRight, Droplets, Ellipsis, Equal, Flag, Flame, Refrigerator, Snowflake, Zap, Loader2, MessageSquarePlus, Paperclip, Pencil, Play, Plus, RotateCcw, Search, Trash2, UserRound, Wrench, X } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { usDate as fmt } from '../lib/usFormat';
 import Page from './Page';
@@ -250,7 +251,7 @@ function WorkOrderView({ id, onBack, onEdit }) {
 
   return (
     <Page title={`${w.ref}${w.category ? ` · ${w.category}` : ''}`} onBack={onBack}
-      action={!['closed', 'cancelled'].includes(w.status) && <button onClick={() => onEdit(w)} className={OUTLINE}><Pencil size={15} /> Edit</button>}>
+      action={canDo('edit') && !['closed', 'cancelled'].includes(w.status) && <button onClick={() => onEdit(w)} className={OUTLINE}><Pencil size={15} /> Edit</button>}>
       <div className="max-w-3xl space-y-4">
         <div className={CARD}>
           <Pill w={w} />
@@ -277,7 +278,7 @@ function WorkOrderView({ id, onBack, onEdit }) {
               {w.status === 'done' && <button onClick={() => put({ status: 'closed' })} className={PRIMARY}><CheckCheck size={15} /> Close</button>}
               {!live && <button onClick={() => { const why = prompt('Why is it reopened? (optional)'); if (why !== null) put({ reopen: true, note: why }); }} className={OUTLINE}><RotateCcw size={15} /> Reopen</button>}
               {live && <button onClick={() => { const why = prompt('Why is this work order cancelled?'); if (why) put({ status: 'cancelled', cancel_reason: why }); }} className={`${GHOST} hover:text-bad`}><Ban size={14} /> Cancel work order</button>}
-              {w.master && w.status === 'open' && !w.assigned_to && (
+              {canDo('delete') && w.status === 'open' && !w.assigned_to && (
                 <button onClick={async () => { if (!confirm(`Delete ${w.ref}? It was raised by mistake.`)) return; try { await api.del(`/leasing/work-orders/${w.id}`); onBack(); } catch (e) { setError(e.message); } }} className={`${GHOST} hover:text-bad`}><Trash2 size={14} /> Delete</button>
               )}
             </div>
@@ -299,7 +300,7 @@ function WorkOrderView({ id, onBack, onEdit }) {
                 <li key={f.id} className="flex items-center gap-2 py-1.5">
                   <Paperclip size={14} className="shrink-0 text-mute" />
                   <a href={fileUrl(f)} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-p3 hover:underline">{f.file_name}</a>
-                  {!frozen && <button onClick={() => confirm(`Remove ${f.file_name}?`) && act(() => api.del(`/leasing/work-orders/files/${f.id}`))} aria-label={`Remove ${f.file_name}`} title="Remove" className={`${ROUND} hover:text-bad`}><Trash2 size={15} /></button>}
+                  {canDo('delete') && !frozen && <button onClick={() => confirm(`Remove ${f.file_name}?`) && act(() => api.del(`/leasing/work-orders/files/${f.id}`))} aria-label={`Remove ${f.file_name}`} title="Remove" className={`${ROUND} hover:text-bad`}><Trash2 size={15} /></button>}
                 </li>
               ))}
             </ul>
@@ -361,7 +362,7 @@ export default function WorkOrders({ scope, title = 'Work orders', preset = null
   const rows = data?.work_orders;
   const buildings = [...new Map((rows || []).map((w) => [w.building_id, w.building]))];
   return (
-    <Page title={title} onBack={onBack} action={<button onClick={() => setForm({})} className={PRIMARY}><Plus size={16} /> New work order</button>}>
+    <Page title={title} onBack={onBack} action={canDo('add') && <button onClick={() => setForm({})} className={PRIMARY}><Plus size={16} /> New work order</button>}>
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[12rem] flex-1">

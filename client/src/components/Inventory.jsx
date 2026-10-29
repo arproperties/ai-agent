@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, ChevronRight, Loader2, Package, Plus, Search, Trash2, X } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import Page from './Page';
 import Picker from './Picker';
@@ -168,7 +169,7 @@ function ItemForm({ inv, start, place: firstPlace, onSaved, onCancel }) {
 
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex items-center gap-2">
-        {start && (
+        {canDo('delete') && start && (
           <button type="button" onClick={remove} disabled={!!busy} aria-label="Remove" title="Remove"
             className="grid size-10 shrink-0 place-items-center rounded-full border border-stroke text-mute transition hover:border-bad/50 hover:text-bad disabled:opacity-50"><Trash2 size={16} /></button>
         )}
@@ -269,7 +270,7 @@ function BuildingInventory({ id }) {
         <section key={p.key} className="space-y-2">
           <div className="flex items-center gap-2 px-1">
             <h2 className={`flex-1 ${LABEL}`}>{p.label.toUpperCase()} · {p.items.length}</h2>
-            {p.area && !want && (
+            {canDo('delete') && p.area && !want && (
               <button onClick={() => removeArea(p.area, p.items.length)} aria-label={`Remove ${p.label}`} title="Remove this area"
                 className="grid size-7 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={13} /></button>
             )}

@@ -215,7 +215,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   // a screen for it here.
   // "AI chats" and "Team chat" sit next to each other, so neither may be called just
   // "Chats": the whole point of the pair is which side of the app a message came from.
-  const TABS = [['agents', 'Agents'], ['modules', 'Modules'], ['duties', 'Responsibilities'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
+  const TABS = [['agents', 'Agents'], ['modules', 'Modules'], ['actions', 'Actions'], ['duties', 'Responsibilities'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
     ['messages', 'Team chat'], ['memory', 'Memory'], ['saifsys', 'saifsys']];
 
   return (
@@ -273,6 +273,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
         {tab === 'duties' && <ResponsibilitiesEditor person={person} isMe={person.id === me.id} />}
         {tab === 'memory' && <Memories person={person} />}
         {tab === 'modules' && <AppModules key={person.id} person={person} />}
+        {tab === 'actions' && <AppModules key={`a${person.id}`} person={person} kind="actions" />}
         {tab === 'saifsys' && <><HrLink person={person} /><SaifsysModules person={person} /></>}
         {(tab === 'documents' || tab === 'conversations' || tab === 'messages') && <Browse person={person} kind={tab} />}
 
@@ -354,29 +355,36 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
 /**
  * Which places in the left menu this person has. A tap saves straight away, as the
  * saifsys modules do: it is one switch per place, with nothing to review first. Chats is
- * everyone's, so it is shown ticked and cannot be tapped.
+ * everyone's, so it is shown ticked and cannot be tapped. With kind "actions" the same
+ * cards are what they may change in those places: Add, Edit, Delete (server/actions.js).
  */
-function AppModules({ person }) {
+const ACCESS_INTRO = {
+  modules: { master: 'The master has every module.',
+    other: (name) => `Tick what ${name} sees in the left menu. Anything not ticked is hidden from them, and Riley cannot look it up for them. Everyone has Chats.` },
+  actions: { master: 'The master may add, edit and delete everything.',
+    other: (name) => `Tick what ${name} may do in the parts of the app they have. Seeing is set in Modules.` },
+};
+function AppModules({ person, kind = 'modules' }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   useEffect(() => {
-    api.get(`/admin/users/${person.id}/modules`).then(setData).catch((e) => { setError(e.message); setData({ modules: [] }); });
-  }, [person.id]);
+    api.get(`/admin/users/${person.id}/${kind}`).then(setData).catch((e) => { setError(e.message); setData({ [kind]: [] }); });
+  }, [person.id, kind]);
 
   // One save at a time: the whole end state is sent, so two in flight could land out of order.
   const toggle = async (key) => {
     if (saving) return;
-    const modules = data.modules.map((m) => (m.key === key ? { ...m, on: !m.on } : m));
-    setData({ ...data, modules });
+    const list = data[kind].map((m) => (m.key === key ? { ...m, on: !m.on } : m));
+    setData({ ...data, [kind]: list });
     setError('');
     setSaving(true);
     try {
-      await api.put(`/admin/users/${person.id}/modules`, { modules: modules.filter((m) => m.on).map((m) => m.key) });
+      await api.put(`/admin/users/${person.id}/${kind}`, { [kind]: list.filter((m) => m.on).map((m) => m.key) });
     } catch (e) {
       setError(e.message);
       // read it again, so the cards show what the server holds and not a guess
-      await api.get(`/admin/users/${person.id}/modules`).then(setData).catch(() => setData(data));
+      await api.get(`/admin/users/${person.id}/${kind}`).then(setData).catch(() => setData(data));
     } finally {
       setSaving(false);
     }
@@ -386,12 +394,10 @@ function AppModules({ person }) {
   return (
     <>
       <p className="text-sm leading-relaxed text-mute">
-        {data.master
-          ? 'The master has every module.'
-          : `Tick what ${person.name} sees in the left menu. Anything not ticked is hidden from them, and Riley cannot look it up for them. Everyone has Chats.`}
+        {data.master ? ACCESS_INTRO[kind].master : ACCESS_INTRO[kind].other(person.name)}
       </p>
       <div className="grid items-start gap-2 @md:grid-cols-2">
-        {data.modules.map((m) => {
+        {data[kind].map((m) => {
           const fixed = data.master || m.locked;
           return (
             <button key={m.key} onClick={() => toggle(m.key)} disabled={fixed || saving} aria-pressed={m.on}

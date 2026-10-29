@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Banknote, Check, ChevronRight, Clock, Coins, Loader2, MessageSquareWarning, Paperclip, Pencil, Plus, RotateCcw, Trash2, Wrench, X } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { can } from '../lib/modules';
 import { money as aed } from '../lib/region';
@@ -109,7 +110,7 @@ function EntryForm({ tenant, start, onDone, onCancel }) {
                 <li key={f.id} className="flex items-center gap-2 py-1.5 pl-3.5 pr-1.5">
                   <Paperclip size={14} className="shrink-0 text-mute" />
                   <a href={fileUrl(f)} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-p3 hover:underline">{f.file_name}</a>
-                  <button type="button" onClick={() => unattach(f)} aria-label={`Remove ${f.file_name}`} title="Remove" className={`${ROUND} hover:text-bad`}><Trash2 size={15} /></button>
+                  {canDo('delete') && <button type="button" onClick={() => unattach(f)} aria-label={`Remove ${f.file_name}`} title="Remove" className={`${ROUND} hover:text-bad`}><Trash2 size={15} /></button>}
                 </li>
               ))}
               {picked.map((f, n) => (
@@ -193,8 +194,8 @@ function Item({ i, onPay, onEdit, onChanged, onWork }) {
             <>
               {open ? !resolving && <button onClick={() => setResolving(true)} className={GHOST}><Check size={14} /> Resolve</button>
                 : <button onClick={() => act(() => api.put(`/leasing/log/${i.id}`, { resolved: false, resolution: '' }))} aria-label="Open again" title="Open again" className={`${ROUND} hover:text-txt`}><RotateCcw size={15} /></button>}
-              <button onClick={() => onEdit(i)} aria-label="Edit" title="Edit" className={`${ROUND} hover:text-txt`}><Pencil size={15} /></button>
-              <button onClick={() => confirm(`Delete this ${name.toLowerCase()} entry?`) && act(() => api.del(`/leasing/log/${i.id}`))} aria-label="Delete" title="Delete" className={`${ROUND} hover:text-bad`}><Trash2 size={15} /></button>
+              {canDo('edit') && <button onClick={() => onEdit(i)} aria-label="Edit" title="Edit" className={`${ROUND} hover:text-txt`}><Pencil size={15} /></button>}
+              {canDo('delete') && <button onClick={() => confirm(`Delete this ${name.toLowerCase()} entry?`) && act(() => api.del(`/leasing/log/${i.id}`))} aria-label="Delete" title="Delete" className={`${ROUND} hover:text-bad`}><Trash2 size={15} /></button>}
             </>
           )}
         </div>
@@ -228,8 +229,8 @@ export default function TenantHistory({ tenant, onBack, onPay, onWorkOrder }) {
   return (
     <Page title={`History · ${tenant.full_name}`} onBack={onBack} action={(
       <div className="flex gap-2">
-        {can('workorders') && <button onClick={() => onWorkOrder({ ...mine, startNew: true })} className={OUTLINE} title={h?.current ? `A work order for unit ${h.current.unit_no}, ${h.current.building}` : 'A work order'}><Plus size={16} /> <span className="hidden sm:inline">Add </span>maintenance</button>}
-        <button onClick={() => setEntry({ kind: 'complaint' })} className={PRIMARY}><Plus size={16} /> <span className="hidden sm:inline">Add </span>complaint</button>
+        {can('workorders') && canDo('add') && <button onClick={() => onWorkOrder({ ...mine, startNew: true })} className={OUTLINE} title={h?.current ? `A work order for unit ${h.current.unit_no}, ${h.current.building}` : 'A work order'}><Plus size={16} /> <span className="hidden sm:inline">Add </span>maintenance</button>}
+        {canDo('add') && <button onClick={() => setEntry({ kind: 'complaint' })} className={PRIMARY}><Plus size={16} /> <span className="hidden sm:inline">Add </span>complaint</button>}
       </div>
     )}>
       <p className="mb-4 text-sm text-mute">{[usPhone(tenant.phone), tenant.email].filter(Boolean).join(' · ') || 'No contact details'}</p>

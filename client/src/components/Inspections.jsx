@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Camera, Check, ChevronLeft, ChevronRight, ClipboardCheck, GitCompareArrows, Loader2, LogIn, LogOut, Pencil, Plus, Sparkles, Trash2, Wrench, X } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { can } from '../lib/modules';
 import { usDate as fmt } from '../lib/usFormat';
@@ -258,8 +259,8 @@ function Sheet({ i, list, onEdit, onRemoved }) {
     <div className="max-w-5xl space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 flex-1 text-sm text-mute">{[fmt(i.date), who(i), i.done_by && `By ${i.done_by}`, tally(i)].filter(Boolean).join(' · ')}</p>
-        <button onClick={onEdit} className={GHOST}><Pencil size={13} /> Edit</button>
-        <button onClick={remove} className={`${GHOST} hover:text-bad`}><Trash2 size={13} /> Delete</button>
+        {canDo('edit') && <button onClick={onEdit} className={GHOST}><Pencil size={13} /> Edit</button>}
+        {canDo('delete') && <button onClick={remove} className={`${GHOST} hover:text-bad`}><Trash2 size={13} /> Delete</button>}
       </div>
       {others.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">

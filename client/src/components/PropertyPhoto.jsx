@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Camera, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 
 // The picture of a company (its logo) or a building (a photo of it), and a unit's photos
@@ -49,7 +50,7 @@ export function Cover({ row, master, onChanged }) {
           {master && (
             <div className="absolute right-3 top-3 flex gap-2">
               <Pick kind="buildings" id={row.id} onDone={onChanged} onError={setError} className={CHIP}><Camera size={13} /> Change photo</Pick>
-              <button onClick={remove} className={CHIP}><Trash2 size={13} /> Remove</button>
+              {canDo('delete') && <button onClick={remove} className={CHIP}><Trash2 size={13} /> Remove</button>}
             </div>
           )}
         </div>
@@ -86,7 +87,7 @@ export function Logo({ row, master, onChanged, size = 'size-16', text = 'text-lg
         {face}
         <span className="absolute inset-0 grid place-items-center bg-black/50 text-white opacity-0 transition group-hover:opacity-100"><Camera size={18} /></span>
       </Pick>
-      {url ? <button onClick={remove} className="text-[11px] text-mute hover:text-bad">Remove</button> : <span className="text-[11px] text-mute">Add logo</span>}
+      {url ? (canDo('delete') && <button onClick={remove} className="text-[11px] text-mute hover:text-bad">Remove</button>) : <span className="text-[11px] text-mute">Add logo</span>}
       {error && <p className="max-w-[8rem] text-center text-[11px] text-bad">{error}</p>}
     </div>
   );
@@ -162,7 +163,7 @@ export function UnitPhotos({ unit, master, onChanged }) {
       {master && (
         <div className="absolute right-2 top-2 flex gap-1.5">
           <label title="Add more photos" className={`cursor-pointer ${ROUND}`}><Camera size={14} />{input}</label>
-          <button onClick={remove} title="Remove this photo" aria-label="Remove this photo" className={ROUND}><Trash2 size={14} /></button>
+          {canDo('delete') && <button onClick={remove} title="Remove this photo" aria-label="Remove this photo" className={ROUND}><Trash2 size={14} /></button>}
         </div>
       )}
       {(error || busy) && <p className={`px-4 pt-2 text-xs ${error ? 'text-bad' : 'text-mute'}`}>{error || 'Adding…'}</p>}

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { currency, money } from '../lib/region';
 import Select from './Select';
@@ -81,8 +82,8 @@ export default function ServiceList({ services, buildingId, onChange, onError, r
                 </div>
                 <span className={`shrink-0 text-sm ${Number(s.amount) ? '' : 'text-mute'}`}>{Number(s.amount) ? money(s.amount) : 'Price set on the lease'}</span>
                 {!readOnly && <div className="-mr-1.5 flex shrink-0">
-                  <button type="button" onClick={() => open(s)} aria-label={`Edit ${s.name}`} title="Edit" className={`${ICON} hover:text-txt`}><Pencil size={15} /></button>
-                  <button type="button" onClick={() => remove(s)} aria-label={`Remove ${s.name}`} title="Remove from the list" className={`${ICON} hover:text-bad`}><Trash2 size={15} /></button>
+                  {canDo('edit') && <button type="button" onClick={() => open(s)} aria-label={`Edit ${s.name}`} title="Edit" className={`${ICON} hover:text-txt`}><Pencil size={15} /></button>}
+                  {canDo('delete') && <button type="button" onClick={() => remove(s)} aria-label={`Remove ${s.name}`} title="Remove from the list" className={`${ICON} hover:text-bad`}><Trash2 size={15} /></button>}
                 </div>}
               </li>
             )))}

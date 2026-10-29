@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AlertCircle, FileText, Loader2, Plus, Search } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import Select from './Select';
 import DocumentSheet, { CHIP, chipText } from './DocumentSheet';
@@ -104,7 +105,7 @@ export default function Documents({ openId, openRenewal, onOpened, building }) {
       )}
 
       {open && (
-        <DocumentSheet doc={open === 'new' ? null : open} label={open === 'new' ? '' : open.where} places={places} master={d.master}
+        <DocumentSheet doc={open === 'new' ? null : open} label={open === 'new' ? '' : open.where} places={places} master={canDo('edit')}
           // Inside a building, a new document is that building's: there is nothing to choose.
           owner={open === 'new' && building ? { building_id: building.id } : undefined}
           onRenew={d.master && open !== 'new' ? renew : undefined} renewing={open !== 'new' && under.has(open.id)}

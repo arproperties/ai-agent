@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, Upload, X, Undo2, Check, FileText } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import Pager, { usePaged } from './Pager';
 
@@ -103,7 +104,7 @@ export default function TenantImport({ onClose, onDone }) {
           {!result.undone && result.added > 0 && result.updated > 0 && <p className="text-xs text-mute">Undo takes back the added tenants; the details filled in on tenants already on file stay.</p>}
           {left > 0 && <p className="text-sm text-warn">{left} row{left === 1 ? '' : 's'} still need{left === 1 ? 's' : ''} checking. They were not imported.</p>}
           <div className="flex flex-wrap justify-end gap-2">
-            {!result.undone && result.added > 0 && <button onClick={undo} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10"><Undo2 size={15} /> Undo this import</button>}
+            {canDo('delete') && !result.undone && result.added > 0 && <button onClick={undo} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10"><Undo2 size={15} /> Undo this import</button>}
             {left > 0 && <button onClick={review} className="rounded-full border border-stroke/70 px-4 py-2 text-sm hover:bg-white/5">Review {left === 1 ? 'it' : `the ${left}`}</button>}
             <button onClick={onClose} className={PRIMARY}>Done</button>
           </div>

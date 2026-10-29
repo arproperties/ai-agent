@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FileText, Loader2, Paperclip, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { usDate as fmt } from '../lib/usFormat';
 import Sheet from './Sheet';
@@ -72,19 +73,19 @@ export default function DocumentSheet({ doc, owner, preset, places, label, maste
                 </div>
                 {master && <>
                   <button onClick={() => setEditing(d.id)} aria-label="Edit" className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>
-                  <button onClick={() => remove(d)} aria-label="Delete" className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
+                  {canDo('delete') && <button onClick={() => remove(d)} aria-label="Delete" className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
                 </>}
               </div>
             </div>
           )))}
         {/* Getting it renewed with Riley's help: who to ask, the requests, the quotes, the choice (Renewal.jsx). */}
-        {master && onRenew && current?.expiry_date && editing == null && (
+        {onRenew && current?.expiry_date && editing == null && (
           <button onClick={() => onRenew(current)}
             className="flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white">
             <Sparkles size={16} /> {renewing ? 'Open the renewal' : 'Renew with Riley'}
           </button>
         )}
-        {master && (editing === 'new'
+        {canDo('add') && (editing === 'new'
           ? <DocumentForm owner={own} preset={preset} places={places} from={current} onDone={done} onCancel={() => (anchor ? setEditing(null) : onClose())} />
           : (
             <button onClick={() => setEditing('new')}

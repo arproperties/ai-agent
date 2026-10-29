@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Plus, Pencil, Trash2, ChevronRight, Building2, Landmark, DoorOpen, Camera, X, FileText, Phone, MapPin, StickyNote, ImagePlus } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import Page from './Page';
 import Select from './Select';
@@ -293,8 +294,8 @@ function Level({ kind, rows, master, onOpen, openLabel = 'Open', onAdd, onSave, 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {rows.map((r) => (
           <div key={r.id} className="flex flex-col rounded-2xl border border-stroke">
-            {kind === 'building' && <CardCover row={r} master={master} onOpen={() => onOpen(r)} onChanged={onChanged} />}
-            {kind === 'unit' && <UnitPhotos unit={r} master={master} onChanged={onChanged} />}
+            {kind === 'building' && <CardCover row={r} master={edits} onOpen={() => onOpen(r)} onChanged={onChanged} />}
+            {kind === 'unit' && <UnitPhotos unit={r} master={edits} onChanged={onChanged} />}
             <div className="flex items-start gap-3 px-4 pt-4">
               <button onClick={onOpen && (() => onOpen(r))} aria-label={`Open ${r.name || r.unit_no}`}
                 className="grid size-10 shrink-0 place-items-center rounded-lg bg-p1/15 text-p1"><Ico size={18} /></button>
@@ -305,8 +306,8 @@ function Level({ kind, rows, master, onOpen, openLabel = 'Open', onAdd, onSave, 
               {master && <div className="-mr-1.5 flex shrink-0">
                 <button onClick={() => setEditing(r.id)} aria-label="Edit" title="Edit"
                   className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>
-                <button onClick={() => remove(r)} aria-label="Delete" title="Delete"
-                  className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
+                {canDo('delete') && <button onClick={() => remove(r)} aria-label="Delete" title="Delete"
+                  className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
               </div>}
             </div>
             <dl className="mx-4 mt-3 flex-1 divide-y divide-stroke/60 border-t border-stroke text-sm">
@@ -347,12 +348,12 @@ function Level({ kind, rows, master, onOpen, openLabel = 'Open', onAdd, onSave, 
             {master && <>
               <button onClick={() => setEditing(r.id)} aria-label="Edit" title="Edit"
                 className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>
-              <button onClick={() => remove(r)} aria-label="Delete" title="Delete"
-                className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
+              {canDo('delete') && <button onClick={() => remove(r)} aria-label="Delete" title="Delete"
+                className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
             </>}
           </div>
         )))}
-      {master && (editing === 'new'
+      {canDo('add') && (editing === 'new'
         ? <Form kind={kind} onSave={async (v, files) => { await onAdd(v, files); setEditing(null); }} onCancel={() => setEditing(null)} />
         : (
           <button onClick={() => setEditing('new')}
@@ -421,7 +422,8 @@ function BuildingStaff({ building, master, onChanged }) {
 }
 
 export default function PropertiesPage({ me, onBack }) {
-  const master = me?.role === 'master';
+  const master = me?.role === 'master'; // who runs a building stays the master's
+  const edits = canDo('edit'); // the rest follows Add, Edit and Delete (server/actions.js)
   const [at, setAt] = useState({ level: 'companies' }); // or { level: 'company', id } / { level: 'building', id }
   const [got, setGot] = useState({ url: null, data: null });
   const [error, setError] = useState('');
@@ -453,27 +455,27 @@ export default function PropertiesPage({ me, onBack }) {
   else if (!data) body = <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
   else if (at.level === 'companies') body = (
     <>
-      <CompanyDocs master={master} onOpen={(c) => setAt({ level: 'company', id: c.id })} />
+      <CompanyDocs master={edits} onOpen={(c) => setAt({ level: 'company', id: c.id })} />
     </>
   );
   else if (at.level === 'company') body = (
     <>
       {(
           <div className="mb-4 flex items-start gap-3">
-            <Logo row={data} master={master} onChanged={load} />
+            <Logo row={data} master={edits} onChanged={load} />
             <p className="flex-1 self-center text-sm text-mute">{join(data.trade_license_no && `EIN ${data.trade_license_no}`, data.trn && `Tax ID ${data.trn}`, data.registration_date && `Registered ${day(data.registration_date)}`, usPhone(data.phone), data.email, usAddress(data.address, data.city, data.state, data.zip)) || 'No details yet.'}</p>
-            {master && <>
+            {edits && <>
               <button onClick={() => setAdding(true)} aria-label="Edit company" title="Edit company"
                 className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>
-              <button onClick={async () => {
+              {canDo('delete') && <button onClick={async () => {
                 if (!confirm(`Delete ${data.name} and all its documents?`)) return;
                 try { await api.del(`/properties/companies/${data.id}`); setAt({ level: 'companies' }); } catch (e) { alert(e.message); }
               }} aria-label="Delete company" title="Delete company"
-                className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
+                className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
             </>}
           </div>
         )}
-      <Level kind="building" rows={data.list} master={master} addLabel="Add a building" empty="No buildings under this company yet."
+      <Level kind="building" rows={data.list} master={edits} addLabel="Add a building" empty="No buildings under this company yet."
         line={(b) => join(b.area, cityLine(b))}
         details={(b) => [['Address', b.address], ['Plot no.', b.plot_no], ['Makani no.', b.makani_no]]}
         stat={(b) => <span className="text-sm"><span className="text-lg font-light">{b.units}</span> <span className="text-mute">{b.units === 1 ? 'unit' : 'units'}</span></span>}
@@ -484,7 +486,7 @@ export default function PropertiesPage({ me, onBack }) {
   );
   else body = (
     <>
-      <Cover row={data} master={master} onChanged={load} />
+      <Cover row={data} master={edits} onChanged={load} />
       <p className="mb-3 text-sm text-mute">{join(data.company?.name, data.area, cityLine(data), data.makani_no && `Makani ${data.makani_no}`)}</p>
       <BuildingStaff building={data} master={master} onChanged={load} />
       <div className="mb-4 flex gap-5 border-b border-stroke text-sm">
@@ -495,9 +497,9 @@ export default function PropertiesPage({ me, onBack }) {
           </button>
         ))}
       </div>
-      {tab === 'services' && <BuildingServices building={data} master={master} />}
+      {tab === 'services' && <BuildingServices building={data} master={edits} />}
       {tab === 'docs' && <Documents building={{ id: data.id, company_id: data.company_id }} />}
-      {tab === 'units' && <Level kind="unit" rows={data.list} master={master} addLabel="Add a unit" empty="No units in this building yet."
+      {tab === 'units' && <Level kind="unit" rows={data.list} master={edits} addLabel="Add a unit" empty="No units in this building yet."
         line={(u) => join(u.floor && `Floor ${u.floor}`, u.type)}
         details={(u) => [['Size', u.size_sqft && `${Number(u.size_sqft).toLocaleString()} sq ft`], ['Energy account no.', !u.energy_on_tenant && u.dewa_no]]}
         stat={(u) => (

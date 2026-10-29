@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, CalendarClock, Check, CheckCircle2, Clock, Download, KeyRound, Loader2, Paperclip, Pause, Pencil, Play, Plus, Power, RefreshCw, Receipt, RotateCcw, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { money } from '../lib/region';
 import { usDate as fmt } from '../lib/usFormat';
@@ -180,7 +181,7 @@ function ExpenseForm({ start, c, master, onDone, onCancel }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex gap-2">
           <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
-          {start?.id && master && <button type="button" onClick={remove} className={`${GHOST} hover:text-bad`}><Trash2 size={14} /> Delete</button>}
+          {start?.id && canDo('delete') && <button type="button" onClick={remove} className={`${GHOST} hover:text-bad`}><Trash2 size={14} /> Delete</button>}
         </div>
         <button disabled={busy || reading} className={PRIMARY}>{busy ? 'Saving…' : <><Check size={15} /> Save</>}</button>
       </div>
@@ -208,7 +209,7 @@ function ExpensesTab({ c, master }) {
           <Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-mute" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search vendor, account, memo, check no." aria-label="Search expenses" className={`${FIELD} pl-10`} />
         </div>
-        <button onClick={() => setForm({})} className={PRIMARY}><Plus size={16} /> New expense</button>
+        {canDo('add') && <button onClick={() => setForm({})} className={PRIMARY}><Plus size={16} /> New expense</button>}
       </div>
       {error && <p className="text-sm text-bad">{error}</p>}
       {!rows ? !error && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
@@ -294,7 +295,7 @@ function MonthlyTab({ c }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm text-mute">Bills paid every month: insurance, a loan, utilities on autopay.</p>
-        <button onClick={() => setForm({})} className={PRIMARY}><Plus size={16} /> New monthly bill</button>
+        {canDo('add') && <button onClick={() => setForm({})} className={PRIMARY}><Plus size={16} /> New monthly bill</button>}
       </div>
       {error && <p className="text-sm text-bad">{error}</p>}
       {!rows ? !error && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
@@ -307,9 +308,9 @@ function MonthlyTab({ c }) {
                   <span className="block text-sm font-medium">{r.vendor_name} · {money(r.amount)}</span>
                   <span className="block truncate text-xs text-mute">{[`Day ${r.day} of each month`, r.account, r.pay_from_name, r.building, !r.active && 'Paused'].filter(Boolean).join(' · ')}</span>
                 </span>
-                <button onClick={() => setForm(r)} aria-label="Change" title="Change" className={ROUND}><Pencil size={15} /></button>
+                {canDo('edit') && <button onClick={() => setForm(r)} aria-label="Change" title="Change" className={ROUND}><Pencil size={15} /></button>}
                 <button onClick={() => act(() => api.put(`/accounts/repeats/${r.id}`, { ...r, active: !r.active }))} aria-label={r.active ? 'Pause' : 'Start again'} title={r.active ? 'Pause' : 'Start again'} className={ROUND}>{r.active ? <Pause size={15} /> : <Play size={15} />}</button>
-                <button onClick={() => confirm(`Delete the monthly bill from ${r.vendor_name}? The ones already made stay.`) && act(() => api.del(`/accounts/repeats/${r.id}`))} aria-label="Delete" title="Delete" className={`${ROUND} hover:text-bad`}><Trash2 size={15} /></button>
+                {canDo('delete') && <button onClick={() => confirm(`Delete the monthly bill from ${r.vendor_name}? The ones already made stay.`) && act(() => api.del(`/accounts/repeats/${r.id}`))} aria-label="Delete" title="Delete" className={`${ROUND} hover:text-bad`}><Trash2 size={15} /></button>}
               </li>
             ))}
           </ul>

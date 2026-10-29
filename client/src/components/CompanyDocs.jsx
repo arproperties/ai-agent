@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Building2, DoorOpen, Loader2, ChevronRight, ChevronDown, Plus, Search } from 'lucide-react';
 import { photoUrl } from './PropertyPhoto';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { usDate as fmt, usPhone, usAddress } from '../lib/usFormat';
 import DocumentSheet, { DOT, CHIP, chipText } from './DocumentSheet';
@@ -82,7 +83,7 @@ function Card({ c, master, onOpen, onDoc }) {
                 </div>
               ))}
             </div>
-            {master && (
+            {canDo('add') && (
               <button onClick={() => onDoc(c, null)}
                 className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-stroke/70 py-2 text-sm text-mute hover:bg-white/5 hover:text-txt">
                 <Plus size={15} /> Add document

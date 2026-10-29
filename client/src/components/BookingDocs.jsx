@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Loader2, Paperclip, Plus, Trash2, FileText } from 'lucide-react';
+import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { usDateOf } from '../lib/usFormat';
 import Select from './Select';
@@ -111,7 +112,7 @@ export default function BookingDocs({ booking }) {
                       ? <a href={`/api/leasing/docs/${d.id}/file`} target="_blank" rel="noreferrer" className="mt-1 flex items-center gap-1.5 text-sm text-p3 hover:underline"><Paperclip size={14} /> <span className="truncate">{d.file_name}</span></a>
                       : <p className="mt-1 text-xs text-mute">No file attached</p>}
                   </div>
-                  <button onClick={() => remove(d)} aria-label={`Delete ${d.title}`} className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>
+                  {canDo('delete') && <button onClick={() => remove(d)} aria-label={`Delete ${d.title}`} className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
                 </div>
               ))}
             </div>
