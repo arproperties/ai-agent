@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { existsSync } from 'node:fs';
-import { reset, closeDb, db, makeUser } from './helpers/db.js';
+import { reset, closeDb, db, makeUser, giveActions } from './helpers/db.js';
+import { actionGate } from '../server/actions.js';
 import { create } from '../server/properties.js';
 import { createBooking } from '../server/leasing.js';
 import { workOrderRoutes, getWorkOrder, removeWorkOrder } from '../server/workOrders.js';
@@ -14,6 +15,7 @@ let user = { id: 0, role: 'master' }; // the test changes who is calling
 const app = express();
 app.use(express.json());
 app.use((req, res, next) => { req.user = user; next(); });
+app.use('/api', actionGate); // as index.js mounts it: what a person may add, edit or delete
 app.use('/api/leasing', workOrderRoutes);
 app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message }));
 
@@ -232,7 +234,7 @@ test('files are attached by upload, read back with their type, removed, and refu
   }
 });
 
-test('only the master deletes a work order, and only one nobody has started', async () => {
+test('only someone ticked for Delete deletes a work order, and only one nobody has started', async () => {
   const { staff, u1 } = await tower();
   const fresh = await raise({ unit_id: u1.id, detail: 'Raised by mistake' });
   const taken = await raise({ unit_id: u1.id, detail: 'Leak', assigned_to: 'Pipes Co' });
@@ -240,8 +242,10 @@ test('only the master deletes a work order, and only one nobody has started', as
   asStaff(staff);
   const no = await call('DELETE', `/work-orders/${fresh.id}`);
   assert.equal(no.status, 403);
-  assert.equal(no.body.error, 'Not allowed');
+  assert.equal(no.body.error, 'You are not allowed to delete here. Ask the master.');
   assert.equal((await getWorkOrder(fresh.id)).id, fresh.id, 'still there');
+  await giveActions(staff, 'delete');
+  assert.equal((await call('DELETE', '/work-orders/9999')).status, 404, 'ticked for Delete, staff reach the route');
 
   asMaster(staff);
   const started = await call('DELETE', `/work-orders/${taken.id}`);

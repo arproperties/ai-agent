@@ -53,6 +53,7 @@ import { replyPdfRoutes } from './replyPdf.js';
 import { meetingShareRoutes } from './meetingShare.js';
 import { drawingRoutes } from './drawing.js';
 import { moduleGate } from './modules.js';
+import { actionGate } from './actions.js';
 import { attachActivityTriggers, actorContext } from './activityCapture.js';
 import { activityRoutes } from './activity.js';
 import { qbwcRoutes, quickbooksRoutes } from './quickbooks.js';
@@ -73,6 +74,7 @@ app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRou
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api', actorContext); // every change from here on is this person's, in the activity log
 app.use('/api', moduleGate); // the leasing and property screens are modules, ticked per person (server/modules.js)
+app.use('/api', actionGate); // and what they may add, edit or delete in them, ticked per person too (server/actions.js)
 app.use('/api/outlook', outlookRoutes);
 app.use('/api/imap', imapRoutes);
 app.use('/api/email', emailRoutes);

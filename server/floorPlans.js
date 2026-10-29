@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { db, tx } from './db.js';
-import { requireMaster } from './auth.js';
 import { bad } from './leasing.js';
 import { create, upload } from './properties.js';
 import { startReading, reading } from './floorPlanReader.js';
@@ -82,6 +81,6 @@ export async function plans() {
 export const planRoutes = Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 planRoutes.get('/plans', wrap(async (req, res) => res.json(await plans())));
-planRoutes.post('/buildings/:id/plan/read', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await startReading(req.params.id, req.file))));
-planRoutes.get('/plan-readings/:id', requireMaster, wrap(async (req, res) => res.json(reading(req.params.id))));
-planRoutes.put('/buildings/:id/plan', requireMaster, wrap(async (req, res) => res.json(await savePlan(req.params.id, req.body))));
+planRoutes.post('/buildings/:id/plan/read', upload.single('file'), wrap(async (req, res) => res.json(await startReading(req.params.id, req.file))));
+planRoutes.get('/plan-readings/:id', wrap(async (req, res) => res.json(reading(req.params.id))));
+planRoutes.put('/buildings/:id/plan', wrap(async (req, res) => res.json(await savePlan(req.params.id, req.body))));

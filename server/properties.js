@@ -466,15 +466,15 @@ export function sendDoc(req, res, d) {
 
 propertyRoutes.get('/docs', wrap(async (req, res) => res.json(await docBoard())));
 propertyRoutes.get('/companies/:id/docs', wrap(async (req, res) => res.json(await companyDocs(req.params.id, req.query.title))));
-propertyRoutes.post('/companies/:id/docs', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await addDoc(req.params.id, req.body, req.file, req.user.id))));
-propertyRoutes.put('/docs/:id', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await updateDoc(req.params.id, req.body, req.file))));
-propertyRoutes.delete('/docs/:id', requireMaster, wrap(async (req, res) => res.json(await removeDoc(req.params.id))));
+propertyRoutes.post('/companies/:id/docs', upload.single('file'), wrap(async (req, res) => res.json(await addDoc(req.params.id, req.body, req.file, req.user.id))));
+propertyRoutes.put('/docs/:id', upload.single('file'), wrap(async (req, res) => res.json(await updateDoc(req.params.id, req.body, req.file))));
+propertyRoutes.delete('/docs/:id', wrap(async (req, res) => res.json(await removeDoc(req.params.id))));
 propertyRoutes.get('/docs/:id/file', wrap(async (req, res) => sendDoc(req, res, await getDoc(req.params.id))));
 // The register: every document, whoever it belongs to. Reading a file only suggests; nothing is kept by it.
 propertyRoutes.get('/documents', wrap(async (req, res) => res.json({ documents: await register(req.query), master: req.user.role === 'master' })));
 propertyRoutes.get('/documents/:id/history', wrap(async (req, res) => res.json(await docHistory(req.params.id))));
-propertyRoutes.post('/documents', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await addDocument(req.body, req.file, req.user.id))));
-propertyRoutes.post('/documents/read', requireMaster, upload.single('file'), wrap(async (req, res) => res.json(await readDocument(req.file))));
+propertyRoutes.post('/documents', upload.single('file'), wrap(async (req, res) => res.json(await addDocument(req.body, req.file, req.user.id))));
+propertyRoutes.post('/documents/read', upload.single('file'), wrap(async (req, res) => res.json(await readDocument(req.file))));
 propertyRoutes.get('/places', wrap(async (req, res) => res.json(await places())));
 
 propertyRoutes.get('/companies', wrap(async (req, res) => res.json(await listCompanies())));
@@ -492,12 +492,12 @@ for (const [kind, path] of [['company', 'companies'], ['building', 'buildings']]
     res.setHeader('Cache-Control', 'private, max-age=31536000, immutable'); // the address changes when the picture does
     res.type(p.file_mime).sendFile(p.file_path);
   }));
-  propertyRoutes.post(`/${path}/:id/photo`, requireMaster, upload.single('photo'), wrap(async (req, res) => res.json(await setPhoto(kind, req.params.id, req.file))));
-  propertyRoutes.delete(`/${path}/:id/photo`, requireMaster, wrap(async (req, res) => res.json(await removePhoto(kind, req.params.id))));
+  propertyRoutes.post(`/${path}/:id/photo`, upload.single('photo'), wrap(async (req, res) => res.json(await setPhoto(kind, req.params.id, req.file))));
+  propertyRoutes.delete(`/${path}/:id/photo`, wrap(async (req, res) => res.json(await removePhoto(kind, req.params.id))));
 }
 
-propertyRoutes.post('/units/:id/photos', requireMaster, upload.single('photo'), wrap(async (req, res) => res.json(await addUnitPhoto(req.params.id, req.file))));
-propertyRoutes.delete('/unit-photos/:id', requireMaster, wrap(async (req, res) => res.json(await removeUnitPhoto(req.params.id))));
+propertyRoutes.post('/units/:id/photos', upload.single('photo'), wrap(async (req, res) => res.json(await addUnitPhoto(req.params.id, req.file))));
+propertyRoutes.delete('/unit-photos/:id', wrap(async (req, res) => res.json(await removeUnitPhoto(req.params.id))));
 propertyRoutes.get('/unit-photos/:id', wrap(async (req, res) => {
   const p = await getUnitPhoto(req.params.id);
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -505,11 +505,11 @@ propertyRoutes.get('/unit-photos/:id', wrap(async (req, res) => {
   res.type(p.file_mime).sendFile(p.file_path);
 }));
 
-propertyRoutes.post('/companies', requireMaster, wrap(async (req, res) => res.json(await create('company', req.body, null, req.user.id))));
-propertyRoutes.post('/companies/:id/buildings', requireMaster, wrap(async (req, res) => res.json(await create('building', req.body, req.params.id))));
-propertyRoutes.post('/buildings/:id/units', requireMaster, wrap(async (req, res) => res.json(await create('unit', req.body, req.params.id))));
+propertyRoutes.post('/companies', wrap(async (req, res) => res.json(await create('company', req.body, null, req.user.id))));
+propertyRoutes.post('/companies/:id/buildings', wrap(async (req, res) => res.json(await create('building', req.body, req.params.id))));
+propertyRoutes.post('/buildings/:id/units', wrap(async (req, res) => res.json(await create('unit', req.body, req.params.id))));
 
 for (const [kind, path] of [['company', 'companies'], ['building', 'buildings'], ['unit', 'units']]) {
-  propertyRoutes.put(`/${path}/:id`, requireMaster, wrap(async (req, res) => res.json(await update(kind, req.params.id, req.body))));
-  propertyRoutes.delete(`/${path}/:id`, requireMaster, wrap(async (req, res) => res.json(await remove(kind, req.params.id))));
+  propertyRoutes.put(`/${path}/:id`, wrap(async (req, res) => res.json(await update(kind, req.params.id, req.body))));
+  propertyRoutes.delete(`/${path}/:id`, wrap(async (req, res) => res.json(await remove(kind, req.params.id))));
 }

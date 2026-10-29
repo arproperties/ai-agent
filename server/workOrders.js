@@ -3,7 +3,6 @@ import multer from 'multer';
 import { rmSync } from 'node:fs';
 import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
-import { requireMaster } from './auth.js';
 import { saveFile, sendDoc } from './properties.js';
 import { bad, isDate, bookingRef, todayHere } from './leasing.js';
 import { holders } from './modules.js';
@@ -352,6 +351,6 @@ workOrderRoutes.delete('/work-orders/files/:id', wrap(async (req, res) => res.js
 workOrderRoutes.post('/work-orders', wrap(async (req, res) => res.json(await createWorkOrder(req.body, req.user.id))));
 workOrderRoutes.get('/work-orders/:id', wrap(async (req, res) => res.json({ ...(await getWorkOrder(req.params.id)), master: isMaster(req) })));
 workOrderRoutes.put('/work-orders/:id', wrap(async (req, res) => res.json(await updateWorkOrder(req.params.id, req.body, req.user.id))));
-workOrderRoutes.delete('/work-orders/:id', requireMaster, wrap(async (req, res) => res.json(await removeWorkOrder(req.params.id))));
+workOrderRoutes.delete('/work-orders/:id', wrap(async (req, res) => res.json(await removeWorkOrder(req.params.id))));
 workOrderRoutes.post('/work-orders/:id/notes', wrap(async (req, res) => res.json(await addWorkOrderNote(req.params.id, req.body?.note, req.user.id))));
 workOrderRoutes.post('/work-orders/:id/files', upload.array('files', MAX_FILES), wrap(async (req, res) => res.json(await addWorkOrderFiles(req.params.id, req.files, req.user.id))));

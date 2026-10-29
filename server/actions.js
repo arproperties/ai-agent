@@ -46,3 +46,45 @@ export async function setAppActions(userId, wanted) {
   });
   return keys.length;
 }
+
+// ---------- which action each request is ----------
+
+// The shared records: what follows /api for every screen of the business. A person's own
+// things (chats, to-dos, meetings, mail, their Riley imports) are theirs, whatever is ticked.
+export const COVERED = /^\/(leasing|properties|accounts|inventory|recurring-payments)(\/|$)/;
+// The method says the action: POST adds, PUT and PATCH edit, DELETE deletes. A POST that
+// does something else is listed here; the first line that matches decides, and null is
+// a POST that changes nothing (Riley reading a file before anything is saved). A new
+// POST is an add until it is given a line (tests/actions.test.js keeps the list honest).
+const OVERRIDES = [
+  [/^\/leasing\/bookings\/[^/]+\/(contract|confirm|end|cancel|deposit|deposit\/pass)$/, 'edit'], // the state of a lease that is there
+  [/^\/leasing\/payments\/[^/]+\/file$/, 'edit'], // the slip of a payment already recorded
+  [/^\/leasing\/alerts\/reminder\/[^/]+$/, 'edit'], // sending a reminder about a lease
+  [/^\/properties\/(companies|buildings|units)\/[^/]+\/photo$/, 'edit'], // the one picture of a place, replaced
+  [/^\/properties\/renewals\/[^/]+\/(find|requests\/[^/]+\/sent|check|chase|compare|lookup|decide|close)$/, 'edit'], // a renewal moving along
+  [/^\/recurring-payments\/entries\/[^/]+\/active$/, 'edit'], // paused or running again
+  [/^\/recurring-payments\/dues\/[^/]+\/(paid|pending)$/, 'edit'],
+  [/^\/recurring-payments\/(dues|transfers)\/[^/]+\/attachment$/, 'edit'], // the file of a line, replaced
+  [/^\/inventory\/proposals\/[^/]+\/(add|cancel)$/, 'edit'], // deciding what Riley proposed
+  [/^\/inventory\/[^/]+\/items\/[^/]+\/(take|photo)$/, 'edit'],
+  [/^\/(leasing\/slips|properties\/documents|accounts\/receipts|leasing\/(tenants|bookings)\/import)\/read$/, null], // Riley reads; the save is its own request
+  [/^\/properties\/buildings\/[^/]+\/plan\/read$/, null],
+];
+const BY_METHOD = { POST: 'add', PUT: 'edit', PATCH: 'edit', DELETE: 'delete' };
+
+/** 'add', 'edit' or 'delete' for a request that changes shared records; null for a read, or for the person's own things. */
+export function actionFor(method, path) {
+  const action = BY_METHOD[method];
+  const lower = path.toLowerCase().replace(/\/$/, '');
+  if (!action || !COVERED.test(lower)) return null;
+  const line = method === 'POST' && OVERRIDES.find(([at]) => at.test(lower));
+  return line ? line[1] : action;
+}
+
+/** Refuses a change the person has not been ticked for. Mount at /api, after moduleGate. */
+export function actionGate(req, res, next) {
+  const action = actionFor(req.method, req.path);
+  if (!action || isMaster(req.user)) return next();
+  userActions(req.user).then((have) => (have.includes(action) ? next()
+    : res.status(403).json({ error: `You are not allowed to ${action} here. Ask the master.` })), next);
+}

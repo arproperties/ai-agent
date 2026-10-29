@@ -4,7 +4,6 @@ import { rmSync } from 'node:fs';
 import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
 import { saveFile, sendDoc, upload } from './properties.js';
-import { requireMaster } from './auth.js';
 import { todayHere } from './leasingRegion.js';
 import { fileBlock } from './documentReader.js';
 import { syncStates } from './qbSync.js';
@@ -342,7 +341,7 @@ expenseRoutes.get('/expenses/:id', async (req, res) => res.json(await getExpense
 expenseRoutes.get('/expenses/:id/file', async (req, res) => sendDoc(req, res, await db.prepare('SELECT file_path, file_name, file_mime FROM expenses WHERE id = ?').get(Number(req.params.id) || 0) || {}));
 expenseRoutes.post('/expenses', upload.single('file'), async (req, res) => res.json(await createExpense(req.body, req.file, req.user.id)));
 expenseRoutes.put('/expenses/:id', upload.single('file'), async (req, res) => res.json(await updateExpense(req.params.id, req.body, req.file)));
-expenseRoutes.delete('/expenses/:id', requireMaster, async (req, res) => res.json(await removeExpense(req.params.id)));
+expenseRoutes.delete('/expenses/:id', async (req, res) => res.json(await removeExpense(req.params.id)));
 expenseRoutes.post('/receipts/read', upload.single('file'), async (req, res) => res.json(await readReceipt(req.file)));
 expenseRoutes.get('/repeats', async (req, res) => res.json(await listRepeats()));
 expenseRoutes.post('/repeats', async (req, res) => res.json(await createRepeat(req.body, req.user.id)));

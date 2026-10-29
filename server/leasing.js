@@ -5,7 +5,6 @@ import { randomUUID } from 'node:crypto';
 import { db, tx } from './db.js';
 import { DATA_DIR } from './config.js';
 import { saveFile, sendDoc, upload, HELD } from './properties.js';
-import { requireMaster } from './auth.js';
 import { todayHere, cash } from './leasingRegion.js';
 import { usPhone } from './usFormat.js';
 import { readSlip } from './slipReader.js';
@@ -1481,6 +1480,6 @@ leasingRoutes.post('/slips/read', upload.single('file'), wrap(async (req, res) =
 leasingRoutes.post('/installments/:id/payments', upload.single('file'), wrap(async (req, res) => res.json(await recordPayment(req.params.id, req.body, req.user.id, undefined, req.file))));
 leasingRoutes.post('/payments/:id/file', upload.single('file'), wrap(async (req, res) => res.json(await attachPaymentFile(req.params.id, req.file, req.user.id))));
 leasingRoutes.get('/payments/:id/file', wrap(async (req, res) => sendDoc(req, res, await getPayment(req.params.id))));
-leasingRoutes.delete('/payments/:id', requireMaster, wrap(async (req, res) => res.json(await removePayment(req.params.id, req.user.id))));
+leasingRoutes.delete('/payments/:id', wrap(async (req, res) => res.json(await removePayment(req.params.id, req.user.id))));
 leasingRoutes.delete('/docs/:id', wrap(async (req, res) => res.json(await removeBookingDoc(req.params.id, req.user.id))));
 leasingRoutes.get('/docs/:id/file', wrap(async (req, res) => sendDoc(req, res, await getDoc(req.params.id))));
