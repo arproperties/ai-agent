@@ -2141,6 +2141,37 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_address_proposals_chat ON address_proposals(master_id, conversation_id, id);
 `);
 
+// Rules the master taught an agent by correcting it in a chat (server/lessons.js; the
+// screen calls them Rules). The agent follows them in every chat, with anyone.
+//   lesson_proposals: a rule Reem wrote from the correction, waiting on a "Learn this?"
+//   card. Nothing is applied until Approve; a No is kept so it is never offered again.
+//   agent_lessons: the rules in force. agent_id NULL = All agents of that owner. Removing
+//   one sets removed_at, so it counts as a No too.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lesson_proposals (
+    id SERIAL PRIMARY KEY,
+    master_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    agent_id        INTEGER REFERENCES agents(id) ON DELETE CASCADE,
+    rule TEXT NOT NULL,
+    replaces_lesson_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined')),
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lesson_proposals_chat ON lesson_proposals(master_id, conversation_id, id);
+  CREATE TABLE IF NOT EXISTS agent_lessons (
+    id SERIAL PRIMARY KEY,
+    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,
+    rule TEXT NOT NULL,
+    from_proposal_id INTEGER REFERENCES lesson_proposals(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    removed_at BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_agent_lessons_owner ON agent_lessons(owner_id, agent_id) WHERE removed_at IS NULL;
+`);
+
 // What each AI call cost, one row per model per call (server/billing.js). Written as the
 // answer comes back, so the Billing screen shows money by person, by job and by model.
 // user_id is empty for work nobody asked for in person (renewals, the shared inboxes).

@@ -28,6 +28,7 @@ import { userModules } from './modules.js';
 import { pictureTag, makePicture, pictureKit } from './pictures.js';
 import { AUTO_MODEL, ADVISOR_MODEL, MASTER_MODEL } from './config.js';
 import { addressPrompt, addressKit, loadAddresses } from './addressBook.js';
+import { lessonKit, lessonsFor, lessonsBlock } from './lessons.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
 // files. The agent's model costs several times the filing model, and the whole turn is re-sent
@@ -81,11 +82,14 @@ export function chatModel(user, agent) {
 const carriedCase = (c, primary) => (primary && c.case && !sameCase(c.case.number, primary.number)
   ? ` case="${String(c.case.number).replace(/"/g, "'")}" about="a reference case, not ${String(primary.number).replace(/"/g, "'")}"` : '');
 
-function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false, auto = false, focus = null) {
+function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false, auto = false, focus = null, taught = null) {
   const others = team.filter((a) => a.id !== agent.id).map((a) => a.name);
   const parts = [
     agent.persona || `You are ${agent.name}, a helpful assistant.`,
     `Your name is ${agent.name}. You are talking with ${user.name}. Dates in UAE documents are usually written DD/MM/YYYY.`,
+    // The rules the owner taught this agent sit right under its persona, for whoever is
+    // chatting. They change rarely, so they stay in the cached part of the prompt.
+    ...(taught?.lessons.length ? [lessonsBlock(taught.owner, taught.lessons, { canOverride: user.id === agent.user_id })] : []),
     'You live inside a personal AI app with long-term memory and a knowledge base made from files the user shared. ' +
       'Use them naturally — do not explain these mechanics unless asked. When you use the knowledge base, mention the file name. ' +
       'If the answer is not in the knowledge base or memory, say so instead of guessing. Format replies in Markdown.',
@@ -577,6 +581,8 @@ export async function chat(req, res) {
     ...(external ? [] : [sendKit,
       responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
       addressKit(user, { conversationId: convId, onCard: (p) => send('companyAddress', p) }),
+      // The master correcting an agent: a "Learn this?" card, never a rule applied by itself.
+      await lessonKit(user, { conversationId: convId, agent, onCard: (p) => send('lesson', p) }),
       await buildingKit(user),
       await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) })]),
     // Their own case folders, from their own inbox: for someone from outside the company only.
@@ -626,7 +632,7 @@ export async function chat(req, res) {
     let rekeyed = false;
     const { model, auto } = chatModel(user, agent);
     if (mailbox) await loadAddresses(); // the master may have added one since the last message
-    const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto, focus);
+    const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto, focus, await lessonsFor(agent));
     for (let turn = 0; turn < MAX_ROUNDS; turn++) {
       stream = claude.beta.messages.stream({
         model,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import { Check, ChevronDown, ChevronRight, MessageSquare, Plus, Scale, Sparkles } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Lightbulb, MessageSquare, Plus, Scale, Sparkles, Trash2 } from 'lucide-react';
 import Page from './Page';
 import { CaseBrief, CaseHomeBody } from './CaseHome';
 import Picker from './Picker';
@@ -171,6 +171,52 @@ function CasesTab({ agent, onOpenChat, onOpenCase }) {
   );
 }
 
+/**
+ * The rules the master taught this agent from chat (server/lessons.js), and the ones every
+ * agent follows. Removing one is a No too: Reem will not offer it again. Master only.
+ */
+function RulesTab({ agent }) {
+  const [rules, setRules] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get(`/lessons/agent/${agent.id}`).then(setRules).catch((e) => { setError(e.message); setRules({ own: [], all: [] }); });
+  }, [agent.id]);
+
+  const remove = async (l) => {
+    if (!confirm(`Remove this rule?\n\n“${l.rule}”\n\nReem will not offer it again.`)) return;
+    setError('');
+    try {
+      await api.del(`/lessons/${l.id}`);
+      setRules((r) => ({ own: r.own.filter((x) => x.id !== l.id), all: r.all.filter((x) => x.id !== l.id) }));
+    } catch (e) { setError(e.message); }
+  };
+
+  if (!rules) return <p className="text-sm text-mute">Loading rules…</p>;
+  const row = (l, from) => (
+    <div key={l.id} className="flex items-start gap-2 rounded-2xl border border-stroke bg-white/[0.03] p-3 text-sm">
+      <Lightbulb size={15} className="mt-0.5 shrink-0 text-p1" />
+      <div className="min-w-0 flex-1">
+        <p>{l.rule}</p>
+        {from && <p className="mt-0.5 text-xs text-mute">From All agents</p>}
+      </div>
+      <button type="button" onClick={() => remove(l)} aria-label="Remove rule" className="shrink-0 rounded-full p-1 text-mute hover:text-bad">
+        <Trash2 size={15} />
+      </button>
+    </div>
+  );
+  const total = rules.own.length + rules.all.length;
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-mute">{agent.name} follows these in every chat, with everyone.</p>
+      {error && <p className="text-sm text-bad">{error}</p>}
+      {!total && <p className="text-sm text-mute">None yet. When you correct this agent in a chat, Reem offers to learn it as a rule.</p>}
+      {rules.own.map((l) => row(l, false))}
+      {rules.all.map((l) => row(l, true))}
+      {total >= 50 && <p className="text-xs text-mute">Only the newest 50 rules are used in a chat.</p>}
+    </div>
+  );
+}
+
 function PersonaTab({ agent, config, onSaved }) {
   const [f, setF] = useState({
     name: agent.name || '', icon: agent.icon || 'sparkles', color: agent.color || 'violet', persona: agent.persona || '',
@@ -316,7 +362,8 @@ export default function AgentSheet({ agent, config, me, modules = [], onClose, o
   const cases = agent.id && modules.includes('case_focus');
   const first = cases ? (agent.case_key ? [['case', `Case ${agent.case_number}`]] : [['cases', 'Cases']]) : [];
   // A bound agent's own files are listed and uploaded on its case tab: one place for files.
-  const tabs = agent.id ? [...first, ['persona', 'About'], ...(first[0]?.[0] === 'case' ? [] : [['files', 'Agent files']])] : [];
+  const tabs = agent.id ? [...first, ['persona', 'About'], ...(me?.role === 'master' ? [['rules', 'Rules']] : []),
+    ...(first[0]?.[0] === 'case' ? [] : [['files', 'Agent files']])] : [];
   const [tab, setTab] = useState(first[0]?.[0] || 'persona');
   return (
     <Page onBack={onClose}
@@ -338,6 +385,8 @@ export default function AgentSheet({ agent, config, me, modules = [], onClose, o
           newChat={`@${agent.name} `} agentId={agent.id} onOpenChat={onOpenChat} onOpenShelf={onOpenShelf} />
       ) : tab === 'cases' ? (
         <CasesTab agent={agent} onOpenChat={onOpenChat} onOpenCase={onOpenCase} />
+      ) : tab === 'rules' ? (
+        <RulesTab agent={agent} />
       ) : tab === 'persona' ? (
         me?.role === 'master'
           ? <PersonaTab agent={agent} config={config} onSaved={onSaved} />
