@@ -72,6 +72,9 @@ Each feature is usually one server file exporting `xxxRoutes` (an Express Router
 ### Client
 `client/src/App.jsx` is the shell; screens and sheets are in `client/src/components/`, API wrapper and helpers in `client/src/lib/` (`api.js`, `push.js`, `voice.js`, …). `client/src/sw.js` is the custom service worker (vite-plugin-pwa injectManifest) handling web push. Arabic content is common: PDFs use the bundled fonts in `server/fonts/` with RTL handling.
 
+### aol-connector/ (not part of Reem)
+A separate small program stored here only for GitHub: the AOL Mail connector for Claude.ai (own `package.json`, pm2 `aol-connector`, `/var/www/aol-connector`, its own deploy; see `aol-connector/CLAUDE.md`). Reem's build, tests and deploy never include it. Reem's side of it is `server/apps.js` (Settings → Apps).
+
 ### Data on disk
 `data/` holds uploaded originals (`data/uploads/`) and the embedding model cache; it is never deployed or overwritten. The server's `.env` is likewise never shipped.
 
