@@ -27,6 +27,7 @@ import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
 import { aiKeyRoutes, hasKey } from './aiKeys.js';
+import { appRoutes, connectorRoutes } from './apps.js';
 import { docCategoryRoutes, seedCategories } from './docCategories.js';
 import { documentRenewalRoutes, proTaskRoutes } from './documentRenewals.js';
 import { startSaifsysDocSync } from './saifsysDocSync.js';
@@ -74,6 +75,7 @@ app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; che
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
+app.use('/api/connector', connectorRoutes); // the AOL connector server asks which mailbox a link opens; this machine only (apps.js)
 app.use('/api/case-share', publicCaseRoutes); // a case folder shared by link: anyone with it, while it is on (caseShare.js)
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api', externalFence); // someone from outside the company reaches only their own things (access.js)
@@ -120,6 +122,7 @@ app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come 
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
 app.use('/api/ai-keys', aiKeyRoutes); // the company's AI keys and anyone's own (master only)
+app.use('/api/apps', appRoutes); // mailboxes connected to Claude.ai as custom connectors (master only)
 app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
 app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
