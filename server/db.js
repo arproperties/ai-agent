@@ -2183,6 +2183,20 @@ await db.exec(`
   );
 `);
 
+// Mailboxes the master connects to Claude.ai as a custom connector (server/apps.js).
+// secret: the app password, sealed like the AI keys. token: the end of the connector link,
+// which is all the separate connector server needs to ask Reem for the login.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS app_connectors (
+    app     TEXT PRIMARY KEY,
+    email   TEXT NOT NULL,
+    secret  TEXT NOT NULL,
+    token   TEXT NOT NULL UNIQUE,
+    set_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    set_at  BIGINT NOT NULL DEFAULT ${NOW}
+  );
+`);
+
 // Case folders for an external user (server/caseFolders.js): their inbox sorted by case number.
 //   case_settings:  the user's own case-number pattern (empty = the built-in ones)
 //   case_folders:   one folder per case; case_key is the number in a form that matches across spellings
