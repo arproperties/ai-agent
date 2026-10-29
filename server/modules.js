@@ -95,11 +95,12 @@ const RULES = [
   [/^\/leasing\/(tenants\/[^/]+\/(history|log)|log)(\/|$)/, ['tenants'], ['tenants']],
   [/^\/leasing\/tenants(\/|$)/, ['tenants', 'leasing', 'reports'], ['tenants', 'leasing']],
   [/^\/leasing\/services(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
-  [/^\/leasing\/sources(\/|$)/, ['sources', 'leasing'], ['sources', 'leasing']],
+  [/^\/leasing\/sources(\/|$)/, ['sources', 'leasing', 'prospects'], ['sources', 'leasing']], // a prospect picks where they came from
   [/^\/leasing\/(units\/[^/]+\/inspections|inspections|inspection-photos)(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
   [/^\/leasing\/(available|bookings|installments|payments|docs)(\/|$)/, ['leasing'], ['leasing']],
   [/^\/leasing(\/|$)/, MASTER, MASTER], // a leasing route with no line above is the master's until it is given one
   [/^\/properties\/renewals(\/|$)/, ['documents'], ['documents']],
+  [/^\/properties\/places\/?$/, ['documents', 'properties', 'prospects'], ['documents', 'properties']], // the names only: a prospect picks the unit wanted
   [/^\/properties\/(documents|docs|places|companies\/[^/]+\/docs)(\/|$)/, ['documents', 'properties'], ['documents', 'properties']],
   [/^\/properties\/(plans|plan-readings|buildings\/[^/]+\/plan)(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
   [/^\/properties(\/|$)/, ['properties', 'leasing', 'reports'], ['properties']],

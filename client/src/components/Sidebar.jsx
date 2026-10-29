@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, BellRing, ClipboardList, Compass, Eye, FileClock, Globe, History, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Receipt, Search, Users, Wrench } from 'lucide-react';
+import { BarChart3, BellRing, ClipboardList, Compass, Eye, FileClock, Globe, History, Landmark, LayoutDashboard, Megaphone, MessagesSquare, Receipt, Search, UserPlus, Users, Wrench } from 'lucide-react';
 import { api } from '../lib/api';
 import { can } from '../lib/modules';
 import Icon from './Icon';
@@ -54,6 +54,7 @@ export default function Sidebar({ user, agents, filesOpen, expiring = 0, dueTodo
     { module: 'leasing', Ico: ClipboardList, color: 'teal', label: 'Leasing', hint: 'Leases, the 3D view and the calendar',
       here: leasingOpen && ['bookings', '3d', 'calendar'].includes(leasingTab), onClick: () => onLeasing(['3d', 'calendar'].includes(leasingTab) ? leasingTab : 'bookings') },
     { module: 'tenants', Ico: Users, color: 'rose', label: 'Tenants', hint: 'The people and companies renting', here: leasingOpen && leasingTab === 'tenants', onClick: () => onLeasing('tenants') },
+    { module: 'prospects', Ico: UserPlus, color: 'amber', label: 'Prospects', hint: 'People interested in a unit', here: leasingOpen && leasingTab === 'prospects', onClick: () => onLeasing('prospects') },
     { module: 'workorders', Ico: Wrench, color: 'from-sky-400 to-cyan-600 shadow-sky-500/30', label: 'Work orders', hint: 'Repairs: what is open, and who has it', here: leasingOpen && leasingTab === 'workorders', onClick: () => onLeasing('workorders') },
     { module: 'reports', Ico: BarChart3, color: 'violet', label: 'Reports', hint: 'Daily, rent roll, overdue, collections', here: leasingOpen && leasingTab === 'reports', onClick: () => onLeasing('reports') },
     { module: 'alerts', Ico: BellRing, color: 'from-orange-400 to-red-500 shadow-red-500/30', label: 'Alerts', hint: alerts.count ? `${alerts.count} need${alerts.count === 1 ? 's' : ''} attention` : 'Nothing needs attention',

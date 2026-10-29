@@ -8,7 +8,7 @@ export const setModules = (list) => { held = new Set(list || []); };
 export const can = (key) => held.has(key);
 
 // Which module each section of the Leasing page belongs to. Its three ways in are one module.
-const TAB = { overview: 'overview', bookings: 'leasing', '3d': 'leasing', calendar: 'leasing', tenants: 'tenants',
+const TAB = { overview: 'overview', bookings: 'leasing', '3d': 'leasing', calendar: 'leasing', tenants: 'tenants', prospects: 'prospects',
   workorders: 'workorders', reports: 'reports', alerts: 'alerts', documents: 'documents' };
 
 /** The module the open screen belongs to, or null when it is one everybody has. */

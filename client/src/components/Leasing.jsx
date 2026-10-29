@@ -25,6 +25,8 @@ import TenantImport from './TenantImport';
 import LeaseImport from './LeaseImport';
 import Inspections from './Inspections';
 import WorkOrders from './WorkOrders';
+import Prospects from './Prospects';
+import { leasePreset } from '../lib/prospects';
 
 const Building3D = lazy(() => import('./Building3D')); // it brings a 3D library with it, fetched only when the 3D View is opened
 
@@ -239,7 +241,7 @@ const Pick = ({ value, onPick, options }) => (
 
 /** New booking, or editing one: a whole page, like registering a company. */
 function BookingForm({ start, preset, onDone, onCancel }) {
-  const init = start || preset || {}; // preset: a new booking begun from the calendar
+  const init = start || preset || {}; // preset: a new booking begun from the calendar, or from a prospect (lib/prospects.js leasePreset)
   const [companies, setCompanies] = useState([]);
   const [buildings, setBuildings] = useState([]);
   const [companyId, setCompanyId] = useState(init.company_id || '');
@@ -247,7 +249,9 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [v, setV] = useState({
     start_date: init.start_date || '', end_date: init.end_date || '', unit_id: init.unit_id || '',
     rent_amount: start?.rent_amount ?? '', rent_period: start?.rent_period || 'year', payment_frequency: start?.payment_frequency || 'monthly',
-    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], discounts: start?.discounts || [], source: start?.source || '', referred_by: start?.referred_by || '', tenant_energy_account: !!start?.tenant_energy_account,
+    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], discounts: start?.discounts || [], source: start?.source || preset?.source || '',
+    // Made from a prospect: the saved lease marks it leased (server/prospects.js).
+    ...(!start && preset?.prospect_id ? { prospect_id: preset.prospect_id } : {}), referred_by: start?.referred_by || '', tenant_energy_account: !!start?.tenant_energy_account,
     discount_type: start?.discount_type || 'percent', discount_value: start?.discount_value ?? '', discount_note: start?.discount_note || '',
     // A new booking starts with the region's usual tax; one being edited keeps what it has. Empty is no tax.
     tax_percent: start ? start.tax_percent ?? '' : region().tax_percent || '',
@@ -267,7 +271,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [tenantMode,setTenantMode] = useState(start ? 'existing' : 'new');
   const [tenants, setTenants] = useState([]);
   const [tenantId, setTenantId] = useState(start?.tenant_id || '');
-  const [tenant, setTenant] = useState({ full_name: '', phone: '', email: '', emirates_id_no: '', ssn: '', housing: false, housing_authority: '', housing_detail: '' });
+  const [tenant, setTenant] = useState({ full_name: '', phone: '', email: '', emirates_id_no: '', ssn: '', housing: false, housing_authority: '', housing_detail: '', ...(!start && preset?.tenant) });
   const [files, setFiles] = useState({}); // the documents a new booking must come with (REQUIRED), by field
   const [services, setServices] = useState([]); // the saved extra services the other charges are picked from
   const [listOpen, setListOpen] = useState(false);
@@ -1407,6 +1411,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
   );
   if (tab === 'workorders') return <WorkOrders key={key} onBack={onBack} />;
   if (tab === 'tenants') return <Page title="Tenants" onBack={onBack}><Tenants onHistory={(t) => setForm({ historyOf: t })} /></Page>;
+  if (tab === 'prospects') return <Page title="Prospects" onBack={onBack}><Prospects key={key} canLease={can('leasing')} onLease={(p) => setForm({ preset: leasePreset(p) })} /></Page>;
   if (tab === 'reports') return <Page title="Reports" onBack={onBack}><LeasingReports key={key} name={report} onName={onReport} onPay={pay} /></Page>;
   if (tab === 'alerts') return <Page title="Alerts" onBack={onBack}><LeasingAlerts key={key} rule={alert} onRule={onAlert} onOpen={openAlert} canOpen={(a) => can(alertModule(a))} /></Page>;
   if (tab === 'documents') return <Page title="Documents" onBack={onBack}><Documents key={key} openId={docOpen} openRenewal={renewalOpen} onOpened={() => { setDocOpen(null); setRenewalOpen(null); }} /></Page>;
