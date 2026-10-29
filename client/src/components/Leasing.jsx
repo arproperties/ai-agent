@@ -231,6 +231,36 @@ function proratedPlan(v) {
     total: allRent + allFees + tax,
   };
 }
+/** The rent is typed as monthly charges named "Rent…", the deposit as a one-time charge named "Security deposit".
+    The lease keeps them as it always has: rent_amount the rent lines together, rent_amount_2 the HUD/Agency part. */
+const isRent = (f) => f.repeats && /^rent\b/i.test(String(f.label || '').trim());
+const isDeposit = (f) => !f.repeats && /^security deposit/i.test(String(f.label || '').trim());
+const RENT_NAMES = ['Rent', 'Rent – Tenant', 'Rent – HUD/Agency'];
+/** A lease's rent and deposit as charge lines, ahead of its other charges, for the form. */
+function chargeLines(b) {
+  const r = Number(b?.rent_amount), r2 = Number(b?.rent_amount_2) || 0;
+  const rent = b?.rent_amount == null || b.rent_amount === '' ? [{ label: 'Rent', amount: '', repeats: true }]
+    : r2 > 0 ? [{ label: 'Rent – Tenant', amount: String(Math.round((r - r2) * 100) / 100), repeats: true }, { label: 'Rent – HUD/Agency', amount: String(r2), repeats: true }]
+      : [{ label: 'Rent', amount: String(r), repeats: true }];
+  const deposit = Number(b?.security_deposit) > 0 ? [{ label: 'Security deposit', amount: String(b.security_deposit), on: b.deposit_due || '' }] : [];
+  return [...rent, ...(b?.fees || []), ...deposit];
+}
+/** The form's lines back into what the lease keeps: the rent, its HUD/Agency part, the deposit and its day, and the other charges. */
+function fromLines(v) {
+  const rent = v.fees.filter(isRent);
+  const deposit = v.fees.find(isDeposit);
+  const typed = rent.filter((f) => f.amount !== '' && f.amount != null);
+  const total = (list) => Math.round(list.reduce((t, f) => t + Number(f.amount || 0), 0) * 100) / 100;
+  // The HUD/Agency part: the rent lines named for it, or else every rent line after the first (the tenant's).
+  const named = rent.filter((f) => /hud|agency/i.test(f.label));
+  const second = total(named.length ? named : rent.slice(1));
+  return {
+    ...v, rent_amount: typed.length ? total(rent) : '', rent_amount_2: second > 0 ? second : '',
+    security_deposit: deposit && Number(deposit.amount) > 0 ? deposit.amount : '', deposit_due: deposit?.on || '',
+    fees: v.fees.filter((f) => !isRent(f) && f !== deposit),
+  };
+}
+
 /** Two or three choices side by side, one of them on. */
 const Pick = ({ value, onPick, options }) => (
   <span className="flex shrink-0 rounded-full border border-stroke p-0.5">
@@ -250,11 +280,9 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [buildingId, setBuildingId] = useState(init.building_id || '');
   const [v, setV] = useState({
     start_date: init.start_date || '', end_date: init.end_date || '', unit_id: init.unit_id || '',
-    rent_amount: start?.rent_amount ?? '',
-    // The rent typed in two parts, the tenant's and HUD's/an agency's; rent_amount is the two together, as everything else reads it.
-    rent_1: start?.rent_amount == null ? '' : Number(start.rent_amount_2) > 0 ? String(Math.round((start.rent_amount - start.rent_amount_2) * 100) / 100) : String(start.rent_amount),
-    rent_amount_2: start?.rent_amount_2 ?? '', rent_period: start?.rent_period || 'month', payment_frequency: start?.payment_frequency || 'monthly',
-    security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], discounts: start?.discounts || [], source: start?.source || preset?.source || '',
+    rent_period: start?.rent_period || 'month', payment_frequency: start?.payment_frequency || 'monthly',
+    // The rent, deposit and other charges, all as charge lines (chargeLines, fromLines).
+    contract_no: start?.contract_no || '', notes: start?.notes || '', fees: chargeLines(start), discounts: start?.discounts || [], source: start?.source || preset?.source || '',
     // Made from a prospect: the saved lease marks it leased (server/prospects.js).
     ...(!start && preset?.prospect_id ? { prospect_id: preset.prospect_id } : {}), referred_by: start?.referred_by || '', tenant_energy_account: !!start?.tenant_energy_account,
     discount_type: start?.discount_type || 'percent', discount_value: start?.discount_value ?? '', discount_note: start?.discount_note || '',
@@ -265,7 +293,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     part_month_amount: start?.part_month_amount ?? '',
     // Rent Manager's General tab: the lease start is start_date; these sit beside it.
     lease_sign_date: start?.lease_sign_date || '', move_in_date: start?.move_in_date || '', notice_date: start?.notice_date || '', expected_move_out: start?.expected_move_out || '',
-    deposit_due: start?.deposit_due || '', leasing_agent: start?.leasing_agent || '', ...Object.fromEntries(TICKS.map(([k]) => [k, !!start?.[k]])),
+    leasing_agent: start?.leasing_agent || '', ...Object.fromEntries(TICKS.map(([k]) => [k, !!start?.[k]])),
   });
   // Whether this lease is billed on the 1st: every new one is. A lease made before that (prorate empty)
   // keeps rent on its move-in day, and the form does not offer to change it.
@@ -287,12 +315,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
-  // Tenant or HUD/Agency typed: the rent is their sum (empty when both are).
-  const setRent = (f) => (e) => setV((now) => {
-    const next = { ...now, [f]: e.target.value };
-    const both = next.rent_1 === '' && next.rent_amount_2 === '';
-    return { ...next, rent_amount: both ? '' : String(Math.round((Number(next.rent_1 || 0) + Number(next.rent_amount_2 || 0)) * 100) / 100) };
-  });
+  const lease = fromLines(v); // the form as the lease keeps it
 
   useEffect(() => { api.get('/properties/companies').then(setCompanies).catch(() => {}); api.get('/leasing/tenants').then(setTenants).catch(() => {}); api.get('/leasing/sources').then(setSources).catch(() => {}); }, []);
   // The other charges are picked from the services of the building the booking is in.
@@ -320,7 +343,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const draftRef = useRef(null); // draftId, read by a save that was waiting while the draft was made
   const [kick, setKick] = useState(0); // another round, for a change made while a save was on its way
   const autosaves = !start || start.status === 'draft';
-  const bodyNow = { ...v, ...(tenantMode === 'existing' ? { tenant_id: tenantId } : { tenant }) };
+  const bodyNow = { ...lease, ...(tenantMode === 'existing' ? { tenant_id: tenantId } : { tenant }) };
   const sent = JSON.stringify(bodyNow);
   const latest = useRef();
   latest.current = { sent, bodyNow };
@@ -328,7 +351,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     if (!autosaves || busy) return;
     if (lastSaved.current === null) { lastSaved.current = sent; if (start) return; } // what it opened with is already saved
     if (sent === lastSaved.current && (start || draftId)) return;
-    const canMake = v.unit_id && datesOk && Number(v.rent_amount) > 0 && (tenantMode === 'existing' ? tenantId : tenant.full_name.trim() && tenant.phone) && REQUIRED.every(([f]) => files[f]);
+    const canMake = v.unit_id && datesOk && Number(lease.rent_amount) > 0 && (tenantMode === 'existing' ? tenantId : tenant.full_name.trim() && tenant.phone) && REQUIRED.every(([f]) => files[f]);
     if (!start && !draftId && !canMake) return;
     const timer = setTimeout(async () => {
       if (autoBusy.current) return; // the save on its way kicks off another round when it is done
@@ -402,13 +425,12 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const unit = units?.find((u) => String(u.id) === String(v.unit_id)) || (start && String(v.unit_id) === String(start.unit_id) ? start : null);
   const buildingName = buildings.find((b) => String(b.id) === String(buildingId))?.name || (start && String(buildingId) === String(start.building_id) ? start.building : '');
   const tenantName = tenantMode === 'existing' ? tenants.find((t) => String(t.id) === String(tenantId))?.full_name : tenant.full_name.trim();
-  const sum = datesOk && Number(v.rent_amount) > 0 ? plan(v) : null;
-  const putDiscount = (i, patch) => setV((now) => ({ ...now, discounts: now.discounts.map((d, j) => (j === i ? { ...d, ...patch } : d)) }));
+  const sum = datesOk && Number(lease.rent_amount) > 0 ? plan(lease) : null;
 
   // One step at a time. A step is done once what it must have is filled in, and a later
   // step opens only when those before it are done.
   const filed = !!start || REQUIRED.every(([f]) => files[f]); // a booking being edited already has its documents, or shows them as missing
-  const done = [!!v.unit_id, (tenantMode === 'existing' ? !!tenantId : !!tenant.full_name.trim()) && filed, v.rent_amount !== '', true];
+  const done = [!!v.unit_id, (tenantMode === 'existing' ? !!tenantId : !!tenant.full_name.trim()) && filed, Number(lease.rent_amount) > 0, true];
   const reach = (i) => done.slice(0, i).every(Boolean);
   const go = (i) => { setStep(i); setFar((f) => Math.max(f, i)); };
   const ready = reach(STEPS.length);
@@ -554,76 +576,12 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         ))}
       </Section>}
 
-      {step === 2 && <Section title="Rent and charges" extra={(
-        <span className="ml-auto flex items-center gap-2 text-xs text-mute">Rent per
-          {/* Rent per month is paid monthly unless someone chooses otherwise after. */}
-          <Pick value={v.rent_period} onPick={(k) => setV({ ...v, rent_period: k, ...(k === 'month' ? { payment_frequency: 'monthly' } : {}) })} options={[['month', 'Month'], ['year', 'Year']]} />
-        </span>
-      )}>
-        <Group title="Rent">
-          {/* One line on a wide screen, two fields a line on a narrower one. */}
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Label text={`Tenant (${currency()})`} need><input type="number" min="0" step="any" value={v.rent_1} onChange={setRent('rent_1')} required className={FIELD} /></Label>
-            <Label text={`HUD/Agency (${currency()})${Number(v.rent_amount_2) > 0 ? ` · rent ${v.rent_amount}` : ''}`}><input type="number" min="0" step="any" value={v.rent_amount_2} onChange={setRent('rent_amount_2')} placeholder="None" className={FIELD} /></Label>
-            <Label text="Paid">
-              {/* Only a lease paid monthly can prorate its first month. */}
-              <Select value={v.payment_frequency} onChange={(e) => setV({ ...v, payment_frequency: e.target.value, prorate: e.target.value === 'monthly' && onTheFirst ? v.prorate || start?.prorate || 'first' : null })} className={SELECT} options={FREQ} />
-            </Label>
-            <Label text={`Security deposit (${currency()})`}><input type="number" min="0" step="any" value={v.security_deposit} onChange={set('security_deposit')} placeholder="None" className={FIELD} /></Label>
-            {/* A deposit charged before the lease start (paid before moving in), on the day Rent Manager charged it. */}
-            {Number(v.security_deposit) > 0 && (
-              <label className="block min-w-0">
-                <span className="mb-1 block truncate text-xs text-txt/80">Deposit charged on · if not the lease start</span>
-                <DateField value={v.deposit_due} onChange={set('deposit_due')} max={v.end_date || undefined} className={FIELD} />
-              </label>
-            )}
-          </div>
-          {/* Discounts off the monthly rent, each between dates of its own: empty dates are the whole lease. One agreed
-              during the lease starts on a later date, so the rent already billed stays as it is. */}
-          {v.discounts.length > 0 && <p className="mb-1 mt-4 text-xs font-medium text-txt/80">Discounts <span className="font-normal text-mute">· off the rent each month · empty dates: the whole lease</span></p>}
-          {v.discounts.map((d, i) => (
-            <div key={i} className="mb-2 flex flex-wrap items-end gap-2">
-              <label className="block w-36">
-                <span className="mb-1 block text-xs text-txt/80">Discount ({currency()})</span>
-                <input type="number" min="0" step="any" value={d.amount} onChange={(e) => putDiscount(i, { amount: e.target.value })} required className={FIELD} />
-              </label>
-              <label className="block w-40">
-                <span className="mb-1 block text-xs text-txt/80">Start · empty: move-in</span>
-                <DateField value={d.from || ''} onChange={(e) => putDiscount(i, { from: e.target.value })} min={v.start_date || undefined} max={d.until || v.end_date || undefined} aria-label="Discount start" className={FIELD} />
-              </label>
-              <label className="block w-40">
-                <span className="mb-1 block text-xs text-txt/80">End · empty: to the end</span>
-                <DateField value={d.until || ''} onChange={(e) => putDiscount(i, { until: e.target.value })} min={d.from || v.start_date || undefined} max={v.end_date || undefined} aria-label="Discount end" className={FIELD} />
-              </label>
-              <label className="block min-w-[10rem] flex-1">
-                <span className="mb-1 block text-xs text-txt/80">Reason</span>
-                <input value={d.note || ''} onChange={(e) => putDiscount(i, { note: e.target.value })} placeholder="e.g. tenant asked, long stay" className={FIELD} />
-              </label>
-              <button type="button" onClick={() => setV({ ...v, discounts: v.discounts.filter((_, j) => j !== i) })} aria-label="Remove this discount"
-                className="mb-0.5 grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={15} /></button>
-            </div>
-          ))}
-          <button type="button" onClick={() => setV({ ...v, discounts: [...v.discounts, { amount: '', from: '', until: '', note: '' }] })} className={`${GHOST} ${v.discounts.length ? '' : 'mt-3'}`}><Plus size={13} /> Add a discount</button>
-        </Group>
-        {/* A lease that starts after the 1st can charge its part month by the day, then rent on the 1st. */}
-        {onTheFirst && v.payment_frequency === 'monthly' && v.start_date && !v.start_date.endsWith('-01') && (
-          <Group title="First month">
-            <Pick value={v.prorate} onPick={(k) => setV({ ...v, prorate: k })}
-              options={[['first', 'From the first month'], ['second', 'From the second month']]} />
-            {sum?.head && v.prorate === 'first' && <p className="mt-2 text-xs text-mute">{sum.head.typed ? 'The prorated rent' : `${sum.head.days} of ${sum.head.of} days`} = <span className="font-medium text-txt">{aed(sum.head.typed || sum.head.amount)}</span>, then the rent is due on the 1st.</p>}
-            {sum?.head && v.prorate === 'second' && sum.second && <p className="mt-2 text-xs text-mute">A full month's rent at move-in, then {aed(sum.head.typed || sum.head.amount)} {!sum.head.typed && `(${sum.head.days} of ${sum.head.of} days) `}on <span className="font-medium text-txt">{fmt(sum.second.due)}</span>.</p>}
-            {/* Rent Manager may have charged the part month at a figure of its own: typed here, it is used as it is. */}
-            <label className="mt-3 block max-w-xs">
-              <span className="mb-1 block text-xs text-txt/80">Prorated rent ({currency()}) · only to use a different amount</span>
-              <input type="number" min="0" step="any" value={v.part_month_amount} onChange={set('part_month_amount')}
-                placeholder={sum?.head ? `Worked out: ${aed(sum.head.amount)}` : 'Worked out by the day'} className={FIELD} />
-            </label>
-          </Group>
-        )}
+      {step === 2 && <Section title="Rent and charges">
+        {/* Three lists only: the monthly charges (the rent among them), those due once (the deposit among them), and the prorated part month. */}
         {/* Other charges in two lists: monthly ones, each with its own start and end, then those due once. One list
             (v.fees) holds both; `repeats` says which. */}
-        {[[true, 'Recurring charges', 'billed every month · with no end date, to the end of the lease', 'Add a monthly charge'],
-          [false, 'One-time charges', 'pet fee, application fee…, due once, on the first day or a date you choose', 'Add a one-time charge']].map(([monthly, title, hint, add]) => (
+        {[[true, 'Recurring charges', 'billed every month · the rent too: a line named Rent (a second, Rent – HUD/Agency, for their part)', 'Add a monthly charge'],
+          [false, 'One-time charges', 'security deposit, pet fee, application fee…, due once, on the first day or a date you choose', 'Add a one-time charge']].map(([monthly, title, hint, add]) => (
           <Group key={title} title={title} hint={hint}>
             {v.fees.map((f, i) => {
               if (!!f.repeats !== monthly) return null;
@@ -635,6 +593,8 @@ function BookingForm({ start, preset, onDone, onCancel }) {
               };
               // A new name is saved to the list there and then, so nobody has to leave the booking to add it.
               const make = async (name) => {
+                // The rent and the deposit are names of the lease's own, not services of the building.
+                if (monthly ? isRent({ repeats: true, label: name }) : isDeposit({ label: name })) return put({ label: name });
                 try {
                   const s = await api.post('/leasing/services', { name, amount: f.amount, repeats: monthly, building_id: buildingId });
                   setServices((list) => [...list, s].sort((a, b) => a.name.localeCompare(b.name)));
@@ -643,7 +603,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
               };
               return (
                 <div key={i} className="mb-2 flex flex-wrap items-end gap-2">
-                  <Select value={f.label} onChange={(e) => pick(e.target.value)} onCreate={make} options={[...new Set([...services.map((s) => s.name), f.label].filter(Boolean))]}
+                  <Select value={f.label} onChange={(e) => pick(e.target.value)} onCreate={make} options={[...new Set([...(monthly ? RENT_NAMES : ['Security deposit']), ...services.map((s) => s.name), f.label].filter(Boolean))]}
                     placeholder="Choose, or type a new one…" aria-label="Charge" className={SELECT} wrap="min-w-[11rem] flex-1" />
                   <input type="number" min="0" step="any" value={f.amount} onChange={(e) => put({ amount: e.target.value })} placeholder={currency()} aria-label="Amount" className={`${FIELD} max-w-[9rem]`} />
                   {!monthly && (
@@ -652,7 +612,9 @@ function BookingForm({ start, preset, onDone, onCancel }) {
                       <DateField value={f.on || ''} onChange={(e) => put({ on: e.target.value })} aria-label="Due on" className={FIELD} />
                     </label>
                   )}
-                  {monthly && (
+                  {/* The rent runs the whole lease: no dates of its own. */}
+                  {monthly && isRent(f) && <span className="mb-2.5 text-xs text-mute">Rent · the whole lease</span>}
+                  {monthly && !isRent(f) && (
                     <>
                       <label className="block w-40">
                         <span className="mb-1 block text-xs text-txt/80">Start date</span>
@@ -681,6 +643,21 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             )}
           </Group>
         ))}
+        {/* A lease that starts after the 1st can charge its part month by the day, then rent on the 1st. */}
+        {onTheFirst && v.payment_frequency === 'monthly' && v.start_date && !v.start_date.endsWith('-01') && (
+          <Group title="Prorated charges" hint="the part month of a lease that starts after the 1st">
+            <Pick value={v.prorate} onPick={(k) => setV({ ...v, prorate: k })}
+              options={[['first', 'From the first month'], ['second', 'From the second month']]} />
+            {sum?.head && v.prorate === 'first' && <p className="mt-2 text-xs text-mute">{sum.head.typed ? 'The prorated rent' : `${sum.head.days} of ${sum.head.of} days`} = <span className="font-medium text-txt">{aed(sum.head.typed || sum.head.amount)}</span>, then the rent is due on the 1st.</p>}
+            {sum?.head && v.prorate === 'second' && sum.second && <p className="mt-2 text-xs text-mute">A full month's rent at move-in, then {aed(sum.head.typed || sum.head.amount)} {!sum.head.typed && `(${sum.head.days} of ${sum.head.of} days) `}on <span className="font-medium text-txt">{fmt(sum.second.due)}</span>.</p>}
+            {/* Rent Manager may have charged the part month at a figure of its own: typed here, it is used as it is. */}
+            <label className="mt-3 block max-w-xs">
+              <span className="mb-1 block text-xs text-txt/80">Prorated rent ({currency()}) · only to use a different amount</span>
+              <input type="number" min="0" step="any" value={v.part_month_amount} onChange={set('part_month_amount')}
+                placeholder={sum?.head ? `Worked out: ${aed(sum.head.amount)}` : 'Worked out by the day'} className={FIELD} />
+            </label>
+          </Group>
+        )}
       </Section>}
 
       {step === 3 && <Section title="Contract & notes">
