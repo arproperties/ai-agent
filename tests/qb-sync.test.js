@@ -92,6 +92,22 @@ test('a day\'s rent and charges go as one bank deposit, a line per account; chan
   assert.deepEqual((await status()).queue.failed, 0);
 });
 
+test('rent paid through Zego is left out: Zego puts it into QuickBooks itself', async () => {
+  const { staff, bk } = await books();
+  await saveSettings({ start_date: '2026-10-01', bank_account: 'B1', rent_account: 'I1', deposit_account: 'L1' });
+  await payBooking(bk.id, { amount: 5000, method: 'zego', received_on: '2026-10-07' }, staff, '2026-10-10');
+  assert.equal(await plan(), 0, 'a day of Zego payments only: nothing to send');
+  await payBooking(bk.id, { amount: 4500, method: 'cash', received_on: '2026-10-08' }, staff, '2026-10-10');
+  await payBooking(bk.id, { amount: 1000, method: 'zego', received_on: '2026-10-08' }, staff, '2026-10-10');
+  const r = await run();
+  const rq = await r.next();
+  assert.match(rq, /<TxnDate>2026-10-08<\/TxnDate>/);
+  assert.match(rq, /<Amount>4500.00<\/Amount>/);
+  assert.doesNotMatch(rq, /1000.00|5500.00/, 'the Zego payment is not in the deposit');
+  await r.reply(made('Deposit', 'T1', '1'));
+  assert.equal(await plan(), 0);
+});
+
 test('today\'s rent waits for the day to end, so it goes whole', async () => {
   const { staff, bk } = await books();
   await saveSettings({ start_date: '2026-10-01', bank_account: 'B1', rent_account: 'I1' });

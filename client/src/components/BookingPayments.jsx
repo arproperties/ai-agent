@@ -18,8 +18,8 @@ const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p
 const GHOST = 'flex items-center gap-1.5 rounded-full border border-stroke/70 px-3 py-1.5 text-xs text-mute hover:bg-white/5 hover:text-txt disabled:opacity-50';
 const PRIMARY = 'flex items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2 text-sm font-medium text-white disabled:opacity-60';
 const HEAD = 'text-[11px] font-medium uppercase tracking-widest text-mute';
-const METHODS = [['transfer', 'Bank transfer'], ['cash', 'Cash'], ['card', 'Card'], ['money_order', 'Money order'], ['online', 'Online card']];
-const REF = { cash: 'Receipt no.', card: 'Card slip no.', money_order: 'Money order no.', online: 'e.g. ePay VISA, auth no.', transfer: 'Transfer ref.' };
+const METHODS = [['transfer', 'Bank transfer'], ['cash', 'Cash'], ['card', 'Card'], ['money_order', 'Money order'], ['online', 'Online card'], ['zego', 'Zego']];
+const REF = { cash: 'Receipt no.', card: 'Card slip no.', money_order: 'Money order no.', online: 'e.g. ePay VISA, auth no.', transfer: 'Transfer ref.', zego: 'Zego ref.' };
 const STATUS = {
   paid: ['Paid', 'bg-ok/15 text-ok'], partly_paid: ['Part paid', 'bg-warn/15 text-warn'], overdue: ['Overdue', 'bg-bad/15 text-bad'],
   due: ['Due today', 'bg-p1/20 text-p1'], upcoming: ['Upcoming', 'bg-white/10 text-txt/80'], waived: ['Cancelled', 'bg-white/5 text-mute'],

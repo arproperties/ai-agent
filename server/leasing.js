@@ -598,7 +598,7 @@ export async function bookingHistory(bookingId) {
 // ---------- payment schedule and payments ----------
 
 const STEP = { monthly: 1, quarterly: 3, every_6_months: 6, yearly: 12 };
-export const METHODS = [['transfer', 'Bank transfer'], ['cash', 'Cash'], ['card', 'Card'], ['money_order', 'Money order'], ['online', 'Online card']];
+export const METHODS = [['transfer', 'Bank transfer'], ['cash', 'Cash'], ['card', 'Card'], ['money_order', 'Money order'], ['online', 'Online card'], ['zego', 'Zego']];
 export const AGING = [['0–30 days', 0, 30], ['31–60 days', 31, 60], ['61–90 days', 61, 90], ['90+ days', 91, Infinity]];
 const ENDING = 60; // days before its end a lease counts as ending soon
 export const dayNo = (s) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) / 86400000;
@@ -849,7 +849,7 @@ export const receiptNo = (p) => `RC-${p.received_on.slice(0, 4)}-${String(p.id).
 export async function takePayment(installmentId, body = {}, by, today = todayHere(), file = null, { batch = null, whole = false } = {}) {
   const amount = Number(body.amount);
   if (!Number.isFinite(amount) || amount <= 0) throw bad('Enter the amount received.');
-  if (!METHODS.some(([k]) => k === body.method)) throw bad('Choose how it was paid: bank transfer, cash, card, money order or online card.');
+  if (!METHODS.some(([k]) => k === body.method)) throw bad('Choose how it was paid: bank transfer, cash, card, money order, online card or Zego.');
   const received_on = String(body.received_on ?? '').trim() || today;
   if (!isDate(received_on)) throw bad('The date received is not a date.');
   if (received_on > today) throw bad('The date received cannot be in the future.');

@@ -9,7 +9,8 @@ import { depositState } from './leasing.js';
 // file on 2026-10-22: rent as bank deposits, money out as checks, nothing invoiced):
 //
 //   deposit:<day>      the rent and charges received that day: one Deposit into the bank,
-//                      a line per income account (rent, late fees, other charges, deposits)
+//                      a line per income account (rent, late fees, other charges, deposits);
+//                      paid through Zego is left out, as Zego puts it into QuickBooks itself
 //   refund:<lease>     a security deposit given back: a Check out of the bank, from the
 //                      account the deposits sit in
 //   kept:<lease>       the part of a deposit kept at check-out, moved from the deposits
@@ -70,7 +71,7 @@ const lineLabel = { rent: 'Rent', deposit: 'Security deposits', late: 'Late fees
 /** The day's rent and charges as one bank deposit, a line per income account. */
 async function depositEntry(day, s) {
   const rows = await db.prepare(`SELECT p.amount, i.kind, i.held FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id
-    WHERE p.received_on = ?`).all(day);
+    WHERE p.received_on = ? AND p.method <> 'zego'`).all(day);
   const lines = new Map();
   for (const r of rows) {
     const group = r.kind === 'deposit' || r.held ? 'deposit' : r.kind === 'late' ? 'late' : r.kind === 'fee' || r.kind === 'charge' ? 'charge' : 'rent';
@@ -173,7 +174,7 @@ export async function entryFor(key, s, today = todayHere()) {
 async function allKeys(s, today) {
   const keys = new Set((await db.prepare('SELECT key FROM qb_sync').all()).map((r) => r.key));
   if (s.start_date && s.bank_account) {
-    for (const r of await db.prepare("SELECT DISTINCT to_char(received_on, 'YYYY-MM-DD') AS d FROM lease_payments WHERE received_on >= ? AND received_on < ?").all(s.start_date, today)) keys.add(`deposit:${r.d}`);
+    for (const r of await db.prepare("SELECT DISTINCT to_char(received_on, 'YYYY-MM-DD') AS d FROM lease_payments WHERE received_on >= ? AND received_on < ? AND method <> 'zego'").all(s.start_date, today)) keys.add(`deposit:${r.d}`);
     for (const r of await db.prepare('SELECT id FROM lease_bookings WHERE deposit_settled_on >= ? AND deposit_settled_on < ?').all(s.start_date, today)) { keys.add(`refund:${r.id}`); keys.add(`kept:${r.id}`); }
     for (const r of await db.prepare('SELECT id FROM expenses WHERE paid_on >= ? AND paid_on <= ?').all(s.start_date, today)) keys.add(`expense:${r.id}`);
   }
