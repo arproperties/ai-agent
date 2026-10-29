@@ -140,6 +140,93 @@ export async function listLessons(master, agentId) {
   return { own: rows.filter((l) => l.agent_id !== null), all: rows.filter((l) => l.agent_id === null) };
 }
 
+// ---------- chat tool ----------
+
+const TOOL = 'propose_lesson';
+
+/** Rules turned down or removed lately, so the model does not offer them again. */
+async function recentNos(masterId, agentId) {
+  const rows = await db.prepare(`
+    SELECT rule, t FROM (
+      SELECT rule, decided_at AS t FROM lesson_proposals WHERE master_id = ? AND (agent_id = ? OR agent_id IS NULL) AND status = 'declined'
+      UNION ALL
+      SELECT rule, removed_at AS t FROM agent_lessons WHERE owner_id = ? AND (agent_id = ? OR agent_id IS NULL) AND removed_at IS NOT NULL
+    ) x ORDER BY t DESC LIMIT 20`).all(masterId, agentId, masterId, agentId);
+  return rows.map((r) => r.rule);
+}
+
+/**
+ * The master only. ctx: { conversationId, agent, onCard } - agent is the one answering this
+ * turn (even when the router has just switched to it); onCard puts the card in front of them.
+ */
+export async function lessonKit(user, ctx = {}) {
+  const { agent } = ctx;
+  if (!isMaster(user) || !agent) return { definitions: [], status: () => null, run: async (b) => ({ type: 'tool_result', tool_use_id: b.id, content: `Unknown tool ${b.name}`, is_error: true }) };
+  const { lessons } = await lessonsFor(agent);
+  const nos = await recentNos(user.id, agent.id);
+  const def = {
+    name: TOOL,
+    description: `Offer ${user.name} a standing rule for how you do your work, learned from the correction they just gave you. ` +
+      'Use it only when they correct or redirect how you work ("no", "wrong", "don\'t…", "always…", "next time…") and the rule will hold beyond this one task. ' +
+      'Never for facts about them (those are remembered anyway), never for a one-off change to the current draft ("make this one shorter"), never for thanks or a new question. ' +
+      'Write the rule as one plain sentence, without names, sums or ID numbers. Set all_agents only when it is clearly a rule for every agent. ' +
+      'If it contradicts one of the rules below, set replaces to that rule\'s number. ' +
+      'This does NOT apply it: a "Learn this?" card appears. Say in one short line that the rule is waiting on the card; never say it is learned.' +
+      (lessons.length ? `\n\nRules you already follow:\n${lessons.map((l) => `[${l.id}] ${l.rule}`).join('\n')}` : '') +
+      (nos.length ? `\n\nTurned down or removed - never offer these again:\n${nos.map((r) => `- ${r}`).join('\n')}` : ''),
+    input_schema: {
+      type: 'object',
+      properties: {
+        rule: { type: 'string', description: 'The rule, one plain sentence.' },
+        all_agents: { type: 'boolean', description: 'True only for a rule every agent should follow.' },
+        replaces: { type: 'integer', description: 'The number of a rule above that this one contradicts.' },
+      },
+      required: ['rule'],
+    },
+  };
+  return {
+    definitions: [def],
+    status: (name) => (name === TOOL ? 'Noting that for next time…' : null),
+    run: async (block) => {
+      try {
+        if (block.name !== TOOL) throw new Error(`Unknown tool ${block.name}`);
+        const { rule, all_agents: allAgents, replaces } = block.input || {};
+        const p = await proposeLesson(user, { agentId: agent.id, rule, allAgents: !!allAgents, replaces: replaces ?? null, conversationId: ctx.conversationId ?? null });
+        ctx.onCard?.(p);
+        return { type: 'tool_result', tool_use_id: block.id, content: `Ready as card #${p.id}: "${p.rule}". It is NOT applied yet - tell ${user.name} in one line the rule is waiting on the card. Never say it is learned.` };
+      } catch (e) {
+        return { type: 'tool_result', tool_use_id: block.id, content: e.message, is_error: true };
+      }
+    },
+  };
+}
+
 export const proposalsFor = (master, conversationId) =>
   db.prepare(`SELECT ${PCOLS} FROM ${PFROM} WHERE p.master_id = ? AND ${scopeIs('p.conversation_id')} ORDER BY p.id`)
     .all(master.id, conversationId ?? null);
+
+// ---------- routes (all master only) ----------
+
+export const lessonRoutes = Router();
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+lessonRoutes.use(requireMaster);
+
+// Cards from chat, so they are still there after a reload. Before '/:id', so "proposals" is never read as an id.
+lessonRoutes.get('/proposals', wrap(async (req, res) => res.json(await proposalsFor(req.user, Number(req.query.conversation) || 0))));
+lessonRoutes.post('/proposals/:id/approve', wrap(async (req, res) => {
+  const b = req.body || {};
+  // A missing agent_id keeps the card's choice; null is All agents.
+  const p = await decideLesson(req.user, req.params.id, {
+    approve: true, rule: b.rule, replace: b.replace !== false,
+    agentId: 'agent_id' in b ? (b.agent_id === null || b.agent_id === '' ? null : Number(b.agent_id)) : undefined,
+  });
+  p ? res.json(p) : res.status(404).json({ error: 'Not found' });
+}));
+lessonRoutes.post('/proposals/:id/decline', wrap(async (req, res) => {
+  const p = await decideLesson(req.user, req.params.id, { approve: false });
+  p ? res.json(p) : res.status(404).json({ error: 'Not found' });
+}));
+lessonRoutes.get('/agent/:agentId', wrap(async (req, res) => res.json(await listLessons(req.user, req.params.agentId))));
+lessonRoutes.delete('/:id', wrap(async (req, res) => {
+  (await removeLesson(req.user, req.params.id)) ? res.json({ ok: true }) : res.status(404).json({ error: 'Not found' });
+}));

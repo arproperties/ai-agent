@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, makeUser, makeAgent, db, closeDb } from './helpers/db.js';
 import {
-  proposeLesson, decideLesson, removeLesson, lessonsFor, lessonsBlock, listLessons, proposalsFor,
+  proposeLesson, decideLesson, removeLesson, lessonsFor, lessonsBlock, listLessons, proposalsFor, lessonKit,
 } from '../server/lessons.js';
 
 test.after(() => closeDb());
@@ -185,4 +185,66 @@ test('declining sets the status once', async () => {
   assert.equal((await decideLesson(master, p.id, { approve: false })).status, 'declined');
   await assert.rejects(decideLesson(master, p.id, { approve: true }), (e) => e.status === 409);
   assert.equal(await count('agent_lessons'), 0);
+});
+
+// ---------- the chat tool ----------
+
+test('the kit is empty for staff and external users', async () => {
+  const { agent } = await setup();
+  const staff = { id: await makeUser('Staff'), role: 'user' };
+  assert.equal((await lessonKit(staff, { agent })).definitions.length, 0);
+  assert.equal((await lessonKit({ ...staff, external: true }, { agent })).definitions.length, 0);
+});
+
+test('the tool description lists current lessons with ids, and recently declined or removed rules', async () => {
+  const { master, a, agent } = await setup();
+  const p = await proposeLesson(master, { agentId: a, rule: VAT });
+  await decideLesson(master, p.id, { approve: true });
+  const [cur] = (await listLessons(master, a)).own;
+  const q = await proposeLesson(master, { agentId: a, rule: 'Never use emojis.' });
+  await decideLesson(master, q.id, { approve: false });
+
+  const [def] = (await lessonKit(master, { agent })).definitions;
+  assert.equal(def.name, 'propose_lesson');
+  assert.ok(def.description.includes(`[${cur.id}] ${VAT}`));
+  assert.ok(def.description.includes('Never use emojis.'));
+});
+
+test('run proposes for the answering agent and sends the card', async () => {
+  const { master, a, agent } = await setup();
+  const cards = [];
+  const kit = await lessonKit(master, { conversationId: null, agent, onCard: (c) => cards.push(c) });
+  const out = await kit.run({ id: 't1', name: 'propose_lesson', input: { rule: VAT } });
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].agent_id, a);
+  assert.ok(out.content.includes('NOT applied'));
+  assert.ok(!out.is_error);
+});
+
+test('run returns the refusal as is_error', async () => {
+  const { master, agent } = await setup();
+  const kit = await lessonKit(master, { agent, onCard: () => {} });
+  await kit.run({ id: 't1', name: 'propose_lesson', input: { rule: VAT } });
+  const out = await kit.run({ id: 't2', name: 'propose_lesson', input: { rule: VAT } });
+  assert.equal(out.is_error, true);
+  assert.match(out.content, /already/);
+});
+
+test('run with all_agents proposes for every agent', async () => {
+  const { master, agent } = await setup();
+  const cards = [];
+  const kit = await lessonKit(master, { agent, onCard: (c) => cards.push(c) });
+  await kit.run({ id: 't1', name: 'propose_lesson', input: { rule: VAT, all_agents: true } });
+  assert.equal(cards[0].agent_id, null);
+});
+
+test('a staff user talking to the agent gets the same lessons block', async () => {
+  const { master, a, agent } = await setup();
+  const p = await proposeLesson(master, { agentId: a, rule: VAT });
+  await decideLesson(master, p.id, { approve: true });
+  // The block is built from the agent alone, so whoever is chatting reads the same rules.
+  const t = await lessonsFor(agent);
+  const block = lessonsBlock(t.owner, t.lessons);
+  assert.ok(block.includes(VAT) && block.includes('Owner'));
+  assert.equal(lessonsBlock((await lessonsFor(await agentRow(a))).owner, (await lessonsFor(agent)).lessons), block);
 });
