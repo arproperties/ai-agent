@@ -485,7 +485,9 @@ const reads = {
 };
 
 /** What sets things up. Each does what the same person could do on the screens, through the same code. */
-const writes = (user) => {
+// `actions` is what the person may change (server/actions.js); a tool that adds can still
+// meet something already there, and changing that is an edit.
+const writes = (user, actions) => {
   return {
     leasing_add_company: async (input) => {
       const c = await create('company', input, null, user.id);
@@ -583,6 +585,7 @@ const writes = (user) => {
       }
       if (input.everything_else != null) for (const it of items) if (!it.condition || it.condition === 'pending') it.condition = rating(input.everything_else);
       const body = { items, ...(input.notes != null ? { notes: input.notes } : {}), ...(input.date ? { date: input.date } : {}) };
+      if (begun && actions && !actions.includes('edit')) throw new Error(NOT_ALLOWED('edit')); // carrying one on changes it
       const now = begun ? await updateInspection(begun.id, body) : await addInspection(unit.id, { ...body, kind, ...(kind === 'make_ready' ? {} : { booking_id: lease.id }) }, user.id);
       const left = now.items.filter((it) => !it.condition || it.condition === 'pending').map((it) => it.area);
       const after = await unitInspections(unit.id, lease?.id);
@@ -706,7 +709,7 @@ const NOT_ALLOWED = (action) => `This person is not allowed to ${action} here. T
  * are carried. Left out, every tool is.
  */
 export function leasingKit(user, { onChanged, renewals, modules, actions } = {}) {
-  const change = writes(user);
+  const change = writes(user, actions);
   const renew = renewalTools(user, renewals); // getting a document renewed: server/renewals.js
   const may = (keys = []) => !modules || keys.some((k) => modules.includes(k));
   // Left out, every action is allowed: what callers did before there were actions.

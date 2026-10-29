@@ -13,7 +13,8 @@ import ServiceList from './ServiceList';
 import { Cover, Logo, CardCover, UnitPhotos, photoUrl } from './PropertyPhoto';
 import Inspections from './Inspections';
 
-// Companies → buildings → units. Everyone can look; only the master adds, edits or removes.
+// Companies → buildings → units. Everyone with Properties can look; what they may change
+// follows their Add, Edit and Delete ticks (server/actions.js).
 // The server is server/properties.js.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
@@ -294,8 +295,8 @@ function Level({ kind, rows, master, onOpen, openLabel = 'Open', onAdd, onSave, 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {rows.map((r) => (
           <div key={r.id} className="flex flex-col rounded-2xl border border-stroke">
-            {kind === 'building' && <CardCover row={r} master={edits} onOpen={() => onOpen(r)} onChanged={onChanged} />}
-            {kind === 'unit' && <UnitPhotos unit={r} master={edits} onChanged={onChanged} />}
+            {kind === 'building' && <CardCover row={r} master={master} onOpen={() => onOpen(r)} onChanged={onChanged} />}
+            {kind === 'unit' && <UnitPhotos unit={r} master={master} onChanged={onChanged} />}
             <div className="flex items-start gap-3 px-4 pt-4">
               <button onClick={onOpen && (() => onOpen(r))} aria-label={`Open ${r.name || r.unit_no}`}
                 className="grid size-10 shrink-0 place-items-center rounded-lg bg-p1/15 text-p1"><Ico size={18} /></button>

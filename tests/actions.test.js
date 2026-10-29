@@ -22,6 +22,7 @@ import { alertRoutes } from '../server/leasingAlerts.js';
 import { regionRoutes } from '../server/leasingRegion.js';
 import { adminRoutes } from '../server/admin.js';
 import { leasingKit, LEASING_WRITES, TOOL_ACTIONS } from '../server/leasingKit.js';
+import { create } from '../server/properties.js';
 
 test.after(() => closeDb());
 
@@ -237,6 +238,22 @@ test('with Properties and Add, Riley adds a company the way the screen now lets 
   const { d } = await diana();
   const r = await leasingKit(d, { modules: ['properties'], actions: ['add'] }).run({ id: 't', name: 'leasing_add_company', input: { name: 'ACE' } });
   assert.ok(!r.is_error, r.content);
+});
+
+test('with add but no edit, Riley starts an inspection but does not change one already begun', async () => {
+  const { d } = await diana();
+  const c = await create('company', { name: 'ACE' });
+  const b = await create('building', { name: 'Tower' }, c.id);
+  await create('unit', { unit_no: '101' }, b.id);
+  const kit = leasingKit(d, { modules: ['leasing', 'properties'], actions: ['add'] });
+  const record = () => kit.run({ id: 't', name: 'leasing_record_inspection', input: { building: 'Tower', unit_no: '101', kind: 'make_ready', notes: 'Started' } });
+  const first = await record();
+  assert.ok(!first.is_error, first.content);
+  const again = await record();
+  assert.deepEqual([again.is_error, again.content], [true, 'This person is not allowed to edit here. Tell them to ask the master.']);
+  const withEdit = await leasingKit(d, { modules: ['leasing', 'properties'], actions: ['add', 'edit'] })
+    .run({ id: 't', name: 'leasing_record_inspection', input: { building: 'Tower', unit_no: '101', kind: 'make_ready', notes: 'Carried on' } });
+  assert.ok(!withEdit.is_error, withEdit.content);
 });
 
 test('the master is never stopped, and unticking works on the next request', async () => {
