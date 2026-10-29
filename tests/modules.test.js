@@ -12,7 +12,7 @@ import { RENEWAL_TOOLS } from '../server/renewals.js';
 
 test.after(() => closeDb());
 
-const ALL = ['tour', 'overview', 'chats', 'leasing', 'tenants', 'workorders', 'reports', 'alerts', 'documents', 'properties', 'sources', 'activity', 'accounts'];
+const ALL = ['tour', 'overview', 'chats', 'leasing', 'tenants', 'prospects', 'workorders', 'reports', 'alerts', 'documents', 'properties', 'sources', 'activity', 'accounts'];
 
 async function people() {
   await reset();
@@ -94,6 +94,7 @@ test('each route names the modules that may read it and the modules that may cha
   assert.deepEqual(rule('/leasing/tenants/3/history'), [['tenants'], ['tenants']]);
   assert.deepEqual(rule('/leasing/tenants/3/log'), [['tenants'], ['tenants']]);
   assert.deepEqual(rule('/leasing/log/9/files'), [['tenants'], ['tenants']]);
+  assert.deepEqual(rule('/leasing/prospects/3'), [['prospects', 'leasing'], ['prospects']]);
   assert.deepEqual(rule('/leasing/services'), [['leasing', 'properties'], ['leasing', 'properties']]);
   assert.deepEqual(rule('/leasing/sources/2'), [['sources', 'leasing'], ['sources', 'leasing']]);
   assert.deepEqual(rule('/leasing/work-orders'), [['workorders', 'leasing'], ['workorders']]);

@@ -12,6 +12,7 @@ export const MODULES = [
   { key: 'chats', label: 'Chats', always: true },
   { key: 'leasing', label: 'Leasing' },
   { key: 'tenants', label: 'Tenants' },
+  { key: 'prospects', label: 'Prospects' }, // people interested in a unit, before they are tenants (server/prospects.js)
   { key: 'workorders', label: 'Work orders' },
   { key: 'reports', label: 'Reports' },
   { key: 'alerts', label: 'Alerts' },
@@ -89,6 +90,7 @@ const RULES = [
   [/^\/leasing\/reports\//, ['reports'], MASTER],
   [/^\/leasing\/overview$/, ['overview', 'leasing'], MASTER], // the 3D view is drawn from it too
   [/^\/leasing\/work-orders(\/|$)/, ['workorders', 'leasing'], ['workorders']], // the 3D view marks open repairs
+  [/^\/leasing\/prospects(\/|$)/, ['prospects', 'leasing'], ['prospects']], // Make lease is the lease form's own route
   // an id is whatever sits between the slashes: Express decodes it and the routes read it as a number
   [/^\/leasing\/(tenants\/[^/]+\/(history|log)|log)(\/|$)/, ['tenants'], ['tenants']],
   [/^\/leasing\/tenants(\/|$)/, ['tenants', 'leasing', 'reports'], ['tenants', 'leasing']],

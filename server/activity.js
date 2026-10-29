@@ -24,6 +24,8 @@ export const LABELS = {
   lease_documents: { name: 'Lease document', about: (r) => r.file_name },
   lease_services: { name: 'Building service', about: (r) => r.name },
   lease_sources: { name: 'Tenant source', about: (r) => r.name },
+  lease_prospects: { name: 'Prospect', about: (r) => [r.full_name, r.status].filter(Boolean).join(', '),
+    fields: { follow_up: 'Follow up on', move_in_date: 'Move-in wanted', lost_reason: 'Why lost', booking_id: 'Lease' } },
   lease_settings: { name: 'Setting', about: (r) => r.key },
   lease_tenant_log: { name: 'Tenant complaint', about: (r) => r.detail },
   lease_tenant_notices: { name: 'Tenant notice' },

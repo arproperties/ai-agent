@@ -1475,6 +1475,29 @@ await db.exec(`
 // The tenant who sent this one, when that is known (beside the source, not in place of it).
 // A tenant removed later takes the link with them; the lease stays.
 await db.exec('ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS referred_by INTEGER REFERENCES lease_tenants(id) ON DELETE SET NULL');
+// Prospects (server/prospects.js): people interested in a unit, before they are tenants. No
+// tenant row is made for one; the lease made from it is booking_id, and while that lease is
+// there and not cancelled the prospect is leased. A unit or building removed leaves the prospect.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lease_prospects (
+    id SERIAL PRIMARY KEY,
+    full_name    TEXT NOT NULL,
+    phone        TEXT,
+    email        TEXT,
+    building_id  INTEGER REFERENCES prop_buildings(id) ON DELETE SET NULL,
+    unit_id      INTEGER REFERENCES prop_units(id) ON DELETE SET NULL,
+    move_in_date DATE,
+    source       TEXT,
+    status       TEXT NOT NULL DEFAULT 'new',
+    lost_reason  TEXT,
+    notes        TEXT,
+    follow_up    DATE,
+    booking_id   INTEGER REFERENCES lease_bookings(id) ON DELETE SET NULL,
+    created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at   BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_prospects_booking ON lease_prospects(booking_id);
+`);
 // Who the energy (electricity and water) bill of a booked unit goes to. false: the company's
 // account, the one whose number is kept on the unit. true: the tenant has opened an account
 // of their own, so the unit's number is not shown while they are in it.
