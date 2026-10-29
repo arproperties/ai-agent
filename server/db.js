@@ -271,6 +271,15 @@ await db.exec(`
   UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL AND embed_model IS DISTINCT FROM '${EMBED_MODEL}';
 `);
 
+// A memory that a newer one corrected is kept, not deleted, so "what was the rent before?"
+// still has an answer. replaced_by points at the newer version; chats read only memories
+// with no replaced_at, and the history tool walks the chain.
+await db.exec(`
+  ALTER TABLE memories ADD COLUMN IF NOT EXISTS replaced_at BIGINT;
+  ALTER TABLE memories ADD COLUMN IF NOT EXISTS replaced_by INTEGER REFERENCES memories(id) ON DELETE SET NULL;
+  CREATE INDEX IF NOT EXISTS idx_mem_replaced_by ON memories(replaced_by);
+`);
+
 // Columns added for the master/assignment model. ADD COLUMN IF NOT EXISTS is safe to
 // re-run, so this block is idempotent and runs on every boot like the rest of the schema.
 // users.role deliberately has no CHECK constraint: more roles may follow, and a

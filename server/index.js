@@ -9,7 +9,7 @@ import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks, setAgentCase } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
 import { deleteMessage, editReply, chat } from './chat.js';
-import { addMemory } from './knowledge.js';
+import { addMemory, memoryChain } from './knowledge.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument, editDocumentKind, kindFieldsIn } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
@@ -408,16 +408,28 @@ app.get('/api/access', wrap(async (req, res) => {
 
 // ---------- memory (shared by all of the user's agents) ----------
 app.use('/api/memories', needsModule('memory'));
+// Current memories only; `versions` counts the earlier ones a memory replaced, for its History link.
 app.get('/api/memories', wrap(async (req, res) => {
-  res.json(await db.prepare('SELECT id, text, created_at FROM memories WHERE user_id = ? ORDER BY id DESC').all(req.user.id));
+  res.json(await db.prepare(`
+    WITH RECURSIVE older AS (
+      SELECT id AS head, id FROM memories WHERE user_id = ? AND replaced_at IS NULL
+      UNION SELECT o.head, m.id FROM memories m JOIN older o ON m.replaced_by = o.id
+    )
+    SELECT m.id, m.text, m.created_at, (SELECT COUNT(*)::int - 1 FROM older o WHERE o.head = m.id) AS versions
+    FROM memories m WHERE m.user_id = ? AND m.replaced_at IS NULL ORDER BY m.id DESC`).all(req.user.id, req.user.id));
+}));
+app.get('/api/memories/:id/history', wrap(async (req, res) => {
+  res.json(await memoryChain(req.user.id, Number(req.params.id)));
 }));
 app.post('/api/memories', wrap(async (req, res) => {
   const text = String(req.body.text || '').trim().slice(0, 500);
   if (!text) return res.status(400).json({ error: 'Empty memory' });
   res.json({ id: await addMemory(req.user.id, text) });
 }));
+// Forgetting a memory forgets its earlier versions too, or they would linger out of sight.
 app.delete('/api/memories/:id', wrap(async (req, res) => {
-  await db.prepare('DELETE FROM memories WHERE id = ? AND user_id = ?').run(Number(req.params.id), req.user.id);
+  const ids = (await memoryChain(req.user.id, Number(req.params.id))).map((m) => m.id);
+  if (ids.length) await db.prepare('DELETE FROM memories WHERE user_id = ? AND id = ANY(?::int[])').run(req.user.id, ids);
   res.json({ ok: true });
 }));
 

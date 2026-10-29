@@ -311,18 +311,120 @@ export async function indexChunks(doc, text) {
   });
 }
 
-export async function addMemory(userId, text) {
+/**
+ * Save a memory. If it updates something already remembered ("rent is now 60,000" after
+ * "rent is 50,000"), the old one is marked replaced, not deleted: chats then read only
+ * the new one, and the history tool can still say what it was before.
+ *
+ * `judge` decides which of the similar current memories the new one makes out of date;
+ * tests pass their own so no model is called.
+ */
+export async function addMemory(userId, text, { judge = whichReplaced } = {}) {
   const [vec] = await embed([text]);
   const lit = toVecLiteral(vec);
   if (lit) {
     // Already known? Answered by the index, rather than by reading every memory the user has.
+    // Only current memories count: a value that changes back (50,000 → 60,000 → 50,000) is news.
     const known = await db.prepare(`SELECT 1 FROM memories
-      WHERE user_id = ? AND embedding IS NOT NULL AND embedding <=> ?::vector < ${DUPE_DIST} LIMIT 1`).get(userId, lit);
+      WHERE user_id = ? AND replaced_at IS NULL AND embedding IS NOT NULL AND embedding <=> ?::vector < ${DUPE_DIST} LIMIT 1`).get(userId, lit);
     if (known) return null;
   }
   const { id } = await db.prepare('INSERT INTO memories (user_id, text, embedding, embed_model) VALUES (?, ?, ?::vector, ?) RETURNING id')
     .run(userId, text, lit, lit && EMBED_MODEL);
+
+  // Only memories close to the new one can be about the same thing, so only those are judged.
+  const near = await rank('memories', { sql: 't.user_id = ? AND t.replaced_at IS NULL AND t.id <> ?', params: [userId, id] }, text, vec, 8);
+  if (near.length) {
+    const rows = await db.prepare(`SELECT id, text FROM memories WHERE id IN (${near.map(() => '?').join(',')})`).all(...near);
+    const old = (await judge(text, rows).catch(() => [])).filter((x) => rows.some((r) => r.id === x));
+    if (old.length) {
+      await db.prepare(`UPDATE memories SET replaced_at = extract(epoch from now())::bigint, replaced_by = ?
+        WHERE user_id = ? AND replaced_at IS NULL AND id = ANY(?::int[])`).run(id, userId, old);
+    }
+  }
   return id;
+}
+
+/** The ids among `rows` that `text` makes out of date: same subject, newer value. */
+async function whichReplaced(text, rows) {
+  const out = await ask(
+    `New fact: ${text}\n\nRemembered facts:\n${rows.map((r) => `[${r.id}] ${r.text}`).join('\n')}`,
+    {
+      maxTokens: 100,
+      system: 'You maintain the long-term memory of an assistant. A new fact has just been learned. Which remembered facts does it ' +
+        'make out of date - the same subject, now with a different value or status (a new rent, a changed phone number, a ' +
+        'preference that changed)? A fact that merely adds detail, or is about something else, is NOT out of date. ' +
+        'Reply with ONLY a JSON array of their ids, e.g. [12], or [] for none.',
+    }
+  );
+  const ids = JSON.parse(out.match(/\[[\s\S]*?\]/)?.[0] || '[]');
+  return Array.isArray(ids) ? ids.map(Number).filter(Number.isInteger) : [];
+}
+
+/**
+ * Every version of the remembered facts that match `query`, oldest first within each
+ * subject, with the date each was saved and replaced. For "what was it before?" questions.
+ */
+export async function memoryHistory(userId, query, k = 8) {
+  const [qvec] = await embed([query], 'query').catch(() => []);
+  const hits = await rank('memories', { sql: 't.user_id = ?', params: [userId] }, query, qvec, k);
+  const chains = [];
+  const seen = new Set();
+  for (const hit of hits) {
+    if (seen.has(hit)) continue;
+    const chain = await memoryChain(userId, hit);
+    chain.forEach((m) => seen.add(m.id));
+    if (chain.length) chains.push(chain);
+  }
+  return chains;
+}
+
+/** All versions of one memory, oldest first: walks back through replaced_by and forward to the current one. */
+export async function memoryChain(userId, id) {
+  return db.prepare(`
+    WITH RECURSIVE newest AS (
+      SELECT id, replaced_by FROM memories WHERE id = ? AND user_id = ?
+      UNION SELECT m.id, m.replaced_by FROM memories m JOIN newest n ON m.id = n.replaced_by
+    ), top AS (SELECT id FROM newest WHERE replaced_by IS NULL),
+    versions AS (
+      SELECT id FROM top
+      UNION SELECT m.id FROM memories m JOIN versions v ON m.replaced_by = v.id
+    )
+    SELECT id, text, created_at, replaced_at FROM memories
+    WHERE id IN (SELECT id FROM versions) AND user_id = ? ORDER BY created_at, id`).all(id, userId, userId);
+}
+
+const fmtDay = (secs) => new Date(secs * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Dubai' });
+
+const MEMORY_TOOLS = [{
+  name: 'memory_history',
+  description: "Look up how something you remember about the user has changed over time: every earlier version of a remembered fact, " +
+    'with the date each was saved and replaced. Your <memory> holds only the current version; use this when they ask for the history, ' +
+    'what something was before, or what changed.',
+  input_schema: {
+    type: 'object',
+    properties: { query: { type: 'string', description: 'What to look up, e.g. "rent of Building A"' } },
+    required: ['query'],
+  },
+}];
+
+/** The chat's way into earlier versions of memories. Always present: it reads only the user's own. */
+export function memoryKit(userId) {
+  return {
+    definitions: MEMORY_TOOLS,
+    status: (name) => (name === 'memory_history' ? 'Looking back through memory…' : null),
+    run: async (block) => {
+      try {
+        const chains = await memoryHistory(userId, String(block.input?.query || ''));
+        const content = chains.length
+          ? chains.map((c) => c.map((m) => `- ${m.text} (saved ${fmtDay(m.created_at)}${m.replaced_at ? `, replaced ${fmtDay(m.replaced_at)}` : ', current'})`).join('\n')).join('\n\n')
+          : 'Nothing remembered about that.';
+        return { type: 'tool_result', tool_use_id: block.id, content };
+      } catch (e) {
+        return { type: 'tool_result', tool_use_id: block.id, content: e.message, is_error: true };
+      }
+    },
+  };
 }
 
 // ---------- hybrid search: meaning (embeddings) + keywords (tsvector), merged by reciprocal rank ----------
@@ -435,11 +537,19 @@ export function notOtherCases(user, scope, t = 't') {
  * document shelves. `qvec` is optional: without it the ranking is keyword-only.
  */
 export async function personalMemories(user, query, qvec, k = 12) {
-  const { n } = await db.prepare('SELECT COUNT(*)::int n FROM memories WHERE user_id = ?').get(user.id);
-  if (n <= 25) { // small memory: include it all
-    return (await db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id').all(user.id)).map((r) => r.text);
-  }
-  return search('memories', { sql: 't.user_id = ?', params: [user.id] }, query, qvec, k);
+  // Current versions only; each carries the day it was saved, so if two still disagree
+  // the model can tell which is newer.
+  const scope = { sql: 't.user_id = ? AND t.replaced_at IS NULL', params: [user.id] };
+  const { n } = await db.prepare('SELECT COUNT(*)::int n FROM memories t WHERE ' + scope.sql).get(...scope.params);
+  const ids = n <= 25 // small memory: include it all
+    ? null
+    : await rank('memories', scope, query, qvec, k);
+  if (ids && !ids.length) return [];
+  const rows = ids
+    ? await db.prepare(`SELECT id, text, created_at FROM memories WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids)
+    : await db.prepare('SELECT id, text, created_at FROM memories t WHERE ' + scope.sql + ' ORDER BY id').all(...scope.params);
+  const ordered = ids ? ids.map((id) => rows.find((r) => r.id === id)) : rows;
+  return ordered.map((r) => (r.created_at ? `${r.text} (saved ${fmtDay(r.created_at)})` : r.text));
 }
 
 export async function recall(user, query) {
@@ -501,7 +611,7 @@ export async function saveFact(master, agentId, conversationId, text) {
  * the answering agent's shelf switched off, for them to publish or delete.
  */
 export async function learn(user, userText, reply, { agentId = null, conversationId = null } = {}) {
-  const known = (await db.prepare('SELECT text FROM memories WHERE user_id = ? ORDER BY id DESC LIMIT 60').all(user.id)).map((r) => r.text);
+  const known = (await db.prepare('SELECT text FROM memories WHERE user_id = ? AND replaced_at IS NULL ORDER BY id DESC LIMIT 60').all(user.id)).map((r) => r.text);
   // Only the master's own conversations produce company knowledge. Staff chats are
   // theirs: nothing anyone else says can turn into an item on the master's shelf.
   const collecting = isMaster(user) && agentId;
@@ -510,7 +620,7 @@ export async function learn(user, userText, reply, { agentId = null, conversatio
     `Conversation turn:\nUSER: ${userText.slice(0, 4000)}\nASSISTANT: ${reply.slice(0, 2000)}\n\nAlready known:\n${known.map((k) => `- ${k}`).join('\n') || '(nothing)'}`,
     {
       maxTokens: 400,
-      system: 'You maintain the long-term memory of an assistant. From the turn, extract NEW durable facts that will still be true and useful weeks from now: who the user is, their work, preferences, long-term goals, ongoing projects, important people and assets, and standing instructions. Do NOT store the current request or task itself, one-off questions, advice you gave, small talk, or facts already known. Most turns contain nothing worth storing.'
+      system: 'You maintain the long-term memory of an assistant. From the turn, extract NEW durable facts that will still be true and useful weeks from now: who the user is, their work, preferences, long-term goals, ongoing projects, important people and assets, and standing instructions. Do NOT store the current request or task itself, one-off questions, advice you gave, small talk, or facts already known. A change to something already known (a new value, a new status) IS new: state it in full as the new fact, e.g. "Building A rent is 60,000". Most turns contain nothing worth storing.'
         + (collecting
           ? ' Sort what you find into two kinds. "personal" - anything about this user themselves, their preferences, their own affairs, a named person, a specific case, a sum of money, or one particular document. "company" - standing rules, policies and processes that would be true for a colleague too, and that you would be comfortable printing in a staff handbook. When in doubt it is personal; most turns produce no company facts at all.'
             + ' Reply with ONLY JSON: {"personal": ["…"], "company": ["…"]}, using [] for either when there is nothing.'
