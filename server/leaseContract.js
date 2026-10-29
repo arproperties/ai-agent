@@ -398,7 +398,8 @@ export async function renderContract(p) {
       field(sym, f ? amt(f.amount) : '', R - 110, t - 26 - k * 12, R - pad);
     }
     const yy = t - 26 - lines * 12;
-    field('Charges due once, at the start:', once.map((f) => `${f.label} ${sym} ${amt(f.amount)}`).join('; '), L + pad, yy, R - pad);
+    const us = (s) => `${s.slice(5, 7)}/${s.slice(8, 10)}/${s.slice(0, 4)}`;
+    field('Charges due once:', once.map((f) => `${f.label} ${sym} ${amt(f.amount)}${f.on ? ` on ${us(f.on)}` : ''}`).join('; '), L + pad, yy, R - pad);
   });
 
   // M. Utilities.

@@ -193,15 +193,15 @@ function bookingFields(body = {}, { partial = false } = {}) {
   if ('source' in body) out.source = text(body.source, 60); // where the tenant came from: a name off the sources list
   if ('referred_by' in body) out.referred_by = Number(body.referred_by) || null; // the tenant who sent them, checked by mustRefer
   if ('tenant_energy_account' in body) out.tenant_energy_account = isTrue(body.tenant_energy_account); // the energy bill is in the tenant's own name
-  // Other charges (pet fee, parking, commission, energy deposit…): each is due once, on the first day,
-  // or, when it repeats, every month. A monthly one may start (`from`) and stop (`until`) on dates of
+  // Other charges (pet fee, parking, commission, energy deposit…): each is due once, on the first day
+  // or on a date of its own (`on`), or, when it repeats, every month. A monthly one may start (`from`) and stop (`until`) on dates of
   // its own; with no `until` it runs to the end of the lease.
   if ('fees' in body) {
     const list = (Array.isArray(body.fees) ? body.fees : []).filter((f) => f && (f.label || f.amount));
     if (list.length > 10) throw bad('At most ten other charges.');
     const day = (s, name) => { if (!s) return null; if (!isDate(s)) throw bad(`${name} is not a date.`); return s; };
     const fees = list.map((f) => {
-      if (!isTrue(f.repeats)) return { label: text(f.label, 60), amount: Number(f.amount) };
+      if (!isTrue(f.repeats)) { const on = day(f.on, 'A one-time charge’s date'); return { label: text(f.label, 60), amount: Number(f.amount), ...(on ? { on } : {}) }; }
       const from = day(f.from, 'A monthly charge’s start'), until = day(f.until, 'A monthly charge’s end');
       if (from && until && until < from) throw bad(`${text(f.label, 60) || 'A monthly charge'} ends before it starts.`);
       return { label: text(f.label, 60), amount: Number(f.amount), repeats: true, ...(from ? { from } : {}), ...(until ? { until } : {}) };
@@ -742,12 +742,16 @@ async function writeSchedule(b) {
   const depositDue = b.deposit_due || first;
   // There is only ever one deposit row: a new date moves it, payment and all, rather than owing a second one.
   await db.prepare("UPDATE lease_installments SET due_date = ? WHERE booking_id = ? AND kind = 'deposit' AND due_date <> ?::date").run(depositDue, b.id, depositDue);
+  // A one-time charge given a new date moves the same way (names are unique, so it has one row).
+  for (const f of fees.filter((x) => !x.repeats)) {
+    await db.prepare("UPDATE lease_installments SET due_date = ? WHERE booking_id = ? AND kind = 'fee' AND label = ? AND due_date <> ?::date").run(f.on || first, b.id, f.label, f.on || first);
+  }
   const rows = [
     ...rent.map((p) => ({ kind: 'rent', label: '', ...p })),
     ...(Number(b.security_deposit) > 0 ? [{ kind: 'deposit', label: '', due: depositDue, amount: Number(b.security_deposit) }] : []),
     // A monthly charge is due in full each month, a part month too: Rent Manager bills
     // water/trash at its whole price on the prorated month (Francis, 2026-10-17).
-    ...fees.flatMap((f) => (f.repeats ? monthlyDues(f).map((d) => [d, f.amount]) : [[first, f.amount]])
+    ...fees.flatMap((f) => (f.repeats ? monthlyDues(f).map((d) => [d, f.amount]) : [[f.on || first, f.amount]])
       .map(([due, amount]) => ({ kind: 'fee', label: f.label, due, amount: money(amount + taxOn(b, amount)), tax: taxOn(b, amount) }))),
   ];
   const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';

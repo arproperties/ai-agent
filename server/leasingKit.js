@@ -325,7 +325,7 @@ const discountLine = (b) => [b.discount_type && `discount ${b.discount_type === 
   ...(b.discounts || []).map((d) => `discount ${cash(d.amount)} a month${d.from ? ` from ${d.from}` : ''}${d.until ? ` until ${d.until}` : ''}${d.note ? ` (${d.note})` : ''}`)].filter(Boolean).join(', ');
 const taxLine = (b) => (b.tax_percent ? `${region().tax_name} ${b.tax_percent}%` : '');
 
-const chargesLine = (fees) => (fees.length ? fees.map((f) => `${f.label} ${cash(f.amount)}${f.repeats ? ` every month${f.from ? ` from ${f.from}` : ''}${f.until ? ` until ${f.until}` : ''}` : ' once'}`).join(', ') : 'none');
+const chargesLine = (fees) => (fees.length ? fees.map((f) => `${f.label} ${cash(f.amount)}${f.repeats ? ` every month${f.from ? ` from ${f.from}` : ''}${f.until ? ` until ${f.until}` : ''}` : ` once${f.on ? ` on ${f.on}` : ''}`}`).join(', ') : 'none');
 
 /** Where a lease stands with its move-in inspection, when that is worth saying. */
 const inspected = (b) => (b.status === 'draft' ? (b.renewed_from ? ', a renewal: no move-in inspection needed' : `, move-in inspection ${b.moved_in ? 'done' : 'not done'}`)

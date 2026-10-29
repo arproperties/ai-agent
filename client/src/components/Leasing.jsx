@@ -182,12 +182,14 @@ function plan(v) {
   const offs = dues.map((d) => Math.min(monthly, offOn(v, d)));
   const dated = offs.reduce((t, o) => t + o, 0);
   const firstRent = monthly * Math.min(step, months) - offs.slice(0, step).reduce((t, o) => t + o, 0);
-  const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? (chargeDays(f, dues)[0] === v.start_date ? 1 : 0) : 1), 0);
+  // A one-time charge with a later date of its own is not owed at move-in.
+  const billsFirst = (f) => (f.repeats ? chargeDays(f, dues)[0] === v.start_date : !f.on || f.on <= v.start_date);
+  const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (billsFirst(f) ? 1 : 0), 0);
   const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? chargeDays(f, dues).length : 1), 0);
   const firstTax = (firstRent + firstFees) * rate;
   const tax = (monthly * months - dated + allFees) * rate;
   return {
-    payments, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats && chargeDays(f, dues)[0] !== v.start_date ? 0 : f.amount })), firstTax, tax, discount: (off / per) * months + dated,
+    payments, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: billsFirst(f) ? f.amount : 0 })), firstTax, tax, discount: (off / per) * months + dated,
     // The deposit is held for the tenant and given back, so it is never part of what the stay costs.
     charges: firstRent + firstFees + firstTax,
     first: firstRent + deposit + firstFees + firstTax,
@@ -214,13 +216,13 @@ function proratedPlan(v) {
   const firstRent = rows[0]?.due === v.start_date ? rentOf(rows[0]) : 0;
   // A monthly charge is its whole price each month, the part month too, as Rent Manager bills it.
   const dues = rows.map((r) => r.due);
-  const billsFirst = (f) => !!atStart && chargeDays(f, dues)[0] === v.start_date;
-  const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? (billsFirst(f) ? 1 : 0) : 1), 0);
+  const billsFirst = (f) => (f.repeats ? !!atStart && chargeDays(f, dues)[0] === v.start_date : !f.on || f.on <= v.start_date);
+  const firstFees = fees.reduce((t, f) => t + Number(f.amount) * (billsFirst(f) ? 1 : 0), 0);
   const allFees = fees.reduce((t, f) => t + Number(f.amount) * (f.repeats ? chargeDays(f, dues).length : 1), 0);
   const firstTax = (firstRent + firstFees) * rate;
   const tax = (allRent + allFees) * rate;
   return {
-    payments: rows.length, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: f.repeats && !billsFirst(f) ? 0 : f.amount })), firstTax, tax,
+    payments: rows.length, firstRent, deposit, fees: fees.map((f) => ({ ...f, amount: billsFirst(f) ? f.amount : 0 })), firstTax, tax,
     discount: (off / per) * shares + rows.reduce((t, r) => t + offOf(r), 0),
     head: head && (({ due }) => ({ ...head, amount: rentOf({ due, share: head.share }), typed: typedPart(v) && rentOf({ due, share: head.share, part: true }) }))(rows.find((r) => r.part) || head),
     second: head && v.prorate === 'second' && rows[1] ? { due: rows[1].due, amount: rentOf(rows[1]) } : null,
@@ -611,7 +613,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         {/* Other charges in two lists: monthly ones, each with its own start and end, then those due once. One list
             (v.fees) holds both; `repeats` says which. */}
         {[[true, 'Recurring charges', 'billed every month · with no end date, to the end of the lease', 'Add a monthly charge'],
-          [false, 'One-time charges', 'pet fee, application fee…, due once on the first day', 'Add a one-time charge']].map(([monthly, title, hint, add]) => (
+          [false, 'One-time charges', 'pet fee, application fee…, due once, on the first day or a date you choose', 'Add a one-time charge']].map(([monthly, title, hint, add]) => (
           <Group key={title} title={title} hint={hint}>
             {v.fees.map((f, i) => {
               if (!!f.repeats !== monthly) return null;
@@ -634,6 +636,12 @@ function BookingForm({ start, preset, onDone, onCancel }) {
                   <Select value={f.label} onChange={(e) => pick(e.target.value)} onCreate={make} options={[...new Set([...services.map((s) => s.name), f.label].filter(Boolean))]}
                     placeholder="Choose, or type a new one…" aria-label="Charge" className={SELECT} wrap="min-w-[11rem] flex-1" />
                   <input type="number" min="0" step="any" value={f.amount} onChange={(e) => put({ amount: e.target.value })} placeholder={currency()} aria-label="Amount" className={`${FIELD} max-w-[9rem]`} />
+                  {!monthly && (
+                    <label className="block w-40">
+                      <span className="mb-1 block text-xs text-txt/80">Due on · empty: first day</span>
+                      <DateField value={f.on || ''} onChange={(e) => put({ on: e.target.value })} aria-label="Due on" className={FIELD} />
+                    </label>
+                  )}
                   {monthly && (
                     <>
                       <label className="block w-40">
