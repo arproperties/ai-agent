@@ -6,6 +6,7 @@ import { region, hourHere, dayOf, cash } from './leasingRegion.js';
 import { usDate } from './usFormat.js';
 import { register } from './properties.js';
 import { listWorkOrders } from './workOrders.js';
+import { listProspects } from './prospects.js';
 import { openByDocument, notRenewing } from './renewals.js';
 import { userModules, holders } from './modules.js';
 
@@ -29,6 +30,7 @@ const DEFAULTS = {
   eid: { on: true, days: 30 },                           // the tenant's ID expires within this
   document: { on: true, days: [60, 30, 7], every: 7 },   // a document inside its renewal window: more days before it expires, then every so many after
   workorder: { on: true },                               // a work order past its scheduled day, and a new urgent one
+  prospect: { on: true },                                // a prospect on their follow-up day, until leased or lost
   summary: { on: true },                                 // the morning's one-line total, to the master
   quiet: { from: 22, to: 8 },                            // no buzz between these hours (the business's time zone)
   // A fee on rent still unpaid after the days of grace (weekdays): fixed or a share of the rent, then `daily` each day
@@ -36,7 +38,7 @@ const DEFAULTS = {
   latefee: { on: false, days: 3, amount: 50, percent: 0, daily: 5, cap: 100, email: 5 },
   tenant: { on: false, before: 3 },                      // email the tenant the reminder automatically: this many days before (0: not before), on the due day and the overdue days
 };
-export const RULES = ['overdue', 'due', 'upcoming', 'ending', 'contract', 'eid', 'document', 'workorder'];
+export const RULES = ['overdue', 'due', 'upcoming', 'ending', 'contract', 'eid', 'document', 'workorder', 'prospect'];
 const aed = (n) => cash(Math.round(n));
 // Loaded when first needed, so the list and the rules still work where push was never set up.
 const sendPush = (userIds, note) => import('./push.js').then((m) => m.sendPush(userIds, note));
@@ -81,6 +83,7 @@ export async function saveSettings(body = {}, today = todayHere()) {
     eid: { on: on('eid'), days: pick('eid', 'days', (v) => whole(v, 180, 'Days before the ID expires')) },
     document: { on: on('document'), days: pick('document', 'days', (v) => dayList(v, 'Days before a document expires')), every: pick('document', 'every', (v) => Math.max(1, whole(v, 90, 'Repeat every'))) },
     workorder: { on: on('workorder') },
+    prospect: { on: on('prospect') },
     summary: { on: on('summary') },
     quiet: { from: pick('quiet', 'from', (v) => whole(v, 23, 'Quiet from')), to: pick('quiet', 'to', (v) => whole(v, 23, 'Quiet until')) },
   };
@@ -189,6 +192,20 @@ export async function openAlerts(s, cfg, q = {}) {
         owner: w.created_by, staff: s.staffOf.get(w.building_id) || [], level: w.priority === 'urgent' ? 'bad' : 'warn', open: 'workorder', days: d,
         title: `${w.ref} is overdue${w.category ? `: ${w.category}` : ''}`,
         detail: `Unit ${w.unit_no}, ${w.building} · scheduled ${w.scheduled_on} · ${d} day${d === 1 ? '' : 's'} late${w.assigned_to ? ` · ${w.assigned_to}` : ''}`, fires: true });
+    }
+  }
+  // A prospect (server/prospects.js) on their follow-up day, and every day after until they are
+  // leased or lost. One wanting no building in particular is shown only when nothing is narrowed.
+  if (cfg.prospect.on) {
+    const here = new Map(s.list.map((b) => [b.id, b]));
+    for (const p of await listProspects({}, s.today)) {
+      if (!p.due) continue;
+      const bl = p.building_id ? here.get(p.building_id) : null;
+      if (p.building_id ? !bl : q.company_id || q.building_id) continue;
+      out.push({ rule: 'prospect', key: `prospect:${p.id}`, prospect_id: p.id, tenant: p.full_name, unit_no: p.unit_no, building: p.building, building_id: p.building_id, company: bl?.company ?? null,
+        owner: p.created_by, staff: (p.building_id && s.staffOf.get(p.building_id)) || [], level: 'warn', open: 'prospects',
+        title: `Follow up ${p.full_name}`,
+        detail: `${[p.building, p.unit_no && `Unit ${p.unit_no}`].filter(Boolean).join(' · ') || 'Any unit'} · follow up ${usDate(p.follow_up)}`, fires: p.follow_up === s.today });
     }
   }
   const rank = { bad: 0, warn: 1, info: 2 };

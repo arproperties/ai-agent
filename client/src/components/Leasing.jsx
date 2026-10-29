@@ -1318,7 +1318,7 @@ function Calendar({ onEdit, onNew }) {
 const BOOKING_TABS = [['bookings', 'Leasing'], ['3d', 'Building (3D view)'], ['calendar', 'Calendar']];
 
 // The module an alert's link leads into: the screen that deals with it.
-const alertModule = (a) => ({ documents: 'documents', tenants: 'tenants', workorder: 'workorders' }[a.open] || 'leasing');
+const alertModule = (a) => ({ documents: 'documents', tenants: 'tenants', workorder: 'workorders', prospects: 'prospects' }[a.open] || 'leasing');
 
 export default function LeasingPage({ tab, onTab: setTab, report, onReport, alert, onAlert, onBack }) {
   const [form, setForm] = useState(null); // { preset } for a new booking, a booking being edited, { docsOf } for its documents, { payOf } for its payments, or null
@@ -1335,6 +1335,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
     if (!can(alertModule(a))) return;
     if (a.open === 'documents') { setDocOpen(a.document_id); setRenewalOpen(a.renewal_id || null); setTab('documents'); return; }
     if (a.open === 'tenants') { setTab('tenants'); return; }
+    if (a.open === 'prospects') { setTab('prospects'); return; }
     if (a.open === 'workorder') { setForm({ workOf: { openId: a.work_order_id } }); return; }
     openBooking(a.booking_id, { pay: 'payOf', docs: 'docsOf' }[a.open]);
   };

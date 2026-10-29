@@ -6,6 +6,7 @@ import { moduleGate } from '../server/modules.js';
 import { actionGate } from '../server/actions.js';
 import { create, remove } from '../server/properties.js';
 import { leasingRoutes, createBooking, removeBooking, cancelBooking, listTenants, bookingRef } from '../server/leasing.js';
+import { listAlerts, saveSettings } from '../server/leasingAlerts.js';
 import { listProspects, addProspect, updateProspect, removeProspect, prospectRoutes } from '../server/prospects.js';
 
 // The routes over real HTTP, behind both gates as index.js mounts them.
@@ -148,6 +149,31 @@ test('the lease deleted or cancelled, the prospect is open again', async () => {
   assert.deepEqual([now.leased, now.lease_ref], [false, null]);
   const again = await createBooking(stay(u1.id, '2026-12-01', '2027-11-30', { prospect_id: p.id }));
   assert.equal((await listProspects())[0].booking_id, again.id);
+});
+
+test("a prospect's follow-up day raises an alert, until it is leased or lost", async () => {
+  const { b, u1 } = await tower();
+  const p = await addProspect({ full_name: 'Sara', phone: '4095550101', unit_id: u1.id, follow_up: '2026-10-29' });
+  await addProspect({ full_name: 'Omar', phone: '4095550102', follow_up: '2026-11-15' }); // not yet
+  const mine = async (today, q) => (await listAlerts(q, today)).filter((a) => a.rule === 'prospect');
+
+  assert.deepEqual((await mine('2026-10-28')).length, 0);
+  const [a] = await mine('2026-10-29');
+  assert.deepEqual([a.key, a.title, a.detail, a.open, a.level, a.fires, a.prospect_id, a.building_id],
+    [`prospect:${p.id}`, 'Follow up Sara', 'Tower · Unit 101 · follow up 10/29/2026', 'prospects', 'warn', true, p.id, b.id]);
+  const [later] = await mine('2026-10-31');
+  assert.deepEqual([later.title, later.fires], ['Follow up Sara', false], 'still listed, but the phone buzzed on the day only');
+  assert.equal((await mine('2026-10-29', { building_id: 999 })).length, 0, 'narrowed to another building');
+
+  await saveSettings({ prospect: { on: false } });
+  assert.equal((await mine('2026-10-29')).length, 0, 'the rule switched off');
+  await saveSettings({ prospect: { on: true } });
+
+  await updateProspect(p.id, { status: 'lost', lost_reason: 'Found cheaper' });
+  assert.equal((await mine('2026-10-29')).length, 0, 'lost: nobody to call');
+  await updateProspect(p.id, { status: 'applied' });
+  await createBooking(stay(u1.id, '2026-12-01', '2027-11-30', { prospect_id: p.id }));
+  assert.equal((await mine('2026-10-29')).length, 0, 'leased');
 });
 
 test('over HTTP: the Prospects module and the Add, Edit and Delete ticks decide', async () => {
