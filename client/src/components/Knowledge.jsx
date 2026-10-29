@@ -465,11 +465,11 @@ export function FileDetail({ d, folders, companies = [], me, onClose, onChanged,
   );
 }
 
-function SearchBox({ value, onChange }) {
+function SearchBox({ value, onChange, placeholder = 'Search by name, party, amount, tag…' }) {
   return (
     <div className="glass flex items-center gap-2 rounded-full px-4">
       <Search size={16} className="shrink-0 text-mute" />
-      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="Search by name, party, amount, tag…"
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
         className="w-full bg-transparent py-2.5 outline-none placeholder:text-mute/70" />
     </div>
   );
@@ -934,7 +934,11 @@ export function FilesPanel({ agentId, hint, folders, me }) {
 export function MemoryPanel() {
   const [items, setItems] = useState(null);
   const [text, setText] = useState('');
+  const [q, setQ] = useState('');
   const load = () => api.get('/memories').then(setItems);
+  // Every word typed must appear somewhere in the memory, in any order.
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = items?.filter((m) => words.every((w) => m.text.toLowerCase().includes(w)));
   useEffect(() => { load(); }, []);
 
   const add = async (e) => {
@@ -953,9 +957,11 @@ export function MemoryPanel() {
           className="glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70" />
         <button className="shrink-0 rounded-xl bg-p1/25 px-4 text-sm text-txt hover:bg-p1/40">Add</button>
       </form>
+      {items?.length > 0 && <SearchBox value={q} onChange={setQ} placeholder="Search memory" />}
       <ul className="space-y-2">
         {items?.length === 0 && <li className="py-4 text-center text-sm text-mute">Nothing learned yet. Just start chatting.</li>}
-        {items?.map((m) => (
+        {items?.length > 0 && shown.length === 0 && <li className="py-4 text-center text-sm text-mute">No memory matches “{q}”.</li>}
+        {shown?.map((m) => (
           <li key={m.id} className="flex items-start gap-2 rounded-xl bg-white/5 py-2 pl-3.5 pr-1.5 text-sm">
             <span className="flex-1 py-1">{m.text}</span>
             <button onClick={async () => { await api.del(`/memories/${m.id}`); load(); }} aria-label="Forget"
