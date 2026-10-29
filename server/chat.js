@@ -3,7 +3,7 @@ import { billNote } from './billing.js';
 import { claude } from './ai.js';
 import { isKeyError, keysFor } from './aiKeys.js';
 import { pickAgent } from './router.js';
-import { extractText, readVideo, recall, learn } from './knowledge.js';
+import { extractText, readVideo, recall, learn, memoryKit } from './knowledge.js';
 import { saveUpload, processDocument, isImage, isVideo, fileName, libraryCatalog } from './files.js';
 import { connectedMailbox, senderName } from './email.js';
 import { listDrafts } from './drafts.js';
@@ -220,7 +220,11 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   // a tenth of the price for five minutes. What changes every message (the time, what was
   // recalled) comes after the cache mark, or it would spoil the match.
   const context = [`Current date and time: ${new Date().toString()}.`];
-  if (memories.length) context.push(`<memory>\nThings you remember about the user from earlier conversations:\n${memories.map((m) => `- ${m}`).join('\n')}\n</memory>`);
+  if (memories.length) {
+    context.push(`<memory>\nThings you remember about the user from earlier conversations, each with the day it was saved ` +
+      `(if two disagree, the newer one is right; for earlier versions and how something changed, use memory_history):\n` +
+      `${memories.map((m) => `- ${m}`).join('\n')}\n</memory>`);
+  }
   if (library.files.length) {
     const some = library.total > library.files.length;
     context.push(`<file_library>\n${some ? `The newest ${library.files.length} of the user's ${library.total} saved files - search_files reaches the rest.` : "The user's saved files (newest first)."} ` +
@@ -551,7 +555,7 @@ export async function chat(req, res) {
       send('picture', pictures);
     },
   });
-  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), meetingKit(user.id), shelf,
+  const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), meetingKit(user.id), memoryKit(user.id), shelf,
     ...(external ? [] : [sendKit,
       responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
       addressKit(user, { conversationId: convId, onCard: (p) => send('companyAddress', p) }),

@@ -935,7 +935,13 @@ export function MemoryPanel() {
   const [items, setItems] = useState(null);
   const [text, setText] = useState('');
   const [q, setQ] = useState('');
+  const [history, setHistory] = useState({}); // memory id -> its earlier versions, while open
   const load = () => api.get('/memories').then(setItems);
+  const toggleHistory = async (id) => {
+    if (history[id]) return setHistory(({ [id]: _, ...rest }) => rest);
+    const versions = await api.get(`/memories/${id}/history`);
+    setHistory((h) => ({ ...h, [id]: versions }));
+  };
   // Every word typed must appear somewhere in the memory, in any order.
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const shown = items?.filter((m) => words.every((w) => m.text.toLowerCase().includes(w)));
@@ -951,7 +957,7 @@ export function MemoryPanel() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-mute">Your agents learn lasting facts about you from your chats, and all of them share this memory. Teach something new, or remove what they should forget.</p>
+      <p className="text-sm text-mute">Your agents learn lasting facts about you from your chats, and all of them share this memory. Teach something new, or remove what they should forget. When something changes, the old version is kept under History.</p>
       <form onSubmit={add} className="flex gap-2">
         <input value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. My company is AR Properties"
           className="glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70" />
@@ -962,10 +968,32 @@ export function MemoryPanel() {
         {items?.length === 0 && <li className="py-4 text-center text-sm text-mute">Nothing learned yet. Just start chatting.</li>}
         {items?.length > 0 && shown.length === 0 && <li className="py-4 text-center text-sm text-mute">No memory matches “{q}”.</li>}
         {shown?.map((m) => (
-          <li key={m.id} className="flex items-start gap-2 rounded-xl bg-white/5 py-2 pl-3.5 pr-1.5 text-sm">
-            <span className="flex-1 py-1">{m.text}</span>
-            <button onClick={async () => { await api.del(`/memories/${m.id}`); load(); }} aria-label="Forget"
-              className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:text-bad"><Icon name="x" size={16} /></button>
+          <li key={m.id} className="rounded-xl bg-white/5 py-2 pl-3.5 pr-1.5 text-sm">
+            <div className="flex items-start gap-2">
+              <div className="flex-1 py-1">
+                <p>{m.text}</p>
+                <p className="mt-0.5 text-[11px] text-mute">
+                  {fmtDate(m.created_at * 1000)}
+                  {m.versions > 0 && (
+                    <button onClick={() => toggleHistory(m.id)} className="ml-2 text-p1 hover:underline">
+                      {history[m.id] ? 'Hide history' : `History (${m.versions} earlier)`}
+                    </button>
+                  )}
+                </p>
+              </div>
+              <button onClick={async () => { await api.del(`/memories/${m.id}`); load(); }} aria-label="Forget"
+                className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:text-bad"><Icon name="x" size={16} /></button>
+            </div>
+            {history[m.id] && (
+              <ul className="mb-1 ml-1 mt-1 space-y-1 border-l border-white/10 pl-3">
+                {history[m.id].filter((v) => v.id !== m.id).reverse().map((v) => (
+                  <li key={v.id} className="text-xs text-mute">
+                    <span className="line-through decoration-mute/50">{v.text}</span>
+                    <span className="ml-1.5 text-[11px]">{fmtDate(v.created_at * 1000)} → replaced {fmtDate(v.replaced_at * 1000)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ul>
