@@ -5,7 +5,7 @@ import { reset, closeDb, makeUser, giveActions, giveModules } from './helpers/db
 import { moduleGate } from '../server/modules.js';
 import { actionGate } from '../server/actions.js';
 import { create, remove } from '../server/properties.js';
-import { leasingRoutes } from '../server/leasing.js';
+import { leasingRoutes, createBooking, removeBooking, cancelBooking, listTenants, bookingRef } from '../server/leasing.js';
 import { listProspects, addProspect, updateProspect, removeProspect, prospectRoutes } from '../server/prospects.js';
 
 // The routes over real HTTP, behind both gates as index.js mounts them.
@@ -110,6 +110,44 @@ test('removing a prospect', async () => {
   const p = await addProspect({ full_name: 'Sara', phone: '4095550101' });
   assert.deepEqual(await removeProspect(p.id), { ok: true });
   await assert.rejects(removeProspect(p.id), /Prospect not found/);
+});
+
+const stay = (unit_id, start_date, end_date, extra = {}) => ({ unit_id, start_date, end_date, rent_amount: 4500, tenant: { full_name: 'Sara' }, ...extra });
+
+test('a lease saved from a prospect marks it leased', async () => {
+  const { u1 } = await tower();
+  const p = await addProspect({ full_name: 'Sara', phone: '4095550101', unit_id: u1.id });
+  await updateProspect(p.id, { status: 'applied' });
+  const bk = await createBooking(stay(u1.id, '2026-12-01', '2027-11-30', { prospect_id: p.id }));
+  const [now] = await listProspects();
+  assert.deepEqual([now.leased, now.booking_id, now.lease_ref, now.status, now.due], [true, bk.id, bookingRef(bk), 'applied', false]);
+  await assert.rejects(createBooking(stay(u1.id, '2027-12-01', '2028-11-30', { prospect_id: 999 })), /Prospect not found/);
+});
+
+test('the same prospect cannot make two leases', async () => {
+  const { u1, u2 } = await tower();
+  const p = await addProspect({ full_name: 'Sara', phone: '4095550101' });
+  const bk = await createBooking(stay(u1.id, '2026-12-01', '2027-11-30', { prospect_id: p.id }));
+  const tenants = (await listTenants()).length;
+  await assert.rejects(createBooking(stay(u2.id, '2026-12-01', '2027-11-30', { prospect_id: p.id })), { message: `Sara already has lease ${bookingRef(bk)}.`, status: 409 });
+  assert.equal((await listTenants()).length, tenants, 'the refused lease made no tenant');
+});
+
+test('the lease deleted or cancelled, the prospect is open again', async () => {
+  const { u1 } = await tower();
+  const p = await addProspect({ full_name: 'Sara', phone: '4095550101', follow_up: '2026-10-01' });
+  await updateProspect(p.id, { status: 'applied' });
+  const draft = await createBooking(stay(u1.id, '2026-12-01', '2027-11-30', { prospect_id: p.id }));
+  await removeBooking(draft.id);
+  let [now] = await listProspects({}, '2026-10-29');
+  assert.deepEqual([now.leased, now.booking_id, now.status, now.due], [false, null, 'applied', true]);
+
+  const bk = await createBooking(stay(u1.id, '2026-12-01', '2027-11-30', { prospect_id: p.id }));
+  await cancelBooking(bk.id, 'Changed their mind');
+  [now] = await listProspects();
+  assert.deepEqual([now.leased, now.lease_ref], [false, null]);
+  const again = await createBooking(stay(u1.id, '2026-12-01', '2027-11-30', { prospect_id: p.id }));
+  assert.equal((await listProspects())[0].booking_id, again.id);
 });
 
 test('over HTTP: the Prospects module and the Add, Edit and Delete ticks decide', async () => {

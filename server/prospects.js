@@ -6,7 +6,7 @@ import { usPhone } from './usFormat.js';
 // Prospects: people interested in a unit, before they are tenants (Rent Manager's Prospects).
 // A prospect is a name and a way to reach them, what they want and when, and how far along
 // they are. No tenant is made for one: Make lease opens the lease form filled in from it, and
-// the lease saved from it is booking_id (linkProspect in leasing.js). "Leased" is never typed:
+// the lease saved from it is booking_id (makeBooking and freeProspect in leasing.js). "Leased" is never typed:
 // a prospect is leased while that lease is there and not cancelled, so a draft deleted or a
 // lease cancelled puts it back where it was.
 

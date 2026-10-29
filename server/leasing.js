@@ -349,6 +349,18 @@ export async function createBookingWithDocs(body = {}, files = {}, by) {
 export const importBooking = (body, by, { batch, billedFrom }) => tx(() => makeBooking({ ...body, status: 'confirmed' }, by,
   { import_batch: batch, billed_from: billedFrom }, 'Imported from Rent Manager'));
 
+/**
+ * The prospect (server/prospects.js) a new lease is made from, held until the transaction ends so
+ * two saves of it cannot both pass. One whose lease is still there and not cancelled is refused.
+ */
+async function freeProspect(prospectId) {
+  const p = await db.prepare(`SELECT p.id, p.full_name, b.id AS booking_id, to_char(b.start_date, 'YYYY-MM-DD') AS start_date
+    FROM lease_prospects p LEFT JOIN lease_bookings b ON b.id = p.booking_id AND b.status <> 'cancelled' WHERE p.id = ? FOR UPDATE OF p`).get(Number(prospectId) || 0);
+  if (!p) throw bad('Prospect not found', 404);
+  if (p.booking_id) throw bad(`${p.full_name} already has lease ${bookingRef({ id: p.booking_id, start_date: p.start_date })}.`, 409);
+  return p;
+}
+
 /** createBooking without its own transaction, for a caller that is already in one. */
 async function makeBooking(body = {}, by, extra = {}, made_as = null) {
   const row = bookingFields(body);
@@ -356,6 +368,7 @@ async function makeBooking(body = {}, by, extra = {}, made_as = null) {
   mustProrateMonthly(row);
   if (!body.unit_id) throw bad('Choose a unit.');
   const confirm = body.status === 'confirmed';
+  const prospect = body.prospect_id ? await freeProspect(body.prospect_id) : null;
   const tenantId = body.tenant_id ? (await getTenant(body.tenant_id)).id : (await addTenant(body.tenant || {}, by)).id;
   await mustRefer(row.referred_by, tenantId);
   const follows = extra.import_batch ? null : await followsOn(body.unit_id, tenantId, row.start_date);
@@ -366,6 +379,7 @@ async function makeBooking(body = {}, by, extra = {}, made_as = null) {
   const cols = Object.keys(full);
   const { id } = await db.prepare(`INSERT INTO lease_bookings (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')}) RETURNING id`)
     .run(...cols.map((c) => full[c]));
+  if (prospect) await db.prepare('UPDATE lease_prospects SET booking_id = ? WHERE id = ?').run(id, prospect.id);
   const made = await getBooking(id);
   if (confirm) await writeSchedule(made);
   await learnPrices(made.fees, made.building_id);
