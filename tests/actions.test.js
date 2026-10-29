@@ -21,6 +21,7 @@ import { leaseImportRoutes } from '../server/leaseImport.js';
 import { alertRoutes } from '../server/leasingAlerts.js';
 import { regionRoutes } from '../server/leasingRegion.js';
 import { adminRoutes } from '../server/admin.js';
+import { leasingKit, LEASING_WRITES, TOOL_ACTIONS } from '../server/leasingKit.js';
 
 test.after(() => closeDb());
 
@@ -208,6 +209,34 @@ test('a person’s own things are not stopped by the ticks', async () => {
   await diana();
   assert.equal(await hit('POST', '/todos', {}), 200);
   assert.equal(await hit('DELETE', '/messenger/chats/1'), 200);
+});
+
+// ---------- Riley ----------
+
+test('without add, Riley does not carry the add tools, and refuses one called anyway', async () => {
+  const { d } = await diana();
+  const kit = leasingKit(d, { modules: ['leasing', 'properties', 'tenants', 'workorders'], actions: ['edit'] });
+  const names = kit.definitions.map((x) => x.name);
+  assert.ok(!names.includes('leasing_add_booking'));
+  assert.ok(!names.includes('leasing_add_company'));
+  assert.ok(names.includes('leasing_change_booking'));
+  assert.ok(names.includes('leasing_list'), 'reading needs no tick');
+  const r = await kit.run({ id: 't', name: 'leasing_add_booking', input: {} });
+  assert.deepEqual([r.is_error, r.content], [true, 'This person is not allowed to add here. Tell them to ask the master.']);
+  const e = await leasingKit(d, { modules: ['leasing'], actions: ['add'] }).run({ id: 't', name: 'leasing_change_booking', input: {} });
+  assert.match(e.content, /not allowed to edit/);
+});
+
+test('every Riley tool that changes something says which action it is', () => {
+  const writers = Object.keys(LEASING_WRITES);
+  assert.ok(writers.length >= 11);
+  for (const n of writers) assert.ok(['add', 'edit', 'delete'].includes(TOOL_ACTIONS[n]), `${n} needs a line in TOOL_ACTIONS`);
+});
+
+test('with Properties and Add, Riley adds a company the way the screen now lets them', async () => {
+  const { d } = await diana();
+  const r = await leasingKit(d, { modules: ['properties'], actions: ['add'] }).run({ id: 't', name: 'leasing_add_company', input: { name: 'ACE' } });
+  assert.ok(!r.is_error, r.content);
 });
 
 test('the master is never stopped, and unticking works on the next request', async () => {

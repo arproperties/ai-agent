@@ -486,21 +486,17 @@ const reads = {
 
 /** What sets things up. Each does what the same person could do on the screens, through the same code. */
 const writes = (user) => {
-  const master = (what) => { if (user?.role !== 'master') throw new Error(`Only the master can add ${what}. Tell the user to ask them.`); };
   return {
     leasing_add_company: async (input) => {
-      master('a company');
       const c = await create('company', input, null, user.id);
       return `Company added: ${c.name}.`;
     },
     leasing_add_building: async (input) => {
-      master('a building');
       const c = await find('prop_companies', 'company', input.company);
       const b = await create('building', input, c.id);
       return `Building added: ${b.name}, under ${c.name}. It has no units yet.`;
     },
     leasing_add_units: async (input) => {
-      master('units');
       const b = await find('prop_buildings', 'building', input.building);
       const list = Array.isArray(input.units) ? input.units : [];
       if (!list.length) throw new Error('Give at least one unit number.');
@@ -693,24 +689,37 @@ const TOOL_MODULES = {
 const LIST_MODULES = { companies: ['properties', 'leasing'], buildings: ['properties', 'leasing'], units: ['properties', 'leasing'],
   services: ['leasing', 'properties'], tenants: ['tenants', 'leasing'], sources: ['sources', 'leasing'], bookings: ['leasing'] };
 const NOT_THEIRS = 'This person does not have that part of the app. Tell them to ask the master.';
+// Which action each tool that changes something is (server/actions.js): a person's Add, Edit
+// and Delete hold for Riley as they do on the screens. A changing tool not listed is refused.
+export const TOOL_ACTIONS = {
+  leasing_add_company: 'add', leasing_add_building: 'add', leasing_add_units: 'add', leasing_add_service: 'add', leasing_add_tenant: 'add',
+  leasing_add_booking: 'add', leasing_record_inspection: 'add', leasing_add_work_order: 'add',
+  leasing_change_booking: 'edit', leasing_confirm_booking: 'edit', leasing_update_work_order: 'edit',
+};
+export const LEASING_WRITES = writes(); // only its names are read: which tools change something
+const NOT_ALLOWED = (action) => `This person is not allowed to ${action} here. Tell them to ask the master.`;
 
 /**
  * The leasing tools, in the shape chat.js keeps its toolkits in. `user` is who is asking;
  * `onChanged` is told when something was added, so an open screen can show it. `modules`
- * is what they hold: only those tools are carried. Left out, every tool is.
+ * is what they hold, `actions` what they may change (server/actions.js): only those tools
+ * are carried. Left out, every tool is.
  */
-export function leasingKit(user, { onChanged, renewals, modules } = {}) {
+export function leasingKit(user, { onChanged, renewals, modules, actions } = {}) {
   const change = writes(user);
   const renew = renewalTools(user, renewals); // getting a document renewed: server/renewals.js
   const may = (keys = []) => !modules || keys.some((k) => modules.includes(k));
+  // Left out, every action is allowed: what callers did before there were actions.
+  const can = (name) => !change[name] || !actions || actions.includes(TOOL_ACTIONS[name]);
   return {
-    definitions: [...LEASING_TOOLS, ...RENEWAL_TOOLS].filter((d) => may(TOOL_MODULES[d.name])),
+    definitions: [...LEASING_TOOLS, ...RENEWAL_TOOLS].filter((d) => may(TOOL_MODULES[d.name]) && can(d.name)),
     status: (name) => STATUS[name] || RENEWAL_STATUS[name] || 'Looking at the leasing records…',
     run: async (block) => {
       try {
         const fn = reads[block.name] || change[block.name] || renew[block.name];
         if (!fn) throw new Error(`Unknown tool ${block.name}`);
         if (!may(TOOL_MODULES[block.name])) throw new Error(NOT_THEIRS);
+        if (!can(block.name)) throw new Error(NOT_ALLOWED(TOOL_ACTIONS[block.name] || 'change that'));
         if (block.name === 'leasing_list' && LIST_MODULES[block.input?.what] && !may(LIST_MODULES[block.input.what])) throw new Error(NOT_THEIRS);
         const content = await fn(block.input || {});
         if (change[block.name]) onChanged?.();

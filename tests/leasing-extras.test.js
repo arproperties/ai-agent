@@ -363,10 +363,10 @@ test('Riley sets a tenancy up from the chat: company, building, units, service, 
   assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: 'airbnb', notes: 'Called' }), /charges: none; source: Airbnb\.$/, 'a source is taken as the list has it, and not added twice');
   assert.match(await says('leasing_change_booking', { booking: 'LS-2026-0002', source: '' }), /charges: none\.$/);
 
-  // Somebody who is not the master can book and add a tenant, not add property.
-  const staff = leasingKit({ id: staffId, role: 'user' });
+  // Somebody who is not the master adds property only with the Properties module (server/modules.js).
+  const staff = leasingKit({ id: staffId, role: 'user' }, { modules: ['leasing', 'tenants'] });
   const no = await staff.run({ id: 't', name: 'leasing_add_company', input: { name: 'Other' } });
-  assert.deepEqual([no.is_error, no.content], [true, 'Only the master can add a company. Tell the user to ask them.']);
+  assert.deepEqual([no.is_error, no.content], [true, 'This person does not have that part of the app. Tell them to ask the master.']);
   const bare = await staff.run({ id: 't', name: 'leasing_add_tenant', input: { full_name: 'Omar' } });
   assert.deepEqual([bare.is_error, bare.content], [true, 'A tenant needs a contact number. Ask the user for it.']);
   assert.ok(!(await staff.run({ id: 't', name: 'leasing_add_tenant', input: { full_name: 'Omar', phone: '0507654321' } })).is_error);
