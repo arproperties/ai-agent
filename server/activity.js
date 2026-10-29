@@ -9,7 +9,7 @@ import { cash, region } from './leasingRegion.js';
 // here still shows, its name tidied ("lease_work_orders" → "Work orders"), so a new feature
 // is never hidden for want of a label; adding one just reads better.
 
-const MONEY = new Set(['amount', 'rent_amount', 'security_deposit', 'deposit', 'late_fee', 'balance', 'credit', 'total', 'price', 'cost']);
+const MONEY = new Set(['amount', 'rent_amount', 'rent_amount_2','security_deposit', 'deposit', 'late_fee', 'balance', 'credit', 'total', 'price', 'cost']);
 const SKIP_FIELDS = new Set(['id', 'created_at', 'updated_at']);
 
 export const LABELS = {
@@ -18,7 +18,7 @@ export const LABELS = {
   lease_installments: { name: 'Charge', about: (r) => [r.label || 'Rent', r.due_date && `due ${r.due_date}`, r.amount != null && cash(r.amount)].filter(Boolean).join(', '),
     fields: { due_date: 'Due on' } },
   lease_bookings: { name: 'Lease', about: (r) => [r.start_date && r.end_date && `${r.start_date} to ${r.end_date}`, r.status].filter(Boolean).join(', '),
-    fields: { rent_amount: 'Rent', security_deposit: 'Deposit', start_date: 'Starts', end_date: 'Ends', referred_by: 'Referred by (tenant)' } },
+    fields: { rent_amount: 'Rent', rent_amount_2: 'Rent amount 2',security_deposit: 'Deposit', start_date: 'Starts', end_date: 'Ends', referred_by: 'Referred by (tenant)' } },
   lease_tenants: { name: 'Tenant', about: (r) => r.full_name, fields: { full_name: 'Name' } },
   lease_events: { name: 'Lease history', about: (r) => r.detail },
   lease_documents: { name: 'Lease document', about: (r) => r.file_name },

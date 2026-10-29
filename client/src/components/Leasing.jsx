@@ -250,7 +250,10 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [buildingId, setBuildingId] = useState(init.building_id || '');
   const [v, setV] = useState({
     start_date: init.start_date || '', end_date: init.end_date || '', unit_id: init.unit_id || '',
-    rent_amount: start?.rent_amount ?? '', rent_period: start?.rent_period || 'month', payment_frequency: start?.payment_frequency || 'monthly',
+    rent_amount: start?.rent_amount ?? '',
+    // The rent typed in two parts, Amount 1 and Amount 2; rent_amount is the two together, as everything else reads it.
+    rent_1: start?.rent_amount == null ? '' : Number(start.rent_amount_2) > 0 ? String(Math.round((start.rent_amount - start.rent_amount_2) * 100) / 100) : String(start.rent_amount),
+    rent_amount_2: start?.rent_amount_2 ?? '', rent_period: start?.rent_period || 'month', payment_frequency: start?.payment_frequency || 'monthly',
     security_deposit: start?.security_deposit ?? '', contract_no: start?.contract_no || '', notes: start?.notes || '', fees: start?.fees || [], discounts: start?.discounts || [], source: start?.source || preset?.source || '',
     // Made from a prospect: the saved lease marks it leased (server/prospects.js).
     ...(!start && preset?.prospect_id ? { prospect_id: preset.prospect_id } : {}), referred_by: start?.referred_by || '', tenant_energy_account: !!start?.tenant_energy_account,
@@ -284,6 +287,12 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
+  // Amount 1 or Amount 2 typed: the rent is their sum (empty when both are).
+  const setRent = (f) => (e) => setV((now) => {
+    const next = { ...now, [f]: e.target.value };
+    const both = next.rent_1 === '' && next.rent_amount_2 === '';
+    return { ...next, rent_amount: both ? '' : String(Math.round((Number(next.rent_1 || 0) + Number(next.rent_amount_2 || 0)) * 100) / 100) };
+  });
 
   useEffect(() => { api.get('/properties/companies').then(setCompanies).catch(() => {}); api.get('/leasing/tenants').then(setTenants).catch(() => {}); api.get('/leasing/sources').then(setSources).catch(() => {}); }, []);
   // The other charges are picked from the services of the building the booking is in.
@@ -554,7 +563,8 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         <Group title="Rent">
           {/* One line on a wide screen, two fields a line on a narrower one. */}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Label text={`Amount (${currency()})`} need><input type="number" min="0" step="any" value={v.rent_amount} onChange={set('rent_amount')} required className={FIELD} /></Label>
+            <Label text={`Amount 1 (${currency()})`} need><input type="number" min="0" step="any" value={v.rent_1} onChange={setRent('rent_1')} required className={FIELD} /></Label>
+            <Label text={`Amount 2 (${currency()})${Number(v.rent_amount_2) > 0 ? ` · rent ${v.rent_amount}` : ''}`}><input type="number" min="0" step="any" value={v.rent_amount_2} onChange={setRent('rent_amount_2')} placeholder="None" className={FIELD} /></Label>
             <Label text="Paid">
               {/* Only a lease paid monthly can prorate its first month. */}
               <Select value={v.payment_frequency} onChange={(e) => setV({ ...v, payment_frequency: e.target.value, prorate: e.target.value === 'monthly' && onTheFirst ? v.prorate || start?.prorate || 'first' : null })} className={SELECT} options={FREQ} />

@@ -104,7 +104,7 @@ export async function removeTenant(id) {
 
 // ---------- bookings ----------
 
-const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amount, b.rent_period, b.payment_frequency,
+const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amount, b.rent_amount_2, b.rent_period, b.payment_frequency,
     b.security_deposit, b.status, b.contract_no, b.source, b.referred_by, rt.full_name AS referred_by_name, b.tenant_energy_account, b.cancel_reason, b.notes, b.created_at,
     b.fees, b.discounts, b.discount_type, b.discount_value, b.discount_note, b.tax_percent, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
@@ -136,7 +136,7 @@ export function bookingStage(b, today = todayHere()) {
 
 const num = (v) => (v == null ? null : Number(v));
 const shape = (b, today) => b && { ...b, fees: JSON.parse(b.fees || '[]'), discounts: JSON.parse(b.discounts || '[]'), discount_value: num(b.discount_value), tax_percent: num(b.tax_percent), part_month_amount: num(b.part_month_amount),
-  ref: bookingRef(b), stage: bookingStage(b, today) };
+  rent_amount_2: num(b.rent_amount_2), ref: bookingRef(b), stage: bookingStage(b, today) };
 
 /** A lease is a year or more (end on or after the day before the same date next year). */
 export function suggestType(start, end) {
@@ -186,6 +186,13 @@ function bookingFields(body = {}, { partial = false } = {}) {
     out[f] = Number(v);
   }
   if ((!partial || 'rent_amount' in out) && !(out.rent_amount > 0)) throw bad('Enter the rent.');
+  // The rent can be typed in two parts: rent_amount is both together, rent_amount_2 the second. Empty: one part.
+  if ('rent_amount_2' in body) {
+    const v = body.rent_amount_2;
+    if (v !== '' && v != null && !(Number(v) >= 0)) throw bad('Amount 2 must be a number.');
+    out.rent_amount_2 = Number(v) > 0 ? money(Number(v)) : null;
+    if (out.rent_amount_2 && 'rent_amount' in out && out.rent_amount_2 > out.rent_amount) throw bad('Amount 2 is more than the whole rent.');
+  }
   if ('rent_period' in body) { if (!PERIODS.has(body.rent_period)) throw bad('Rent is per month or per year.'); out.rent_period = body.rent_period; }
   if ('payment_frequency' in body) { if (!FREQUENCIES.has(body.payment_frequency)) throw bad('Unknown payment frequency.'); out.payment_frequency = body.payment_frequency; }
   if ('type' in body && body.type) { if (!TYPES.has(body.type)) throw bad('Unknown lease type.'); out.type = body.type; }
