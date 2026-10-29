@@ -23,6 +23,7 @@ import { routineRoutes } from './routines.js';
 import { teamReminderRoutes, bringOldRemindersIntoTodos } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
 import { addressRoutes } from './addressBook.js';
+import { lessonRoutes } from './lessons.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
@@ -111,6 +112,7 @@ app.use('/api/legal-cases', legalCaseRoutes); // legal cases step by step, cooli
 app.use('/api/pictures', pictureRoutes); // the pictures a chat drew for /explain, /breakdown and /explore
 app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's
 app.use('/api/address-book', addressRoutes); // company mailboxes the master added, next to the built-in ones (master only)
+app.use('/api/lessons', lessonRoutes); // rules the master taught agents from chat, shown as Rules (master only)
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/checklists', needsModule('checklists'), checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
