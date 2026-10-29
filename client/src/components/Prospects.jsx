@@ -135,7 +135,7 @@ export default function Prospects({ canLease, onLease }) {
                         {canDo('delete') && <button onClick={() => remove(p)} aria-label="Delete" title="Delete" className={`${TOOL} hover:text-bad`}><Trash2 size={15} /></button>}
                       </div>
                     </div>
-                    {p.due && <p className="mx-4 mt-2 flex items-center gap-1.5 text-xs text-warn"><BellRing size={13} /> Follow up {p.follow_up < new Date().toISOString().slice(0, 10) ? `overdue (${fmt(p.follow_up)})` : 'today'}</p>}
+                    {p.due && <p className="mx-4 mt-2 flex items-center gap-1.5 text-xs text-warn"><BellRing size={13} /> Follow up {p.overdue ? `overdue (${fmt(p.follow_up)})` : 'today'}</p>}
                     <dl className="mx-4 my-3 divide-y divide-stroke/60 border-t border-stroke text-sm">
                       {[['Phone', usPhone(p.phone)], ['Email', p.email], ['Move-in wanted', p.move_in_date && fmt(p.move_in_date)], ['Source', p.source],
                         ...(p.due || !p.follow_up ? [] : [['Follow up', fmt(p.follow_up)]]), ...(p.leased ? [['Lease', p.lease_ref]] : []),

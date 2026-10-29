@@ -6,7 +6,7 @@ import { moduleGate } from '../server/modules.js';
 import { actionGate } from '../server/actions.js';
 import { create, remove } from '../server/properties.js';
 import { leasingRoutes, createBooking, removeBooking, cancelBooking, listTenants, bookingRef } from '../server/leasing.js';
-import { listAlerts, saveSettings } from '../server/leasingAlerts.js';
+import { listAlerts, saveSettings, runAlerts } from '../server/leasingAlerts.js';
 import { listProspects, addProspect, updateProspect, removeProspect, prospectRoutes } from '../server/prospects.js';
 
 // The routes over real HTTP, behind both gates as index.js mounts them.
@@ -134,6 +134,18 @@ test('the same prospect cannot make two leases', async () => {
   assert.equal((await listTenants()).length, tenants, 'the refused lease made no tenant');
 });
 
+test('two saves of the same prospect at the same moment: one lease, the other refused', async () => {
+  const { u1, u2 } = await tower();
+  const p = await addProspect({ full_name: 'Sara', phone: '4095550101' });
+  const both = await Promise.allSettled([
+    createBooking(stay(u1.id, '2026-12-01', '2027-11-30', { prospect_id: p.id })),
+    createBooking(stay(u2.id, '2026-12-01', '2027-11-30', { prospect_id: p.id })),
+  ]);
+  assert.deepEqual(both.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+  assert.match(both.find((r) => r.status === 'rejected').reason.message, /Sara already has lease/);
+  assert.equal((await listTenants()).length, 1);
+});
+
 test('the lease deleted or cancelled, the prospect is open again', async () => {
   const { u1 } = await tower();
   const p = await addProspect({ full_name: 'Sara', phone: '4095550101', follow_up: '2026-10-01' });
@@ -174,6 +186,24 @@ test("a prospect's follow-up day raises an alert, until it is leased or lost", a
   await updateProspect(p.id, { status: 'applied' });
   await createBooking(stay(u1.id, '2026-12-01', '2027-11-30', { prospect_id: p.id }));
   assert.equal((await mine('2026-10-29')).length, 0, 'leased');
+});
+
+test("who is buzzed about a follow-up: only people who can open prospects, and once even when its day went by", async () => {
+  const { u1 } = await tower();
+  const both = await makeUser('Both');
+  const alertsOnly = await makeUser('AlertsOnly');
+  await giveModules(both, 'alerts', 'prospects');
+  await giveModules(alertsOnly, 'alerts');
+  const p = await addProspect({ full_name: 'Sara', phone: '4095550101', unit_id: u1.id, follow_up: '2026-10-27' }, alertsOnly);
+  await addProspect({ full_name: 'Omar', phone: '4095550102', unit_id: u1.id, follow_up: '2026-10-27' }, both);
+
+  // Two days late, the phone has never been told: it goes now, to the one who can open it.
+  const sent = await runAlerts('2026-10-29', 9);
+  assert.deepEqual(sent.map((s) => [s.user_id, s.title]), [[both, 'Follow up Omar']]);
+  assert.deepEqual(await runAlerts('2026-10-30', 9), [], 'told once; after that only on its day');
+  assert.equal((await listProspects({}, '2026-10-29')).find((x) => x.id === p.id).overdue, true);
+  assert.equal((await listProspects({}, '2026-10-27')).find((x) => x.id === p.id).overdue, false, 'on the day itself, not overdue');
+  await assert.rejects(updateProspect(p.id, { building_id: 999 }), /Building not found/);
 });
 
 test('over HTTP: the Prospects module and the Add, Edit and Delete ticks decide', async () => {

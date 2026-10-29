@@ -90,7 +90,7 @@ const RULES = [
   [/^\/leasing\/reports\//, ['reports'], MASTER],
   [/^\/leasing\/overview$/, ['overview', 'leasing'], MASTER], // the 3D view is drawn from it too
   [/^\/leasing\/work-orders(\/|$)/, ['workorders', 'leasing'], ['workorders']], // the 3D view marks open repairs
-  [/^\/leasing\/prospects(\/|$)/, ['prospects', 'leasing'], ['prospects']], // Make lease is the lease form's own route
+  [/^\/leasing\/prospects(\/|$)/, ['prospects'], ['prospects']], // Make lease is the lease form's own route
   // an id is whatever sits between the slashes: Express decodes it and the routes read it as a number
   [/^\/leasing\/(tenants\/[^/]+\/(history|log)|log)(\/|$)/, ['tenants'], ['tenants']],
   [/^\/leasing\/tenants(\/|$)/, ['tenants', 'leasing', 'reports'], ['tenants', 'leasing']],

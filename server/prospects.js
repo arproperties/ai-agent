@@ -24,8 +24,9 @@ const SELECT = `SELECT p.id, p.full_name, p.phone, p.email, p.building_id, p.uni
   LEFT JOIN lease_bookings b ON b.id = p.booking_id`;
 const shape = ({ lease_status, lease_start, ...p }, today) => {
   const leased = !!p.booking_id && lease_status !== 'cancelled';
-  return { ...p, leased, lease_ref: leased ? bookingRef({ id: p.booking_id, start_date: lease_start }) : null,
-    due: !leased && p.status !== 'lost' && !!p.follow_up && p.follow_up <= today };
+  const due = !leased && p.status !== 'lost' && !!p.follow_up && p.follow_up <= today;
+  // overdue: the follow-up day is past, by the business's day (the browser's may differ).
+  return { ...p, leased, lease_ref: leased ? bookingRef({ id: p.booking_id, start_date: lease_start }) : null, due, overdue: due && p.follow_up < today };
 };
 
 async function getProspect(id, today = todayHere()) {
@@ -62,6 +63,7 @@ async function fields(body = {}, was = null) {
         Object.assign(out, { unit_id: null, building_id: buildingId });
       } else Object.assign(out, { unit_id: unitId, building_id: u.building_id });
     } else Object.assign(out, { unit_id: null, building_id: buildingId ?? ('building_id' in body ? null : was?.building_id ?? null) });
+    if (out.building_id && !(await db.prepare('SELECT 1 FROM prop_buildings WHERE id = ?').get(out.building_id))) throw bad('Building not found', 404);
   }
 
   const now = { ...was, ...out };

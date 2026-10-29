@@ -354,10 +354,12 @@ export const importBooking = (body, by, { batch, billedFrom }) => tx(() => makeB
  * two saves of it cannot both pass. One whose lease is still there and not cancelled is refused.
  */
 async function freeProspect(prospectId) {
-  const p = await db.prepare(`SELECT p.id, p.full_name, b.id AS booking_id, to_char(b.start_date, 'YYYY-MM-DD') AS start_date
-    FROM lease_prospects p LEFT JOIN lease_bookings b ON b.id = p.booking_id AND b.status <> 'cancelled' WHERE p.id = ? FOR UPDATE OF p`).get(Number(prospectId) || 0);
+  // The lock first, on the prospect alone, then its lease in a query of its own: a save that waited on
+  // the lock must see the lease the other one made, which a join locked in the same statement would not.
+  const p = await db.prepare('SELECT id, full_name, booking_id FROM lease_prospects WHERE id = ? FOR UPDATE').get(Number(prospectId) || 0);
   if (!p) throw bad('Prospect not found', 404);
-  if (p.booking_id) throw bad(`${p.full_name} already has lease ${bookingRef({ id: p.booking_id, start_date: p.start_date })}.`, 409);
+  const had = p.booking_id && await db.prepare(`SELECT id, to_char(start_date, 'YYYY-MM-DD') AS start_date FROM lease_bookings WHERE id = ? AND status <> 'cancelled'`).get(p.booking_id);
+  if (had) throw bad(`${p.full_name} already has lease ${bookingRef(had)}.`, 409);
   return p;
 }
 
