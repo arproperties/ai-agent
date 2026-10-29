@@ -15,7 +15,9 @@ const STATE = {
 let agentsOnce = null; // one list for every card in the chat
 const loadAgents = () => (agentsOnce ??= api.get('/agents').catch(() => { agentsOnce = null; return []; }));
 
-export default function LessonCard({ proposal: p, onChanged }) {
+// onStale: read the chat's cards again after a refusal - decided on another device, or the
+// agent deleted - so a finished card does not stay open answering every tap with an error.
+export default function LessonCard({ proposal: p, onChanged, onStale }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(false);
@@ -37,7 +39,7 @@ export default function LessonCard({ proposal: p, onChanged }) {
         : undefined;
       onChanged(await api.post(`/lessons/proposals/${p.id}/${what}`, body));
       setEditing(false);
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e.message); onStale?.(); }
     setBusy(null);
   };
 

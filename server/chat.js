@@ -89,7 +89,7 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     `Your name is ${agent.name}. You are talking with ${user.name}. Dates in UAE documents are usually written DD/MM/YYYY.`,
     // The rules the owner taught this agent sit right under its persona, for whoever is
     // chatting. They change rarely, so they stay in the cached part of the prompt.
-    ...(taught?.lessons.length ? [lessonsBlock(taught.owner, taught.lessons)] : []),
+    ...(taught?.lessons.length ? [lessonsBlock(taught.owner, taught.lessons, { canOverride: user.id === agent.user_id })] : []),
     'You live inside a personal AI app with long-term memory and a knowledge base made from files the user shared. ' +
       'Use them naturally — do not explain these mechanics unless asked. When you use the knowledge base, mention the file name. ' +
       'If the answer is not in the knowledge base or memory, say so instead of guessing. Format replies in Markdown.',

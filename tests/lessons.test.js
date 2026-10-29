@@ -248,3 +248,14 @@ test('a staff user talking to the agent gets the same lessons block', async () =
   assert.ok(block.includes(VAT) && block.includes('Owner'));
   assert.equal(lessonsBlock((await lessonsFor(await agentRow(a))).owner, (await lessonsFor(agent)).lessons), block);
 });
+
+test('only the owner may override a rule; everyone else follows it', () => {
+  const rules = [{ rule: 'Never promise a discount.' }];
+  const owner = lessonsBlock('Owner', rules, { canOverride: true });
+  const other = lessonsBlock('Owner', rules, { canOverride: false });
+  assert.match(owner, /follow the request and mention the rule/);
+  assert.doesNotMatch(other, /follow the request/);
+  assert.match(other, /even if asked not to/);
+  // Safe by default: a caller that forgets the flag does not hand out overrides.
+  assert.doesNotMatch(lessonsBlock('Owner', rules), /follow the request/);
+});

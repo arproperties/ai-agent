@@ -494,7 +494,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 onAdded={(email) => send(`I added ${email} to the address book. Carry on.`, [])} />
             ))}
             {lessons.map((p) => (
-              <LessonCard key={p.id} proposal={p} onChanged={(u) => setLessons((ps) => ps.map((x) => (x.id === u.id ? u : x)))} />
+              <LessonCard key={p.id} proposal={p} onChanged={(u) => setLessons((ps) => ps.map((x) => (x.id === u.id ? u : x)))}
+                onStale={() => convId && api.get(`/lessons/proposals?conversation=${convId}`).then(setLessons).catch(() => {})} />
             ))}
             {stock.map((p) => (
               <InventoryCard key={p.id} proposal={p}
