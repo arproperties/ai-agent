@@ -28,6 +28,8 @@ export const MODELS = [
   { id: 'auto', label: 'Auto · cheap, asks Sonnet when hard' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5 · balanced' },
   { id: 'claude-opus-5', label: 'Opus 5 · smartest' },
+  // Fable is the most capable and the dearest (2.5x Opus 5.5 per word): for an agent whose work is hard.
+  { id: 'claude-fable-5-1', label: 'Fable 5.1 · most capable, dearest' },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 · fastest' },
 ];
 export const FAST_MODEL = 'claude-haiku-4-5-20251001';
