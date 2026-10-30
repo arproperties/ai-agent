@@ -12,6 +12,8 @@ import Documents from './Documents';
 import ServiceList from './ServiceList';
 import { Cover, Logo, CardCover, UnitPhotos, photoUrl } from './PropertyPhoto';
 import Inspections from './Inspections';
+import Sheet from './Sheet';
+import { ArchiveSheet, archiveLine } from './Archive';
 
 // Companies → buildings → units. Everyone with Properties can look; what they may change
 // follows their Add, Edit and Delete ticks (server/actions.js).
@@ -433,6 +435,9 @@ export default function PropertiesPage({ me, onBack }) {
   const [newUnit, setNewUnit] = useState(false); // the add-unit form on a building's page
   const [tab, setTab] = useState('units'); // which part of a building's page is showing
   const [inspecting, setInspecting] = useState(null); // the unit whose inspections are open
+  const [oldLeases, setOldLeases] = useState({ building: null, byUnit: {} }); // Rent Manager archive rows of the open building, by unit
+  const [oldFor, setOldFor] = useState(null); // the unit whose old leases are listed
+  const [oldOpen, setOldOpen] = useState(null); // the archived lease being viewed
   useEffect(() => { setAdding(false); setNewBuilding(false); setNewUnit(false); setTab('units'); }, [at]);
 
   const url =at.level === 'companies' ? '/properties/companies' : at.level === 'company' ? `/properties/companies/${at.id}` : `/properties/buildings/${at.id}`;
@@ -441,6 +446,16 @@ export default function PropertiesPage({ me, onBack }) {
   const data = got.url === url ? got.data : null;
   const load = () => api.get(url).then((d) => setGot({ url, data: d })).catch((e) => setError(e.message));
   useEffect(() => { setError(''); load(); }, [url]);
+  // Old Rent Manager leases, fetched once per building; no leasing access (or any failure) just shows nothing.
+  const buildingId = at.level === 'building' && tab === 'units' && data ? data.id : null;
+  useEffect(() => {
+    if (!buildingId || oldLeases.building === buildingId) return;
+    api.get(`/leasing/archive?building_id=${buildingId}`).then((rows) => {
+      const byUnit = {};
+      (Array.isArray(rows) ? rows : rows?.rows || []).forEach((r) => { (byUnit[r.unit_id] ||= []).push(r); });
+      setOldLeases({ building: buildingId, byUnit });
+    }).catch(() => setOldLeases({ building: buildingId, byUnit: {} }));
+  }, [buildingId]);
 
   const back = () => {
     if (at.level === 'building' && data?.company) return setAt({ level: 'company', id: data.company.id });
@@ -508,6 +523,11 @@ export default function PropertiesPage({ me, onBack }) {
             {u.current_tenant
               ? <span className="truncate rounded-full bg-p1/15 px-2 py-0.5 text-[11px] text-p1" title={`Leased until ${u.current_until}`}>{u.current_tenant} · until {u.current_until}</span>
               : !u.blocked && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">Vacant today</span>}
+            {oldLeases.building === data.id && oldLeases.byUnit[u.id]?.length > 0 && (
+              <button onClick={(e) => { e.stopPropagation(); setOldFor(u); }} className="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-mute hover:bg-white/10 hover:text-txt">
+                {oldLeases.byUnit[u.id].length} old {oldLeases.byUnit[u.id].length === 1 ? 'lease' : 'leases'}
+              </button>
+            )}
             {u.furnished && <span className="rounded-full bg-p3/15 px-2 py-0.5 text-[11px] text-p3">Furnished</span>}
             {u.blocked && <span className="rounded-full bg-bad/15 px-2 py-0.5 text-[11px] text-bad">Blocked</span>}
             {u.move_in_due && <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[11px] text-warn" title="The tenant has the unit and the move-in inspection is not done">Move-in inspection</span>}
@@ -518,7 +538,21 @@ export default function PropertiesPage({ me, onBack }) {
         addOpen={newUnit} onAddClose={() => setNewUnit(false)} onChanged={load}
         onOpen={setInspecting} openLabel="Inspections"
         onAdd={async (v, files) => { const u = await api.post(`/properties/buildings/${data.id}/units`, v); await sendPhotos('unit', u.id, files); load(); }} onSave={edit('units', 'unit')} onRemove={del('units')} />}
+      {oldSheet}
+      {oldOpen && <ArchiveSheet id={oldOpen} onClose={() => setOldOpen(null)} />}
     </>
+  );
+
+  const oldSheet = oldFor && (
+    <Sheet title={`Old leases (Rent Manager) · Unit ${oldFor.unit_no}`} onClose={() => setOldFor(null)}>
+      <ul className="divide-y divide-stroke/60">
+        {(oldLeases.byUnit[oldFor.id] || []).map((r) => (
+          <li key={r.id}><button onClick={() => setOldOpen(r.id)} className="w-full py-2 text-left text-sm hover:text-p1">
+            <span className="block">{r.tenant || '—'}</span><span className="block text-xs text-mute">{archiveLine(r)}</span>
+          </button></li>
+        ))}
+      </ul>
+    </Sheet>
   );
 
   // A unit's inspections take the whole page; back is the building, read again for its Make ready mark.
