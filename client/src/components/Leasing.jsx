@@ -298,7 +298,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     start_date: init.start_date || '', end_date: init.end_date || '', unit_id: init.unit_id || '',
     rent_period: start?.rent_period || 'month', payment_frequency: start?.payment_frequency || 'monthly',
     // The rent, deposit and other charges, all as charge lines (chargeLines, fromLines).
-    contract_no: start?.contract_no || '', notes: start?.notes || '', fees: chargeLines(start), discounts: start?.discounts || [], source: start?.source || preset?.source || '',
+    contract_no: start?.contract_no || '', notes: start?.notes || '', fees: chargeLines(start).map((f) => (start?.status === 'confirmed' ? { ...f, was: true } : f)), discounts: start?.discounts || [], source: start?.source || preset?.source || '',
     // Made from a prospect: the saved lease marks it leased (server/prospects.js).
     ...(!start && preset?.prospect_id ? { prospect_id: preset.prospect_id } : {}), referred_by: start?.referred_by || '', tenant_energy_account: !!start?.tenant_energy_account,
     discount_type: start?.discount_type || 'percent', discount_value: start?.discount_value ?? '', discount_note: start?.discount_note || '',
@@ -640,8 +640,9 @@ function BookingForm({ start, preset, onDone, onCancel }) {
                       </label>
                     </>
                   )}
-                  <button type="button" onClick={() => setV({ ...v, fees: v.fees.filter((_, j) => j !== i) })} aria-label="Remove this charge"
-                    className="mb-0.5 grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={15} /></button>
+                  {/* A line a confirmed lease already has comes off only for those ticked Delete (the server checks it too). */}
+                  {(!f.was || canDo('delete')) && <button type="button" onClick={() => setV({ ...v, fees: v.fees.filter((_, j) => j !== i) })} aria-label="Remove this charge"
+                    className="mb-0.5 grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={15} /></button>}
                 </div>
               );
             })}

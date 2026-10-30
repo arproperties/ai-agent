@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reset, closeDb, db, makeUser } from './helpers/db.js';
+import { reset, closeDb, db, makeUser, giveActions } from './helpers/db.js';
 import { create } from '../server/properties.js';
 import { existsSync } from 'node:fs';
 import { addTenant, removeTenant, changeEnd, createBooking, updateBooking, bookingPayments, recordPayment, removePayment, attachPaymentFile, overview, depositState, settleDeposit, passDeposit, takeBackDeposit, removeBooking, renewBooking, bookingHistory, listBookings, listServices, addService, updateService, removeService, listSources, addSource, renameSource, removeSource } from '../server/leasing.js';
@@ -16,6 +16,7 @@ const AT = '2026-10-10';
 async function tower() {
   await reset();
   const staff = await makeUser('Staff');
+  await giveActions(staff, 'add', 'edit', 'delete'); // taking a charge off a lease is a delete
   const c = await create('company', { name: 'ACE', trn: '100200300' });
   const b = await create('building', { name: 'Tower' }, c.id);
   const u1 = await create('unit', { unit_no: '101' }, b.id);
@@ -95,22 +96,23 @@ test('a renewal that is deleted gives the deposit passed on to it back to the bo
   assert.deepEqual([d.status, d.held, d.passed_to], ['held', 5000, undefined]);
 });
 
-test('a deposit or charge changed after part of it is paid owes what the booking now says', async () => {
+test('a deposit or charge part paid cannot go below what came in, nor come off; changed above it, it owes the rest', async () => {
   const { staff, u1 } = await tower();
   const bk = await createBooking(sara(u1.id, { security_deposit: 5000, fees: [{ label: 'Admin fee', amount: 500 }] }), staff);
   const [deposit, fee] = await bookingPayments(bk.id, AT);
   await recordPayment(deposit.id, { amount: 2000, method: 'cash', received_on: '2026-09-15' }, staff, AT);
   await recordPayment(fee.id, { amount: 200, method: 'cash', received_on: '2026-09-15' }, staff, AT);
 
-  await updateBooking(bk.id, { security_deposit: 4000, fees: [] }, staff);
-  assert.deepEqual((await bookingPayments(bk.id, AT)).slice(0, 2).map((r) => [r.name, r.amount, r.paid, r.left, r.status]),
-    [['Security deposit', 4000, 2000, 2000, 'overdue'], ['Admin fee', 200, 200, 0, 'paid']], 'the charge taken off owes no more than was paid');
-  await updateBooking(bk.id, { security_deposit: 1000 }, staff);
-  assert.deepEqual((await bookingPayments(bk.id, AT)).slice(0, 1).map((r) => [r.amount, r.left, r.status]), [[2000, 0, 'paid']], 'never less than has come in');
+  // Refused, and nothing changes: the money would be left over with nobody told.
+  await assert.rejects(updateBooking(bk.id, { fees: [] }, staff), (e) => e.status === 409 && /Admin fee due 09\/15\/2026 has USD 200 paid/.test(e.message));
+  await assert.rejects(updateBooking(bk.id, { security_deposit: 1000 }, staff), /Security deposit due 09\/15\/2026 has USD 2,000 paid/);
+  await assert.rejects(updateBooking(bk.id, { security_deposit: null }, staff), /Security deposit .* paid/);
+  assert.deepEqual((await bookingPayments(bk.id, AT)).slice(0, 2).map((r) => [r.name, r.amount]), [['Security deposit', 5000], ['Admin fee', 500]]);
 
-  // Taken off the booking altogether, what came in is still the tenant's: held, and given back.
-  await updateBooking(bk.id, { security_deposit: null }, staff);
-  assert.deepEqual([(await depositState(bk.id)).held, (await depositState(bk.id)).status], [2000, 'held']);
+  await updateBooking(bk.id, { security_deposit: 4000, fees: [{ label: 'Admin fee', amount: 200 }] }, staff);
+  assert.deepEqual((await bookingPayments(bk.id, AT)).slice(0, 2).map((r) => [r.name, r.amount, r.paid, r.left, r.status]),
+    [['Security deposit', 4000, 2000, 2000, 'overdue'], ['Admin fee', 200, 200, 0, 'paid']]);
+  // The deposit that came in is still the tenant's: held, and given back at check-out.
   assert.equal((await settleDeposit(bk.id, { refunded: 2000 }, staff, AT)).status, 'refunded');
 });
 

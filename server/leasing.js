@@ -8,6 +8,7 @@ import { saveFile, sendDoc, upload, HELD } from './properties.js';
 import { todayHere, cash } from './leasingRegion.js';
 import { usPhone } from './usFormat.js';
 import { readSlip } from './slipReader.js';
+import { userActions } from './actions.js';
 
 export { todayHere };
 
@@ -411,6 +412,22 @@ async function makeBooking(body = {}, by, extra = {}, made_as = null) {
 }
 
 /** Change a booking's details. A confirmed one is re-checked against the unit's other bookings. */
+/** The first line an edit takes off a lease, in words, or null: a charge by its name, a rent line, the deposit. */
+function linesTakenOff(old, row) {
+  if ('fees' in row) {
+    const now = new Set(JSON.parse(row.fees).map((f) => f.label.toLowerCase()));
+    const off = (old.fees || []).find((f) => !now.has(String(f.label).toLowerCase()));
+    if (off) return off.label;
+  }
+  // Rent typed as one amount (no lines) is not a line taken off: the HUD/Agency part has its own rules.
+  if (row.rent_lines) {
+    const had = old.rent_lines?.length || (Number(old.rent_amount_2) > 0 ? 2 : 1);
+    if (JSON.parse(row.rent_lines).length < had) return 'a rent line';
+  }
+  if ('security_deposit' in row && row.security_deposit == null && Number(old.security_deposit) > 0) return 'the security deposit';
+  return null;
+}
+
 export async function updateBooking(id, body = {}, by) {
   return tx(async () => {
     const old = await getBooking(id);
@@ -424,6 +441,12 @@ export async function updateBooking(id, body = {}, by) {
     if (end < start) throw bad('The end date is before the start date.');
     mustLeaveRent({ ...old, ...row });
     mustProrateMonthly({ ...old, ...row });
+    // Taking a line off a confirmed lease (a charge, a rent line, the deposit) is a delete: only for those ticked Delete.
+    if (old.status === 'confirmed' && by) {
+      const gone = linesTakenOff(old, row);
+      const user = gone && await db.prepare('SELECT id, role FROM users WHERE id = ?').get(Number(by));
+      if (gone && !(user && (await userActions(user)).includes('delete'))) throw bad(`Taking ${gone} off this lease needs the Delete permission.`, 403);
+    }
     // Moved to the day after the same tenant's stay in the unit ends: it follows on from that stay now. A link it has is kept.
     if (!old.renewed_from && !old.import_batch) {
       const follows = await followsOn(row.unit_id || old.unit_id, row.tenant_id || old.tenant_id, start, old.id);
@@ -458,7 +481,7 @@ export async function updateBooking(id, body = {}, by) {
     const cols = Object.keys(row);
     if (cols.length) await db.prepare(`UPDATE lease_bookings SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => row[c]), old.id);
     const now = await getBooking(id);
-    if (now.status === 'confirmed') await writeSchedule(now);
+    if (now.status === 'confirmed') await writeSchedule(now, { strict: true });
     // Late fees switched off on this lease: those not paid come off (a paid one stays, as money was taken for it).
     // Switched back on, applyLateFees() works them out again the next time the schedule is looked at.
     if (now.no_late_fees && !old.no_late_fees) {
@@ -787,7 +810,7 @@ const TAX_OF_PAID = 'CASE WHEN amount > 0 THEN round(tax * (SELECT coalesce(sum(
  * it is kept, and owes what the terms now say (never less than it has been paid); one the
  * terms no longer ask for at all (a charge taken off, a stay cut short) owes nothing more.
  */
-async function writeSchedule(b) {
+async function writeSchedule(b, { strict = false } = {}) {
   // Late fees and charges added by hand are not part of the terms: applyLateFees() and addCharge() add them, and they stay as they are.
   await db.prepare(`DELETE FROM lease_installments i WHERE i.booking_id = ? AND i.kind NOT IN ${KEPT} AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)`).run(b.id);
   const fees = typeof b.fees === 'string' ? JSON.parse(b.fees) : b.fees || [];
@@ -816,6 +839,16 @@ async function writeSchedule(b) {
     ...fees.flatMap((f) => (f.repeats ? monthlyDues(f).map((d) => [d, f.amount]) : [[f.on || first, f.amount]])
       .map(([due, amount]) => ({ kind: 'fee', label: f.label, due, amount: money(amount + taxOn(b, amount)), tax: taxOn(b, amount) }))),
   ];
+  // A lease edited by hand (strict): a row with money against it may not owe less than was paid, nor be taken off;
+  // the money would be left over with nobody told. Cutting the stay short has its own way (changeEnd), which reports it.
+  if (strict) {
+    const want = new Map(rows.map((r) => [`${r.kind}|${r.label}|${r.due}`, r.amount]));
+    const paidRows = await db.prepare(`SELECT i.kind, i.label, to_char(i.due_date, 'YYYY-MM-DD') AS due, sum(p.amount) AS paid FROM lease_installments i
+      JOIN lease_payments p ON p.installment_id = i.id WHERE i.booking_id = ? AND i.kind NOT IN ${KEPT} GROUP BY i.id ORDER BY i.due_date`).all(b.id);
+    const hit = paidRows.find((r) => Number(r.paid) > (want.get(`${r.kind}|${r.label}|${r.due}`) ?? 0) + 0.004);
+    const usDate = (d) => `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}`;
+    if (hit) throw bad(`${dueName(hit)} due ${usDate(hit.due)} has ${cash(Number(hit.paid))} paid on it, so it cannot be lowered below that or taken off. Give the money back or move the payment first.`, 409);
+  }
   const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';
   for (const r of rows) {
     await db.prepare(`INSERT INTO lease_installments (booking_id, kind, label, due_date, amount, tax) VALUES (?, ?, ?, ?, ?, ?)
