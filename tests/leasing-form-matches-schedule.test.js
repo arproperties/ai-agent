@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { reset, closeDb, makeUser } from './helpers/db.js';
 import { create } from '../server/properties.js';
 import { createBooking, bookingPayments } from '../server/leasing.js';
+import * as names from '../server/chargeNames.js'; // the form imports these
 
 test.after(() => closeDb());
 
@@ -11,7 +12,7 @@ test.after(() => closeDb());
 // both read from the same lines here must come to the same money, row for row, as the Payments → Schedule tab shows it.
 const src = readFileSync(new URL('../client/src/components/Leasing.jsx', import.meta.url), 'utf8');
 const pick = (from, to) => src.slice(src.indexOf(from), src.indexOf(to));
-const client = new Function(`${pick('const STEP =', '/** Two or three choices')}; return { plan, chargeLines, fromLines };`)();
+const client = new Function(...Object.keys(names), `${pick('const STEP =', '/** Two or three choices')}; return { plan, chargeLines, fromLines };`)(...Object.values(names));
 
 // Bethany's lease: 30 Sep 2022 to 30 Sep 2023, Tenant 3 + HUD 828, a water charge and a deposit.
 const BASE = [

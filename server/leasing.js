@@ -9,6 +9,7 @@ import { todayHere, cash } from './leasingRegion.js';
 import { usPhone } from './usFormat.js';
 import { readSlip } from './slipReader.js';
 import { userActions } from './actions.js';
+import { fixedName, lookalike } from './chargeNames.js';
 
 export { todayHere };
 
@@ -1336,6 +1337,8 @@ function serviceFields(body = {}, { partial = false } = {}) {
   const out = {};
   if ('name' in body) out.name = text(body.name, 60);
   if ((!partial || 'name' in out) && !out.name) throw bad('Give the service a name.');
+  if (out.name && fixedName(out.name)) throw bad(`"${fixedName(out.name)}" is the lease's own: pick it from the list on the lease.`);
+  if (out.name && lookalike(out.name)) throw bad(`"${out.name}" looks like "${lookalike(out.name)}". Pick "${lookalike(out.name)}" from the list, or give this charge another name.`);
   if ('amount' in body) {
     const v = body.amount;
     if (v !== '' && v != null && !(Number(v) > 0)) throw bad('The price must be a number above zero.');

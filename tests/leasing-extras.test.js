@@ -144,6 +144,10 @@ test('extra services: a saved list, charged once or with every rent payment', as
   const parking = await addService({ name: 'Parking', amount: 300, repeats: true }, staff);
   const pet = await addService({ name: 'Pet fee' }, staff); // made from the booking form: no price yet
   await assert.rejects(addService({ name: 'pet FEE' }, staff), /already has a service with that name/);
+  // The rents and the deposit are the lease's own names, picked from the list: never a service, nor a typo of one.
+  await assert.rejects(addService({ name: 'Security Deposit' }, staff), /"Security deposit" is the lease's own/);
+  await assert.rejects(addService({ name: 'Rnet' }, staff), /looks like "Rent"/);
+  await assert.rejects(updateService(pet.id, { name: 'Securty deposit' }), /looks like "Security deposit"/);
   assert.deepEqual((await listServices()).map((s) => [s.name, s.amount, s.repeats]), [['Parking', 300, true], ['Pet fee', null, false]]);
 
   const bk = await createBooking(sara(u1.id, { fees: [{ label: 'Parking', amount: 250, repeats: true }, { label: 'Pet fee', amount: 800 }] }), staff);

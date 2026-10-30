@@ -28,6 +28,7 @@ import WorkOrders from './WorkOrders';
 import Prospects from './Prospects';
 import Archive, { ArchiveSheet, archiveLine } from './Archive';
 import { leasePreset } from '../lib/prospects';
+import { RENT_NAMES, DEPOSIT_NAME, fixedName, lookalike } from '../../../server/chargeNames.js';
 
 const Building3D = lazy(() => import('./Building3D')); // it brings a 3D library with it, fetched only when the 3D View is opened
 
@@ -238,9 +239,9 @@ function proratedPlan(v) {
 /** The rent is typed as monthly charges named "Rent…", each between dates of its own (rent_lines: HUD's part
     changing during the lease), the deposit as a one-time charge named "Security deposit". rent_amount and
     rent_amount_2 stay the rent at the start and its HUD/Agency part, as everything else reads them. */
-const isRent = (f) => f.repeats && /^rent\b/i.test(String(f.label || '').trim());
-const isDeposit = (f) => !f.repeats && /^security deposit/i.test(String(f.label || '').trim());
-const RENT_NAMES = ['Rent', 'Rent – Tenant', 'Rent – HUD/Agency'];
+// Known by the fixed names only (server/chargeNames.js), picked from the list, so a typo cannot pass as rent or deposit.
+const isRent = (f) => f.repeats && RENT_NAMES.includes(fixedName(f.label));
+const isDeposit = (f) => !f.repeats && fixedName(f.label) === DEPOSIT_NAME;
 /** Whether a dated line is billed in the month due on `due`. */
 const coversDay = (f, due) => (!f.from || due >= f.from) && (!f.until || due <= f.until);
 /** A lease's rent and deposit as charge lines, ahead of its other charges, for the form. */
@@ -248,7 +249,7 @@ function chargeLines(b) {
   const r = Number(b?.rent_amount), r2 = Number(b?.rent_amount_2) || 0;
   const rent = b?.rent_lines?.length ? b.rent_lines.map(({ label, amount, from, until }) => ({ label, amount: String(amount), repeats: true, from: from || '', until: until || '' }))
     : b?.rent_amount == null || b.rent_amount === '' ? [{ label: 'Rent', amount: '', repeats: true }]
-      : r2 > 0 ? [{ label: 'Rent – Tenant', amount: String(Math.round((r - r2) * 100) / 100), repeats: true }, { label: 'Rent – HUD/Agency', amount: String(r2), repeats: true }]
+      : r2 > 0 ? [{ label: 'Rent', amount: String(Math.round((r - r2) * 100) / 100), repeats: true }, { label: 'Rent – HUD/Agency', amount: String(r2), repeats: true }]
         : [{ label: 'Rent', amount: String(r), repeats: true }];
   const deposit = Number(b?.security_deposit) > 0 ? [{ label: 'Security deposit', amount: String(b.security_deposit), on: b.deposit_due || '' }] : [];
   return [...rent, ...(b?.fees || []), ...deposit];
@@ -619,8 +620,11 @@ function BookingForm({ start, preset, onDone, onCancel }) {
               };
               // A new name is saved to the list there and then, so nobody has to leave the booking to add it.
               const make = async (name) => {
-                // The rent and the deposit are names of the lease's own, not services of the building.
-                if (monthly ? isRent({ repeats: true, label: name }) : isDeposit({ label: name })) return put({ label: name });
+                // The rent and the deposit are names of the lease's own, not services of the building; a typo of one is refused.
+                const own = fixedName(name), like = lookalike(name);
+                if (own) return (monthly ? RENT_NAMES.includes(own) : own === DEPOSIT_NAME) ? put({ label: own })
+                  : setError(`${own} goes under ${monthly ? 'One-time' : 'Recurring'} charges.`);
+                if (like) return setError(`"${name}" looks like "${like}". Pick "${like}" from the list, or give this charge another name.`);
                 try {
                   const s = await api.post('/leasing/services', { name, amount: f.amount, repeats: monthly, building_id: buildingId });
                   setServices((list) => [...list, s].sort((a, b) => a.name.localeCompare(b.name)));
@@ -629,7 +633,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
               };
               return (
                 <div key={i} className="mb-2 flex flex-wrap items-end gap-2">
-                  <Select value={f.label} onChange={(e) => pick(e.target.value)} onCreate={make} options={[...new Set([...(monthly ? RENT_NAMES : ['Security deposit']), ...services.map((s) => s.name), f.label].filter(Boolean))]}
+                  <Select value={f.label} onChange={(e) => pick(e.target.value)} onCreate={make} options={[...new Set([...(monthly ? RENT_NAMES : [DEPOSIT_NAME]), ...services.map((s) => s.name).filter((n) => !fixedName(n) && !lookalike(n)), f.label].filter(Boolean))]}
                     placeholder="Choose, or type a new one…" aria-label="Charge" className={SELECT} wrap="min-w-[11rem] flex-1" />
                   <input type="number" min="0" step="any" value={f.amount} onChange={(e) => put({ amount: e.target.value })} placeholder={currency()} aria-label="Amount" className={`${FIELD} max-w-[9rem]`} />
                   {!monthly && (
