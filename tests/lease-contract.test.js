@@ -51,6 +51,17 @@ test('a lease made from the form gets its contract, kept as a generated document
   await assert.rejects(fileContract(bk.id), /cancelled lease/);
 });
 
+test('the rent amount typed for the lease goes to its contract and is not billed', async () => {
+  const bk = await lease({ status: 'confirmed', shown_rent: 831 });
+  const p = await contractRow(bk.id);
+  assert.equal(p.shown_rent, 831);
+  assert.equal((await renderContract(p)).bytes.subarray(0, 5).toString(), '%PDF-');
+  const rents = await db.prepare("SELECT DISTINCT amount FROM lease_installments WHERE booking_id = ? AND kind = 'rent' AND label IS NULL").all(bk.id);
+  assert.ok(rents.every((r) => Number(r.amount) !== 831), 'the rent billed is still the lease rent, not the amount shown');
+  await updateBooking(bk.id, { shown_rent: '' });
+  assert.equal((await contractRow(bk.id)).shown_rent, null, 'emptied, the contract shows the rent as billed again');
+});
+
 test('a lease with no contract kept is not given one by a change', async () => {
   const bk = await lease();
   await keepContract(bk.id, null, { onlyIfKept: true });

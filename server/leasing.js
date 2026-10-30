@@ -112,7 +112,7 @@ const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amou
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
     (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
     (b.import_batch IS NOT NULL OR EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete)) AS moved_in,
-    b.import_batch, to_char(b.billed_from, 'YYYY-MM-DD') AS billed_from, b.prorate, b.part_month_amount, b.leasing_agent,
+    b.import_batch, to_char(b.billed_from, 'YYYY-MM-DD') AS billed_from, b.prorate, b.part_month_amount, b.shown_rent, b.leasing_agent,
     to_char(b.lease_sign_date, 'YYYY-MM-DD') AS lease_sign_date, to_char(b.move_in_date, 'YYYY-MM-DD') AS move_in_date,
     to_char(b.notice_date, 'YYYY-MM-DD') AS notice_date, to_char(b.expected_move_out, 'YYYY-MM-DD') AS expected_move_out,
     to_char(b.deposit_due, 'YYYY-MM-DD') AS deposit_due,
@@ -138,7 +138,7 @@ export function bookingStage(b, today = todayHere()) {
 
 const num = (v) => (v == null ? null : Number(v));
 const shape = (b, today) => b && { ...b, fees: JSON.parse(b.fees || '[]'), discounts: JSON.parse(b.discounts || '[]'), discount_value: num(b.discount_value), tax_percent: num(b.tax_percent), part_month_amount: num(b.part_month_amount),
-  rent_amount_2: num(b.rent_amount_2), rent_lines: b.rent_lines ? JSON.parse(b.rent_lines) : null, ref: bookingRef(b), stage: bookingStage(b, today) };
+  shown_rent: num(b.shown_rent), rent_amount_2: num(b.rent_amount_2), rent_lines: b.rent_lines ? JSON.parse(b.rent_lines) : null, ref: bookingRef(b), stage: bookingStage(b, today) };
 
 /** A lease is a year or more (end on or after the day before the same date next year). */
 export function suggestType(start, end) {
@@ -275,6 +275,12 @@ function bookingFields(body = {}, { partial = false } = {}) {
     const v = body.part_month_amount;
     if (v !== '' && v != null && !(Number(v) > 0)) throw bad('The prorated rent must be a number above zero.');
     out.part_month_amount = v === '' || v == null ? null : money(Number(v));
+  }
+  // The rent a month to show on the lease and the summary, as typed. Shown only: nothing is billed or counted from it.
+  if ('shown_rent' in body) {
+    const v = body.shown_rent;
+    if (v !== '' && v != null && !(Number(v) > 0)) throw bad('The rent amount must be a number above zero.');
+    out.shown_rent = v === '' || v == null ? null : money(Number(v));
   }
   // What Rent Manager's General tab has besides: the day it was signed, the day the tenant moved in, a notice
   // given and the move-out expected from it, who let it, and its ticks.

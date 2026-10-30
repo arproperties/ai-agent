@@ -313,6 +313,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     // A new lease prorates its first month and is then billed on the 1st; one being edited keeps what it has.
     prorate: start?.prorate ?? (start?.id ? null : 'first'),
     part_month_amount: start?.part_month_amount ?? '',
+    shown_rent: start?.shown_rent ?? '', // shown on the lease and summary only, never billed
     // Rent Manager's General tab: the lease start is start_date; these sit beside it.
     lease_sign_date: start?.lease_sign_date || '', move_in_date: start?.move_in_date || '', notice_date: start?.notice_date || '', expected_move_out: start?.expected_move_out || '',
     // A lease moved over from Rent Manager: the 1st this app takes over billing (server/leasing.js). The tick is for new leases only.
@@ -605,6 +606,11 @@ function BookingForm({ start, preset, onDone, onCancel }) {
       </Section>}
 
       {step === 2 && <Section title="Rent and charges">
+        {/* The rent a month as the lease and the summary show it. Shown only: billing goes by the charge lines below. */}
+        <label className="block max-w-xs">
+          <span className="mb-1 block text-xs text-txt/80">Rent amount ({currency()}) · shown on the lease and summary, not billed</span>
+          <input type="number" min="0" step="any" value={v.shown_rent} onChange={set('shown_rent')} placeholder="e.g. 831" className={FIELD} />
+        </label>
         {/* Three lists only: the monthly charges (the rent among them), those due once (the deposit among them), and the prorated part month. */}
         {/* Other charges in two lists: monthly ones, each with its own start and end, then those due once. One list
             (v.fees) holds both; `repeats` says which. */}
@@ -752,6 +758,8 @@ function BookingForm({ start, preset, onDone, onCancel }) {
         {sum ? (
           <>
             <div className="space-y-1.5 border-t border-stroke/60 pt-3">
+              {/* The rent amount as typed for the lease; shown only. */}
+              {Number(v.shown_rent) > 0 && <Row k="Rent amount" strong>{aed(Number(v.shown_rent))}</Row>}
               <Row k={sum.second ? 'Rent · at move-in' : sum.head && v.prorate ? 'First month · paid at move-in' : sum.payments > 1 ? 'First rent payment' : 'Rent'}>{aed(sum.firstRent)}</Row>
               {sum.fees.filter((f) => Number(f.amount) > 0).map((f, i) => <Row key={i} k={f.label || 'Other charge'}>{aed(Number(f.amount))}</Row>)}
               {sum.firstTax > 0 && <Row k={`${taxName} ${Number(v.tax_percent)}%`}>{aed(sum.firstTax)}</Row>}
@@ -761,8 +769,6 @@ function BookingForm({ start, preset, onDone, onCancel }) {
               ))}
               {sum.discount > 0 && <Row k="Discounts, whole stay · already taken off">−{aed(sum.discount)}</Row>}
               {sum.second && <Row k={`Prorated rent · on ${fmt(sum.second.due)}`}>{aed(sum.second.amount)}</Row>}
-              {sum.payments > 1 && <Row k={`Whole stay · ${sum.payments} payments`}>{aed(sum.total)}</Row>}
-              {sum.payments > 1 && sum.tax > 0 && <Row k={`Of which ${taxName}`}>{aed(sum.tax)}</Row>}
             </div>
             {/* The deposit stands apart: it is the tenant's money, held and given back at check-out. */}
             {sum.deposit > 0 && (

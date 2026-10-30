@@ -1551,6 +1551,8 @@ await db.exec(`
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS expected_move_out DATE;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS leasing_agent TEXT;
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS part_month_amount NUMERIC;
+  -- shown_rent: the rent a month as typed to show on the lease and the summary; shown only, never billed or counted.
+  ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS shown_rent NUMERIC;
   -- rent_amount_2: the part of the rent HUD or an agency pays; the rest is the tenant's. rent_amount stays the whole rent, both parts together.
   ALTER TABLE lease_bookings ADD COLUMN IF NOT EXISTS rent_amount_2 NUMERIC;
   -- rent_lines: the rent as dated lines (JSON [{label, amount, from, until, hud}]); each month bills the lines it falls in,

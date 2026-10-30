@@ -302,7 +302,8 @@ export async function renderContract(p) {
   band(92, (t) => {
     const part = partMonth(p);
     head('C. Monthly Rent', L, t, '(Par. 3)');
-    field(sym, amt(monthlyRent(p)), L + pad, t - 26, c1 - pad);
+    // The rent amount typed for the lease when there is one (shown only), else the rent as billed.
+    field(sym, amt(Number(p.shown_rent) > 0 ? Number(p.shown_rent) : monthlyRent(p)), L + pad, t - 26, c1 - pad);
     let note = '';
     if (p.discount_type) note = `After a discount of ${p.discount_type === 'percent' ? `${Number(p.discount_value)}%` : `${sym} ${amt(p.discount_value)}`}${p.discount_note ? ` (${p.discount_note})` : ''}.`;
     const us = (s) => `${s.slice(5, 7)}/${s.slice(8, 10)}/${s.slice(0, 4)}`;
