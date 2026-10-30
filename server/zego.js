@@ -209,6 +209,7 @@ async function sameOnLease(bookingId, t) {
 }
 
 /** For each payment: the lease it goes to and how that was found, or the leases to choose from. */
+export const matchPayouts = (payouts) => match(payouts);
 async function match(payouts) {
   const leases = await leaseChoices();
   const tenants = await db.prepare('SELECT id, full_name, old_name FROM lease_tenants').all();
@@ -274,49 +275,71 @@ export async function readReport(file) {
 export async function recordReport({ token, picks = {} } = {}, by, today = todayHere()) {
   const kept = reads.get(String(token || ''));
   if (!kept) throw bad('Upload the report again: it was read more than an hour ago.', 409);
-  const payouts = await match(structuredClone(kept.payouts));
+  return recordPayouts(await match(structuredClone(kept.payouts)), { fileName: kept.file_name, picks, by, today });
+}
+
+/** Writes one payment of a payout down, on the lease given or (null) on none. */
+const saveTransaction = (t, payoutId, bookingId, batch) => db.prepare(`INSERT INTO zego_transactions (trans_no, payout_id, resident, property, unit, init_date, pay_type, amount, booking_id, batch)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (trans_no) DO UPDATE SET booking_id = EXCLUDED.booking_id, batch = EXCLUDED.batch
+  WHERE zego_transactions.batch IS NULL RETURNING trans_no`).get(t.trans_no, payoutId, t.resident, t.property, t.unit, t.init_date, t.pay_type, t.amount, bookingId, batch);
+
+/** One payment put on its lease as a Zego payment. False when it was on a lease already. A refusal (the lease takes no payments) is thrown. */
+const putOnLease = (t, payout, lease, by, today) => tx(async () => {
+  // Taken first, so two at once cannot both record it.
+  if (!(await saveTransaction(t, payout.id, lease.id, 'pending'))) return false;
+  const made = await spreadWithin(lease.id, {
+    amount: t.amount, method: 'zego', received_on: t.init_date, keep_credit: true,
+    reference: `Zego ${t.trans_no}`, notes: `Zego payout ${payout.paid_on}${t.pay_type ? ` · ${t.pay_type}` : ''}`,
+  }, by, today);
+  await db.prepare('UPDATE zego_transactions SET batch = ? WHERE trans_no = ?').run(made[0].batch, t.trans_no);
+  // A name that is not the tenant's own is remembered for the next report.
+  if (nameKey(t.resident) !== nameKey(lease.tenant)) {
+    await db.prepare('INSERT INTO zego_names (name_key, tenant_id) VALUES (?, ?) ON CONFLICT (name_key) DO UPDATE SET tenant_id = EXCLUDED.tenant_id').run(nameKey(t.resident), lease.tenant_id);
+  }
+  return true;
+});
+
+/**
+ * Records matched payouts. `picks` gives a lease for a payment by its Trans # (overriding the
+ * match), or null to leave it on no lease. Each payment is recorded on its own: one that cannot
+ * be (the lease takes no payments, say) is reported and left on no lease for later.
+ */
+export async function recordPayouts(payouts, { fileName = null, picks = {}, by = null, today = todayHere() } = {}) {
   const out = { recorded: 0, already: 0, skipped: 0, failed: [] };
   const leaseOf = new Map((await leaseChoices()).map((l) => [l.id, l]));
   for (const p of payouts) {
-    // The same payout uploaded before is the one already there.
+    // The same payout brought in before is the one already there.
     const nos = p.transactions.map((t) => t.trans_no);
     const had = await db.prepare('SELECT payout_id FROM zego_transactions WHERE trans_no = ANY(?) LIMIT 1').get(nos);
-    const payoutId = had?.payout_id ?? (await db.prepare('INSERT INTO zego_payouts (bank, paid_on, total, file_name, uploaded_by) VALUES (?, ?, ?, ?, ?) RETURNING id')
-      .get(p.bank, p.paid_on, p.total, kept.file_name, by ?? null)).id;
+    const payout = { paid_on: p.paid_on, id: had?.payout_id ?? (await db.prepare('INSERT INTO zego_payouts (bank, paid_on, total, file_name, uploaded_by) VALUES (?, ?, ?, ?, ?) RETURNING id')
+      .get(p.bank, p.paid_on, p.total, fileName, by ?? null)).id };
     for (const t of p.transactions) {
       if (t.recorded) { out.already++; continue; }
       const picked = Object.hasOwn(picks, t.trans_no) ? (picks[t.trans_no] == null || picks[t.trans_no] === '' ? null : Number(picks[t.trans_no])) : t.booking_id;
       if (picked != null && !leaseOf.has(picked)) throw bad(`The lease chosen for Trans # ${t.trans_no} is not a confirmed lease.`);
-      const row = [t.trans_no, payoutId, t.resident, t.property, t.unit, t.init_date, t.pay_type, t.amount];
-      const save = (bookingId, batch) => db.prepare(`INSERT INTO zego_transactions (trans_no, payout_id, resident, property, unit, init_date, pay_type, amount, booking_id, batch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (trans_no) DO UPDATE SET booking_id = EXCLUDED.booking_id, batch = EXCLUDED.batch
-        WHERE zego_transactions.batch IS NULL RETURNING trans_no`).get(...row, bookingId, batch);
-      if (picked == null) { await save(null, null); out.skipped++; continue; }
+      if (picked == null) { await saveTransaction(t, payout.id, null, null); out.skipped++; continue; }
       try {
-        const done = await tx(async () => {
-          // Taken first, so two uploads at once cannot both record it.
-          if (!(await save(picked, 'pending'))) return false;
-          const made = await spreadWithin(picked, {
-            amount: t.amount, method: 'zego', received_on: t.init_date, keep_credit: true,
-            reference: `Zego ${t.trans_no}`, notes: `Zego payout ${p.paid_on}${t.pay_type ? ` · ${t.pay_type}` : ''}`,
-          }, by, today);
-          await db.prepare('UPDATE zego_transactions SET batch = ? WHERE trans_no = ?').run(made[0].batch, t.trans_no);
-          // A name that is not the tenant's own is remembered for the next report.
-          const tenantId = leaseOf.get(picked).tenant_id;
-          if (nameKey(t.resident) !== nameKey(leaseOf.get(picked).tenant)) {
-            await db.prepare('INSERT INTO zego_names (name_key, tenant_id) VALUES (?, ?) ON CONFLICT (name_key) DO UPDATE SET tenant_id = EXCLUDED.tenant_id').run(nameKey(t.resident), tenantId);
-          }
-          return true;
-        });
-        if (done) out.recorded++; else out.already++;
+        if (await putOnLease(t, payout, leaseOf.get(picked), by, today)) out.recorded++; else out.already++;
       } catch (e) {
         if (!e.status) throw e;
-        await save(null, null);
+        await saveTransaction(t, payout.id, null, null);
         out.failed.push({ trans_no: t.trans_no, resident: t.resident, error: e.message });
       }
     }
   }
   return out;
+}
+
+/** A payment left on no lease, put on one later from the payout's list. */
+export async function placeTransaction(transNo, bookingId, by, today = todayHere()) {
+  const t = await db.prepare(`SELECT t.trans_no, t.payout_id, t.resident, t.property, t.unit, to_char(t.init_date, 'YYYY-MM-DD') AS init_date, t.pay_type, t.amount, t.batch,
+      to_char(p.paid_on, 'YYYY-MM-DD') AS paid_on FROM zego_transactions t JOIN zego_payouts p ON p.id = t.payout_id WHERE t.trans_no = ?`).get(String(transNo));
+  if (!t) throw bad('Not found', 404);
+  if (t.batch) throw bad('This payment is on a lease already.', 409);
+  const lease = (await leaseChoices()).find((l) => l.id === Number(bookingId));
+  if (!lease) throw bad('Choose a confirmed lease.');
+  await putOnLease({ ...t, amount: Number(t.amount) }, { id: t.payout_id, paid_on: t.paid_on }, lease, by, today);
+  return { ok: true };
 }
 
 // ---------- what was brought in ----------
@@ -340,6 +363,9 @@ export async function getPayout(id) {
     FROM zego_transactions t LEFT JOIN lease_bookings b ON b.id = t.booking_id AND t.batch IS NOT NULL LEFT JOIN lease_tenants lt ON lt.id = b.tenant_id
     LEFT JOIN prop_units u ON u.id = b.unit_id LEFT JOIN prop_buildings bl ON bl.id = u.building_id
     WHERE t.payout_id = ? ORDER BY t.init_date, t.trans_no`).all(p.id)).map((t) => ({ ...t, amount: Number(t.amount) }));
+  // One still on no lease: where it could go, as a report read would say.
+  const off = transactions.filter((t) => !t.on_lease);
+  if (off.length) await match([{ transactions: off }]);
   return { ...p, transactions };
 }
 
@@ -351,3 +377,4 @@ zegoRoutes.post('/record', async (req, res) => res.json(await recordReport(req.b
 zegoRoutes.get('/leases', async (req, res) => res.json(await leaseChoices()));
 zegoRoutes.get('/payouts', async (req, res) => res.json(await listPayouts(req.query)));
 zegoRoutes.get('/payouts/:id', async (req, res) => res.json(await getPayout(req.params.id)));
+zegoRoutes.post('/transactions/:no/lease', async (req, res) => res.json(await placeTransaction(req.params.no, req.body?.booking_id, req.user.id)));

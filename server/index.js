@@ -61,6 +61,7 @@ import { activityRoutes } from './activity.js';
 import { qbwcRoutes, quickbooksRoutes } from './quickbooks.js';
 import { expenseRoutes, startRepeats } from './expenses.js';
 import { zegoRoutes } from './zego.js';
+import { zegoMailRoutes, startZegoMail } from './zegoMail.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -118,6 +119,7 @@ app.use('/api/leasing', leasingRoutes); // tenants and bookings of units; the re
 app.use('/api/activity', activityRoutes); // who changed what, and when: the master and whoever holds Activity
 app.use('/api/quickbooks', requireMaster, quickbooksRoutes); // the QuickBooks connection: master only
 app.use('/api/accounts/zego', zegoRoutes); // Zego's payments report brought in (server/zego.js)
+app.use('/api/accounts/zego', zegoMailRoutes); // and picked up from its Gmail, weekly or on Sync now (server/zegoMail.js)
 app.use('/api/accounts', expenseRoutes); // Accounts: expenses and monthly bills, sent to QuickBooks (the accounts module)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
@@ -444,6 +446,7 @@ app.listen(PORT, '0.0.0.0', () => {
   startBuildings(); // buzzes a building's administrator when a staff job needs them
   startRecurringPayments(); // creates each recurring payment's line on its day of the month
   startRepeats(); // makes each monthly bill (Accounts) into an expense on its day
+  startZegoMail(); // reads Zego's report from its Gmail once a week, when one is connected
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));

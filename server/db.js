@@ -2305,3 +2305,20 @@ await db.exec(`
     tenant_id INTEGER NOT NULL REFERENCES lease_tenants(id) ON DELETE CASCADE
   );
 `);
+
+// The Gmail Zego's reports are emailed to, connected for that alone (server/zegoMail.js): one row.
+// password_enc is a Google app password, encrypted (server/secrets.js). last_ok_at is the last run
+// that could read the mailbox (the next looks back from there); last_result what the last run did.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS zego_mailbox (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    email TEXT NOT NULL,
+    password_enc TEXT NOT NULL,
+    sender TEXT NOT NULL DEFAULT 'zego',
+    auto BOOLEAN NOT NULL DEFAULT true,
+    last_run_at TIMESTAMPTZ,
+    last_ok_at TIMESTAMPTZ,
+    last_result JSONB,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+  );
+`);

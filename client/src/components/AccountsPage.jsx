@@ -515,7 +515,127 @@ function ZegoReview({ read, onDone, onCancel }) {
   );
 }
 
-function ZegoTab() {
+const when = (at) => (at ? new Date(at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '');
+
+/** What the last sync did, in a line or two. */
+function SyncResult({ r }) {
+  if (!r) return null;
+  if (r.error) return <p className="mt-2 text-xs text-bad">Last sync {when(r.at)} could not read the Gmail: {r.error}</p>;
+  const parts = [
+    `${r.emails} email${r.emails === 1 ? '' : 's'} read`,
+    `${r.recorded} payment${r.recorded === 1 ? '' : 's'} put on leases`,
+    r.already && `${r.already} recorded before`,
+    r.left && `${r.left} left for a person below`,
+  ].filter(Boolean);
+  return (
+    <div className="mt-2 space-y-1 text-xs">
+      <p className="text-mute">Last sync {when(r.at)}{r.by_hand ? ' (Sync now)' : ' (weekly)'}: {parts.join(' · ')}.</p>
+      {[...r.notes, ...r.failed.map((f) => `${f.resident} (Trans # ${f.trans_no}): ${f.error}`)].map((n, i) => <p key={i} className="text-warn">{n}</p>)}
+    </div>
+  );
+}
+
+/** The Gmail Zego's reports come to: connected by the master, synced weekly by itself or on Sync now. */
+function ZegoGmail({ master, onSynced }) {
+  const [s, setS] = useState(null);
+  const [form, setForm] = useState(null); // the connect form, open
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => { api.get('/accounts/zego/mailbox').then(setS).catch((e) => setError(e.message)); }, []);
+  const act = async (what, fn) => {
+    setBusy(what); setError('');
+    try { return await fn(); } catch (e) { setError(e.message); } finally { setBusy(''); }
+  };
+  const save = (e) => {
+    e.preventDefault();
+    act('save', async () => { setS(await api.put('/accounts/zego/mailbox', form)); setForm(null); });
+  };
+  const sync = () => act('sync', async () => {
+    await api.post('/accounts/zego/sync');
+    setS(await api.get('/accounts/zego/mailbox'));
+    onSynced();
+  });
+
+  if (!s) return error ? <p className="text-sm text-bad">{error}</p> : null;
+  if (form) {
+    return (
+      <form onSubmit={save} className={`${CARD} space-y-3`}>
+        <p className="text-sm font-medium">Connect the Gmail Zego's reports come to</p>
+        <p className="text-xs text-mute">Used only to read Zego's report emails, never to send. Use an app password: in the Google account, turn on 2-Step Verification, then Security → App passwords → make one.</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Label text="Gmail address" need><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required className={FIELD} /></Label>
+          <Label text="App password" need={!s.connected}>
+            <input type="password" value={form.app_password} onChange={(e) => setForm({ ...form, app_password: e.target.value })} required={!s.connected} autoComplete="new-password"
+              placeholder={s.connected ? 'Leave empty to keep the one saved' : 'xxxx xxxx xxxx xxxx'} className={FIELD} />
+          </Label>
+          <Label text="Emails from (contains)" wide><input value={form.sender} onChange={(e) => setForm({ ...form, sender: e.target.value })} className={FIELD} /></Label>
+        </div>
+        {error && <p className="text-sm text-bad">{error}</p>}
+        <div className="flex flex-wrap justify-end gap-2">
+          <button type="button" onClick={() => { setForm(null); setError(''); }} className={OUTLINE}>Cancel</button>
+          <button disabled={!!busy} className={PRIMARY}>{busy ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />} Check and save</button>
+        </div>
+      </form>
+    );
+  }
+  if (!s.connected) {
+    return (
+      <div className={`${CARD} flex flex-wrap items-center gap-3`}>
+        <span className="min-w-0 flex-1 basis-60 text-sm text-mute">Connect the Gmail that gets Zego's reports, and they are brought in every week by themselves.{!master && ' Ask the master to connect it.'}</span>
+        {master && <button onClick={() => setForm({ email: '', app_password: '', sender: 'zego' })} className={OUTLINE}><KeyRound size={16} /> Connect Gmail</button>}
+      </div>
+    );
+  }
+  return (
+    <div className={CARD}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1 basis-60 text-sm">
+          <span className="font-medium">Gmail sync</span> <span className="text-mute">· {s.email}</span>
+          <span className="block text-xs text-mute">{s.auto ? `Weekly, by itself${s.next_run_at ? `: next ${when(s.next_run_at)}` : ''}` : 'Weekly sync is off: only Sync now'}</span>
+        </span>
+        {canDo('add') && <button onClick={sync} disabled={!!busy || s.running} className={PRIMARY}>{busy === 'sync' || s.running ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} Sync now</button>}
+        {master && (
+          <>
+            <button onClick={() => act('auto', async () => setS(await api.put('/accounts/zego/mailbox', { auto: !s.auto })))} disabled={!!busy} className={GHOST}>{s.auto ? <Pause size={13} /> : <Play size={13} />} {s.auto ? 'Stop weekly' : 'Run weekly'}</button>
+            <button onClick={() => setForm({ email: s.email, app_password: '', sender: s.sender })} className={GHOST}><Pencil size={13} /> Change</button>
+            <button onClick={() => confirm('Disconnect the Gmail? Reports will have to be uploaded by hand.') && act('remove', async () => setS(await api.del('/accounts/zego/mailbox')))} className={`${GHOST} hover:text-bad`}><Power size={13} /> Disconnect</button>
+          </>
+        )}
+      </div>
+      <SyncResult r={s.last_result} />
+      {error && <p className="mt-2 text-sm text-bad">{error}</p>}
+    </div>
+  );
+}
+
+/** A payment of a payout still on no lease: where it could go, and the lease to put it on. */
+function PlaceRow({ t, leases, onPlaced }) {
+  const [pick, setPick] = useState(t.booking_id ? String(t.booking_id) : '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const byId = new Map(leases.map((l) => [l.id, l]));
+  const [note, tone] = zegoNote(t, byId.get(t.booking_id));
+  const first = (t.suggest || []).map((id) => byId.get(id)).filter(Boolean);
+  const options = [...first, ...leases.filter((l) => !first.includes(l))].map((l) => ({ value: String(l.id), label: leaseLabel(l) }));
+  const place = async () => {
+    setBusy(true); setError('');
+    try { await api.post(`/accounts/zego/transactions/${t.trans_no}/lease`, { booking_id: Number(pick) }); onPlaced(); } catch (e) { setError(e.message); setBusy(false); }
+  };
+  return (
+    <div className="mt-1 space-y-2">
+      <span className={`block text-xs ${tone}`}>{note}</span>
+      {canDo('add') && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="w-full sm:w-72"><Select value={pick} onChange={(e) => setPick(e.target.value)} aria-label={`Lease for ${t.resident}`} placeholder="Choose the lease" className={FIELD} options={options} /></span>
+          <button onClick={place} disabled={!pick || busy} className={GHOST}>{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Put on lease</button>
+        </div>
+      )}
+      {error && <span className="block text-xs text-bad">{error}</span>}
+    </div>
+  );
+}
+
+function ZegoTab({ master }) {
   const [rows, setRows] = useState(null);
   const [open, setOpen] = useState(null); // a payout, with its payments
   const [read, setRead] = useState(null);
@@ -533,10 +653,17 @@ function ZegoTab() {
     try { setRead(await api.upload('/accounts/zego/read', form)); } catch (e) { setError(e.message); }
     setReading(false);
   };
+  const [leases, setLeases] = useState(null); // to place a payment left on no lease
+  const show = async (id) => {
+    const p = await api.get(`/accounts/zego/payouts/${id}`);
+    if (p.transactions.some((t) => !t.on_lease) && !leases) setLeases(await api.get('/accounts/zego/leases'));
+    setOpen(p);
+  };
   const toggle = async (p) => {
     if (open?.id === p.id) { setOpen(null); return; }
-    try { setOpen(await api.get(`/accounts/zego/payouts/${p.id}`)); } catch (e) { setError(e.message); }
+    try { await show(p.id); } catch (e) { setError(e.message); }
   };
+  const placed = () => { load(); show(open.id).catch((e) => setError(e.message)); };
 
   if (read) {
     return <ZegoReview read={read} onCancel={() => setRead(null)} onDone={(out) => {
@@ -548,9 +675,10 @@ function ZegoTab() {
   }
   return (
     <div className="space-y-4">
+      <ZegoGmail master={master} onSynced={() => { load(); if (open) show(open.id).catch(() => {}); }} />
       {canDo('add') && (
         <div className={`${CARD} flex flex-wrap items-center gap-3`}>
-          <span className="min-w-0 flex-1 basis-60 text-sm text-mute">Upload Zego's payments report (PDF or CSV). Nothing is recorded until you check it and press Record.</span>
+          <span className="min-w-0 flex-1 basis-60 text-sm text-mute">Or upload Zego's payments report (PDF or CSV). Nothing is recorded until you check it and press Record.</span>
           <label className={`${PRIMARY} cursor-pointer`}>
             {reading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} {reading ? 'Reading…' : 'Upload report'}
             <input type="file" accept=".pdf,.csv,application/pdf,text/csv" className="hidden" disabled={reading} onChange={(e) => { upload(e.target.files[0]); e.target.value = ''; }} />
@@ -583,6 +711,7 @@ function ZegoTab() {
                         <span className="min-w-0 flex-1">
                           <span className="block">{t.resident} <span className="text-xs text-mute">· Trans # {t.trans_no}</span></span>
                           <span className={`block text-xs ${t.on_lease ? 'text-mute' : 'text-warn'}`}>{fmt(t.init_date)} · {t.on_lease ? `${t.tenant} · Unit ${t.unit_no} · ${t.building}` : 'Not on a lease yet'}</span>
+                          {!t.on_lease && leases && <PlaceRow t={t} leases={leases} onPlaced={placed} />}
                         </span>
                         <span className="shrink-0 tabular-nums">{money(t.amount)}</span>
                       </li>
@@ -612,7 +741,7 @@ export default function AccountsPage({ me, onBack }) {
         <div className="flex flex-wrap gap-1">{TABS.map(([k, l]) => <button key={k} onClick={() => setTab(k)} aria-pressed={tab === k} className={CHIP(tab === k)}>{l}</button>)}</div>
         {error && <p className="text-sm text-bad">{error}</p>}
         {tab === 'quickbooks' ? <QuickBooksTab />
-          : tab === 'zego' ? <ZegoTab />
+          : tab === 'zego' ? <ZegoTab master={master} />
           : !c ? !error && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
           : !c.ready ? <p className="text-sm text-mute">QuickBooks' vendors and accounts are not here yet. {master ? 'Connect QuickBooks on the QuickBooks tab first.' : 'Ask the master to connect QuickBooks first.'}</p>
           : tab === 'expenses' ? <ExpensesTab c={c} master={master} /> : <MonthlyTab c={c} />}

@@ -55,6 +55,8 @@ export const LABELS = {
   zego_transactions: { name: 'Zego payment', about: (r) => [r.resident, r.amount != null && cash(r.amount), r.trans_no && `Trans # ${r.trans_no}`].filter(Boolean).join(', '),
     fields: { booking_id: 'Lease', init_date: 'Paid on' } },
   zego_names: { name: 'Zego name', about: (r) => r.name_key },
+  zego_mailbox: { name: 'Zego Gmail', about: (r) => [r.email, r.auto === false ? 'weekly sync off' : 'weekly sync on'].filter(Boolean).join(', '),
+    fields: { email: 'Gmail', sender: 'From', auto: 'Weekly sync' } },
   todos: { name: 'To-do', about: (r) => r.text },
   routines: { name: 'Routine', about: (r) => r.title || r.text },
   conversations: { name: 'Chat', about: (r) => r.title },
