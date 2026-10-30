@@ -400,7 +400,7 @@ export default function Inspections({ unit, booking, start, onBack }) {
           </ol>
           {next?.kind === 'confirm' ? (
             <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-ok/40 bg-ok/10 px-4 py-3">
-              <p className="min-w-0 flex-1 text-sm">{lease.renewed_from ? 'No move-in inspection: this lease follows on from the tenant\'s last one, so they are already in.' : 'The move-in inspection is done.'} The lease can be confirmed.</p>
+              <p className="min-w-0 flex-1 text-sm">{lease.import_batch ? 'Already living here (from Rent Manager): no move-in inspection needed.' : lease.renewed_from ? 'No move-in inspection: this lease follows on from the tenant\'s last one, so they are already in.' : 'The move-in inspection is done.'} The lease can be confirmed.</p>
               <button onClick={confirm} disabled={busy} className={PRIMARY}><Check size={16} /> {busy ? 'Confirming…' : 'Confirm lease'}</button>
             </div>
           ) : <p className={`rounded-2xl border px-4 py-3 text-sm ${warn ? 'border-warn/40 bg-warn/10' : 'border-stroke text-txt/80'}`}>{say}</p>}

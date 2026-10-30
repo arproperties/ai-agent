@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, closeDb, makeUser } from './helpers/db.js';
 import { create, listUnits } from '../server/properties.js';
-import { addTenant, createBooking, getBooking, updateBooking, bookingPayments, payBooking, addCharge, ledger, depositState, METHODS, NOT_RENT_MANAGER, overview } from '../server/leasing.js';
+import { addTenant, createBooking, importBooking, getBooking, updateBooking, bookingPayments, payBooking, addCharge, ledger, depositState, METHODS, NOT_RENT_MANAGER, overview } from '../server/leasing.js';
 import { db } from './helpers/db.js';
 import { receiptPdf } from '../server/leasingReceipt.js';
 import { report as runReport } from '../server/leasingReports.js';
@@ -139,4 +139,38 @@ test('after a payment the Rent Manager mark cannot change', async () => {
   await payBooking(bk.id, { amount: 1000, method: 'cash', received_on: '2026-11-01' }, staff, '2026-11-02');
   await assert.rejects(updateBooking(bk.id, { from_rent_manager: true }, staff), /Payments are recorded/);
   await updateBooking(bk.id, { from_rent_manager: false }, staff); // same as now: fine
+});
+
+test('a Rent Roll import that ended before its billed_from can still be edited', async () => {
+  const { staff, base } = await setup();
+  const bk = await importBooking({ unit_id: base.unit_id, tenant_id: base.tenant_id, start_date: '2025-01-01', end_date: '2026-10-15', rent_amount: 900, rent_period: 'month', payment_frequency: 'monthly' }, staff.id, { batch: 'b1', billedFrom: '2026-11-01' });
+  await updateBooking(bk.id, { notes: 'x', billed_from: '2026-11-01' }, staff.id);
+  assert.equal((await getBooking(bk.id)).notes, 'x');
+});
+test('moving a hand-entered Rent Manager lease end before its billed_from is refused', async () => {
+  const { staff, base } = await setup();
+  const bk = await createBooking({ ...base, billed_from: '2026-11-01', from_rent_manager: true }, staff);
+  await assert.rejects(updateBooking(bk.id, { end_date: '2026-09-30', billed_from: '2026-11-01' }, staff), /inside the lease/);
+});
+test('billed_from cannot be before a mid-month start', async () => {
+  const { staff, base } = await setup();
+  const mid = { ...base, start_date: '2026-11-15', end_date: '2027-03-14', prorate: 'first' };
+  await assert.rejects(createBooking({ ...mid, billed_from: '2026-11-01' }, staff), /inside the lease/);
+  const ok = await createBooking({ ...mid, billed_from: '2026-12-01' }, staff);
+  await updateBooking(ok.id, { billed_from: '2026-12-01' }, staff);
+  assert.equal((await getBooking(ok.id)).billed_from, '2026-12-01');
+});
+test('billed_from may be the start date itself', async () => {
+  const { staff, base } = await setup();
+  await createBooking({ ...base, billed_from: '2025-03-01' }, staff);
+});
+test('ticking a draft as from Rent Manager does not make it follow on from an earlier stay', async () => {
+  const { staff, base } = await setup();
+  await createBooking({ ...base, end_date: '2026-10-31' }, staff);
+  const d = await createBooking({ ...base, start_date: '2026-12-01', end_date: '2027-10-31', status: 'draft' }, staff);
+  assert.equal((await getBooking(d.id)).renewed_from, null);
+  await updateBooking(d.id, { start_date: '2026-11-01', from_rent_manager: true, billed_from: '2026-11-01' }, staff);
+  const b = await getBooking(d.id);
+  assert.equal(b.import_batch, 'rent-manager-by-hand');
+  assert.equal(b.renewed_from, null);
 });

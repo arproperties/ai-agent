@@ -294,10 +294,10 @@ function bookingFields(body = {}, { partial = false } = {}) {
   return out;
 }
 
-/** A switch-over date lies in the lease's months: from the 1st of the start month to the end date. */
+/** A switch-over date lies in the lease: from its start date to its end date. */
 function mustBillInside(billedFrom, start, end) {
   const v = String(billedFrom ?? '').trim();
-  if (v && isDate(v) && (v < `${start.slice(0, 8)}01` || v > end)) throw bad('Bill in this app from must be inside the lease.');
+  if (v && isDate(v) && (v < start || v > end)) throw bad('Bill in this app from must be inside the lease.');
 }
 
 const DATES = [['lease_sign_date', 'Lease sign date'], ['move_in_date', 'Move-in date'], ['notice_date', 'Notice date'], ['expected_move_out', 'Expected move-out'], ['deposit_due', 'Deposit date']];
@@ -454,7 +454,11 @@ export async function updateBooking(id, body = {}, by, today = todayHere()) {
     const start = row.start_date || old.start_date;
     const end = row.end_date || old.end_date;
     if (end < start) throw bad('The end date is before the start date.');
-    if ('billed_from' in row) mustBillInside(row.billed_from, start, end);
+    // Only checked when it changes, or when the dates move on a lease entered by hand: a Rent Roll import may end before its date.
+    const datesMoved = (row.start_date && row.start_date !== old.start_date) || (row.end_date && row.end_date !== old.end_date);
+    if (('billed_from' in row && (row.billed_from || null) !== (old.billed_from || null)) || (datesMoved && old.import_batch === 'rent-manager-by-hand')) {
+      mustBillInside('billed_from' in row ? row.billed_from : old.billed_from, start, end);
+    }
     mustLeaveRent({ ...old, ...row });
     mustProrateMonthly({ ...old, ...row });
     // Taking a line off a confirmed lease (a charge, a rent line, the deposit) is a delete: only for those ticked Delete.
@@ -464,7 +468,7 @@ export async function updateBooking(id, body = {}, by, today = todayHere()) {
       if (gone && !(user && (await userActions(user)).includes('delete'))) throw bad(`Taking ${gone} off this lease needs the Delete permission.`, 403);
     }
     // Moved to the day after the same tenant's stay in the unit ends: it follows on from that stay now. A link it has is kept.
-    if (!old.renewed_from && !old.import_batch) {
+    if (!old.renewed_from && !old.import_batch && !isTrue(body.from_rent_manager)) {
       const follows = await followsOn(row.unit_id || old.unit_id, row.tenant_id || old.tenant_id, start, old.id);
       if (follows) row.renewed_from = follows;
     }

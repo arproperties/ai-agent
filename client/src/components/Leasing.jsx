@@ -365,7 +365,11 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   const draftRef = useRef(null); // draftId, read by a save that was waiting while the draft was made
   const [kick, setKick] = useState(0); // another round, for a change made while a save was on its way
   const autosaves = !start || start.status === 'draft';
+  // billed_from goes only when the Rent Manager group is in use or the lease already has one, so an ordinary lease never sends an empty one.
+  const usedRM = useRef(false);
+  if (lease.from_rent_manager || lease.billed_from || start?.billed_from) usedRM.current = true;
   const bodyNow = { ...lease, ...(tenantMode === 'existing' ? { tenant_id: tenantId } : { tenant }) };
+  if (!usedRM.current) delete bodyNow.billed_from;
   const sent = JSON.stringify(bodyNow);
   const latest = useRef();
   latest.current = { sent, bodyNow };

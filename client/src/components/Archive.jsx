@@ -21,7 +21,6 @@ export const ARCHIVE_BADGE = 'Archived · from Rent Manager — history only, no
 const NOT_IN_APP = '__typed__';
 const BATCH = 10; // files the server takes in one go
 const ENDED = { renewed: 'Renewed', moved_out: 'Moved out', evicted: 'Evicted', transferred: 'Transferred to another unit' };
-const METHODS = [['cash', 'Cash'], ['check', 'Check'], ['bank_transfer', 'Bank transfer'], ['card', 'Card'], ['other', 'Other']]; // replaced by the server's list on load
 const money = (n) => (n == null || n === '' ? '—' : aed(n));
 const payUrl = (p) => `/api/leasing/archive/payments/${p.id}/file`;
 const fileUrl = (f) => `/api/leasing/archive/files/${f.id}/file`;
@@ -215,8 +214,11 @@ const Head = ({ title, count, onAdd, adding }) => (
 );
 
 /** One archived lease: its terms, and its payments, work orders and files, each editable. `onChanged` runs after any change. */
-export function ArchiveDetail({ id, places, tenants, methods = METHODS, onChanged, onDeleted, onBack }) {
+export function ArchiveDetail({ id, places, tenants, methods: given, onChanged, onDeleted, onBack }) {
   const [a, setA] = useState(null);
+  const [loaded, setLoaded] = useState([]); // the server's payment methods, when the caller did not pass them
+  const methods = given || loaded;
+  useEffect(() => { if (!given) api.get('/leasing/archive/meta').then((m) => setLoaded(m.methods)).catch(() => {}); }, [!!given]);
   const [error, setError] = useState('');
   const [edit, setEdit] = useState(null); // 'lease', or { kind: 'pay' | 'wo' | 'files', row }
   const load = () => api.get(`/leasing/archive/${id}`).then((x) => { setA(x); setError(''); }).catch((e) => setError(e.message));
@@ -318,7 +320,7 @@ export default function Archive() {
   const [open, setOpen] = useState(null); // an id, or 'new'
   const [places, setPlaces] = useState({ buildings: [], units: [] });
   const [tenants, setTenants] = useState([]);
-  const [methods, setMethods] = useState(METHODS);
+  const [methods, setMethods] = useState([]);
   const [error, setError] = useState('');
   const load = () => api.get(`/leasing/archive?q=${encodeURIComponent(q)}${building ? `&building_id=${building}` : ''}${unit ? `&unit_id=${unit}` : ''}`).then(setRows).catch((e) => setError(e.message));
   useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [q, building, unit]);
