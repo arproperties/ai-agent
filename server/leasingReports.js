@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from './db.js';
-import { snapshot, bookingRef, dayNo, total, todayHere, isDate, bad, dueName, METHODS, AGING } from './leasing.js';
+import { snapshot, bookingRef, dayNo, total, todayHere, isDate, bad, dueName, METHODS, AGING, RENT_MANAGER } from './leasing.js';
 import { region, dayOf, cash } from './leasingRegion.js';
 import { usDate, usPhone } from './usFormat.js';
 
@@ -71,7 +71,7 @@ function collections(s, { from, to }) {
   const start = isDate(from || '') ? from : `${s.today.slice(0, 7)}-01`;
   const end = isDate(to || '') ? to : s.today;
   if (end < start) throw bad('The end date is before the start date.');
-  const got = s.pays.filter((p) => p.method !== 'rent_manager' && p.received_on >= start && p.received_on <= end).map((p) => ({
+  const got = s.pays.filter((p) => p.method !== RENT_MANAGER && p.received_on >= start && p.received_on <= end).map((p) => ({
     received_on: p.received_on, ...s.where(s.bookingOf.get(p.booking_id)), what: dueName(p), method: METHOD[p.method], reference: p.reference, amount: p.amount, tax: p.tax, recorded_by: p.added_by,
   }));
   // The tax in what came in, shown only where some booking is taxed.
@@ -160,7 +160,7 @@ async function daily(s, { day }) {
   const of = (b) => s.where(b);
   const cancelled = (await db.prepare("SELECT booking_id, detail, created_at FROM lease_events WHERE kind = 'cancelled' ORDER BY id").all())
     .filter((e) => s.bookingOf.has(e.booking_id) && dayOf(e.created_at) === on);
-  const paid = s.pays.filter((p) => p.method !== 'rent_manager' && p.received_on === on);
+  const paid = s.pays.filter((p) => p.method !== RENT_MANAGER && p.received_on === on);
   const due = s.dues.filter((p) => p.due === on);
   const made = s.bookings.filter((b) => dayOf(b.created_at) === on);
   const back = s.refunds.filter((r) => r.on === on);

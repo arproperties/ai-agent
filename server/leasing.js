@@ -671,6 +671,7 @@ export async function bookingHistory(bookingId) {
 
 const STEP = { monthly: 1, quarterly: 3, every_6_months: 6, yearly: 12 };
 export const METHODS = [['transfer', 'Bank transfer'], ['cash', 'Cash'], ['card', 'Card'], ['money_order', 'Money order'], ['online', 'Online card'], ['zego', 'Zego'], ['rent_manager', 'Paid in Rent Manager']];
+export const RENT_MANAGER = 'rent_manager';
 /** SQL (over lease_payments as p) that leaves out money received in Rent Manager before the switch-over: it counts on the lease, not in QuickBooks, Zego or reports. */
 export const NOT_RENT_MANAGER = "p.method <> 'rent_manager'";
 export const AGING = [['0–30 days', 0, 30], ['31–60 days', 31, 60], ['61–90 days', 61, 90], ['90+ days', 91, Infinity]];
@@ -1014,7 +1015,7 @@ export const receiptNo = (p) => `RC-${p.received_on.slice(0, 4)}-${String(p.id).
 export async function takePayment(installmentId, body = {}, by, today = todayHere(), file = null, { batch = null, whole = false } = {}) {
   const amount = Number(body.amount);
   if (!Number.isFinite(amount) || amount <= 0) throw bad('Enter the amount received.');
-  if (!METHODS.some(([k]) => k === body.method)) throw bad('Choose how it was paid: bank transfer, cash, card, money order, online card, Zego or Paid in Rent Manager.');
+  if (!METHODS.some(([k]) => k === body.method)) throw bad('Choose how it was paid: bank transfer, cash, card, money order, online card or Zego.');
   const received_on = String(body.received_on ?? '').trim() || today;
   if (!isDate(received_on)) throw bad('The date received is not a date.');
   if (received_on > today) throw bad('The date received cannot be in the future.');
@@ -1542,14 +1543,15 @@ export async function overview({ company_id, building_id, months } = {}, today =
 
   // Twelve months ending this month: the rent falling due in each and how much of it has come in,
   // then how full the buildings were, and what was owed, at each month's end.
+  const notRM = (x) => x.method !== RENT_MANAGER; // money received in Rent Manager is not counted as collected here
   const first = `${today.slice(0, 7)}-01`;
   const monthly = Array.from({ length: 12 }, (_, i) => {
     const month = addMonths(first, i - 11).slice(0, 7);
     const mine = dues.filter((p) => p.kind === 'rent' && p.due.startsWith(month));
-    return { month, due: total(mine), collected: total(mine, (p) => p.paid), inPeriod: i >= 12 - span };
+    return { month, due: total(mine), collected: total(mine.flatMap((p) => p.payments).filter(notRM)), inPeriod: i >= 12 - span };
   });
   const period = new Set(monthly.filter((m) => m.inPeriod).map((m) => m.month));
-  const received = dues.filter((p) => p.kind === 'rent' && period.has(p.due.slice(0, 7))).flatMap((p) => p.payments);
+  const received = dues.filter((p) => p.kind === 'rent' && period.has(p.due.slice(0, 7))).flatMap((p) => p.payments).filter(notRM);
   const ends = Array.from({ length: 12 }, (_, i) => (i === 11 ? today : iso(dayNo(addMonths(first, i - 10)) - 1)));
   const letAt = ends.map((d) => lettable.filter((u) => letOn(u, d)).length);
   const owedAt = (d) => total(dues.filter((p) => p.due < d), (p) => Math.max(0, p.amount - total(p.payments.filter((x) => x.received_on <= d))));
@@ -1571,7 +1573,7 @@ export async function overview({ company_id, building_id, months } = {}, today =
         return { label, amount: total(band, (p) => p.left), count: new Set(band.map((p) => p.booking_id)).size };
       }),
     },
-    methods: METHODS.map(([key, label]) => ({ key, label, amount: total(received.filter((p) => p.method === key)) })),
+    methods: METHODS.filter(([key]) => key !== RENT_MANAGER).map(([key, label]) => ({ key, label, amount: total(received.filter((p) => p.method === key)) })),
     dueSoon: dues.filter((p) => p.left > 0).map(({ payments, ...p }) => ({ ...p, rent: p.left, date: p.due, due_in: dayNo(p.due) - T }))
       .filter((p) => p.due_in >= 0 && p.due_in <= 6).sort((a, b) => a.due_in - b.due_in),
     ending: rows.filter((u) => u.days_left <= ENDING).sort((a, b) => a.days_left - b.days_left),

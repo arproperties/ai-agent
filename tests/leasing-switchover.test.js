@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, closeDb, makeUser } from './helpers/db.js';
 import { create, listUnits } from '../server/properties.js';
-import { addTenant, createBooking, getBooking, updateBooking, bookingPayments, payBooking, addCharge, ledger, depositState, METHODS, NOT_RENT_MANAGER } from '../server/leasing.js';
+import { addTenant, createBooking, getBooking, updateBooking, bookingPayments, payBooking, addCharge, ledger, depositState, METHODS, NOT_RENT_MANAGER, overview } from '../server/leasing.js';
 import { db } from './helpers/db.js';
 import { receiptPdf } from '../server/leasingReceipt.js';
 import { report as runReport } from '../server/leasingReports.js';
@@ -97,4 +97,14 @@ test('reports leave Rent Manager money out of what was received', async () => {
   assert.equal(c.total.amount, 100);
   const d = await runReport('daily', { day: '2026-10-29' }, '2026-10-30');
   assert.equal(d.rows.filter((r) => r.what === 'Payment received').length, 1);
+});
+test('the dashboard counts only money received here, not Rent Manager money', async () => {
+  const { staff, base } = await setup();
+  const bk = await createBooking({ ...base, start_date: '2026-10-01', end_date: '2027-09-30' }, staff);
+  await payBooking(bk.id, { amount: 300, method: 'rent_manager', received_on: '2026-10-02' }, staff, '2026-10-30');
+  await payBooking(bk.id, { amount: 400, method: 'cash', received_on: '2026-10-03', keep_credit: true }, staff, '2026-10-30');
+  const o = await overview({}, '2026-10-30');
+  assert.equal(o.methods.reduce((t, m) => t + m.amount, 0), 400);
+  assert.equal(o.methods.some((m) => m.key === 'rent_manager'), false);
+  assert.equal(o.collection.collected, 400);
 });
