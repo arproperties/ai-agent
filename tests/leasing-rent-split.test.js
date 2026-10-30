@@ -24,8 +24,8 @@ test('each month bills two rent lines, one per part, that add up to the rent', a
   const { bk } = await split();
   assert.equal(bk.rent_amount_2, 272);
   assert.deepEqual(await rents(bk.id), [
-    ['2026-09-15', 'Rent · Tenant', 500], ['2026-09-15', 'Rent · HUD/Agency', 272],
-    ['2026-10-15', 'Rent · Tenant', 500], ['2026-10-15', 'Rent · HUD/Agency', 272],
+    ['2026-09-15', 'Rent', 500], ['2026-09-15', 'Rent · HUD/Agency', 272],
+    ['2026-10-15', 'Rent', 500], ['2026-10-15', 'Rent · HUD/Agency', 272],
   ]);
 });
 

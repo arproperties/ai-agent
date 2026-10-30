@@ -247,7 +247,8 @@ const coversDay = (f, due) => (!f.from || due >= f.from) && (!f.until || due <= 
 /** A lease's rent and deposit as charge lines, ahead of its other charges, for the form. */
 function chargeLines(b) {
   const r = Number(b?.rent_amount), r2 = Number(b?.rent_amount_2) || 0;
-  const rent = b?.rent_lines?.length ? b.rent_lines.map(({ label, amount, from, until }) => ({ label, amount: String(amount), repeats: true, from: from || '', until: until || '' }))
+  // A line saved under an old name ("Rent – Tenant") opens under the name it is now ("Rent").
+  const rent = b?.rent_lines?.length ? b.rent_lines.map(({ label, amount, from, until }) => ({ label: fixedName(label) || label, amount: String(amount), repeats: true, from: from || '', until: until || '' }))
     : b?.rent_amount == null || b.rent_amount === '' ? [{ label: 'Rent', amount: '', repeats: true }]
       : r2 > 0 ? [{ label: 'Rent', amount: String(Math.round((r - r2) * 100) / 100), repeats: true }, { label: 'Rent – HUD/Agency', amount: String(r2), repeats: true }]
         : [{ label: 'Rent', amount: String(r), repeats: true }];

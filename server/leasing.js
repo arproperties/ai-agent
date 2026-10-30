@@ -1023,8 +1023,8 @@ export async function bookingPayments(bookingId, today = todayHere()) {
     const amount = Number(i.amount);
     const paid = total(payments);
     const status = paid >= amount ? 'paid' : i.due_date < today ? 'overdue' : paid > 0 ? 'partly_paid' : i.due_date === today ? 'due' : 'upcoming';
-    // Rent in two parts: the tenant's row is named for it too, beside "Rent · HUD/Agency".
-    const name = i.kind === 'rent' && !i.label && Number(b.rent_amount_2) > 0 ? 'Rent · Tenant' : dueName(i);
+    // Rent in two parts: the tenant's row is plain "Rent", beside "Rent · HUD/Agency", as on the lease form.
+    const name = dueName(i);
     return { ...i, name, amount, tax: Number(i.tax), paid, left: money(Math.max(0, amount - paid)), status, payments };
   });
 }

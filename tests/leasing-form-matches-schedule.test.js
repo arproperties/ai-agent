@@ -16,7 +16,7 @@ const client = new Function(...Object.keys(names), `${pick('const STEP =', '/** 
 
 // Bethany's lease: 30 Sep 2022 to 30 Sep 2023, Tenant 3 + HUD 828, a water charge and a deposit.
 const BASE = [
-  { label: 'Rent – Tenant', amount: '3', repeats: true },
+  { label: 'Rent', amount: '3', repeats: true },
   { label: 'Rent – HUD/Agency', amount: '828', repeats: true },
   { label: 'Water/Trash PKG', amount: '40', repeats: true },
   { label: 'Security deposit', amount: '150', on: '2022-09-28' },
@@ -27,9 +27,9 @@ const CASES = {
   'HUD changes on 1 March': {
     prorate: 'first',
     fees: [
-      { label: 'Rent – Tenant', amount: '3', repeats: true, until: '2023-02-28' },
+      { label: 'Rent', amount: '3', repeats: true, until: '2023-02-28' },
       { label: 'Rent – HUD/Agency', amount: '828', repeats: true, until: '2023-02-28' },
-      { label: 'Rent – Tenant', amount: '50', repeats: true, from: '2023-03-01' },
+      { label: 'Rent', amount: '50', repeats: true, from: '2023-03-01' },
       { label: 'Rent – HUD/Agency', amount: '781', repeats: true, from: '2023-03-01' },
       ...BASE.slice(2),
     ],

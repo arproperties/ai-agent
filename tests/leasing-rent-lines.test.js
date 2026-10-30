@@ -29,10 +29,10 @@ test('each month bills the rent lines it falls in, Tenant and HUD/Agency apart',
   const { bk } = await lease();
   assert.equal(bk.rent_lines.length, 4);
   assert.deepEqual(await rents(bk.id), [
-    ['2026-09-15', 'Rent · Tenant', 3], ['2026-09-15', 'Rent · HUD/Agency', 828],
-    ['2026-10-15', 'Rent · Tenant', 3], ['2026-10-15', 'Rent · HUD/Agency', 828],
-    ['2026-11-15', 'Rent · Tenant', 50], ['2026-11-15', 'Rent · HUD/Agency', 781],
-    ['2026-12-15', 'Rent · Tenant', 50], ['2026-12-15', 'Rent · HUD/Agency', 781],
+    ['2026-09-15', 'Rent', 3], ['2026-09-15', 'Rent · HUD/Agency', 828],
+    ['2026-10-15', 'Rent', 3], ['2026-10-15', 'Rent · HUD/Agency', 828],
+    ['2026-11-15', 'Rent', 50], ['2026-11-15', 'Rent · HUD/Agency', 781],
+    ['2026-12-15', 'Rent', 50], ['2026-12-15', 'Rent · HUD/Agency', 781],
   ]);
 });
 
@@ -43,7 +43,7 @@ test('a month only HUD pays is their line alone; a month no line covers bills no
   ]);
   assert.deepEqual(await rents(bk.id), [
     ['2026-09-15', 'Rent · HUD/Agency', 828],
-    ['2026-11-15', 'Rent · Tenant', 900], ['2026-12-15', 'Rent · Tenant', 900],
+    ['2026-11-15', 'Rent', 900], ['2026-12-15', 'Rent', 900],
   ]);
 });
 
@@ -78,7 +78,7 @@ test('paid ahead, then HUD changes a later month: a higher month owes the differ
   await updateBooking(bk.id, { rent_amount: 831, rent_amount_2: 828, rent_lines: change }, staff, '2026-10-01');
   const rows = (await bookingPayments(bk.id, '2026-10-01')).map((r) => [r.due_date, r.name, r.amount, r.paid]);
   // November: the tenant's part keeps the 3 paid and owes the other 47; HUD's 828 paid is 128 more than its 700 now.
-  assert.deepEqual(rows.filter(([d]) => d === '2026-11-15'), [['2026-11-15', 'Rent · Tenant', 50, 3], ['2026-11-15', 'Rent · HUD/Agency', 700, 700]]);
+  assert.deepEqual(rows.filter(([d]) => d === '2026-11-15'), [['2026-11-15', 'Rent', 50, 3], ['2026-11-15', 'Rent · HUD/Agency', 700, 700]]);
   const credit = rows.filter(([, n]) => n === 'Credit (paid ahead)');
   assert.equal(credit.reduce((t, r) => t + r[3], 0), 128, 'HUD paid 828 for November, now 700: 128 kept as credit');
   // A month already due cannot be changed, paid or not.
@@ -87,5 +87,5 @@ test('paid ahead, then HUD changes a later month: a higher month owes the differ
   // HUD's change pushed later after all: November back to 828 is higher again, so it owes it, and the credit stays as credit.
   await updateBooking(bk.id, { rent_amount: 831, rent_amount_2: 828, rent_lines: change.map((l) => (l.until ? { ...l, until: '2026-12-14' } : { ...l, from: '2026-12-15' })) }, staff, '2026-10-01');
   const nov = (await bookingPayments(bk.id, '2026-10-01')).filter((r) => r.due_date === '2026-11-15').map((r) => [r.name, r.amount, r.paid]);
-  assert.deepEqual(nov, [['Rent · Tenant', 3, 3], ['Rent · HUD/Agency', 828, 700]]);
+  assert.deepEqual(nov, [['Rent', 3, 3], ['Rent · HUD/Agency', 828, 700]]);
 });
