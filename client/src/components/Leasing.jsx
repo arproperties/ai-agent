@@ -323,6 +323,7 @@ function BookingForm({ start, preset, onDone, onCancel }) {
   // Whether this lease is billed on the 1st: every new one is. A lease made before that (prorate empty)
   // keeps rent on its move-in day, and the form does not offer to change it.
   const onTheFirst = !start?.id || !!start?.prorate;
+  const locked = start?.status === 'confirmed' && start?.shown_rent != null; // the rent amount on the lease, once entered
   const taxName = region().tax_name;
   const [units, setUnits] = useState(null);
   const [unitQ, setUnitQ] = useState(''); // what is typed in the search box over the units
@@ -608,8 +609,9 @@ function BookingForm({ start, preset, onDone, onCancel }) {
       {step === 2 && <Section title="Rent and charges">
         {/* The rent a month as the lease and the summary show it. Shown only: billing goes by the charge lines below. */}
         <label className="block max-w-xs">
-          <span className="mb-1 block text-xs text-txt/80">Rent amount ({currency()}) · shown on the lease and summary, not billed</span>
-          <input type="number" min="0" step="any" value={v.shown_rent} onChange={set('shown_rent')} placeholder="e.g. 831" className={FIELD} />
+          <span className="mb-1 block text-xs text-txt/80">Rent amount ({currency()}) · {locked ? 'locked, as on the lease' : 'shown on the lease and summary, not billed'}</span>
+          {/* Locked once a confirmed lease has one (server refuses a change too); its contract is not made again. */}
+          <input type="number" min="0" step="any" value={v.shown_rent} onChange={set('shown_rent')} placeholder="e.g. 831" disabled={locked} className={`${FIELD} disabled:opacity-60`} />
         </label>
         {/* Three lists only: the monthly charges (the rent among them), those due once (the deposit among them), and the prorated part month. */}
         {/* Other charges in two lists: monthly ones, each with its own start and end, then those due once. One list
@@ -760,10 +762,10 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             <div className="space-y-1.5 border-t border-stroke/60 pt-3">
               {/* The rent amount as typed for the lease; shown only. */}
               {Number(v.shown_rent) > 0 && <Row k="Rent amount" strong>{aed(Number(v.shown_rent))}</Row>}
-              <Row k={sum.second ? 'Rent · at move-in' : sum.head && v.prorate ? 'First month · paid at move-in' : sum.payments > 1 ? 'First rent payment' : 'Rent'}>{aed(sum.firstRent)}</Row>
+              {/* Rent due on the first day, part of "To collect"; left out when there is none (rent starting later). */}
+              {sum.firstRent > 0 && <Row k={sum.second ? 'Rent · at move-in' : sum.head && v.prorate ? 'First month · paid at move-in' : sum.payments > 1 ? 'First rent payment' : 'Rent'}>{aed(sum.firstRent)}</Row>}
               {sum.fees.filter((f) => Number(f.amount) > 0).map((f, i) => <Row key={i} k={f.label || 'Other charge'}>{aed(Number(f.amount))}</Row>)}
               {sum.firstTax > 0 && <Row k={`${taxName} ${Number(v.tax_percent)}%`}>{aed(sum.firstTax)}</Row>}
-              <Row k="Rent and charges" strong>{aed(sum.charges)}</Row>
               {v.discounts.filter((d) => Number(d.amount) > 0).map((d, i) => (
                 <Row key={i} k={`Discount${d.from && d.from > v.start_date ? ` from ${fmt(d.from)}` : ''}${d.until ? ` to ${fmt(d.until)}` : ''}`}>−{aed(Number(d.amount))} a month</Row>
               ))}

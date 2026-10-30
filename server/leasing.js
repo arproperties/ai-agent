@@ -468,6 +468,8 @@ export async function updateBooking(id, body = {}, by, today = todayHere()) {
     }
     mustLeaveRent({ ...old, ...row });
     mustProrateMonthly({ ...old, ...row });
+    // The rent amount shown on the lease is locked once a confirmed lease has one (Francis): an older lease may get it once.
+    if (old.status === 'confirmed' && old.shown_rent != null && 'shown_rent' in row && row.shown_rent !== old.shown_rent) throw bad('The rent amount on this lease is locked.', 409);
     // Taking a line off a confirmed lease (a charge, a rent line, the deposit) is a delete: only for those ticked Delete.
     if (old.status === 'confirmed' && by) {
       const gone = linesTakenOff(old, row);
@@ -1666,7 +1668,13 @@ const withContract = async (made, by) => { await contract(made.id, by); return g
 const keepsContract = async (now, by) => { await contract(now.id, by, { onlyIfKept: true }); return now; };
 
 leasingRoutes.post('/bookings', bookingFiles, wrap(async (req, res) => res.json(await withContract(await createBookingWithDocs(asDraft(sentBooking(req)), req.files, req.user.id), req.user.id))));
-leasingRoutes.put('/bookings/:id', wrap(async (req, res) => res.json(await keepsContract(await updateBooking(req.params.id, req.body, req.user.id), req.user.id))));
+leasingRoutes.put('/bookings/:id', wrap(async (req, res) => {
+  const before = await getBooking(req.params.id);
+  const now = await updateBooking(req.params.id, req.body, req.user.id);
+  // A confirmed lease's contract never changes, except once: when the rent amount is first entered on an older lease.
+  if (before.status === 'confirmed' && before.shown_rent == null && now.shown_rent != null) { await contract(now.id, req.user.id); return res.json(now); }
+  res.json(await keepsContract(now, req.user.id));
+}));
 leasingRoutes.post('/bookings/:id/contract', wrap(async (req, res) => {
   const { fileContract } = await import('./leaseContract.js');
   await fileContract(req.params.id, req.user.id);

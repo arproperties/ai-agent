@@ -29,8 +29,8 @@ test('the contract is typed in from the lease: the parties, the place, the rent,
   assert.ok(doc.getPageCount() >= 3, 'the details page, the terms and the bed bug addendum');
 });
 
-test('a lease made from the form gets its contract, kept as a generated document that a change makes again; it does not count as signed', async () => {
-  const bk = await lease({ status: 'confirmed' });
+test('a lease made from the form gets its contract, kept as a generated document; a draft\'s follows its changes, a confirmed one\'s never changes; it does not count as signed', async () => {
+  const bk = await lease();
   await keepContract(bk.id, null);
   let docs = await bookingDocs(bk.id);
   assert.deepEqual(docs.map((d) => [d.title, d.category, d.generated, d.has_file]), [['Lease Contract', 'lease', true, true]]);
@@ -41,7 +41,13 @@ test('a lease made from the form gets its contract, kept as a generated document
   await keepContract(bk.id, null, { onlyIfKept: true });
   docs = await bookingDocs(bk.id);
   assert.equal(docs.length, 1, 'made again over the same document, not a second one');
-  assert.notDeepEqual(readFileSync(path), first);
+  const drafted = readFileSync(path);
+  assert.ok(!drafted.equals(first), 'a draft\'s contract follows the form');
+
+  await db.prepare("UPDATE lease_bookings SET status = 'confirmed' WHERE id = ?").run(bk.id); // an edit cannot confirm; this stands in for Confirm
+  await updateBooking(bk.id, { security_deposit: 400 });
+  await keepContract(bk.id, null, { onlyIfKept: true });
+  assert.ok(readFileSync(path).equals(drafted), 'a confirmed lease\'s contract is never made again by a change');
 
   assert.equal((await overview({}, '2026-10-20')).missingContracts, 1, 'the generated copy is unsigned: the signed one is still asked for');
   await addBookingDoc(bk.id, { title: 'Signed contract' });
@@ -58,8 +64,12 @@ test('the rent amount typed for the lease goes to its contract and is not billed
   assert.equal((await renderContract(p)).bytes.subarray(0, 5).toString(), '%PDF-');
   const rents = await db.prepare("SELECT DISTINCT amount FROM lease_installments WHERE booking_id = ? AND kind = 'rent' AND label IS NULL").all(bk.id);
   assert.ok(rents.every((r) => Number(r.amount) !== 831), 'the rent billed is still the lease rent, not the amount shown');
-  await updateBooking(bk.id, { shown_rent: '' });
-  assert.equal((await contractRow(bk.id)).shown_rent, null, 'emptied, the contract shows the rent as billed again');
+  await assert.rejects(updateBooking(bk.id, { shown_rent: 900 }), /locked/, 'locked once a confirmed lease has one');
+  await assert.rejects(updateBooking(bk.id, { shown_rent: '' }), /locked/);
+  await updateBooking(bk.id, { shown_rent: 831, security_deposit: 120 }); // the form sends it unchanged with every save
+  const older = await lease({ status: 'confirmed' });
+  await updateBooking(older.id, { shown_rent: 700 });
+  assert.equal((await contractRow(older.id)).shown_rent, 700, 'an older confirmed lease can get it once');
 });
 
 test('a lease with no contract kept is not given one by a change', async () => {

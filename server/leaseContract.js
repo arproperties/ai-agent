@@ -537,10 +537,11 @@ export async function fileContract(bookingId, by) {
   return id;
 }
 
-/** After a lease is made or changed: its contract made (again). A contract that cannot be made never stops the lease being saved. */
+/** After a lease is made or changed: its contract made (again). A contract that cannot be made never stops the lease being saved.
+    Once the lease is confirmed its contract is never made again by a change (Francis): only a draft's follows the form. */
 export async function keepContract(bookingId, by, { onlyIfKept = false } = {}) {
   try {
-    if (onlyIfKept && !(await db.prepare('SELECT 1 FROM lease_documents WHERE booking_id = ? AND generated').get(Number(bookingId)))) return;
+    if (onlyIfKept && !(await db.prepare("SELECT 1 FROM lease_documents d JOIN lease_bookings b ON b.id = d.booking_id WHERE d.booking_id = ? AND d.generated AND b.status = 'draft'").get(Number(bookingId)))) return;
     await fileContract(bookingId, by);
   } catch (e) {
     console.error(`Lease contract for lease ${bookingId} not made:`, e.message);
