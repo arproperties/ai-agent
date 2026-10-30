@@ -287,6 +287,9 @@ const Pick = ({ value, onPick, options }) => (
   </span>
 );
 
+/** The 1st of next month (this computer's date), as YYYY-MM-DD. */
+const firstOfNextMonth = () => { const n = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`; };
+
 /** New booking, or editing one: a whole page, like registering a company. */
 function BookingForm({ start, preset, onDone, onCancel }) {
   const init = start || preset || {}; // preset: a new booking begun from the calendar, or from a prospect (lib/prospects.js leasePreset)
@@ -309,6 +312,8 @@ function BookingForm({ start, preset, onDone, onCancel }) {
     part_month_amount: start?.part_month_amount ?? '',
     // Rent Manager's General tab: the lease start is start_date; these sit beside it.
     lease_sign_date: start?.lease_sign_date || '', move_in_date: start?.move_in_date || '', notice_date: start?.notice_date || '', expected_move_out: start?.expected_move_out || '',
+    // A lease moved over from Rent Manager: the 1st this app takes over billing (server/leasing.js). The tick is for new leases only.
+    billed_from: start?.billed_from || '', ...(!start ? { from_rent_manager: !!preset?.from_rent_manager } : {}),
     leasing_agent: start?.leasing_agent || '', ...Object.fromEntries(TICKS.map(([k]) => [k, !!start?.[k]])),
   });
   // Whether this lease is billed on the 1st: every new one is. A lease made before that (prorate empty)
@@ -690,6 +695,21 @@ function BookingForm({ start, preset, onDone, onCancel }) {
             ))}
           </div>
         </Group>
+        {(!start || start.billed_from) && <Group title="Rent Manager">
+          {!start && (
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" checked={!!v.from_rent_manager} className="mt-0.5 size-4 shrink-0 accent-p1"
+                onChange={(e) => setV({ ...v, from_rent_manager: e.target.checked, billed_from: e.target.checked ? v.billed_from || firstOfNextMonth() : '' })} />
+              <span>Already living here — moved over from Rent Manager</span>
+            </label>
+          )}
+          {(v.from_rent_manager || start?.billed_from) && (
+            <div className="mt-3">
+              <Label text="Bill in this app from"><DateField value={v.billed_from} onChange={set('billed_from')} className={FIELD} /></Label>
+              <p className="mt-1 text-xs text-mute">The 1st of the month this app takes over. Rent before it was billed in Rent Manager.</p>
+            </div>
+          )}
+        </Group>}
         <Group title="Energy account" hint="electricity and water for this stay">
           <Pick value={v.tenant_energy_account ? 'tenant' : 'company'} onPick={(k) => setV({ ...v, tenant_energy_account: k === 'tenant' })}
             options={[['company', 'On the company’s account'], ['tenant', 'Tenant’s own account']]} />
@@ -927,6 +947,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
         {[['Moved in', b.move_in_date && b.move_in_date !== b.start_date && fmt(b.move_in_date)], ['Leasing agent', b.leasing_agent],
           ['Notice given', b.notice_date && `${fmt(b.notice_date)}${b.expected_move_out ? ` · out ${fmt(b.expected_move_out)}` : ''}`],
           ['Expected move-out', !b.notice_date && b.expected_move_out && fmt(b.expected_move_out)],
+          ['Billed here from', b.billed_from && fmt(b.billed_from)],
           ['Deposit charged', b.deposit_due && b.deposit_due !== b.start_date && fmt(b.deposit_due)],
           ['Payments', TICKS.filter(([k]) => b[k]).map(([, name]) => name).join(' · ')]].filter(([, x]) => x).map(([k, x]) => (
           <div key={k} className="flex justify-between gap-4 py-2">
