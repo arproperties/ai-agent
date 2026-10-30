@@ -495,6 +495,19 @@ export async function updateBooking(id, body = {}, by, today = todayHere()) {
       const usDate = (s) => `${s.slice(5, 7)}/${s.slice(8, 10)}/${s.slice(0, 4)}`;
       if (hit) throw bad(`The rent due ${usDate(hit.due)} is already paid, so a discount cannot change it. Start the discount after it.`, 409);
     }
+    // Ticked "from Rent Manager" after the draft was made: allowed until money is recorded. A Rent Roll import's batch is never touched.
+    let rmSwitch = null;
+    if ('from_rent_manager' in body) {
+      const want = isTrue(body.from_rent_manager);
+      const hand = old.import_batch === 'rent-manager-by-hand';
+      if (want !== hand && (want ? !old.import_batch : hand)) {
+        if (await db.prepare('SELECT 1 FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id WHERE i.booking_id = ? LIMIT 1').get(old.id)) {
+          throw bad('Payments are recorded on this lease, so it can no longer be switched to or from Rent Manager. Cancel it and make a new lease instead.', 409);
+        }
+        row.import_batch = want ? 'rent-manager-by-hand' : null;
+        rmSwitch = want ? 'marked as entered from Rent Manager' : 'no longer marked as entered from Rent Manager';
+      }
+    }
     const cols = Object.keys(row);
     if (cols.length) await db.prepare(`UPDATE lease_bookings SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => row[c]), old.id);
     const now = await getBooking(id);
@@ -507,7 +520,9 @@ export async function updateBooking(id, body = {}, by, today = todayHere()) {
     if ('fees' in row) await learnPrices(now.fees, now.building_id);
     const same = (c) => (c === 'rent_lines' ? row[c] === (old[c] ? JSON.stringify(old[c]) : null) : c === 'fees' || c === 'discounts' ? row[c] === JSON.stringify(old[c]) : String(row[c] ?? '') === String(old[c] ?? '') || (row[c] != null && Number(row[c]) === Number(old[c])));
     const changed = cols.filter((c) => c !== 'renewed_from' && !same(c)).map((c) => c.replace(/_id$/, '').replace(/_/g, ' '));
-    if (changed.length) await logEvent(old.id, 'changed', changed.join(', '), by);
+    const shown = changed.filter((c) => c !== 'import batch');
+    if (shown.length) await logEvent(old.id, 'changed', shown.join(', '), by);
+    if (rmSwitch) await logEvent(old.id, 'changed', rmSwitch, by);
     if (row.renewed_from) await logEvent(old.id, 'changed', await logFollowOn(row.renewed_from, now, by), by);
     return now;
   });

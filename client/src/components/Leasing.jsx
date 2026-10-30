@@ -288,7 +288,7 @@ const Pick = ({ value, onPick, options }) => (
 );
 
 /** The 1st of next month (this computer's date), as YYYY-MM-DD. */
-const firstOfNextMonth = () => { const n = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`; };
+const firstOfNextMonth = () => { const t = new Date(), n = new Date(t.getFullYear(), t.getMonth() + 1, 1); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`; };
 
 /** New booking, or editing one: a whole page, like registering a company. */
 function BookingForm({ start, preset, onDone, onCancel }) {

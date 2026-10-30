@@ -108,3 +108,35 @@ test('the dashboard counts only money received here, not Rent Manager money', as
   assert.equal(o.methods.some((m) => m.key === 'rent_manager'), false);
   assert.equal(o.collection.collected, 400);
 });
+
+test('a draft ticked from Rent Manager later becomes one, and unticking undoes it', async () => {
+  const { staff, base } = await setup();
+  const bk = await createBooking({ ...base, status: 'draft' }, staff);
+  assert.equal((await getBooking(bk.id)).import_batch, null);
+  await updateBooking(bk.id, { from_rent_manager: true, billed_from: '2026-11-01' }, staff);
+  let b = await getBooking(bk.id);
+  assert.equal(b.import_batch, 'rent-manager-by-hand');
+  assert.equal(b.billed_from, '2026-11-01');
+  await updateBooking(bk.id, { from_rent_manager: true }, staff); // same value: no-op
+  await updateBooking(bk.id, { from_rent_manager: false, billed_from: '' }, staff);
+  b = await getBooking(bk.id);
+  assert.equal(b.import_batch, null);
+  await updateBooking(bk.id, { from_rent_manager: true, billed_from: '2026-11-01' }, staff);
+  assert.equal((await getBooking(bk.id)).moved_in, true);
+});
+test('from_rent_manager never changes a Rent Roll import batch', async () => {
+  const { staff, base } = await setup();
+  const bk = await createBooking({ ...base }, staff);
+  await db.prepare("UPDATE lease_bookings SET import_batch = 'rent-roll-1' WHERE id = ?").run(bk.id);
+  await updateBooking(bk.id, { from_rent_manager: true }, staff);
+  assert.equal((await getBooking(bk.id)).import_batch, 'rent-roll-1');
+  await updateBooking(bk.id, { from_rent_manager: false }, staff);
+  assert.equal((await getBooking(bk.id)).import_batch, 'rent-roll-1');
+});
+test('after a payment the Rent Manager mark cannot change', async () => {
+  const { staff, base } = await setup();
+  const bk = await createBooking(base, staff);
+  await payBooking(bk.id, { amount: 1000, method: 'cash', received_on: '2026-11-01' }, staff, '2026-11-02');
+  await assert.rejects(updateBooking(bk.id, { from_rent_manager: true }, staff), /Payments are recorded/);
+  await updateBooking(bk.id, { from_rent_manager: false }, staff); // same as now: fine
+});
