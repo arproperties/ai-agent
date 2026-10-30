@@ -10,6 +10,7 @@ import { leasingRoutes } from '../server/leasing.js';
 import { historyRoutes } from '../server/leasingHistory.js';
 import { inspectionRoutes } from '../server/inspections.js';
 import { workOrderRoutes } from '../server/workOrders.js';
+import { archiveRoutes } from '../server/leaseArchive.js';
 import { propertyRoutes } from '../server/properties.js';
 import { planRoutes } from '../server/floorPlans.js';
 import { renewalRoutes } from '../server/renewals.js';
@@ -108,12 +109,13 @@ test('a POST that changes something already there is an edit, and a read by Rile
 // Every router behind a covered path, mounted where index.js mounts it.
 const MOUNTS = [['/properties/renewals', renewalRoutes], ['/properties', planRoutes], ['/properties', propertyRoutes],
   ['/leasing/alerts', alertRoutes], ['/leasing/region', regionRoutes], ['/leasing', inspectionRoutes], ['/leasing', historyRoutes],
-  ['/leasing', workOrderRoutes], ['/leasing/tenants/import', tenantImportRoutes], ['/leasing/bookings/import', leaseImportRoutes],
+  ['/leasing', workOrderRoutes], ['/leasing', archiveRoutes], ['/leasing/tenants/import', tenantImportRoutes], ['/leasing/bookings/import', leaseImportRoutes],
   ['/leasing', leasingRoutes], ['/accounts', expenseRoutes], ['/recurring-payments', recurringPaymentRoutes], ['/inventory', inventoryRoutes]];
 // The POSTs that make something new. Any other POST must be in OVERRIDES (server/actions.js).
 const CREATES = ['/leasing/tenants', '/leasing/services', '/leasing/sources', '/leasing/bookings', '/leasing/bookings/1/docs', '/leasing/bookings/1/renew',
   '/leasing/bookings/1/payments', '/leasing/bookings/1/charges', '/leasing/installments/1/payments', '/leasing/tenants/1/log', '/leasing/log/1/files',
   '/leasing/units/1/inspections', '/leasing/inspections/1/photos', '/leasing/work-orders', '/leasing/work-orders/1/notes', '/leasing/work-orders/1/files',
+  '/leasing/archive', '/leasing/archive/1/payments', '/leasing/archive/1/work-orders', '/leasing/archive/1/files',
   '/properties/companies/1/docs', '/properties/documents', '/properties/units/1/photos', '/properties/companies', '/properties/companies/1/buildings',
   '/properties/buildings/1/units', '/properties/renewals', '/properties/renewals/1/suppliers', '/properties/renewals/1/requests', '/properties/renewals/1/quotes',
   '/accounts/expenses', '/accounts/repeats', '/recurring-payments/entries', '/recurring-payments/entries/1/dues', '/recurring-payments/buildings',

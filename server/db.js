@@ -1705,6 +1705,66 @@ await db.exec(`
     created_at  BIGINT DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_lease_work_order_files ON lease_work_order_files(work_order_id);
+
+  -- The Rent Manager archive: old leases kept as history only, in tables of their own that no
+  -- live query reads, so they can never reach a balance, a schedule or a report (server/leaseArchive.js).
+  CREATE TABLE IF NOT EXISTS lease_archive (
+    id SERIAL PRIMARY KEY,
+    unit_id INTEGER NOT NULL REFERENCES prop_units(id) ON DELETE RESTRICT,
+    tenant_id INTEGER REFERENCES lease_tenants(id) ON DELETE SET NULL,
+    tenant_name TEXT NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    rent_amount NUMERIC,
+    security_deposit NUMERIC,
+    ended_how TEXT NOT NULL,
+    unpaid_at_end NUMERIC,
+    notes TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_archive_unit ON lease_archive(unit_id, start_date);
+  CREATE INDEX IF NOT EXISTS idx_lease_archive_tenant ON lease_archive(tenant_id);
+  CREATE TABLE IF NOT EXISTS lease_archive_payments (
+    id SERIAL PRIMARY KEY,
+    archive_id INTEGER NOT NULL REFERENCES lease_archive(id) ON DELETE CASCADE,
+    received_on DATE NOT NULL,
+    amount NUMERIC NOT NULL,
+    method TEXT NOT NULL,
+    reference TEXT,
+    notes TEXT,
+    file_path TEXT,
+    file_name TEXT,
+    file_mime TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_archive_payments ON lease_archive_payments(archive_id);
+  CREATE TABLE IF NOT EXISTS lease_archive_work_orders (
+    id SERIAL PRIMARY KEY,
+    archive_id INTEGER NOT NULL REFERENCES lease_archive(id) ON DELETE CASCADE,
+    reported_on DATE NOT NULL,
+    detail TEXT NOT NULL,
+    resolution TEXT,
+    done_on DATE,
+    cost NUMERIC,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_archive_work_orders ON lease_archive_work_orders(archive_id);
+  CREATE TABLE IF NOT EXISTS lease_archive_files (
+    id SERIAL PRIMARY KEY,
+    archive_id INTEGER NOT NULL REFERENCES lease_archive(id) ON DELETE CASCADE,
+    work_order_id INTEGER REFERENCES lease_archive_work_orders(id) ON DELETE CASCADE,
+    title TEXT,
+    category TEXT,
+    file_path TEXT NOT NULL,
+    file_name TEXT,
+    file_mime TEXT,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lease_archive_files ON lease_archive_files(archive_id);
 `);
 
 // Checklists: the points of one job, ticked off each time it is done - see server/checklists.js.

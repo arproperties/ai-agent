@@ -33,6 +33,7 @@ import { leaseImportRoutes } from './leaseImport.js';
 import { historyRoutes } from './leasingHistory.js';
 import { inspectionRoutes } from './inspections.js';
 import { workOrderRoutes, moveMaintenanceNotes } from './workOrders.js';
+import { archiveRoutes } from './leaseArchive.js';
 import { prospectRoutes } from './prospects.js';
 import { reportRoutes } from './leasingReports.js';
 import { alertRoutes, startLeasingAlerts } from './leasingAlerts.js';
@@ -109,6 +110,7 @@ app.use('/api/leasing/payments', receiptRoutes); // the receipt PDF for one paym
 app.use('/api/leasing', inspectionRoutes); // a unit's condition over time: make-ready, move-in and move-out inspections
 app.use('/api/leasing', historyRoutes); // a tenant's history: late rent, complaints, maintenance
 app.use('/api/leasing', workOrderRoutes); // repairs to a unit, linked to its lease and tenant, each with its history
+app.use('/api/leasing', archiveRoutes); // old Rent Manager leases kept as history, apart from live money
 app.use('/api/leasing', prospectRoutes); // people interested in a unit, before they are tenants
 app.use('/api/leasing/tenants/import', tenantImportRoutes); // the tenant list from Rent Manager, read by Claude and previewed before saving
 app.use('/api/leasing/bookings/import', leaseImportRoutes); // the leases from Rent Manager's Rent Roll, the same way

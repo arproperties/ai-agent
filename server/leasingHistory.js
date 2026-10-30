@@ -6,6 +6,7 @@ import { DATA_DIR } from './config.js';
 import { saveFile, sendDoc } from './properties.js';
 import { bad, isDate, bookingRef, dayNo, money, todayHere, applyLateFees } from './leasing.js';
 import { listWorkOrders, LIVE } from './workOrders.js';
+import { listArchive } from './leaseArchive.js';
 
 // A tenant's history: what kind of tenant they have been. Three things in one list, newest
 // first: rent that came in late, complaints made about them, and maintenance done for them.
@@ -191,6 +192,7 @@ export async function tenantHistory(tenantId, today = todayHere()) {
   return {
     tenant,
     current: await unitToday(tenant.id, today),
+    archive: await listArchive({ tenant_id: tenant.id }), // old Rent Manager leases, history only
     summary: {
       late: late.length, late_unpaid: late.filter((l) => !l.paid_on).length,
       late_days: late.length ? Math.round(late.reduce((t, l) => t + l.days_late, 0) / late.length) : 0, // on average
