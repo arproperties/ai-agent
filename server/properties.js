@@ -162,7 +162,7 @@ export const listUnits = (buildingId, today = todayHere()) => db.prepare(`
     coalesce((SELECT (i.kind = 'move_out' AND i.complete) OR (i.kind = 'make_ready' AND NOT i.complete) FROM prop_inspections i WHERE i.unit_id = u.id ORDER BY i.inspected_on DESC, i.id DESC LIMIT 1), false) AS needs_make_ready
   FROM prop_units u
   LEFT JOIN LATERAL (SELECT t.full_name AS tenant, to_char(b.end_date, 'YYYY-MM-DD') AS end_date, b.tenant_energy_account,
-      b.renewed_from IS NULL AND NOT EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind IN ('move_in', 'move_out') AND i.complete) AS move_in_due FROM lease_bookings b
+      b.renewed_from IS NULL AND b.import_batch IS NULL AND NOT EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind IN ('move_in', 'move_out') AND i.complete) AS move_in_due FROM lease_bookings b
     JOIN lease_tenants t ON t.id = b.tenant_id
     WHERE b.unit_id = u.id AND b.status = 'confirmed' AND (?::date BETWEEN b.start_date AND b.end_date OR (b.end_date < ?::date AND ${HELD}))
     ORDER BY b.start_date DESC LIMIT 1) cur ON true

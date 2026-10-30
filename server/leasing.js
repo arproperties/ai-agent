@@ -178,6 +178,7 @@ function bookingFields(body = {}, { partial = false } = {}) {
     out[f] = v;
   }
   if (!partial && (!out.start_date || !out.end_date)) throw bad('Choose the start and end dates.');
+  if (!partial) mustBillInside(body.billed_from, out.start_date, out.end_date);
   if (out.start_date && out.end_date && out.end_date < out.start_date) throw bad('The end date is before the start date.');
   for (const f of ['rent_amount', 'security_deposit']) {
     if (!(f in body)) continue;
@@ -282,9 +283,21 @@ function bookingFields(body = {}, { partial = false } = {}) {
     if (v && !isDate(v)) throw bad(`${name} is not a date.`);
     out[f] = v || null;
   }
+  // Where this app starts billing a lease Rent Manager already billed: a 1st, inside the lease. Empty: from its start.
+  if ('billed_from' in body) {
+    const v = String(body.billed_from ?? '').trim();
+    if (v && (!isDate(v) || !v.endsWith('-01'))) throw bad('Bill in this app from must be the 1st of a month.');
+    out.billed_from = v || null;
+  }
   if ('leasing_agent' in body) out.leasing_agent = text(body.leasing_agent, 80);
   for (const f of TICKS) if (f in body) out[f] = isTrue(body[f]);
   return out;
+}
+
+/** A switch-over date lies in the lease's months: from the 1st of the start month to the end date. */
+function mustBillInside(billedFrom, start, end) {
+  const v = String(billedFrom ?? '').trim();
+  if (v && isDate(v) && (v < `${start.slice(0, 8)}01` || v > end)) throw bad('Bill in this app from must be inside the lease.');
 }
 
 const DATES = [['lease_sign_date', 'Lease sign date'], ['move_in_date', 'Move-in date'], ['notice_date', 'Notice date'], ['expected_move_out', 'Expected move-out'], ['deposit_due', 'Deposit date']];
@@ -390,6 +403,8 @@ async function makeBooking(body = {}, by, extra = {}, made_as = null) {
   mustLeaveRent(row);
   mustProrateMonthly(row);
   if (!body.unit_id) throw bad('Choose a unit.');
+  // A lease Rent Manager already had: the tenant lives there, so no move-in and no follow-on link, as for an import.
+  if (isTrue(body.from_rent_manager)) { extra = { ...extra, import_batch: 'rent-manager-by-hand' }; made_as ||= 'Entered from Rent Manager: tenant already living there, no move-in inspection'; }
   const confirm = body.status === 'confirmed';
   const prospect = body.prospect_id ? await freeProspect(body.prospect_id) : null;
   const tenantId = body.tenant_id ? (await getTenant(body.tenant_id)).id : (await addTenant(body.tenant || {}, by)).id;
@@ -439,6 +454,7 @@ export async function updateBooking(id, body = {}, by, today = todayHere()) {
     const start = row.start_date || old.start_date;
     const end = row.end_date || old.end_date;
     if (end < start) throw bad('The end date is before the start date.');
+    if ('billed_from' in row) mustBillInside(row.billed_from, start, end);
     mustLeaveRent({ ...old, ...row });
     mustProrateMonthly({ ...old, ...row });
     // Taking a line off a confirmed lease (a charge, a rent line, the deposit) is a delete: only for those ticked Delete.
@@ -454,7 +470,7 @@ export async function updateBooking(id, body = {}, by, today = todayHere()) {
     }
     if (old.status === 'confirmed') await mustBeFree(row.unit_id || old.unit_id, start, end, old.id, row.renewed_from);
     // The schedule is rebuilt around the rows already paid, which only holds if they still fit it.
-    const fixed = ['start_date', 'rent_period', 'payment_frequency', 'discount_type', 'prorate'].some((f) => f in row && row[f] !== old[f])
+    const fixed = ['start_date', 'rent_period', 'payment_frequency', 'discount_type', 'prorate', 'billed_from'].some((f) => f in row && row[f] !== old[f])
       || ['rent_amount', 'rent_amount_2', 'discount_value', 'tax_percent', 'part_month_amount'].some((f) => f in row && row[f] !== num(old[f]));
     if (fixed && await db.prepare('SELECT 1 FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id WHERE i.booking_id = ? LIMIT 1').get(old.id)) {
       throw bad('Payments are recorded on this lease, so its start date, rent (and its Tenant / HUD split), discount, tax and payment frequency cannot change (nor how its first month is charged). Cancel it and make a new lease instead.', 409);
