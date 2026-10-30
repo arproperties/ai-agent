@@ -452,7 +452,7 @@ export default function PropertiesPage({ me, onBack }) {
     if (!buildingId || oldLeases.building === buildingId) return;
     api.get(`/leasing/archive?building_id=${buildingId}`).then((rows) => {
       const byUnit = {};
-      (Array.isArray(rows) ? rows : rows?.rows || []).forEach((r) => { (byUnit[r.unit_id] ||= []).push(r); });
+      rows.forEach((r) => { (byUnit[r.unit_id] ||= []).push(r); });
       setOldLeases({ building: buildingId, byUnit });
     }).catch(() => setOldLeases({ building: buildingId, byUnit: {} }));
   }, [buildingId]);
@@ -465,6 +465,18 @@ export default function PropertiesPage({ me, onBack }) {
   const title = at.level === 'companies' ? 'Properties' : data?.name || '…';
   const edit = (path, kind) => async (r, v, files) => { await api.put(`/properties/${path}/${r.id}`, v); await sendPhotos(kind, r.id, files); load(); };
   const del = (path) => async (r) => { await api.del(`/properties/${path}/${r.id}`); load(); };
+
+  const oldSheet = oldFor && (
+    <Sheet title={`Old leases (Rent Manager) · Unit ${oldFor.unit_no}`} onClose={() => setOldFor(null)}>
+      <ul className="divide-y divide-stroke/60">
+        {(oldLeases.byUnit[oldFor.id] || []).map((r) => (
+          <li key={r.id}><button onClick={() => setOldOpen(r.id)} className="w-full py-2 text-left text-sm hover:text-p1">
+            <span className="block">{r.tenant || '—'}</span><span className="block text-xs text-mute">{archiveLine(r)}</span>
+          </button></li>
+        ))}
+      </ul>
+    </Sheet>
+  );
 
   let body;
   if (error) body = <p className="text-sm text-bad">{error}</p>;
@@ -541,18 +553,6 @@ export default function PropertiesPage({ me, onBack }) {
       {oldSheet}
       {oldOpen && <ArchiveSheet id={oldOpen} onClose={() => setOldOpen(null)} />}
     </>
-  );
-
-  const oldSheet = oldFor && (
-    <Sheet title={`Old leases (Rent Manager) · Unit ${oldFor.unit_no}`} onClose={() => setOldFor(null)}>
-      <ul className="divide-y divide-stroke/60">
-        {(oldLeases.byUnit[oldFor.id] || []).map((r) => (
-          <li key={r.id}><button onClick={() => setOldOpen(r.id)} className="w-full py-2 text-left text-sm hover:text-p1">
-            <span className="block">{r.tenant || '—'}</span><span className="block text-xs text-mute">{archiveLine(r)}</span>
-          </button></li>
-        ))}
-      </ul>
-    </Sheet>
   );
 
   // A unit's inspections take the whole page; back is the building, read again for its Make ready mark.
