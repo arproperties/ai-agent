@@ -428,7 +428,7 @@ function linesTakenOff(old, row) {
   return null;
 }
 
-export async function updateBooking(id, body = {}, by) {
+export async function updateBooking(id, body = {}, by, today = todayHere()) {
   return tx(async () => {
     const old = await getBooking(id);
     if (old.status === 'cancelled') throw bad('A cancelled lease cannot be changed.', 409);
@@ -459,10 +459,11 @@ export async function updateBooking(id, body = {}, by) {
     if (fixed && await db.prepare('SELECT 1 FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id WHERE i.booking_id = ? LIMIT 1').get(old.id)) {
       throw bad('Payments are recorded on this lease, so its start date, rent (and its Tenant / HUD split), discount, tax and payment frequency cannot change (nor how its first month is charged). Cancel it and make a new lease instead.', 409);
     }
-    // A rent line changed (HUD's part from a later date): rent still to be paid may change, never a rent row with money against it.
+    // A rent line changed (HUD's part from a later date): a month already due that has money against it stays as it is.
+    // A month paid ahead may change: it owes the difference, or what it no longer needs goes to credit (writeSchedule).
     if ('rent_lines' in row && row.rent_lines !== (old.rent_lines ? JSON.stringify(old.rent_lines) : null)) {
       const paid = await db.prepare(`SELECT DISTINCT to_char(i.due_date, 'YYYY-MM-DD') AS due, i.label FROM lease_installments i JOIN lease_payments p ON p.installment_id = i.id
-        WHERE i.booking_id = ? AND i.kind = 'rent' ORDER BY 1`).all(old.id);
+        WHERE i.booking_id = ? AND i.kind = 'rent' AND i.due_date <= ?::date ORDER BY 1`).all(old.id, today);
       const rows = (b) => new Map(schedule(b).flatMap((p) => rentParts(b, p)).map((r) => [`${r.due}|${r.label}`, r.amount]));
       const was = rows(old), will = rows({ ...old, ...row, start_date: start, end_date: end });
       const hit = paid.find((p) => was.get(`${p.due}|${p.label}`) !== will.get(`${p.due}|${p.label}`));
@@ -481,7 +482,7 @@ export async function updateBooking(id, body = {}, by) {
     const cols = Object.keys(row);
     if (cols.length) await db.prepare(`UPDATE lease_bookings SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map((c) => row[c]), old.id);
     const now = await getBooking(id);
-    if (now.status === 'confirmed') await writeSchedule(now, { strict: true });
+    if (now.status === 'confirmed') await writeSchedule(now, { strict: true, by, today });
     // Late fees switched off on this lease: those not paid come off (a paid one stays, as money was taken for it).
     // Switched back on, applyLateFees() works them out again the next time the schedule is looked at.
     if (now.no_late_fees && !old.no_late_fees) {
@@ -810,7 +811,7 @@ const TAX_OF_PAID = 'CASE WHEN amount > 0 THEN round(tax * (SELECT coalesce(sum(
  * it is kept, and owes what the terms now say (never less than it has been paid); one the
  * terms no longer ask for at all (a charge taken off, a stay cut short) owes nothing more.
  */
-async function writeSchedule(b, { strict = false } = {}) {
+async function writeSchedule(b, { strict = false, by = null, today = todayHere() } = {}) {
   // Late fees and charges added by hand are not part of the terms: applyLateFees() and addCharge() add them, and they stay as they are.
   await db.prepare(`DELETE FROM lease_installments i WHERE i.booking_id = ? AND i.kind NOT IN ${KEPT} AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)`).run(b.id);
   const fees = typeof b.fees === 'string' ? JSON.parse(b.fees) : b.fees || [];
@@ -839,15 +840,21 @@ async function writeSchedule(b, { strict = false } = {}) {
     ...fees.flatMap((f) => (f.repeats ? monthlyDues(f).map((d) => [d, f.amount]) : [[f.on || first, f.amount]])
       .map(([due, amount]) => ({ kind: 'fee', label: f.label, due, amount: money(amount + taxOn(b, amount)), tax: taxOn(b, amount) }))),
   ];
-  // A lease edited by hand (strict): a row with money against it may not owe less than was paid, nor be taken off;
-  // the money would be left over with nobody told. Cutting the stay short has its own way (changeEnd), which reports it.
+  // A lease edited by hand (strict): a row already due with money against it may not owe less than was paid, nor be
+  // taken off. A row paid ahead (not due yet) may: what it no longer needs goes to credit, so no money is lost.
+  // Cutting the stay short has its own way (changeEnd), which reports what was overpaid.
   if (strict) {
     const want = new Map(rows.map((r) => [`${r.kind}|${r.label}|${r.due}`, r.amount]));
-    const paidRows = await db.prepare(`SELECT i.kind, i.label, to_char(i.due_date, 'YYYY-MM-DD') AS due, sum(p.amount) AS paid FROM lease_installments i
+    const paidRows = await db.prepare(`SELECT i.id, i.kind, i.label, to_char(i.due_date, 'YYYY-MM-DD') AS due, sum(p.amount) AS paid FROM lease_installments i
       JOIN lease_payments p ON p.installment_id = i.id WHERE i.booking_id = ? AND i.kind NOT IN ${KEPT} GROUP BY i.id ORDER BY i.due_date`).all(b.id);
-    const hit = paidRows.find((r) => Number(r.paid) > (want.get(`${r.kind}|${r.label}|${r.due}`) ?? 0) + 0.004);
+    const over = paidRows.map((r) => ({ ...r, over: money(Number(r.paid) - (want.get(`${r.kind}|${r.label}|${r.due}`) ?? 0)) })).filter((r) => r.over > 0.004);
     const usDate = (d) => `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}`;
+    const hit = over.find((r) => r.due <= today);
     if (hit) throw bad(`${dueName(hit)} due ${usDate(hit.due)} has ${cash(Number(hit.paid))} paid on it, so it cannot be lowered below that or taken off. Give the money back or move the payment first.`, 409);
+    for (const r of over) {
+      await toCredit(b.id, r.id, r.over);
+      await logEvent(b.id, 'changed', `${cash(r.over)} paid ahead on ${dueName(r)} due ${usDate(r.due)} is no longer needed there: kept as credit`, by);
+    }
   }
   const paid = '(SELECT coalesce(sum(p.amount), 0) FROM lease_payments p WHERE p.installment_id = lease_installments.id)';
   for (const r of rows) {
@@ -857,7 +864,35 @@ async function writeSchedule(b, { strict = false } = {}) {
   const asked = new Set(rows.map((r) => `${r.kind}|${r.label}|${r.due}`));
   const have = await db.prepare(`SELECT id, kind, label, to_char(due_date, 'YYYY-MM-DD') AS due FROM lease_installments WHERE booking_id = ? AND kind NOT IN ${KEPT}`).all(b.id);
   for (const h of have) {
-    if (!asked.has(`${h.kind}|${h.label}|${h.due}`)) await db.prepare(`UPDATE lease_installments SET amount = ${paid}, tax = ${TAX_OF_PAID} WHERE id = ?`).run(h.id);
+    if (asked.has(`${h.kind}|${h.label}|${h.due}`)) continue;
+    // Its money all moved to credit: nothing is left on it.
+    await db.prepare('DELETE FROM lease_installments i WHERE i.id = ? AND NOT EXISTS (SELECT 1 FROM lease_payments p WHERE p.installment_id = i.id)').run(h.id);
+    await db.prepare(`UPDATE lease_installments SET amount = ${paid}, tax = ${TAX_OF_PAID} WHERE id = ?`).run(h.id);
+  }
+}
+
+/**
+ * Move `amount` of the money paid on a row to the lease's credit (a minus balance, "Credit (paid ahead)"), the latest
+ * payment first. A payment moved in part is split in two, the part moved kept with the same date, method and batch;
+ * the slip stays with the part left behind.
+ */
+async function toCredit(bookingId, installmentId, amount) {
+  let left = money(amount);
+  const pays = await db.prepare(`SELECT *, to_char(received_on, 'YYYY-MM-DD') AS on_day FROM lease_payments WHERE installment_id = ? ORDER BY received_on DESC, id DESC`).all(installmentId);
+  for (const p of pays) {
+    if (left <= 0) break;
+    const on = p.on_day;
+    const credit = (await db.prepare("SELECT id FROM lease_installments WHERE booking_id = ? AND kind = 'credit' AND due_date = ?").get(bookingId, on))
+      ?? (await db.prepare("INSERT INTO lease_installments (booking_id, kind, label, due_date, amount) VALUES (?, 'credit', 'Credit', ?, 0) RETURNING id").get(bookingId, on));
+    const take = Math.min(left, Number(p.amount));
+    if (take >= Number(p.amount)) await db.prepare('UPDATE lease_payments SET installment_id = ? WHERE id = ?').run(credit.id, p.id);
+    else {
+      const batch = p.batch || randomUUID();
+      await db.prepare('UPDATE lease_payments SET amount = ?, batch = ? WHERE id = ?').run(money(Number(p.amount) - take), batch, p.id);
+      await db.prepare(`INSERT INTO lease_payments (installment_id, amount, method, received_on, reference, notes, recorded_by, batch)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(credit.id, money(take), p.method, on, p.reference, p.notes, p.recorded_by, batch);
+    }
+    left = money(left - take);
   }
 }
 
