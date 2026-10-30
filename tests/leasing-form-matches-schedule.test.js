@@ -34,6 +34,21 @@ const CASES = {
       ...BASE.slice(2),
     ],
   },
+  // LS-2022-0200 as the staff entered it: rent lines from 1 Oct, the one day in September typed as 28, put off to 1 Oct.
+  'rent lines from the 1st after move-in, prorated from the second month': {
+    prorate: 'second', part_month_amount: '28',
+    fees: [
+      { label: 'Rent', amount: '3', repeats: true, from: '2022-10-01', until: '2023-02-28' },
+      { label: 'Rent – HUD/Agency', amount: '828', repeats: true, from: '2022-10-01', until: '2023-02-28' },
+      { label: 'Rent', amount: '577', repeats: true, from: '2023-03-01', until: '2023-04-30' },
+      { label: 'Rent – HUD/Agency', amount: '254', repeats: true, from: '2023-03-01', until: '2023-04-30' },
+      { label: 'Rent', amount: '652', repeats: true, from: '2023-05-01', until: '2023-09-30' },
+      { label: 'Rent – HUD/Agency', amount: '179', repeats: true, from: '2023-05-01', until: '2023-09-30' },
+      { label: 'Security deposit', amount: '150', on: '2022-09-28' },
+    ],
+    // Twelve full months (October billed on move-in day) and the 28: none lost to a 0 row.
+    expect: { total: 10000, onMoveIn: [['', 3], ['HUD/Agency', 828]] },
+  },
   'one rent, starting on the 1st, a one-time charge later': {
     start_date: '2022-10-01', end_date: '2023-09-30', prorate: 'first',
     fees: [{ label: 'Rent', amount: '900', repeats: true }, { label: 'Pet fee', amount: '200', on: '2022-11-15' }],
@@ -47,7 +62,8 @@ for (const [name, c] of Object.entries(CASES)) {
     const co = await create('company', { name: 'ACE' });
     const bl = await create('building', { name: 'Gates' }, co.id);
     const u = await create('unit', { unit_no: '304' }, bl.id);
-    const v = { start_date: '2022-09-30', end_date: '2023-09-30', rent_period: 'month', payment_frequency: 'monthly', discounts: [], tax_percent: '', part_month_amount: '', ...c };
+    const { expect, ...given } = c;
+    const v = { start_date: '2022-09-30', end_date: '2023-09-30', rent_period: 'month', payment_frequency: 'monthly', discounts: [], tax_percent: '', part_month_amount: '', ...given };
     const lease = client.fromLines(v);
     const sum = client.plan(lease);
     const bk = await createBooking({ ...lease, unit_id: u.id, status: 'confirmed', tenant: { full_name: 'Bethany', phone: '050 123 4567' } }, staff);
@@ -58,6 +74,10 @@ for (const [name, c] of Object.entries(CASES)) {
     assert.equal(money(notDeposit), r2(sum.total), 'whole stay');
     assert.equal(money(rows.filter((r) => r.due_date <= v.start_date)), r2(sum.first), 'to collect on the first day (a deposit charged before it too)');
     assert.equal(money(rows.filter((r) => r.kind === 'deposit')), sum.deposit, 'deposit');
+    if (expect) {
+      assert.equal(money(notDeposit), expect.total, 'the whole stay, every month billed');
+      assert.deepEqual(rows.filter((r) => r.kind === 'rent' && r.due_date === v.start_date).map((r) => [r.label, r.amount]), expect.onMoveIn, 'move-in day: the next month, split as that month');
+    }
     if (sum.second) assert.equal(money(rows.filter((r) => r.kind === 'rent' && r.due_date === sum.second.due)), r2(sum.second.amount), 'prorated rent on the next 1st');
     // The form opened again shows the lines it was saved with.
     const back = client.chargeLines(bk).map((f) => [f.label, Number(f.amount), f.from || f.on || '', f.until || '']);

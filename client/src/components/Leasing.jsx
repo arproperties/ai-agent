@@ -154,7 +154,8 @@ function proratedRows(v) {
   for (let d = head ? firstOfNext(v.start_date) : v.start_date; d <= v.end_date; d = firstOfNext(d)) {
     rows.push({ due: d, share: v.end_date < lastOfMonth(d) ? part(d, v.end_date) : 1 });
   }
-  if (head && v.prorate === 'second' && rows.length) rows.splice(0, 1, { due: v.start_date, share: rows[0].share }, { due: rows[0].due, share: head.share, part: true });
+  // The move-in day takes the month after the part month, at that month's rent (`month`), as on the server (`of`).
+  if (head && v.prorate === 'second' && rows.length) rows.splice(0, 1, { due: v.start_date, share: rows[0].share, month: rows[0].due }, { due: rows[0].due, share: head.share, part: true });
   else if (head) rows.unshift({ due: head.due, share: head.share, part: true });
   return { rows, head };
 }
@@ -215,8 +216,8 @@ function proratedPlan(v) {
   const shares = rows.reduce((t, r) => t + r.share, 0);
   const atStart = rows[0]?.due === v.start_date ? rows[0].share : 0;
   // A row's rent: the part month at its typed amount when one was typed, the rest by the day; a dated discount comes off by the day too.
-  const offOf = (r) => Math.min(monthly, offOn(v, r.due)) * r.share;
-  const rentOf = (r) => Math.max(0, (r.part && typedPart(v) ? typedPart(v) : rentAt(v, r.due, monthly) * r.share) - offOf(r));
+  const offOf = (r) => Math.min(monthly, offOn(v, r.month || r.due)) * r.share;
+  const rentOf = (r) => Math.max(0, (r.part && typedPart(v) ? typedPart(v) : rentAt(v, r.month || r.due, monthly) * r.share) - offOf(r));
   const allRent = rows.reduce((t, r) => t + rentOf(r), 0);
   const firstRent = rows[0]?.due === v.start_date ? rentOf(rows[0]) : 0;
   // A monthly charge is its whole price each month, the part month too, as Rent Manager bills it.

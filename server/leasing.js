@@ -753,7 +753,7 @@ const RENT_2 = 'HUD/Agency';
 /** A rent row split into its two parts, as the rent was typed (Tenant + HUD/Agency): each takes its share of the
     amount and the tax, and the two add up to the row exactly. A rent typed in one part stays one row. */
 function rentParts(b, p) {
-  const on = rentOn(b, p.due), lines = on.lines, r2 = on.hud;
+  const on = rentOn(b, p.of || p.due), lines = on.lines, r2 = on.hud; // split as the month it bills (`of`, see proratedSchedule)
   const r = lines ? on.rent : Number(b.rent_amount); // one rent: the split as it was typed
   // A month only HUD/an agency pays (dated lines) is their row alone.
   if (lines && r2 > 0 && r2 >= r) return [{ kind: 'rent', label: RENT_2, ...p }];
@@ -818,15 +818,18 @@ function proratedSchedule(b) {
   for (let d = head ? firstOfNext(b.start_date) : b.start_date; d <= b.end_date; d = firstOfNext(d)) {
     rows.push({ due: d, share: b.end_date < lastOfMonth(d) ? part(d, b.end_date) : 1 });
   }
-  if (head && b.prorate === 'second' && rows.length) rows.splice(0, 1, { due: b.start_date, share: rows[0].share }, { due: rows[0].due, share: head.share, part: true });
+  // With 'second' the move-in day takes the month after the part month: billed at that month's rent (`of`), so rent
+  // lines starting on the 1st after a mid-month move-in still bill it (LS-2022-0200 lost October to a 0 row).
+  if (head && b.prorate === 'second' && rows.length) rows.splice(0, 1, { due: b.start_date, share: rows[0].share, of: rows[0].due }, { due: rows[0].due, share: head.share, part: true });
   else if (head) rows.unshift({ ...head, part: true });
-  return rows.map(({ due, share, part }) => {
+  return rows.map(({ due, share, part, of }) => {
     // The part month at the amount typed for it, when one was (Rent Manager's own figure).
     // A dated discount comes off a part month by its days, as the rent does.
-    const off = offOn(b, due) * share;
-    const rent = money(Math.max(0, part && Number(b.part_month_amount) > 0 ? Number(b.part_month_amount) - off : (rentOn(b, due).rent - offOn(b, due)) * share));
+    const at = of || due;
+    const off = offOn(b, at) * share;
+    const rent = money(Math.max(0, part && Number(b.part_month_amount) > 0 ? Number(b.part_month_amount) - off : (rentOn(b, at).rent - offOn(b, at)) * share));
     const tax = taxOn(b, rent);
-    return { due, amount: money(rent + tax), ...(tax ? { tax } : {}), share };
+    return { due, amount: money(rent + tax), ...(tax ? { tax } : {}), share, ...(of ? { of } : {}) };
   });
 }
 
