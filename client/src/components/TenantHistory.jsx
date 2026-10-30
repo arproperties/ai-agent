@@ -8,6 +8,7 @@ import { usDate as fmt, usPhone } from '../lib/usFormat';
 import Page from './Page';
 import DateField from './DateField';
 import { WO_STATUS } from './WorkOrders';
+import { ArchiveSheet, archiveLine } from './Archive';
 
 // One tenant's history: rent that came in late, complaints made about them and maintenance
 // done for them, in one list with the figures on top. Late rent is worked out by the server
@@ -208,6 +209,7 @@ export default function TenantHistory({ tenant, onBack, onPay, onWorkOrder }) {
   const [h, setH] = useState(null);
   const [error, setError] = useState('');
   const [show, setShow] = useState('');
+  const [archived, setArchived] = useState(null); // the id of the archived lease open in a dialog
   const [entry, setEntry] = useState(null); // { kind } for a new one, or the entry being changed
   const load = () => api.get(`/leasing/tenants/${tenant.id}/history`).then(setH).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [tenant.id]);
@@ -246,6 +248,22 @@ export default function TenantHistory({ tenant, onBack, onPay, onWorkOrder }) {
           <div className="flex flex-wrap gap-1">
             {FILTERS.map(([k, l]) => <button key={k} onClick={() => setShow(k)} aria-pressed={show === k} className={CHIP(show === k)}>{l} <span className="tabular-nums opacity-70">{count(k)}</span></button>)}
           </div>
+          {h.archive?.length > 0 && (
+            <div className="rounded-2xl border border-stroke bg-surface p-4">
+              <p className="text-sm font-medium">Archived leases <span className="text-mute">{h.archive.length}</span></p>
+              <ul className="mt-1 divide-y divide-stroke/60">
+                {h.archive.map((r) => (
+                  <li key={r.id}>
+                    <button onClick={() => setArchived(r.id)} className="flex w-full flex-wrap items-center gap-x-2 py-2 text-left text-sm hover:text-p1">
+                      <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[11px] text-warn">Archived</span>
+                      <span>Unit {r.unit_no}, {r.building}</span><span className="text-xs text-mute">{archiveLine(r)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {archived && <ArchiveSheet id={archived} onClose={() => setArchived(null)} />}
           {items.length === 0
             ? <p className="py-3 text-sm text-mute">{h.items.length ? 'Nothing of this kind.' : 'Nothing on record: no late rent, no complaints, no maintenance.'}</p>
             : <ul className="space-y-3">{items.map((i) => <Item key={i.wo || `${i.type}-${i.id || `${i.booking_id}-${i.date}`}`} i={i} onPay={onPay} onEdit={setEntry} onChanged={load} onWork={(o) => onWorkOrder({ ...mine, openId: o.id })} />)}</ul>}

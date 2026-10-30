@@ -26,6 +26,7 @@ import LeaseImport from './LeaseImport';
 import Inspections from './Inspections';
 import WorkOrders from './WorkOrders';
 import Prospects from './Prospects';
+import Archive, { ArchiveSheet, archiveLine } from './Archive';
 import { leasePreset } from '../lib/prospects';
 
 const Building3D = lazy(() => import('./Building3D')); // it brings a 3D library with it, fetched only when the 3D View is opened
@@ -843,6 +844,27 @@ function ChangeEnd({ booking: b, onPay, onDone }) {
   );
 }
 
+/** The tenant's archived Rent Manager leases in this unit: fetched only when the person opens the list. */
+function PreviousLeases({ booking }) {
+  const [rows, setRows] = useState(null);
+  const [shown, setShown] = useState(false);
+  const [open, setOpen] = useState(null);
+  const [error, setError] = useState('');
+  const toggle = () => {
+    setShown(!shown);
+    if (!shown && !rows) api.get(`/leasing/bookings/${booking.id}/previous`).then(setRows).catch((e) => setError(e.message));
+  };
+  return (
+    <div className="border-t border-stroke px-4 py-2 text-sm">
+      <button onClick={toggle} aria-expanded={shown} className="flex w-full items-center gap-1.5 text-xs text-mute hover:text-txt"><History size={13} /> Previous leases (Rent Manager)</button>
+      {shown && (error ? <p className="mt-1 text-xs text-bad">{error}</p> : !rows ? <Loader2 size={14} className="my-1 animate-spin text-mute" />
+        : rows.length === 0 ? <p className="mt-1 text-xs text-mute">None archived for this tenant in this unit.</p>
+          : <ul className="mt-1 divide-y divide-stroke/60">{rows.map((r) => <li key={r.id}><button onClick={() => setOpen(r.id)} className="w-full py-1.5 text-left text-xs hover:text-p1">{archiveLine(r)}</button></li>)}</ul>)}
+      {open && <ArchiveSheet id={open} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
 function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, onWork, onRenewed, onChanged }) {
   // Added in the last day (created_at is unix seconds): marked New, so it is easy to find again.
   const isNew = b.created_at && Date.now() / 1000 - Number(b.created_at) < 86400;
@@ -959,6 +981,7 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
         {due && <div className="py-2">{due}</div>}
       </dl>
       {error && <p className="px-4 pb-1 text-xs text-bad">{error}</p>}
+      {b.status === 'confirmed' && <PreviousLeases booking={b} />}
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-stroke px-4 py-2.5">
         {actions.map(([Ico, name, run, hint, danger]) => (
           <button key={name} onClick={run} title={name === 'Documents' ? undefined : hint || undefined} className={`${GHOST} ${name === 'Documents' ? 'mr-auto' : ''} ${danger ? 'hover:text-bad' : ''}`}>
@@ -1407,7 +1430,7 @@ function Calendar({ onEdit, onNew }) {
 // Leasing is several pages, each with its own row in the sidebar: the overview, Bookings (which
 // has the 3D View and the calendar beside it as tabs), Tenants, Reports, Alerts and Documents. Which one
 // is open is the app's to hold, as `tab`, so the sidebar can open any of them.
-const BOOKING_TABS = [['bookings', 'Leasing'], ['vacant', 'Vacant'], ['3d', 'Building (3D view)'], ['calendar', 'Calendar']];
+const BOOKING_TABS = [['bookings', 'Leasing'], ['vacant', 'Vacant'], ['3d', 'Building (3D view)'], ['calendar', 'Calendar'], ['archive', 'Archive']];
 
 // The module an alert's link leads into: the screen that deals with it.
 const alertModule = (a) => ({ documents: 'documents', tenants: 'tenants', workorder: 'workorders', prospects: 'prospects' }[a.open] || 'leasing');
@@ -1499,6 +1522,7 @@ export default function LeasingPage({ tab, onTab: setTab, report, onReport, aler
           </Suspense>
         )
         : tab === 'calendar' ? <Calendar key={key} onEdit={(b) => setForm(b)} onNew={(preset) => setForm({ preset })} />
+        : tab === 'archive' ? <Archive key={key} />
         : tab === 'vacant' ? <Vacant key={key} onNew={(preset) => setForm({ preset })} onOpen={(b) => setForm(b)} />
         : <Bookings key={key} fresh={fresh} onEdit={(b) => setForm(b)} onDocs={(b) => setForm({ docsOf: b })} onPay={(b) => setForm({ payOf: b })} onEnd={(b) => setForm({ endOf: b })} onInspect={(b, start) => setForm({ inspectOf: b, start })} onWork={(b) => setForm({ workOf: { scope: { booking_id: b.id }, title: `Work orders · ${b.ref}`, preset: { unit_id: b.unit_id } } })} />}
     </Page>
