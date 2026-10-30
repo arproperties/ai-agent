@@ -833,7 +833,9 @@ function BookingCard({ b, list, fresh, onEdit, onDocs, onPay, onEnd, onInspect, 
   const stay = `${nights(b.start_date, b.end_date)} nights · ${b.type === 'lease' ? 'Lease' : 'Short stay'}`;
   const terms = [FREQ.find(([k]) => k === b.payment_frequency)?.[1], b.discount_type && `${b.discount_type === 'percent' ? `${b.discount_value}%` : aed(b.discount_value)} off`,
     ...(b.discounts || []).map((d) => `${aed(d.amount)} off${d.from && d.from > b.start_date ? ` from ${fmt(d.from)}` : ''}${d.until ? ` to ${fmt(d.until)}` : ''}`),
-    b.tax_percent && `+ ${region().tax_name} ${b.tax_percent}%`, b.prorate && 'prorated'].filter(Boolean).join(' · ');
+    b.tax_percent && `+ ${region().tax_name} ${b.tax_percent}%`, b.prorate && 'prorated',
+    // The rent shown is the rent at the start; dated rent lines change it later (the Schedule has each month's).
+    ...[...new Set((b.rent_lines || []).map((l) => l.from).filter((d) => d && d > b.start_date))].sort().map((d) => `rent changes ${fmt(d)}`)].filter(Boolean).join(' · ');
   const rent = <>{aed(b.rent_amount)} / {b.rent_period} <span className="text-xs text-mute">· {terms}</span></>;
   // A lease confirmed with no move-in (by Riley, or imported), whose tenant now has the unit: how they found it is not written down.
   const moveInDue = b.status === 'confirmed' && b.stage !== 'upcoming' && !b.renewed_from && !b.moved_in && !b.moved_out;
