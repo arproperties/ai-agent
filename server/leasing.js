@@ -1036,7 +1036,10 @@ export const payBooking = async (bookingId, body = {}, by, today = todayHere(), 
   return spreadPayment(bookingId, body, by, today, file);
 };
 
-const spreadPayment = (bookingId, body, by, today, file) => tx(async () => {
+const spreadPayment = (bookingId, body, by, today, file) => tx(() => spreadWithin(bookingId, body, by, today, file));
+
+/** payBooking inside the caller's transaction (a Zego report records each payment with its own row). Returns the payments made. */
+export const spreadWithin = async (bookingId, body, by, today, file = null) => {
   const b = await getBooking(bookingId);
   if (b.no_payments) throw bad(NO_PAYMENTS, 409);
   const amount = money(Number(body.amount));
@@ -1056,8 +1059,8 @@ const spreadPayment = (bookingId, body, by, today, file) => tx(async () => {
       ?? (await db.prepare("INSERT INTO lease_installments (booking_id, kind, label, due_date, amount) VALUES (?, 'credit', 'Credit', ?, 0) RETURNING id").get(b.id, on));
     made.push(await takePayment(c.id, { ...body, amount: left }, by, today, made.length ? null : file, { batch }));
   }
-  return made;
-});
+  return made.map((p) => ({ ...p, batch }));
+};
 
 // ---------- charges added by hand, and the transactions list ----------
 

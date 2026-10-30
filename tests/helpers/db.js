@@ -45,6 +45,7 @@ const TABLES = [
   'prop_suppliers', 'prop_renewals', 'prop_renewal_requests', 'prop_renewal_quotes',
   'activity_log',
   'qb_connection', 'qb_sessions', 'qb_queue', 'qb_lists', 'qb_log', 'qb_looks', 'qb_settings', 'qb_sync', 'expenses', 'expense_lines', 'expense_repeats',
+  'zego_payouts', 'zego_transactions', 'zego_names',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

@@ -10,7 +10,10 @@ import { depositState } from './leasing.js';
 //
 //   deposit:<day>      the rent and charges received that day: one Deposit into the bank,
 //                      a line per income account (rent, late fees, other charges, deposits);
-//                      paid through Zego is left out, as Zego puts it into QuickBooks itself
+//                      payments brought in from a Zego report are left out: they go with
+//   zego:<payout>      a payout Zego made into the bank (server/zego.js): one Deposit on its
+//                      day for its whole total, as the bank statement shows it, a line per
+//                      income account; a payment of it on no lease goes in as rent
 //   refund:<lease>     a security deposit given back: a Check out of the bank, from the
 //                      account the deposits sit in
 //   kept:<lease>       the part of a deposit kept at check-out, moved from the deposits
@@ -68,24 +71,50 @@ export async function saveSettings(body = {}) {
 
 const lineLabel = { rent: 'Rent', deposit: 'Security deposits', late: 'Late fees', charge: 'Other charges' };
 
-/** The day's rent and charges as one bank deposit, a line per income account. */
-async function depositEntry(day, s) {
-  const rows = await db.prepare(`SELECT p.amount, i.kind, i.held FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id
-    WHERE p.received_on = ? AND p.method <> 'zego'`).all(day);
+// A payment that came in a Zego payout goes to QuickBooks with that payout, not with its day.
+const NOT_ZEGO = 'NOT EXISTS (SELECT 1 FROM zego_transactions z WHERE z.batch = p.batch)';
+
+/** Payments as deposit lines, a line per income account; `extra` (a label and an amount) adds to the rent line. */
+function depositLines(rows, s, extra = null) {
   const lines = new Map();
+  const add = (acct, label, amount) => {
+    const at = lines.get(acct) || { account: acct, labels: new Set(), amount: 0 };
+    at.labels.add(label);
+    at.amount += Number(amount);
+    lines.set(acct, at);
+  };
   for (const r of rows) {
     const group = r.kind === 'deposit' || r.held ? 'deposit' : r.kind === 'late' ? 'late' : r.kind === 'fee' || r.kind === 'charge' ? 'charge' : 'rent';
     const acct = (group === 'deposit' && s.deposit_account) || (group === 'late' && (s.late_account || s.charge_account)) || (group === 'charge' && s.charge_account) || s.rent_account;
-    const at = lines.get(acct) || { account: acct, labels: new Set(), amount: 0 };
-    at.labels.add(lineLabel[group]);
-    at.amount += Number(r.amount);
-    lines.set(acct, at);
+    add(acct, lineLabel[group], r.amount);
   }
-  const list = [...lines.values()].filter((l) => Math.round(l.amount * 100) > 0)
+  if (extra && Math.round(extra.amount * 100) > 0) add(s.rent_account, extra.label, extra.amount);
+  return [...lines.values()].filter((l) => Math.round(l.amount * 100) > 0)
     .map((l) => ({ account: l.account, memo: [...l.labels].join(', '), amount: amt(l.amount) }))
     .sort((a, b) => a.account.localeCompare(b.account));
+}
+
+/** The day's rent and charges as one bank deposit, a line per income account. */
+async function depositEntry(day, s) {
+  const rows = await db.prepare(`SELECT p.amount, i.kind, i.held FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id
+    WHERE p.received_on = ? AND ${NOT_ZEGO}`).all(day);
+  return deposit(day, `Lease app: rent and charges received ${day}`, depositLines(rows, s), s);
+}
+
+/** A Zego payout as one bank deposit for its whole total: what its payments paid on the leases, and the rest (on no lease) as rent. */
+async function zegoEntry(id, s) {
+  const p = await db.prepare("SELECT id, total, to_char(paid_on, 'YYYY-MM-DD') AS paid_on FROM zego_payouts WHERE id = ?").get(Number(id));
+  if (!p) return null;
+  const rows = await db.prepare(`SELECT pm.amount, i.kind, i.held FROM zego_transactions z JOIN lease_payments pm ON pm.batch = z.batch
+    JOIN lease_installments i ON i.id = pm.installment_id WHERE z.payout_id = ?`).all(p.id);
+  const onLeases = rows.reduce((t, r) => t + Number(r.amount), 0);
+  const rest = Math.round((Number(p.total) - onLeases) * 100) / 100;
+  const { n } = await db.prepare('SELECT count(*)::int AS n FROM zego_transactions WHERE payout_id = ?').get(p.id);
+  return deposit(p.paid_on, `Lease app: Zego payout ${p.paid_on}, ${n} payment${n === 1 ? '' : 's'}`, depositLines(rows, s, { label: 'Zego, not on a lease', amount: rest }), s);
+}
+
+function deposit(day, memo, list, s) {
   if (!list.length) return null;
-  const memo = `Lease app: rent and charges received ${day}`;
   const head = `<TxnDate>${day}</TxnDate><DepositToAccountRef>${ref(s.bank_account)}</DepositToAccountRef><Memo>${esc(memo)}</Memo>`;
   return {
     type: 'Deposit',
@@ -158,6 +187,10 @@ export async function entryFor(key, s, today = todayHere()) {
   const [kind, id] = String(key).split(/:(.*)/s);
   if (!s.start_date || !s.bank_account) return null;
   if (kind === 'deposit') return id >= s.start_date && id < today && s.rent_account ? depositEntry(id, s) : null;
+  if (kind === 'zego') {
+    const p = await db.prepare("SELECT to_char(paid_on, 'YYYY-MM-DD') AS paid FROM zego_payouts WHERE id = ?").get(Number(id));
+    return p && p.paid >= s.start_date && p.paid <= today && s.rent_account ? zegoEntry(id, s) : null;
+  }
   if (kind === 'refund' || kind === 'kept') {
     const b = await leaseOf(id);
     if (!b?.settled || b.settled < s.start_date || b.settled >= today) return null;
@@ -174,7 +207,8 @@ export async function entryFor(key, s, today = todayHere()) {
 async function allKeys(s, today) {
   const keys = new Set((await db.prepare('SELECT key FROM qb_sync').all()).map((r) => r.key));
   if (s.start_date && s.bank_account) {
-    for (const r of await db.prepare("SELECT DISTINCT to_char(received_on, 'YYYY-MM-DD') AS d FROM lease_payments WHERE received_on >= ? AND received_on < ? AND method <> 'zego'").all(s.start_date, today)) keys.add(`deposit:${r.d}`);
+    for (const r of await db.prepare(`SELECT DISTINCT to_char(p.received_on, 'YYYY-MM-DD') AS d FROM lease_payments p WHERE p.received_on >= ? AND p.received_on < ? AND ${NOT_ZEGO}`).all(s.start_date, today)) keys.add(`deposit:${r.d}`);
+    for (const r of await db.prepare('SELECT id FROM zego_payouts WHERE paid_on >= ? AND paid_on <= ?').all(s.start_date, today)) keys.add(`zego:${r.id}`);
     for (const r of await db.prepare('SELECT id FROM lease_bookings WHERE deposit_settled_on >= ? AND deposit_settled_on < ?').all(s.start_date, today)) { keys.add(`refund:${r.id}`); keys.add(`kept:${r.id}`); }
     for (const r of await db.prepare('SELECT id FROM expenses WHERE paid_on >= ? AND paid_on <= ?').all(s.start_date, today)) keys.add(`expense:${r.id}`);
   }

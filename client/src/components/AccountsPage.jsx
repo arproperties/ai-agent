@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CalendarClock, Check, CheckCircle2, Clock, Download, KeyRound, Loader2, Paperclip, Pause, Pencil, Play, Plus, Power, RefreshCw, Receipt, RotateCcw, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Check, CheckCircle2, Clock, Download, KeyRound, Loader2, Paperclip, Pause, Pencil, Play, Plus, Power, RefreshCw, Receipt, RotateCcw, Search, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { canDo } from '../lib/actions';
 import { api } from '../lib/api';
 import { money } from '../lib/region';
@@ -424,6 +424,179 @@ function QuickBooksTab() {
   );
 }
 
+// ---------- Zego's payments report ----------
+
+const leaseLabel = (l) => `${l.tenant} · Unit ${l.unit_no} · ${l.building}`;
+
+/** Why a payment of the report is where it is, before it is recorded. */
+function zegoNote(t, lease) {
+  if (t.recorded) return ['Already recorded', 'text-mute'];
+  if (t.duplicate) return [`${money(t.duplicate.amount)} on ${fmt(t.duplicate.received_on)} is already on this lease. Choose the lease only if this is another payment.`, 'text-warn'];
+  if (t.no_lease) return [`${t.no_lease} has no lease here yet. Add the lease, then upload the report again.`, 'text-warn'];
+  if (!t.booking_id) return ['No tenant by this name. Choose the lease, and next time it is matched by itself.', 'text-warn'];
+  return [t.how === 'remembered' ? `Matched as before: ${leaseLabel(lease)}` : `Matched by name: ${leaseLabel(lease)}`, 'text-ok'];
+}
+
+/** A report read: each payment with the lease it goes on, changed where needed, then recorded. */
+function ZegoReview({ read, onDone, onCancel }) {
+  const all = read.payouts.flatMap((p) => p.transactions);
+  const [picks, setPicks] = useState(() => Object.fromEntries(all.filter((t) => !t.recorded).map((t) => [t.trans_no, t.booking_id ? String(t.booking_id) : ''])));
+  const [only, setOnly] = useState('look');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const byId = new Map(read.leases.map((l) => [l.id, l]));
+  const look = (t) => !t.recorded && (!t.booking_id || t.duplicate);
+  const options = (t) => {
+    const first = (t.suggest || []).map((id) => byId.get(id)).filter(Boolean);
+    const rest = read.leases.filter((l) => !first.includes(l));
+    return [{ value: '', label: 'Not on a lease for now' }, ...[...first, ...rest].map((l) => ({ value: String(l.id), label: leaseLabel(l) }))];
+  };
+  const chosen = Object.values(picks).filter(Boolean).length;
+  const counts = { all: all.length, look: all.filter(look).length, recorded: all.filter((t) => t.recorded).length };
+  const shown = (t) => only === 'all' || (only === 'look' ? look(t) : !t.recorded && !look(t));
+  const record = async () => {
+    setBusy(true); setError('');
+    try {
+      onDone(await api.post('/accounts/zego/record', { token: read.token, picks: Object.fromEntries(Object.entries(picks).map(([k, v]) => [k, v ? Number(v) : null])) }));
+    } catch (e) { setError(e.message); setBusy(false); }
+  };
+  const total = read.payouts.reduce((s, p) => s + p.total, 0);
+  return (
+    <div className="space-y-4">
+      <div className={CARD}>
+        <p className="text-sm font-medium">{read.payouts.length} payout{read.payouts.length === 1 ? '' : 's'} · {all.length} payments · {money(total)}</p>
+        <p className="mt-1 text-xs text-mute">
+          Each payment goes on the lease chosen as a Zego payment, on the day the tenant paid. One left off is still in its payout, which goes to QuickBooks whole, as the bank shows it; upload the report again later to put it on its lease.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {[['look', `Needs a look (${counts.look})`], ['ready', `Matched (${counts.all - counts.look - counts.recorded})`], ['all', `All (${counts.all})`]].map(([k, l]) => (
+          <button key={k} onClick={() => setOnly(k)} aria-pressed={only === k} className={CHIP(only === k)}>{l}</button>
+        ))}
+      </div>
+      {read.payouts.map((p, n) => {
+        const rows = p.transactions.filter(shown);
+        if (!rows.length) return null;
+        return (
+          <section key={n} className={CARD}>
+            <p className="text-sm font-medium">Payout {fmt(p.paid_on)}{p.bank ? ` · ${p.bank}` : ''} · {money(p.total)}</p>
+            {p.warning && <p className="mt-1 flex items-center gap-1 text-xs text-bad"><AlertTriangle size={12} /> {p.warning}</p>}
+            <ul className="mt-3 divide-y divide-stroke/60">
+              {rows.map((t) => {
+                const pick = picks[t.trans_no];
+                const [note, tone] = zegoNote(t, byId.get(t.booking_id));
+                return (
+                  <li key={t.trans_no} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
+                    <span className="min-w-0 flex-1 basis-48">
+                      <span className="block text-sm">{t.resident} <span className="text-xs text-mute">· Trans # {t.trans_no}</span></span>
+                      <span className="block text-xs text-mute">{[fmt(t.init_date), t.pay_type, t.unit && `Unit ${t.unit}`].filter(Boolean).join(' · ')}</span>
+                      <span className={`mt-0.5 block text-xs ${tone}`}>{note}</span>
+                    </span>
+                    {!t.recorded && (
+                      <span className="w-full sm:w-72">
+                        <Select value={pick} onChange={(e) => setPicks({ ...picks, [t.trans_no]: e.target.value })} aria-label={`Lease for ${t.resident}`} className={FIELD} options={options(t)} />
+                      </span>
+                    )}
+                    <span className="w-24 shrink-0 text-right text-sm font-medium tabular-nums">{money(t.amount)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        );
+      })}
+      {counts.look === 0 && only === 'look' && <p className="text-sm text-mute">Nothing needs a look: every payment is matched or recorded already.</p>}
+      {error && <p className="text-sm text-bad">{error}</p>}
+      <div className="flex flex-wrap justify-end gap-2">
+        <button onClick={onCancel} className={OUTLINE}>Cancel</button>
+        <button onClick={record} disabled={busy} className={PRIMARY}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Record {chosen} payment{chosen === 1 ? '' : 's'}</button>
+      </div>
+    </div>
+  );
+}
+
+function ZegoTab() {
+  const [rows, setRows] = useState(null);
+  const [open, setOpen] = useState(null); // a payout, with its payments
+  const [read, setRead] = useState(null);
+  const [reading, setReading] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [error, setError] = useState('');
+  const load = () => api.get('/accounts/zego/payouts').then(setRows).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, []);
+
+  const upload = async (file) => {
+    if (!file) return;
+    setReading(true); setError(''); setMsg('');
+    const form = new FormData();
+    form.append('file', file);
+    try { setRead(await api.upload('/accounts/zego/read', form)); } catch (e) { setError(e.message); }
+    setReading(false);
+  };
+  const toggle = async (p) => {
+    if (open?.id === p.id) { setOpen(null); return; }
+    try { setOpen(await api.get(`/accounts/zego/payouts/${p.id}`)); } catch (e) { setError(e.message); }
+  };
+
+  if (read) {
+    return <ZegoReview read={read} onCancel={() => setRead(null)} onDone={(out) => {
+      setRead(null);
+      setMsg([`${out.recorded} payment${out.recorded === 1 ? '' : 's'} put on leases.`, out.already && `${out.already} were recorded before.`, out.skipped && `${out.skipped} left on no lease for now.`].filter(Boolean).join(' '));
+      if (out.failed.length) setError(out.failed.map((f) => `${f.resident} (Trans # ${f.trans_no}): ${f.error}`).join('\n'));
+      load();
+    }} />;
+  }
+  return (
+    <div className="space-y-4">
+      {canDo('add') && (
+        <div className={`${CARD} flex flex-wrap items-center gap-3`}>
+          <span className="min-w-0 flex-1 basis-60 text-sm text-mute">Upload Zego's payments report (PDF or CSV). Nothing is recorded until you check it and press Record.</span>
+          <label className={`${PRIMARY} cursor-pointer`}>
+            {reading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} {reading ? 'Reading…' : 'Upload report'}
+            <input type="file" accept=".pdf,.csv,application/pdf,text/csv" className="hidden" disabled={reading} onChange={(e) => { upload(e.target.files[0]); e.target.value = ''; }} />
+          </label>
+        </div>
+      )}
+      {msg && <p className="text-sm text-ok">{msg}</p>}
+      {error && <p className="whitespace-pre-line text-sm text-bad">{error}</p>}
+      {!rows ? !error && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
+        : rows.length === 0 ? <p className="py-3 text-sm text-mute">No Zego payouts brought in yet.</p> : (
+          <ul className="space-y-2">
+            {rows.map((p) => (
+              <li key={p.id} className={CARD}>
+                <button onClick={() => toggle(p)} className="flex w-full items-start gap-3 text-left">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-sky-400 to-indigo-600 text-white"><Receipt size={16} /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-sm font-medium">Zego payout {fmt(p.paid_on)}</span>
+                      <QbPill q={p.quickbooks} />
+                    </span>
+                    <span className="mt-0.5 block text-xs text-mute">{[p.bank, `${p.payments} payment${p.payments === 1 ? '' : 's'}`, p.on_leases < p.payments && `${p.payments - p.on_leases} not on a lease`, p.uploaded_by && `by ${p.uploaded_by}`].filter(Boolean).join(' · ')}</span>
+                    {p.quickbooks?.state === 'failed' && <span className="mt-1 block text-xs text-bad">{p.quickbooks.error}</span>}
+                  </span>
+                  <span className="shrink-0 text-sm font-medium tabular-nums">{money(p.total)}</span>
+                </button>
+                {open?.id === p.id && (
+                  <ul className="mt-3 divide-y divide-stroke/60 border-t border-stroke/60">
+                    {open.transactions.map((t) => (
+                      <li key={t.trans_no} className="flex items-start gap-3 py-2 text-sm">
+                        <span className="min-w-0 flex-1">
+                          <span className="block">{t.resident} <span className="text-xs text-mute">· Trans # {t.trans_no}</span></span>
+                          <span className={`block text-xs ${t.on_lease ? 'text-mute' : 'text-warn'}`}>{fmt(t.init_date)} · {t.on_lease ? `${t.tenant} · Unit ${t.unit_no} · ${t.building}` : 'Not on a lease yet'}</span>
+                        </span>
+                        <span className="shrink-0 tabular-nums">{money(t.amount)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+    </div>
+  );
+}
+
 // ---------- the page ----------
 
 export default function AccountsPage({ me, onBack }) {
@@ -432,13 +605,14 @@ export default function AccountsPage({ me, onBack }) {
   const [c, setC] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => { api.get('/accounts/choices').then(setC).catch((e) => setError(e.message)); }, [tab]);
-  const TABS = [['expenses', 'Expenses'], ['monthly', 'Monthly bills'], master && ['quickbooks', 'QuickBooks']].filter(Boolean);
+  const TABS = [['expenses', 'Expenses'], ['monthly', 'Monthly bills'], ['zego', 'Zego'], master && ['quickbooks', 'QuickBooks']].filter(Boolean);
   return (
     <Page title="Accounts" onBack={onBack}>
       <div className="space-y-4">
         <div className="flex flex-wrap gap-1">{TABS.map(([k, l]) => <button key={k} onClick={() => setTab(k)} aria-pressed={tab === k} className={CHIP(tab === k)}>{l}</button>)}</div>
         {error && <p className="text-sm text-bad">{error}</p>}
         {tab === 'quickbooks' ? <QuickBooksTab />
+          : tab === 'zego' ? <ZegoTab />
           : !c ? !error && <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />
           : !c.ready ? <p className="text-sm text-mute">QuickBooks' vendors and accounts are not here yet. {master ? 'Connect QuickBooks on the QuickBooks tab first.' : 'Ask the master to connect QuickBooks first.'}</p>
           : tab === 'expenses' ? <ExpensesTab c={c} master={master} /> : <MonthlyTab c={c} />}

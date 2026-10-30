@@ -74,7 +74,7 @@ const OVERRIDES = [
   [/^\/recurring-payments\/(dues|transfers)\/[^/]+\/attachment$/, 'edit'], // the file of a line, replaced
   [/^\/inventory\/proposals\/[^/]+\/(add|cancel)$/, 'edit'], // deciding what Riley proposed
   [/^\/inventory\/[^/]+\/items\/[^/]+\/(take|photo)$/, 'edit'],
-  [/^\/(leasing\/slips|properties\/documents|accounts\/receipts|leasing\/(tenants|bookings)\/import)\/read$/, null], // Riley reads; the save is its own request
+  [/^\/(leasing\/slips|properties\/documents|accounts\/(receipts|zego)|leasing\/(tenants|bookings)\/import)\/read$/, null], // Riley reads; the save is its own request
   [/^\/properties\/buildings\/[^/]+\/plan\/read$/, null],
 ];
 const BY_METHOD = { POST: 'add', PUT: 'edit', PATCH: 'edit', DELETE: 'delete' };

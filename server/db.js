@@ -2205,3 +2205,43 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_expense_lines ON expense_lines(expense_id);
 `);
+
+// Rent collected online through Zego, brought in from Zego's payments report (server/zego.js).
+//   zego_payouts: one deposit Zego made into the bank (the report's "#1468 · date · total" line).
+//     It goes to QuickBooks as one Deposit, as it shows on the bank statement.
+//   zego_transactions: one tenant's payment inside a payout, by Zego's own Trans #, so a report
+//     uploaded twice records nothing twice. booking_id is the lease it went to and batch the
+//     lease payments it became; both empty while it is on no lease.
+//   zego_names: a name as Zego writes it that is not the tenant's name here, tied to the tenant
+//     once by a person, so the next report matches it by itself.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS zego_payouts (
+    id SERIAL PRIMARY KEY,
+    bank TEXT,
+    paid_on DATE NOT NULL,
+    total NUMERIC(14,2) NOT NULL,
+    file_name TEXT,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+
+  CREATE TABLE IF NOT EXISTS zego_transactions (
+    trans_no TEXT PRIMARY KEY,
+    payout_id INTEGER NOT NULL REFERENCES zego_payouts(id) ON DELETE CASCADE,
+    resident TEXT NOT NULL,
+    property TEXT,
+    unit TEXT,
+    init_date DATE NOT NULL,
+    pay_type TEXT,
+    amount NUMERIC(14,2) NOT NULL,
+    booking_id INTEGER REFERENCES lease_bookings(id) ON DELETE SET NULL,
+    batch TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_zego_transactions_payout ON zego_transactions(payout_id);
+  CREATE INDEX IF NOT EXISTS idx_zego_transactions_batch ON zego_transactions(batch);
+
+  CREATE TABLE IF NOT EXISTS zego_names (
+    name_key TEXT PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES lease_tenants(id) ON DELETE CASCADE
+  );
+`);
