@@ -20,6 +20,7 @@ export const AED = 3.6725; // the dirham is pegged to the dollar
 // US dollars per million tokens. Cache writes cost 1.25x input (2x for the 1-hour kind).
 // Matched by the start of the model id, so a dated id finds its row.
 export const CLAUDE_PRICES = [
+  { id: 'claude-fable-5-1', name: 'Fable 5.1', about: 'The most capable, for agents set to it', input: 10, output: 50, read: 0.25 },
   { id: 'claude-haiku-5-5', name: 'Haiku 5.5', about: 'The cheap one: Auto answers with it', input: 0.10, output: 0.50, read: 0.01,
     long: { over: 100_000, input: 0.50, output: 2.50, read: 0.05 } },
   { id: 'claude-haiku-4-5', name: 'Haiku 4.5', about: 'Quick small jobs: titles, sorting, short replies', input: 1, output: 5, read: 0.10 },
