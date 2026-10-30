@@ -124,7 +124,9 @@ async function dropPhotos(reminderId) {
 
 /** One reminder as the sender's card shows it: who it is for and who has done it. */
 export async function getReminder(senderId, id) {
-  const r = await db.prepare('SELECT * FROM team_reminders WHERE id = ? AND sender_id = ?').get(Number(id), senderId);
+  // `|| 0`: phones still on the app from before To-dos ask for /team-reminders/inbox, which
+  // lands here as id "inbox". That is "not found", not a database error.
+  const r = await db.prepare('SELECT * FROM team_reminders WHERE id = ? AND sender_id = ?').get(Number(id) || 0, senderId);
   if (!r) return null;
   // The tick is on each person's to-do. A row without one is from before that, or not sent yet.
   const people = await db.prepare(`SELECT u.id, u.name, COALESCE(t.done, p.done) done,
