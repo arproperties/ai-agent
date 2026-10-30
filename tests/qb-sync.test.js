@@ -4,7 +4,7 @@ import { reset, closeDb, db, makeUser } from './helpers/db.js';
 import { create } from '../server/properties.js';
 import { createBooking, payBooking, removePayment, bookingPayments, settleDeposit } from '../server/leasing.js';
 import { setUp, setEnabled, authenticate, sendRequestXML, receiveResponseXML, retryFailed, status } from '../server/quickbooks.js';
-import { saveSettings, plan, syncStates } from '../server/qbSync.js';
+import { saveSettings, plan, syncStates, entryFor, settings } from '../server/qbSync.js';
 import { createExpense, updateExpense, removeExpense, getExpense, listExpenses, choices, createRepeat, runRepeats, listRepeats, receiptFrom, readReceipt, useAsk } from '../server/expenses.js';
 
 test.after(() => closeDb());
@@ -248,4 +248,24 @@ test('a receipt read by the AI is tied to QuickBooks\' own vendor and accounts',
   assert.equal(r.vendor_list_id, 'V1');
   assert.match(asked, /KNOWN VENDORS:\nEntergy/);
   assert.match(asked, /Utilities:Electric/);
+});
+
+// The sum of an entry's line amounts, read off its DepositAdd XML as the tests above read it.
+const totalOf = (e) => [...e.add().matchAll(/<DepositLineAdd>.*?<Amount>([\d.]+)<\/Amount>/g)].reduce((t, m) => t + Number(m[1]), 0);
+
+test('qb deposit skips Rent Manager money but keeps the rest', async () => {
+  const { staff, bk } = await books();
+  await saveSettings({ start_date: '2026-10-01', bank_account: 'B1', rent_account: 'I1', deposit_account: 'L1' });
+  await payBooking(bk.id, { amount: 200, method: 'rent_manager', received_on: '2026-11-02', keep_credit: true }, staff, '2026-11-03');
+  await payBooking(bk.id, { amount: 1000, method: 'cash', received_on: '2026-11-02', keep_credit: true }, staff, '2026-11-03');
+  await payBooking(bk.id, { amount: 300, method: 'rent_manager', received_on: '2026-10-31', keep_credit: true }, staff, '2026-11-03');
+  const e = await entryFor('deposit:2026-11-02', await settings(), '2026-11-03');
+  assert.equal(totalOf(e), 1000);
+});
+test('a day with only Rent Manager money has no qb deposit', async () => {
+  const { staff, bk } = await books();
+  await saveSettings({ start_date: '2026-10-01', bank_account: 'B1', rent_account: 'I1', deposit_account: 'L1' });
+  await payBooking(bk.id, { amount: 300, method: 'rent_manager', received_on: '2026-10-31', keep_credit: true }, staff, '2026-11-03');
+  assert.equal(await entryFor('deposit:2026-10-31', await settings(), '2026-11-03'), null);
+  assert.equal(await plan('2026-11-03'), 0, 'and nothing is queued for it');
 });

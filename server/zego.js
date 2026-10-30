@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { db, tx } from './db.js';
 import { upload } from './properties.js';
 import { todayHere } from './leasingRegion.js';
-import { spreadWithin } from './leasing.js';
+import { spreadWithin, NOT_RENT_MANAGER } from './leasing.js';
 import { syncStates } from './qbSync.js';
 
 // Rent paid online through Zego (gozego.com), brought in from Zego's payments report instead of
@@ -203,7 +203,7 @@ function leaseOn(leases, day) {
 async function sameOnLease(bookingId, t) {
   const r = await db.prepare(`SELECT to_char(min(p.received_on), 'YYYY-MM-DD') AS received_on, sum(p.amount) AS amount, min(p.method) AS method
     FROM lease_payments p JOIN lease_installments i ON i.id = p.installment_id
-    WHERE i.booking_id = ? AND p.received_on BETWEEN ?::date - 5 AND ?::date + 5 AND NOT EXISTS (SELECT 1 FROM zego_transactions z WHERE z.batch = p.batch)
+    WHERE i.booking_id = ? AND p.received_on BETWEEN ?::date - 5 AND ?::date + 5 AND NOT EXISTS (SELECT 1 FROM zego_transactions z WHERE z.batch = p.batch) AND ${NOT_RENT_MANAGER}
     GROUP BY coalesce(p.batch, p.id::text) HAVING sum(p.amount) = ? LIMIT 1`).get(bookingId, t.init_date, t.init_date, t.amount);
   return r ? { ...r, amount: Number(r.amount) } : null;
 }

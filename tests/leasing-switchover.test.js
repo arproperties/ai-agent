@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, closeDb, makeUser } from './helpers/db.js';
 import { create, listUnits } from '../server/properties.js';
-import { addTenant, createBooking, getBooking, updateBooking, bookingPayments, payBooking } from '../server/leasing.js';
+import { addTenant, createBooking, getBooking, updateBooking, bookingPayments, payBooking, addCharge, ledger, depositState, METHODS, NOT_RENT_MANAGER } from '../server/leasing.js';
+import { db } from './helpers/db.js';
+import { receiptPdf } from '../server/leasingReceipt.js';
+import { report as runReport } from '../server/leasingReports.js';
 
 test.after(() => closeDb());
 
@@ -54,4 +57,44 @@ test('billed_from cannot move once rent is paid', async () => {
   const bk = await createBooking({ ...base, billed_from: '2026-11-01', from_rent_manager: true }, staff);
   await payBooking(bk.id, { amount: 1000, method: 'cash', received_on: '2026-11-01' }, staff, '2026-11-02');
   await assert.rejects(updateBooking(bk.id, { billed_from: '2026-12-01' }, staff), /Payments are recorded/);
+});
+
+test('an opening credit and an old deposit are recorded as Paid in Rent Manager', async () => {
+  const { staff, base } = await setup();
+  const bk = await createBooking({ ...base, billed_from: '2026-11-01', from_rent_manager: true, security_deposit: 500, deposit_due: '2023-04-01' }, staff);
+  await payBooking(bk.id, { amount: 500, method: 'rent_manager', received_on: '2023-04-01' }, staff, '2026-10-30');
+  assert.equal((await depositState(bk.id)).held, 500);
+  await payBooking(bk.id, { amount: 200, method: 'rent_manager', received_on: '2026-10-31', keep_credit: true }, staff, '2026-10-31');
+  assert.equal((await ledger(bk.id, '2026-10-31')).balance, -200);
+});
+test('an opening balance is one charge', async () => {
+  const { staff, base } = await setup();
+  const bk = await createBooking({ ...base, billed_from: '2026-11-01', from_rent_manager: true }, staff);
+  await addCharge(bk.id, { label: 'Balance brought forward from Rent Manager', due_date: '2026-10-31', amount: 777.5 }, staff);
+  assert.equal((await ledger(bk.id, '2026-10-31')).balance, 777.5);
+});
+test('Paid in Rent Manager is a method, with a SQL filter for the other modules', () => {
+  assert.deepEqual(METHODS.find(([k]) => k === 'rent_manager'), ['rent_manager', 'Paid in Rent Manager']);
+  assert.equal(NOT_RENT_MANAGER, "p.method <> 'rent_manager'");
+});
+test('a Rent Manager payment has no receipt', async () => {
+  const { staff, base } = await setup();
+  const bk = await createBooking({ ...base, billed_from: '2026-11-01', from_rent_manager: true, security_deposit: 500, deposit_due: '2023-04-01' }, staff);
+  await payBooking(bk.id, { amount: 500, method: 'rent_manager', received_on: '2023-04-01' }, staff, '2026-10-30');
+  await payBooking(bk.id, { amount: 100, method: 'cash', received_on: '2026-10-30', keep_credit: true }, staff, '2026-10-30');
+  const rm = await db.prepare("SELECT id FROM lease_payments WHERE method = 'rent_manager'").get();
+  const cash = await db.prepare("SELECT id FROM lease_payments WHERE method = 'cash'").get();
+  await assert.rejects(receiptPdf(rm.id), /no receipt/);
+  assert.ok(await receiptPdf(cash.id));
+});
+test('reports leave Rent Manager money out of what was received', async () => {
+  const { staff, base } = await setup();
+  const bk = await createBooking({ ...base, billed_from: '2026-11-01', from_rent_manager: true }, staff);
+  await payBooking(bk.id, { amount: 300, method: 'rent_manager', received_on: '2026-10-29', keep_credit: true }, staff, '2026-10-30');
+  await payBooking(bk.id, { amount: 100, method: 'cash', received_on: '2026-10-29', keep_credit: true }, staff, '2026-10-30');
+  const c = await runReport('collections', { from: '2026-10-01', to: '2026-10-30' }, '2026-10-30');
+  assert.equal(c.rows.length, 1);
+  assert.equal(c.total.amount, 100);
+  const d = await runReport('daily', { day: '2026-10-29' }, '2026-10-30');
+  assert.equal(d.rows.filter((r) => r.what === 'Payment received').length, 1);
 });

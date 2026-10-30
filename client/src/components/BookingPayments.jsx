@@ -18,8 +18,8 @@ const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p
 const GHOST = 'flex items-center gap-1.5 rounded-full border border-stroke/70 px-3 py-1.5 text-xs text-mute hover:bg-white/5 hover:text-txt disabled:opacity-50';
 const PRIMARY = 'flex items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2 text-sm font-medium text-white disabled:opacity-60';
 const HEAD = 'text-[11px] font-medium uppercase tracking-widest text-mute';
-const METHODS = [['transfer', 'Bank transfer'], ['cash', 'Cash'], ['card', 'Card'], ['money_order', 'Money order'], ['online', 'Online card'], ['zego', 'Zego']];
-const REF = { cash: 'Receipt no.', card: 'Card slip no.', money_order: 'Money order no.', online: 'e.g. ePay VISA, auth no.', transfer: 'Transfer ref.', zego: 'Zego ref.' };
+const METHODS = [['transfer', 'Bank transfer'], ['cash', 'Cash'], ['card', 'Card'], ['money_order', 'Money order'], ['online', 'Online card'], ['zego', 'Zego'], ['rent_manager', 'Paid in Rent Manager']];
+const REF = { cash: 'Receipt no.', card: 'Card slip no.', money_order: 'Money order no.', online: 'e.g. ePay VISA, auth no.', transfer: 'Transfer ref.', zego: 'Zego ref.', rent_manager: 'Rent Manager ref.' };
 const STATUS = {
   paid: ['Paid', 'bg-ok/15 text-ok'], partly_paid: ['Part paid', 'bg-warn/15 text-warn'], overdue: ['Overdue', 'bg-bad/15 text-bad'],
   due: ['Due today', 'bg-p1/20 text-p1'], upcoming: ['Upcoming', 'bg-white/10 text-txt/80'], waived: ['Cancelled', 'bg-white/5 text-mute'],
@@ -94,7 +94,7 @@ function Transactions({ bookingId, stamp: version }) {
                     {r.kind === 'payment' && (
                       <span className="ml-2 inline-flex flex-wrap gap-x-2 text-xs">
                         {r.slip && <a href={`/api/leasing/payments/${r.slip}/file`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-p1 hover:underline"><Paperclip size={12} /> Slip</a>}
-                        {r.parts?.map((p) => (
+                        {r.method !== 'rent_manager' && r.parts?.map((p) => (
                           <a key={p.id} href={`/api/leasing/payments/${p.id}/receipt`} target="_blank" rel="noreferrer" title={`Receipt ${p.receipt_no} · ${p.name} · ${aed(p.amount)}`}
                             className="inline-flex items-center gap-1 text-p1 hover:underline"><FileText size={12} /> {r.parts.length > 1 ? `${p.name} ${aed(p.amount)}` : 'Receipt'}</a>
                         ))}
@@ -207,6 +207,7 @@ function PayForm({ row, url, onDone, onCancel }) {
         <label className="block"><span className="mb-1 block text-xs text-txt/80">Reference</span>
           <input value={v.reference} onChange={set('reference')} placeholder={REF[v.method]} className={FIELD} /></label>
       </div>
+      {v.method === 'rent_manager' && <p className="text-xs text-mute">Money received before the switch-over. Kept out of QuickBooks.</p>}
       {whole && <Plan url={url} amount={v.amount} on={v.received_on} />}
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex justify-end gap-2">
@@ -406,7 +407,7 @@ export default function BookingPayments({ booking }) {
               <Paperclip size={13} /> {p.has_file ? 'Replace' : 'Attach'}
               <input type="file" accept="application/pdf,image/*" className="hidden" onChange={(e) => { attach(p, e.target.files?.[0]); e.target.value = ''; }} />
             </label>
-            <a href={`/api/leasing/payments/${p.id}/receipt`} target="_blank" rel="noreferrer" title={`Receipt ${p.receipt_no}`} className={GHOST}><FileText size={13} /> Receipt</a>
+            {p.method !== 'rent_manager' && <a href={`/api/leasing/payments/${p.id}/receipt`} target="_blank" rel="noreferrer" title={`Receipt ${p.receipt_no}`} className={GHOST}><FileText size={13} /> Receipt</a>}
             {canDo('delete') && <button onClick={() => remove(p)} aria-label="Delete payment" className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
           </div>
         ))}

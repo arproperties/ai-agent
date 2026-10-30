@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { XMLParser } from 'fast-xml-parser';
 import { db } from './db.js';
 import { todayHere } from './leasingRegion.js';
-import { depositState } from './leasing.js';
+import { depositState, NOT_RENT_MANAGER } from './leasing.js';
 
 // Keeping QuickBooks in step with the app. The app is where things are recorded; QuickBooks
 // gets the same entries, made the way the bookkeeper makes them (looked at in the company
@@ -72,7 +72,7 @@ export async function saveSettings(body = {}) {
 const lineLabel = { rent: 'Rent', deposit: 'Security deposits', late: 'Late fees', charge: 'Other charges' };
 
 // A payment that came in a Zego payout goes to QuickBooks with that payout, not with its day.
-const NOT_ZEGO = 'NOT EXISTS (SELECT 1 FROM zego_transactions z WHERE z.batch = p.batch)';
+const NOT_ZEGO = `NOT EXISTS (SELECT 1 FROM zego_transactions z WHERE z.batch = p.batch) AND ${NOT_RENT_MANAGER}`;
 
 /** Payments as deposit lines, a line per income account; `extra` (a label and an amount) adds to the rent line. */
 function depositLines(rows, s, extra = null) {

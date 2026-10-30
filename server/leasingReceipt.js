@@ -43,6 +43,7 @@ export async function receiptRow(paymentId) {
     JOIN lease_tenants t ON t.id = b.tenant_id JOIN prop_units u ON u.id = b.unit_id JOIN prop_buildings bl ON bl.id = u.building_id
     JOIN prop_companies c ON c.id = bl.company_id LEFT JOIN users w ON w.id = p.recorded_by WHERE p.id = ?`).get(Number(paymentId) || 0);
   if (!p) throw bad('Not found', 404);
+  if (p.method === 'rent_manager') throw bad('Paid in Rent Manager: there is no receipt for it.', 409);
   return p;
 }
 
