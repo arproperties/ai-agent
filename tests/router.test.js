@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, makeUser, makeAgent, makeDoc, closeDb } from './helpers/db.js';
-import { teamDocuments } from '../server/router.js';
+import { teamDocuments, pickAgent, isFollowUp } from '../server/router.js';
 
 test.after(() => closeDb());
 
@@ -30,6 +30,21 @@ test("teamDocuments never returns another user's documents on a shared agent", a
   const names = docs.map((d) => d.name);
   assert.ok(!names.includes('bob-divorce-papers.pdf'), `leaked another user's file: ${names.join(', ')}`);
   assert.deepEqual(names, ['alice-tenancy.pdf']);
+});
+
+test('a short reply stays with the agent that asked, without asking the router', async () => {
+  const pd = { id: 1, name: 'Project Director', persona: '' };
+  const writer = { id: 2, name: 'Writer', persona: '' };
+  for (const text of ['Cc Rona', 'Yes it is done', 'Tauqeer', 'Draft the email', 'Show me']) {
+    const { agent } = await pickAgent({ agents: [pd, writer], userId: 0, text, recent: [], currentAgentId: pd.id });
+    assert.equal(agent.id, pd.id, text);
+  }
+});
+
+test('a long message, or one with a file, is not taken as a follow-up', () => {
+  assert.equal(isFollowUp('Cc Rona'), true);
+  assert.equal(isFollowUp('Can you help me find someone for this even check freelancers'), false);
+  assert.equal(isFollowUp('yes', [{ name: 'cv.pdf' }]), false);
 });
 
 test('teamDocuments handles an empty agent list without building invalid SQL', async () => {

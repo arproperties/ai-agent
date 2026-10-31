@@ -84,7 +84,7 @@ export function chatModel(user, agent) {
 const carriedCase = (c, primary) => (primary && c.case && !sameCase(c.case.number, primary.number)
   ? ` case="${String(c.case.number).replace(/"/g, "'")}" about="a reference case, not ${String(primary.number).replace(/"/g, "'")}"` : '');
 
-function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false, auto = false, focus = null, taught = null) {
+function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false, auto = false, focus = null, taught = null, pinned = []) {
   const others = team.filter((a) => a.id !== agent.id).map((a) => a.name);
   const parts = [
     agent.persona || `You are ${agent.name}, a helpful assistant.`,
@@ -254,6 +254,11 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   // a tenth of the price for five minutes. What changes every message (the time, what was
   // recalled) comes after the cache mark, or it would spoil the match.
   const context = [`Current date and time: ${new Date().toString()}.`];
+  if (pinned.length) {
+    context.push(`<key_facts>\nKey facts ${user.name} pinned: who people are, which side they are on, how things are done. ` +
+      'They hold in every answer and every draft, unless this conversation says otherwise:\n' +
+      `${pinned.map((m) => `- ${m}`).join('\n')}\n</key_facts>`);
+  }
   if (memories.length) {
     context.push(`<memory>\nThings you remember about the user from earlier conversations, each with the day it was saved ` +
       `(if two disagree, the newer one is right; for earlier versions and how something changed, use memory_history):\n` +
@@ -614,7 +619,7 @@ export async function chat(req, res) {
   }
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   // The case's number goes into the search too, so the case's own files come up first.
-  const { memories, knowledge } = await recall(reader, [text || meta.map((f) => f.name).join(' '), focus?.primary?.number].filter(Boolean).join(' '));
+  const { memories, pinned, knowledge } = await recall(reader, [text || meta.map((f) => f.name).join(' '), focus?.primary?.number].filter(Boolean).join(' '));
   const library = await libraryCatalog(reader); // same every turn, so read it once
   // Chats brought in by this message, plus any brought in earlier: once a chat is carried
   // into this conversation it stays for every message after it, which is what "this chat
@@ -648,7 +653,7 @@ export async function chat(req, res) {
     let checked = false;
     const { model, auto } = chatModel(user, agent);
     if (mailbox) await loadAddresses(); // the master may have added one since the last message
-    const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto, focus, await lessonsFor(agent));
+    const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto, focus, await lessonsFor(agent), pinned);
     for (let turn = 0; turn < MAX_ROUNDS; turn++) {
       stream = claude.beta.messages.stream({
         model,

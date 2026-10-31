@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   FileSignature, Building2, Receipt, Landmark, Scale, Users, IdCard, BadgeCheck, Mail, Megaphone, Image as ImageIcon,
   Folder, FolderOpen, Search, Download, ExternalLink, Loader2, AlertCircle, Upload, ChevronLeft, Trash2, MessageSquare, X, Info, PenLine, Sparkles,
-  FileArchive, FolderInput, CheckCircle2, Clock, Play,
+  FileArchive, FolderInput, CheckCircle2, Clock, Play, Pin,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { startImport, importState, onImport, clearImportError } from '../lib/importer';
@@ -957,6 +957,11 @@ export function MemoryPanel() {
   const [hasAny, setHasAny] = useState(false);
   useEffect(() => { if (!searched && data) setHasAny(data.total > 0); }, [data, searched]);
 
+  // A pinned memory is read into every chat, not only when the question brings it up.
+  const pin = async (m) => {
+    try { await api.patch(`/memories/${m.id}`, { pinned: !m.pinned }); } catch (e) { return alert(e.message); }
+    load();
+  };
   const add = async (e) => {
     e.preventDefault();
     if (!text.trim()) return;
@@ -967,7 +972,7 @@ export function MemoryPanel() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-mute">Your agents learn lasting facts about you from your chats, and all of them share this memory. Teach something new, or remove what they should forget. When something changes, the old version is kept under History.</p>
+      <p className="text-sm text-mute">Your agents learn lasting facts about you from your chats, and all of them share this memory. Teach something new, or remove what they should forget. When something changes, the old version is kept under History. Pin the key facts - who someone is, which side they are on - and every chat uses them.</p>
       <form onSubmit={add} className="flex gap-2">
         <input value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. My company is AR Properties"
           className="glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70" />
@@ -991,6 +996,9 @@ export function MemoryPanel() {
                   )}
                 </p>
               </div>
+              <button onClick={() => pin(m)} aria-label={m.pinned ? 'Unpin' : 'Pin: use in every chat'} title={m.pinned ? 'Pinned: used in every chat' : 'Pin: use in every chat'}
+                className={`grid size-8 shrink-0 place-items-center rounded-full ${m.pinned ? 'text-p1' : 'text-mute hover:text-txt'}`}>
+                <Pin size={15} fill={m.pinned ? 'currentColor' : 'none'} /></button>
               <button onClick={async () => { await api.del(`/memories/${m.id}`); load(); }} aria-label="Forget"
                 className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:text-bad"><Icon name="x" size={16} /></button>
             </div>

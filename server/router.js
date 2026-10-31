@@ -7,7 +7,16 @@ Rules:
 - Pick the agent whose expertise, persona and files best match what the user needs right now.
 - Judge attached files by their type and purpose, not by words that merely appear in them (an offer letter for an accountant job is an HR matter; a tenancy contract is a property matter).
 - If the message continues the current topic (follow-ups like "make it shorter", "what about the second one?"), keep the current agent.
+- Keep the current agent for anything that answers it, corrects it or acts on its last answer: "yes", "proceed", a name, a number, "cc Rona", "draft the email", "show me", "check again".
+- Every agent can read and draft emails, make PDFs and keep to-dos, so asking for one of those is never a reason to switch.
+- Switch only when the user plainly starts a different subject that another agent knows better.
 - If nothing specific fits, pick the general assistant.`;
+
+// A boss's chat went Reem → Architectural Engineer → Writer → Project Director in a few
+// minutes, each one correcting the one before, over replies like "Cc Rona" and "Yes it is
+// done". A short reply with nothing attached is a follow-up: it stays with who asked.
+export const isFollowUp = (text, attachments = []) =>
+  !attachments.length && text.trim().split(/\s+/).filter(Boolean).length <= 6;
 
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('router timeout')), ms))]);
 
@@ -57,6 +66,7 @@ export async function pickAgent({ agents, byName = [], userId, text, attachments
   const current = agents.find((a) => a.id === currentAgentId);
   const fallback = current || agents[0];
   if (agents.length === 1) return { agent: agents[0], why: null };
+  if (current && isFollowUp(text, attachments)) return { agent: current, why: null };
 
   const docs = await teamDocuments(userId, agents.map((a) => a.id));
   const team = agents.map((a) => {
