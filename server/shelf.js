@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { retrievalScope, agentScope, findChunks } from './knowledge.js';
+import { retrievalScope, agentScope, notOtherCases, findChunks } from './knowledge.js';
 import { isMaster, masterReach } from './access.js';
 import { copiesOf } from './copies.js';
 
@@ -99,8 +99,9 @@ const line = (d) => `#${d.id} ${d.title || d.name} (${d.folder || 'Other'}${d.do
   `${d.uploader ? `; uploaded by ${d.uploader}${d.created_at ? ` on ${day(d.created_at)}` : ''}` : ''})`;
 
 // A private agent's turn reads only the person's own files, the master's too (agentScope).
-// The master reaches everyone's files but an external person's (access.js).
-const scopeOf = (user) => (user.ownFilesOnly ? agentScope(user) : isMaster(user) ? masterReach('t') : retrievalScope(user.id));
+// The master reaches everyone's files but an external person's (access.js). Never the own
+// files of an agent bound to another case (notOtherCases).
+const scopeOf = (user) => (user.ownFilesOnly ? agentScope(user) : notOtherCases(user, isMaster(user) ? masterReach('t') : retrievalScope(user.id)));
 const DOC_COLS = `t.id, t.user_id, t.title, t.name, t.folder, t.company, t.tags, t.summary, t.doc_date, t.expires_on, t.created_at,
   CASE WHEN t.user_id = ? THEN NULL ELSE coalesce(u.name, u.email) END AS uploader`;
 

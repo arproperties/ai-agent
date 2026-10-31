@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Globe } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -8,8 +9,8 @@ import Avatar from './Avatar';
 import { hideMarkers } from '../lib/replyDoc';
 import { splitDrawings, withoutDrawings, exportAsked } from '../lib/drawing';
 import { DrawingCard, DrawingPending, DrawingFile } from './Drawing';
-import { onSpokenWord } from '../lib/voice';
-import { makeHighlighter } from '../lib/highlight';
+import { onSpeechProgress } from '../lib/voice';
+import { makeHighlighter, readingPlan, pointAt } from '../lib/highlight';
 
 const isImg = (f) => f.kind === 'image' || /\.(png|jpe?g|gif|webp|heic)$/i.test(f.name);
 const isVid = (f) => f.kind === 'video' || /\.(mp4|mov|webm|m4v|3gp)$/i.test(f.name);
@@ -95,7 +96,8 @@ function sentAt(ts) {
 const Time = ({ ts }) => (ts ? <span className="px-1 text-[11px] text-mute/70">{sentAt(ts)}</span> : null);
 
 const VOICE = {
-  idle: { icon: 'speaker', label: 'Read aloud' },
+  idle: { icon: 'speaker', label: 'Read aloud', hint: 'Read aloud — or select some words and tap Listen to start there' },
+  resume: { icon: 'speaker', label: 'Continue', hint: 'Carry on from where it stopped', show: true },
   loading: { icon: 'spinner', label: 'Preparing…', hint: 'Preparing audio — tap to cancel', spin: true },
   speaking: { icon: 'pause', label: 'Playing', hint: 'Pause' },
   paused: { icon: 'play', label: 'Paused', hint: 'Resume' },
@@ -109,11 +111,11 @@ function Reply({ content, savedId }) {
   ) : p.pending ? <DrawingPending key={i} /> : <DrawingCard key={i} drawing={p.drawing} messageId={savedId} />));
 }
 
-// Select some of a reply and two buttons appear by it: Reply (draft an answer to what was
-// selected) and Remove (take it out of the reply). Below the selection on a phone, where
-// the phone's own copy menu sits above it.
-function SelectionBar({ rootRef, onReply, onRemove }) {
-  const [sel, setSel] = useState(null); // { text, x, y }
+// Select some of a reply and buttons appear by it: Listen (read aloud from the start of the
+// selection), Reply (draft an answer to what was selected) and Remove (take it out of the
+// reply). Below the selection on a phone, where the phone's own copy menu sits above it.
+function SelectionBar({ rootRef, onListen, onReply, onRemove }) {
+  const [sel, setSel] = useState(null); // { text, from, x, y }
 
   useEffect(() => {
     let frame = 0;
@@ -124,10 +126,15 @@ function SelectionBar({ rootRef, onReply, onRemove }) {
         const root = rootRef.current;
         const text = s && !s.isCollapsed ? s.toString().trim() : '';
         if (!text || !root || !root.contains(s.anchorNode) || !root.contains(s.focusNode)) return setSel(null);
-        const box = s.getRangeAt(0).getBoundingClientRect();
-        const below = window.matchMedia('(pointer: coarse)').matches;
-        const x = Math.min(Math.max(box.left + box.width / 2, 90), window.innerWidth - 90);
-        setSel({ text, x, y: below ? box.bottom + 12 : box.top - 52 });
+        const range = s.getRangeAt(0);
+        const box = range.getBoundingClientRect();
+        // Over the selection's first line, not the middle of a selection spanning many; below
+        // it when that would leave the window (or on a phone, as above).
+        const line = range.getClientRects()[0] || box;
+        const below = window.matchMedia('(pointer: coarse)').matches || line.top - 52 < 8;
+        const x = Math.min(Math.max(line.left + line.width / 2, 140), window.innerWidth - 140);
+        const y = below ? Math.min(line.bottom + 12, window.innerHeight - 52) : line.top - 52;
+        setSel({ text, from: { node: range.startContainer, offset: range.startOffset }, x, y });
       });
     };
     document.addEventListener('selectionchange', read);
@@ -136,32 +143,76 @@ function SelectionBar({ rootRef, onReply, onRemove }) {
   }, [rootRef]);
 
   if (!sel) return null;
-  const act = (fn) => () => { fn(sel.text); window.getSelection()?.removeAllRanges(); setSel(null); };
+  const act = (fn, what = 'text') => () => { fn(sel[what]); window.getSelection()?.removeAllRanges(); setSel(null); };
   const btn = 'flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition hover:bg-white/10';
-  return (
+  // Drawn on the page itself: inside the chat, a panel with a blur or transform turns
+  // "fixed" into "relative to that panel", and the bar lands far from the selection.
+  return createPortal(
     // mousedown is stopped so tapping a button does not clear the selection first
     <div onMouseDown={(e) => e.preventDefault()} style={{ left: sel.x, top: Math.max(sel.y, 8) }}
       className="fixed z-40 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-stroke bg-surface-2/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
+      {onListen && <button type="button" onClick={act(onListen, 'from')} className={btn}><Icon name="speaker" size={14} /> Listen</button>}
       {onReply && <button type="button" onClick={act(onReply)} className={btn}><Icon name="reply" size={14} /> Reply</button>}
       {onRemove && <button type="button" onClick={act(onRemove)} className={`${btn} hover:text-bad`}><Icon name="trash" size={14} /> Remove</button>}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
 // savedId: the reply's row, which the PDF and AutoCAD files are made from. drawingFrom: the
 // latest drawing up to this reply, for a reply that hands it over as a file.
-export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, onOpenFile, onShare, onPdf, onDelete, onReplyTo, onRemoveText, savedId, drawingFrom }) {
+// readNow: the reply to a spoken question, to read out as soon as it is shown.
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, readNow, onReadStarted, onOpenFile, onShare, onPdf, onDelete, onReplyTo, onRemoveText, savedId, drawingFrom }) {
   const [copied, setCopied] = useState(false);
   const bodyRef = useRef();
   const reading = voice !== 'idle';
+  const [plan, setPlan] = useState(null); // what this reading reads, as pieces cut from the screen
+  // Where reading was stopped, so the next tap of the speaker carries on from there
+  // instead of starting the whole reply again.
+  const resumeRef = useRef(null);
+  const [canResume, setCanResume] = useState(false);
+
+  // Read aloud from a spot ({ node, offset }: a tapped word, a selection), or from the top.
+  const listen = (from) => {
+    if (!bodyRef.current) return;
+    const p = readingPlan(bodyRef.current, from);
+    if (!p.pieces.length) return;
+    setPlan(p);
+    onSpeak(p.pieces.map((x) => x.text));
+  };
 
   // While this reply is read aloud, each word lights up as it is said.
   useEffect(() => {
-    if (!reading) return;
-    const h = makeHighlighter(() => bodyRef.current);
-    const off = onSpokenWord((e) => (e.reset ? h.clear() : h.word(e.word)));
+    if (!reading || !plan) return;
+    const h = makeHighlighter(plan);
+    const off = onSpeechProgress((e) => {
+      if (e.finished) { resumeRef.current = null; return; }
+      h.at(e);
+      // Carrying on starts at the top of the piece that was playing, so the sentence is whole.
+      const w = plan.pieces[e.index]?.words[0];
+      if (w) resumeRef.current = { node: w.node, offset: w.start };
+    });
     return () => { off(); h.stop(); };
+  }, [reading, plan]);
+
+  useEffect(() => {
+    if (!reading) setCanResume(!!resumeRef.current?.node.isConnected);
   }, [reading]);
+
+  useEffect(() => {
+    if (!readNow || msg.streaming || !msg.content) return;
+    onReadStarted?.();
+    listen(null);
+  }, [readNow, msg.streaming]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // While it is being read, a tap on the text pauses it right there. Once paused, tapping a
+  // word reads on from that word (the play button carries on from where it paused).
+  const jump = (e) => {
+    if (!reading || e.target.closest('a, button') || !window.getSelection()?.isCollapsed) return;
+    if (voice === 'speaking') return onSpeak();
+    const p = pointAt(e.clientX, e.clientY);
+    if (p && bodyRef.current?.contains(p.node)) listen(p);
+  };
 
   if (msg.role === 'user') {
     return (
@@ -221,9 +272,12 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
       {msg.error ? (
         <div className="rounded-2xl border border-bad/30 bg-bad/10 px-4 py-3 text-sm">{msg.error}</div>
       ) : msg.content ? (
-        <div ref={bodyRef}>
+        <div ref={bodyRef} onClick={jump} className={reading ? 'cursor-pointer' : undefined}
+          title={voice === 'speaking' ? 'Tap to pause' : reading ? 'Tap a word to read from there' : undefined}>
           <Reply content={msg.content} savedId={savedId} />
-          {!msg.streaming && (onReplyTo || onRemoveText) && <SelectionBar rootRef={bodyRef} onReply={onReplyTo} onRemove={onRemoveText} />}
+          {!msg.streaming && (voiceEnabled || onReplyTo || onRemoveText) && (
+            <SelectionBar rootRef={bodyRef} onListen={voiceEnabled ? listen : undefined} onReply={onReplyTo} onRemove={onRemoveText} />
+          )}
         </div>
       ) : (
         <div className="flex gap-1.5 py-2">{[0, 1, 2].map((i) => (
@@ -251,15 +305,22 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
       {msg.content && !msg.streaming && (
         <div className="mt-2 flex items-center gap-1 text-mute">
           {voiceEnabled && (() => {
-            const v = VOICE[voice] || VOICE.idle;
+            const v = !reading && canResume ? VOICE.resume : VOICE[voice] || VOICE.idle;
             const active = voice !== 'idle';
             return (
               <>
-                <button onClick={onSpeak} aria-label={v.hint || v.label} title={v.hint || v.label}
+                <button onClick={() => (reading ? onSpeak() : listen(canResume ? resumeRef.current : null))}
+                  aria-label={v.hint || v.label} title={v.hint || v.label}
                   className={`flex h-8 items-center gap-1.5 rounded-full px-2 transition hover:bg-white/10 ${active ? 'bg-white/5 text-p2' : ''}`}>
                   <Icon name={v.icon} size={16} className={v.spin ? 'animate-spin' : ''} />
-                  {active && <span className="text-xs">{v.label}</span>}
+                  {(active || v.show) && <span className="text-xs">{v.label}</span>}
                 </button>
+                {!reading && canResume && (
+                  <button onClick={() => listen(null)} aria-label="Read from the start" title="Read from the start"
+                    className="grid size-8 place-items-center rounded-full hover:bg-white/10">
+                    <Icon name="restart" size={15} />
+                  </button>
+                )}
                 {active && (
                   <button onClick={onStopSpeak} aria-label="Stop reading" title="Stop"
                     className="grid size-8 place-items-center rounded-full text-p2 hover:bg-white/10">

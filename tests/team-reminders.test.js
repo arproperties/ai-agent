@@ -33,6 +33,12 @@ async function office() {
 /** What someone else has given this person and they have not ticked: their own to-do list, filtered. */
 const given = async (userId, done = false) => (await listTodos(userId, { done })).filter((t) => t.team_reminder_id);
 
+test('an id that is not a number (old apps asking for /inbox) is not found, not a database error', async () => {
+  const { boss } = await office();
+  assert.equal(await getReminder(boss, 'inbox'), null);
+  assert.equal(await decideReminder(boss, 'inbox', true), null);
+});
+
 test('names are found by first name, and an unknown or doubtful one is asked about', async () => {
   const { boss, rona } = await office();
   assert.deepEqual((await findPeople(boss, ['rona'])).map((u) => u.id), [rona]);

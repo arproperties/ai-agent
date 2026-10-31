@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, X, Users, Eye, ChevronRight } from 'lucide-react';
+import { Search, X, Users, Eye, ChevronRight, MoreHorizontal, Pencil } from 'lucide-react';
 import { api } from '../lib/api';
 import { groupChats } from '../lib/chatGroups';
 import Icon from './Icon';
@@ -7,6 +7,7 @@ import Avatar from './Avatar';
 import { NotifyBell } from './Notifications';
 import { Row } from './NavRow';
 import SettingsMenu from './SettingsMenu';
+import UpdateButton from './UpdateButton';
 
 // The sidebar is deliberately monochrome. Every destination is the same quiet row, so
 // the eye lands on the chat you are looking for rather than on the furniture. Colour is
@@ -41,12 +42,15 @@ const Label = ({ children, action }) => (
   </div>
 );
 
-export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, translateOpen, onTranslate, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, aiKeysOpen, onAiKeys, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, renewalsOpen, onRenewals, modules, petOn, onPet, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose, onCollapse }) {
+export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, translateOpen, onTranslate, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, healthOpen, onHealth, aiKeysOpen, onAiKeys, appsOpen, onApps, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, renewalsOpen, onRenewals, modules, petOn, onPet, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onRenameConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose, onCollapse }) {
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
   const [q, setQ] = useState('');
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState(null);
   const searchRef = useRef(null);
+  const [menuFor, setMenuFor] = useState(null); // chat whose ⋯ menu is open
+  const [renaming, setRenaming] = useState(null); // { id, title } while a name is being typed
+  const cancelRename = useRef(false);
   const [teamOpen, setTeamOpen] = useState(() => { try { return localStorage.getItem('teamOpen') === '1'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('teamOpen', teamOpen ? '1' : '0'); } catch { /* private window */ } }, [teamOpen]);
   // Only shown once somebody has actually looked at this account, so it is silent for
@@ -71,8 +75,27 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
   // it shows you which chat the match is in.
   const chatRow = (c, { snippet }) => {
     const a = byId[c.agent_id];
+    if (renaming?.id === c.id) {
+      // Enter or tapping away keeps the new name; Escape (or an empty name) leaves it as it was.
+      const save = () => {
+        if (cancelRename.current) { cancelRename.current = false; return; }
+        const t = renaming.title.trim();
+        setRenaming(null);
+        if (t && t !== c.title) onRenameConv(c.id, t);
+      };
+      return (
+        <li key={c.id} className="flex items-center rounded-lg bg-white/10 px-2.5">
+          <input autoFocus value={renaming.title} maxLength={120} aria-label="Chat name"
+            onChange={(e) => setRenaming({ id: c.id, title: e.target.value })}
+            onFocus={(e) => e.target.select()} onBlur={save}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') { cancelRename.current = true; setRenaming(null); } }}
+            className="w-full bg-transparent py-[7px] text-sm outline-none" />
+        </li>
+      );
+    }
+    const open = menuFor === c.id;
     return (
-      <li key={c.id} className={`group flex items-center rounded-lg transition ${c.id === activeConvId ? 'bg-white/10' : 'hover:bg-white/[0.06]'}`}>
+      <li key={c.id} className={`group relative flex items-center rounded-lg transition ${c.id === activeConvId ? 'bg-white/10' : 'hover:bg-white/[0.06]'}`}>
         <button onClick={() => onOpenConv(c.id)} className="flex min-w-0 flex-1 items-center gap-2.5 py-[7px] pl-2.5 text-left">
           {snippet && (a
             ? <Avatar icon={a.icon} color={a.color} size={22} className="shadow-none" />
@@ -85,16 +108,32 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
             {snippet && c.snippet && <span className="mt-0.5 line-clamp-2 text-xs leading-snug text-mute"><Highlight text={c.snippet} q={q.trim()} /></span>}
           </span>
         </button>
-        <button onClick={() => onDeleteConv(c.id)} aria-label="Delete chat"
-          className="mr-1 grid size-7 shrink-0 place-items-center rounded-md text-mute opacity-50 hover:bg-white/10 hover:text-bad md:opacity-0 md:group-hover:opacity-100">
-          <Icon name="trash" size={14} />
+        {/* Hidden until hover only where there is a mouse: a tablet or phone has no
+            hover, so there it is always shown or the chat could never be renamed or deleted. */}
+        <button onClick={() => setMenuFor(open ? null : c.id)} aria-label="Chat options" aria-expanded={open}
+          className={`mr-1 grid size-8 shrink-0 place-items-center rounded-md text-mute hover:bg-white/10 hover:text-txt ${open ? 'bg-white/10 text-txt' : '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100'}`}>
+          <MoreHorizontal size={16} />
         </button>
+        {open && (<>
+          <div className="fixed inset-0 z-40" onClick={() => setMenuFor(null)} />
+          <div className="absolute right-1 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg border border-stroke bg-surface py-1 text-sm shadow-xl">
+            <button onClick={() => { setMenuFor(null); setRenaming({ id: c.id, title: c.title || '' }); }}
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-white/10">
+              <Pencil size={14} /> Rename
+            </button>
+            <button onClick={() => { setMenuFor(null); onDeleteConv(c.id); }}
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-bad hover:bg-white/10">
+              <Icon name="trash" size={14} /> Delete
+            </button>
+          </div>
+        </>)}
       </li>
     );
   };
 
   return (
     <div className="flex h-full flex-col pt-safe">
+      <UpdateButton />
       <header className="flex items-center justify-between px-4 pb-2 pt-2 text-xs tracking-[0.14em] text-mute">
         <span>REEM</span>
         <span className="flex items-center gap-3"><Clock />
@@ -209,7 +248,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
               <Eye size={16} />
             </button>
           )}
-          <SettingsMenu user={user} expiring={expiring} dueTodos={dueTodos} tenantCare={tenantCare} mailRoutingOpen={mailRoutingOpen} onMailRouting={onMailRouting} addressBookOpen={addressBookOpen} onAddressBook={onAddressBook} billingOpen={billingOpen} onBilling={onBilling} aiKeysOpen={aiKeysOpen} onAiKeys={onAiKeys} docRenewalsOpen={docRenewalsOpen} onDocRenewals={onDocRenewals} legalOpen={legalOpen} onLegal={onLegal} sharedInbox={sharedInbox} sharedInboxOpen={sharedInboxOpen} onSharedInbox={onSharedInbox}
+          <SettingsMenu user={user} expiring={expiring} dueTodos={dueTodos} tenantCare={tenantCare} mailRoutingOpen={mailRoutingOpen} onMailRouting={onMailRouting} addressBookOpen={addressBookOpen} onAddressBook={onAddressBook} billingOpen={billingOpen} onBilling={onBilling} healthOpen={healthOpen} onHealth={onHealth} aiKeysOpen={aiKeysOpen} onAiKeys={onAiKeys} appsOpen={appsOpen} onApps={onApps} docRenewalsOpen={docRenewalsOpen} onDocRenewals={onDocRenewals} legalOpen={legalOpen} onLegal={onLegal} sharedInbox={sharedInbox} sharedInboxOpen={sharedInboxOpen} onSharedInbox={onSharedInbox}
             filesOpen={filesOpen} todosOpen={todosOpen} translateOpen={translateOpen} meetingsOpen={meetingsOpen} transcribeOpen={transcribeOpen} tenantCareOpen={tenantCareOpen} dutiesOpen={dutiesOpen} checklistsOpen={checklistsOpen} hasBuildings={hasBuildings} buildingsOpen={buildingsOpen} inventoryOpen={inventoryOpen} renewalsOpen={renewalsOpen} onRenewals={onRenewals} modules={modules} petOn={petOn} onPet={onPet}
             onFiles={onFiles} onTodos={onTodos} onTranslate={onTranslate} onMeetings={onMeetings} onTranscribe={onTranscribe} onTenantCare={onTenantCare} onDuties={onDuties} onChecklists={onChecklists} onBuildings={onBuildings} onInventory={onInventory}
             onMemory={onMemory} onEmail={onEmail} onPeople={onPeople} />

@@ -1,0 +1,56 @@
+import { registerSW } from 'virtual:pwa-register';
+
+// Getting a new version onto an installed copy of Reem.
+//
+// On an iPad or tablet the installed app is rarely started fresh: it is paused in the
+// background and picked up again, and the browser only looks for a new version of the
+// service worker when a page is loaded. So a deploy never reached it, and the only way
+// to see a change was to delete the home-screen icon and install again.
+//
+// Now the app asks the server for a new version on start and every time it comes back to
+// the front. A new version is downloaded but never switched to on its own: reloading by
+// itself would throw away whatever the person was in the middle of. Instead <UpdateButton>
+// appears on its own line at the top of the menu, and the page reloads only when they tap it.
+let ready = false;
+let registration = null;
+const watchers = new Set();
+
+export function startUpdates() {
+  if (!('serviceWorker' in navigator)) return;
+  registerSW({
+    immediate: true,
+    onNeedRefresh() {
+      ready = true;
+      watchers.forEach((fn) => fn(true));
+    },
+    onRegisteredSW(_url, reg) {
+      if (!reg) return;
+      registration = reg;
+      const check = () => {
+        if (document.visibilityState === 'visible' && navigator.onLine) reg.update().catch(() => {});
+      };
+      document.addEventListener('visibilitychange', check);
+      window.addEventListener('focus', check);
+    },
+  });
+}
+
+// Whether a new version is waiting; `fn` hears when one arrives.
+export function updateReady() { return ready; }
+export function onUpdateReady(fn) {
+  watchers.add(fn);
+  return () => watchers.delete(fn);
+}
+
+// Switch to the new version: the waiting worker takes over and the page reloads onto it.
+// The reload is done here rather than left to the plugin, which only reloads a page the old
+// worker was running — after a hard refresh it was not, and the button sat on "Updating…"
+// for ever. If the takeover is never heard, the page reloads anyway after a few seconds.
+export function applyUpdate() {
+  let gone = false;
+  const reload = () => { if (!gone) { gone = true; window.location.reload(); } };
+  navigator.serviceWorker.addEventListener('controllerchange', reload);
+  const waiting = registration?.waiting;
+  if (waiting) waiting.postMessage({ type: 'SKIP_WAITING' });
+  setTimeout(reload, waiting ? 4000 : 0);
+}

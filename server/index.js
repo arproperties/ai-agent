@@ -6,10 +6,10 @@ import { db, tx } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo, timingsFor } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
-import { agentOut, agentIn, agentLinks } from './agents.js';
+import { agentOut, agentIn, agentLinks, setAgentCase } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
 import { deleteMessage, editReply, chat } from './chat.js';
-import { addMemory } from './knowledge.js';
+import { addMemory, memoryChain } from './knowledge.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument, editDocumentKind, kindFieldsIn } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
@@ -23,10 +23,12 @@ import { routineRoutes } from './routines.js';
 import { teamReminderRoutes, bringOldRemindersIntoTodos } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
 import { addressRoutes } from './addressBook.js';
+import { lessonRoutes } from './lessons.js';
 import { checklistRoutes } from './checklists.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
 import { aiKeyRoutes, hasKey } from './aiKeys.js';
+import { appRoutes, connectorRoutes } from './apps.js';
 import { docCategoryRoutes, seedCategories } from './docCategories.js';
 import { documentRenewalRoutes, proTaskRoutes } from './documentRenewals.js';
 import { startSaifsysDocSync } from './saifsysDocSync.js';
@@ -38,6 +40,8 @@ import { caseRoutes } from './caseRoutes.js';
 import { startCaseFolders } from './caseWatch.js';
 import { caseShareRoutes, publicCaseRoutes } from './caseShare.js';
 import { caseFocusRoutes } from './caseFocus.js';
+import { serverHealthRoutes, startServerHealth } from './serverHealth.js';
+import { startCaseBriefs } from './caseBrief.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
 import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
@@ -73,6 +77,7 @@ app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; che
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
+app.use('/api/connector', connectorRoutes); // the AOL connector server asks which mailbox a link opens; this machine only (apps.js)
 app.use('/api/case-share', publicCaseRoutes); // a case folder shared by link: anyone with it, while it is on (caseShare.js)
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api', externalFence); // someone from outside the company reaches only their own things (access.js)
@@ -109,6 +114,7 @@ app.use('/api/legal-cases', legalCaseRoutes); // legal cases step by step, cooli
 app.use('/api/pictures', pictureRoutes); // the pictures a chat drew for /explain, /breakdown and /explore
 app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's
 app.use('/api/address-book', addressRoutes); // company mailboxes the master added, next to the built-in ones (master only)
+app.use('/api/lessons', lessonRoutes); // rules the master taught agents from chat, shown as Rules (master only)
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/checklists', needsModule('checklists'), checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
@@ -120,10 +126,12 @@ app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come 
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
 app.use('/api/ai-keys', aiKeyRoutes); // the company's AI keys and anyone's own (master only)
+app.use('/api/apps', appRoutes); // mailboxes connected to Claude.ai as custom connectors (master only)
 app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
 app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
 app.use('/api/billing', requireMaster, billingRoutes); // what the AI cost: by person, job and model (master only)
+app.use('/api/server-health', requireMaster, serverHealthRoutes); // disk, memory, database, backups and their growth (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -162,20 +170,36 @@ Keep the user's own wording and intent; expand it, do not change it.`,
 
 app.post('/api/agents', requireMaster, wrap(async (req, res) => {
   const a = agentIn(req.body);
-  const { id } = await db.prepare('INSERT INTO agents (user_id, name, icon, color, persona, model, voice, starters, private) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id')
-    .run(req.user.id, a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, a.private);
+  const { id } = await tx(async () => {
+    // One case agent per owner: ticking it on another agent takes it off the old one.
+    if (a.handles_cases) await db.prepare('UPDATE agents SET handles_cases = false WHERE user_id = ?').run(req.user.id);
+    return db.prepare(`INSERT INTO agents (user_id, name, icon, color, persona, model, voice, starters, private, handles_cases, case_number, case_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+      .run(req.user.id, a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, a.private, a.handles_cases, a.case_number, a.case_key);
+  });
   res.json(agentOut(await own('agents', id, req.user.id), req.user));
 }));
 app.put('/api/agents/:id', requireMaster, wrap(async (req, res) => {
   if (!await own('agents', req.params.id, req.user.id)) return notFound(res);
   const a = agentIn(req.body);
   await tx(async () => {
-    await db.prepare('UPDATE agents SET name = ?, icon = ?, color = ?, persona = ?, model = ?, voice = ?, starters = ?, private = ? WHERE id = ?')
-      .run(a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, a.private, Number(req.params.id));
+    if (a.handles_cases) await db.prepare('UPDATE agents SET handles_cases = false WHERE user_id = ? AND id <> ?').run(req.user.id, Number(req.params.id));
+    await db.prepare(`UPDATE agents SET name = ?, icon = ?, color = ?, persona = ?, model = ?, voice = ?, starters = ?, private = ?, handles_cases = ?,
+      case_number = ?, case_key = ? WHERE id = ?`)
+      .run(a.name, a.icon, a.color, a.persona, a.model, a.voice, a.starters, a.private, a.handles_cases, a.case_number, a.case_key, Number(req.params.id));
     // Made private: it stops being lent out as a hidden shelf. The people it is ticked for keep it.
     if (a.private) await db.prepare("DELETE FROM agent_assignments WHERE agent_id = ? AND mode = 'knowledge'").run(Number(req.params.id));
   });
   res.json(agentOut(await own('agents', req.params.id, req.user.id), req.user));
+}));
+// The case an agent works on: also for the person it was given to, when it is theirs alone.
+app.put('/api/agents/:id/case', wrap(async (req, res) => {
+  try {
+    res.json(agentOut(await setAgentCase(req.user, req.params.id, req.body?.case_number), req.user));
+  } catch (e) {
+    if (!e.status) throw e;
+    res.status(e.status).json({ error: e.message });
+  }
 }));
 app.delete('/api/agents/:id', requireMaster, wrap(async (req, res) => {
   const id = Number(req.params.id);
@@ -233,6 +257,15 @@ app.get('/api/conversations/:id/messages', wrap(async (req, res) => {
       (SELECT json_agg(cc.title ORDER BY cc.id) FROM carried_chats cc WHERE cc.message_id = m.id) carried
     FROM messages m WHERE m.conversation_id = ? ORDER BY m.id`).all(Number(req.params.id));
   res.json(rows.map((m) => ({ ...m, files: JSON.parse(m.files), sources: JSON.parse(m.sources || '[]'), carried: m.carried || [] })));
+}));
+// Renamed from the chat list. The title is only ever set when a chat starts, so a new
+// name is kept from then on.
+app.patch('/api/conversations/:id', wrap(async (req, res) => {
+  const title = String(req.body.title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (!title) return res.status(400).json({ error: 'Give the chat a name' });
+  const r = await db.prepare('UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?').run(title, Number(req.params.id), req.user.id);
+  if (!r.changes) return notFound(res);
+  res.json({ ok: true, title });
 }));
 app.delete('/api/conversations/:id', wrap(async (req, res) => {
   await db.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?').run(Number(req.params.id), req.user.id);
@@ -382,16 +415,36 @@ app.get('/api/access', wrap(async (req, res) => {
 
 // ---------- memory (shared by all of the user's agents) ----------
 app.use('/api/memories', needsModule('memory'));
+// Current memories only, newest first, one page at a time; `versions` counts the earlier
+// ones a memory replaced, for its History link. `q` keeps memories holding every word of it,
+// searched here rather than in the page so it reaches memories on other pages.
+const MEMORY_PAGE = 20;
 app.get('/api/memories', wrap(async (req, res) => {
-  res.json(await db.prepare('SELECT id, text, created_at FROM memories WHERE user_id = ? ORDER BY id DESC').all(req.user.id));
+  const words = String(req.query.q || '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+  const where = ['m.user_id = ?', 'm.replaced_at IS NULL', ...words.map(() => "m.text ILIKE ? ESCAPE '\\'")].join(' AND ');
+  const params = [req.user.id, ...words.map((w) => `%${w.replace(/[\\%_]/g, '\\$&')}%`)];
+  const { total } = await db.prepare(`SELECT COUNT(*)::int total FROM memories m WHERE ${where}`).get(...params);
+  const page = Math.max(1, Math.min(Number(req.query.page) || 1, Math.ceil(total / MEMORY_PAGE) || 1));
+  const items = await db.prepare(`
+    SELECT m.id, m.text, m.created_at, (
+      WITH RECURSIVE older AS (
+        SELECT m.id AS id UNION SELECT o2.id FROM memories o2 JOIN older o ON o2.replaced_by = o.id
+      ) SELECT COUNT(*)::int - 1 FROM older) AS versions
+    FROM memories m WHERE ${where} ORDER BY m.id DESC LIMIT ${MEMORY_PAGE} OFFSET ${(page - 1) * MEMORY_PAGE}`).all(...params);
+  res.json({ items, total, page, pages: Math.ceil(total / MEMORY_PAGE) });
+}));
+app.get('/api/memories/:id/history', wrap(async (req, res) => {
+  res.json(await memoryChain(req.user.id, Number(req.params.id)));
 }));
 app.post('/api/memories', wrap(async (req, res) => {
   const text = String(req.body.text || '').trim().slice(0, 500);
   if (!text) return res.status(400).json({ error: 'Empty memory' });
   res.json({ id: await addMemory(req.user.id, text) });
 }));
+// Forgetting a memory forgets its earlier versions too, or they would linger out of sight.
 app.delete('/api/memories/:id', wrap(async (req, res) => {
-  await db.prepare('DELETE FROM memories WHERE id = ? AND user_id = ?').run(Number(req.params.id), req.user.id);
+  const ids = (await memoryChain(req.user.id, Number(req.params.id))).map((m) => m.id);
+  if (ids.length) await db.prepare('DELETE FROM memories WHERE user_id = ? AND id = ANY(?::int[])').run(req.user.id, ids);
   res.json({ ok: true });
 }));
 
@@ -489,11 +542,15 @@ app.listen(PORT, '0.0.0.0', () => {
   billAs({ userId: null, job: 'other' }, startLegalCases); // tells people when a cooling period is about to end, or has run over
   billAs({ userId: null, job: 'mail' }, startMailRouting); // does nothing until the shared mailbox is connected
   startCaseFolders(); // external users' case folders take in new case mail; each folder is billed to its owner
+  // Case brief suggestions from quiet case chats, billed to each chat's owner. Live only unless
+  // asked for: a local copy of the live database would pay to read every real case chat.
+  if (process.env.NODE_ENV === 'production' || process.env.CASE_BRIEFS === 'on') startCaseBriefs();
   billAs({ userId: null, job: 'buildings' }, startBuildings); // buzzes a building's administrator when a staff job needs them
   billAs({ userId: null, job: 'other' }, startRecurringPayments); // creates each recurring payment's line on its day of the month
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));
+  startServerHealth(); // an hourly reading of disk, memory and database, for the master's Server health screen
   // The saifsys morning checkout reminder (startArs in server/saifsys/ars.js) is on hold
   // by the user's choice, 2026-09-25: they ask Reem instead. The tool still works.
   console.log(`Reem server → http://localhost:${PORT}`);

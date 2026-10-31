@@ -143,8 +143,11 @@ export function labelExcerpt(chunk, primary, references = []) {
 
 const attr = (s) => String(s).replace(/"/g, "'");
 
-/** The block the agent is given while the chat has a primary case. */
-export function primaryCaseBlock(userName, primary, references = []) {
+/**
+ * The block the agent is given while the chat has a primary case. brief: the case brief the
+ * person approved (caseBrief.js), what earlier chats on the case settled.
+ */
+export function primaryCaseBlock(userName, primary, references = [], brief = '') {
   if (!primary) return '';
   const parties = primary.partyA || primary.partyB
     ? `${primary.partyA || 'Party A unknown'} vs ${primary.partyB || 'Party B unknown'}` : primary.title || '';
@@ -159,5 +162,7 @@ export function primaryCaseBlock(userName, primary, references = []) {
     'If you are not sure which case a fact belongs to, say so and ask.\n' +
     `The primary case is fixed for this chat. If ${userName} wants another case to be the main one, tell them to start a new chat for it.` +
     (refs.length ? `\nReference cases so far: ${refs.join(', ')}.` : '') +
+    (brief ? `\n<case_brief>\nWhat earlier chats on ${primary.number} settled, approved by ${userName}. Treat it as known; ` +
+      `if this chat contradicts it, point that out.\n${brief}\n</case_brief>` : '') +
     '\n</primary_case>';
 }

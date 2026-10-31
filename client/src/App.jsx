@@ -5,6 +5,7 @@ import Sidebar from './components/Sidebar';
 import Icon from './components/Icon';
 import Chat from './components/Chat';
 import AgentSheet from './components/AgentSheet';
+import CaseHomePage from './components/CaseHome';
 import { FilesPage, MemoryPage } from './components/Knowledge';
 import EmailPage from './components/EmailSheet';
 import AdminPage, { MyActivitySheet } from './components/Admin';
@@ -20,7 +21,9 @@ import TenantCarePage from './components/TenantCare';
 import MailRoutingPage from './components/MailRouting';
 import AddressBookPage from './components/AddressBook';
 import AiKeysPage from './components/AiKeys';
+import AppsPage from './components/Apps';
 import BillingPage from './components/Billing';
+import ServerHealthPage from './components/ServerHealth';
 import SharedInboxPage from './components/SharedInbox';
 import ResponsibilitiesPage from './components/Responsibilities';
 import ChecklistsPage from './components/Checklists';
@@ -54,7 +57,7 @@ if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || noti
 
 // The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
 const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
-  duties: 'duties', checklists: 'checklists', memory: 'memory', email: 'email', renewals: 'renewals', docrenewals: 'document_renewals', legal: 'legal' };
+  duties: 'duties', checklists: 'checklists', memory: 'memory', email: 'email', renewals: 'renewals', docrenewals: 'document_renewals', legal: 'legal', case: 'case_focus' };
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -77,6 +80,7 @@ export default function App() {
   // The menu button opens the drawer on a phone and brings the folded menu back on a computer.
   const openMenu = () => { if (window.matchMedia('(min-width: 768px)').matches) toggleRail(false); else setDrawer(true); };
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
+  const [caseKey, setCaseKey] = useState(null); // the case Case Home shows
   const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewals ? 'renewals' : notifiedDocRenewal ? 'docrenewals' : notifiedLegal ? 'legal' : notifiedBuilding ? 'buildings' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const [jumpToRenewal, setJumpToRenewal] = useState(notifiedRenewal); // a lease renewal a notification asked for
@@ -183,12 +187,19 @@ export default function App() {
     if (modules && PANEL_MODULE[panel] && !modules.includes(PANEL_MODULE[panel])) setPanel(null);
   }, [modules, panel]);
 
-  const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setPanel(null); };
+  // draft: what the new chat's box starts with, e.g. the case number from an agent's Cases tab.
+  const openChat = (id, draft = '') => { setChat({ key: Date.now(), id, draft }); setDrawer(false); setPanel(null); };
+  // Case Home (CaseHome.jsx): one case, by its key, from an agent's Cases tab or a case chat.
+  const openCase = (key) => { setCaseKey(key); setPanel('case'); setDrawer(false); };
   const onConversation = (id) => { if (id) setChat((c) => ({ ...c, id })); loadConvs(); };
   const deleteConv = async (id) => {
     if (!confirm('Delete this chat?')) return;
     await api.del(`/conversations/${id}`);
     if (id === chat.id) openChat(null);
+    loadConvs();
+  };
+  const renameConv = async (id, title) => {
+    await api.patch(`/conversations/${id}`, { title });
     loadConvs();
   };
   const logout = async () => {
@@ -209,7 +220,7 @@ export default function App() {
         <div className="h-full md:w-72">
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
-          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} petOn={petOn} onPet={togglePet}
+          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} onRenameConv={renameConv} petOn={petOn} onPet={togglePet}
           expiring={expiring.length} dueTodos={due.todos.length + due.routines.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
           meetingsOpen={panel === 'meetings'} onMeetings={() => { setPanel('meetings'); setDrawer(false); }}
           translateOpen={panel === 'translate'} onTranslate={() => { setPanel('translate'); setDrawer(false); }}
@@ -218,7 +229,9 @@ export default function App() {
           mailRoutingOpen={panel === 'mailrouting'} onMailRouting={() => { setPanel('mailrouting'); setDrawer(false); }}
           addressBookOpen={panel === 'addressbook'} onAddressBook={() => { setPanel('addressbook'); setDrawer(false); }}
           billingOpen={panel === 'billing'} onBilling={() => { setPanel('billing'); setDrawer(false); }}
+          healthOpen={panel === 'health'} onHealth={() => { setPanel('health'); setDrawer(false); }}
           aiKeysOpen={panel === 'aikeys'} onAiKeys={() => { setPanel('aikeys'); setDrawer(false); }}
+          appsOpen={panel === 'apps'} onApps={() => { setPanel('apps'); setDrawer(false); }}
           sharedInbox={sharedInbox} sharedInboxOpen={panel === 'sharedinbox'} onSharedInbox={() => { setPanel('sharedinbox'); setDrawer(false); }}
           dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
@@ -239,7 +252,7 @@ export default function App() {
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice}
             firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
             due={due} onDueChanged={loadDue} onOpenLists={() => setPanel('todos')}
-            onConversation={onConversation} onMenu={openMenu} onNewChat={() => openChat(null)} menuBadge={dm.unread} railHidden={railHidden} />
+            onConversation={onConversation} onMenu={openMenu} onNewChat={() => openChat(null)} menuBadge={dm.unread} railHidden={railHidden} draft={chat.draft || ''} onOpenCase={openCase} />
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —
           // otherwise there is no way back to the sidebar (or to sign out) on mobile.
@@ -276,7 +289,9 @@ export default function App() {
         {panel === 'mailrouting' && me.role === 'master' && <MailRoutingPage onBack={() => setPanel(null)} />}
         {panel === 'addressbook' && me.role === 'master' && <AddressBookPage onBack={() => setPanel(null)} />}
         {panel === 'billing' && me.role === 'master' && <BillingPage onBack={() => setPanel(null)} />}
+        {panel === 'health' && me.role === 'master' && <ServerHealthPage onBack={() => setPanel(null)} />}
         {panel === 'aikeys' && me.role === 'master' && <AiKeysPage onBack={() => setPanel(null)} />}
+        {panel === 'apps' && me.role === 'master' && <AppsPage onBack={() => setPanel(null)} />}
         {panel === 'sharedinbox' && <SharedInboxPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
         {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}
@@ -285,17 +300,25 @@ export default function App() {
         {panel === 'docrenewals' && <DocumentRenewalsPage key={jumpToDocRenewal || 'list'} start={jumpToDocRenewal} onBack={() => { setJumpToDocRenewal(null); setPanel(null); }} />}
         {panel === 'renewals' && <LeaseRenewalsPage key={jumpToRenewal || 'list'} open={jumpToRenewal} onBack={() => setPanel(null)} />}
         {panel === 'legal' && <LegalCasesPage key={jumpToLegal || 'list'} open={jumpToLegal} onBack={() => setPanel(null)} />}
+        {panel === 'case' && caseKey && (
+          <CaseHomePage key={caseKey} caseKey={caseKey} folders={config.folders} me={me} onBack={() => setPanel(null)}
+            onOpenChat={openChat} onOpenShelf={() => setPanel('files')} />
+        )}
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
         {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
         {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
+        {/* An agent is a page over whatever is open, last so it is on top. */}
+        {editing && (
+          <AgentSheet key={editing.id || 'new'} agent={editing} config={config} me={me} modules={modules || []} onClose={() => setEditing(null)}
+            onSaved={() => { setEditing(null); loadAgents(); }}
+            onOpenChat={(id, draft) => { setEditing(null); openChat(id, draft); }}
+            onOpenCase={(key) => { setEditing(null); openCase(key); }}
+            onOpenShelf={() => { setEditing(null); setPanel('files'); }} />
+        )}
       </main>
 
-      {editing && (
-        <AgentSheet agent={editing} config={config} me={me} onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); loadAgents(); }} />
-      )}
       {panel === 'activity' && <MyActivitySheet onClose={() => setPanel(null)} />}
       <NotifyPrompt />
       {me.role === 'master' && petOn && (

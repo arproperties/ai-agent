@@ -271,6 +271,15 @@ await db.exec(`
   UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL AND embed_model IS DISTINCT FROM '${EMBED_MODEL}';
 `);
 
+// A memory that a newer one corrected is kept, not deleted, so "what was the rent before?"
+// still has an answer. replaced_by points at the newer version; chats read only memories
+// with no replaced_at, and the history tool walks the chain.
+await db.exec(`
+  ALTER TABLE memories ADD COLUMN IF NOT EXISTS replaced_at BIGINT;
+  ALTER TABLE memories ADD COLUMN IF NOT EXISTS replaced_by INTEGER REFERENCES memories(id) ON DELETE SET NULL;
+  CREATE INDEX IF NOT EXISTS idx_mem_replaced_by ON memories(replaced_by);
+`);
+
 // Columns added for the master/assignment model. ADD COLUMN IF NOT EXISTS is safe to
 // re-run, so this block is idempotent and runs on every boot like the rest of the schema.
 // users.role deliberately has no CHECK constraint: more roles may follow, and a
@@ -359,6 +368,12 @@ await db.exec(`
 // lent out as a 'knowledge' shelf, and the master's own chats never route to it unless
 // they name it - so a personal agent stays out of the team's day-to-day work.
 await db.exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS private BOOLEAN NOT NULL DEFAULT false;`);
+// The agent every chat about a case goes to (router.js), e.g. Soutex Case Attorney. One per owner.
+await db.exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS handles_cases BOOLEAN NOT NULL DEFAULT false;`);
+// An agent bound to one case (router.js): every chat about that case goes to it, and it answers
+// nothing else. case_key is case_number in the form that matches across spellings (caseMatch.js).
+await db.exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS case_number TEXT;
+  ALTER TABLE agents ADD COLUMN IF NOT EXISTS case_key TEXT;`);
 
 // Sending. The mailbox row gains its SMTP side and one switch: can_write. It defaults to
 // false so every connection made before this feature existed stays read-only — write
@@ -2151,6 +2166,37 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_address_proposals_chat ON address_proposals(master_id, conversation_id, id);
 `);
 
+// Rules the master taught an agent by correcting it in a chat (server/lessons.js; the
+// screen calls them Rules). The agent follows them in every chat, with anyone.
+//   lesson_proposals: a rule Reem wrote from the correction, waiting on a "Learn this?"
+//   card. Nothing is applied until Approve; a No is kept so it is never offered again.
+//   agent_lessons: the rules in force. agent_id NULL = All agents of that owner. Removing
+//   one sets removed_at, so it counts as a No too.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS lesson_proposals (
+    id SERIAL PRIMARY KEY,
+    master_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    agent_id        INTEGER REFERENCES agents(id) ON DELETE CASCADE,
+    rule TEXT NOT NULL,
+    replaces_lesson_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined')),
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_lesson_proposals_chat ON lesson_proposals(master_id, conversation_id, id);
+  CREATE TABLE IF NOT EXISTS agent_lessons (
+    id SERIAL PRIMARY KEY,
+    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE,
+    rule TEXT NOT NULL,
+    from_proposal_id INTEGER REFERENCES lesson_proposals(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    removed_at BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_agent_lessons_owner ON agent_lessons(owner_id, agent_id) WHERE removed_at IS NULL;
+`);
+
 // What each AI call cost, one row per model per call (server/billing.js). Written as the
 // answer comes back, so the Billing screen shows money by person, by job and by model.
 // user_id is empty for work nobody asked for in person (renewals, the shared inboxes).
@@ -2190,6 +2236,20 @@ await db.exec(`
     failed_at BIGINT,
     failed_reason TEXT,
     PRIMARY KEY (owner_id, provider)
+  );
+`);
+
+// Mailboxes the master connects to Claude.ai as a custom connector (server/apps.js).
+// secret: the app password, sealed like the AI keys. token: the end of the connector link,
+// which is all the separate connector server needs to ask Reem for the login.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS app_connectors (
+    app     TEXT PRIMARY KEY,
+    email   TEXT NOT NULL,
+    secret  TEXT NOT NULL,
+    token   TEXT NOT NULL UNIQUE,
+    set_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    set_at  BIGINT NOT NULL DEFAULT ${NOW}
   );
 `);
 
@@ -2300,4 +2360,47 @@ await db.exec(`
     doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL
   );
   CREATE INDEX IF NOT EXISTS idx_case_deadlines ON case_deadlines(user_id, case_key, due);
+
+  -- The case brief (server/caseBrief.js): what has been settled on a case, per person, handed
+  -- to every new chat on it. Written only when the person approves a suggestion or edits it.
+  -- brief_upto: the last message of a chat already read for a suggestion.
+  CREATE TABLE IF NOT EXISTS case_briefs (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_key TEXT NOT NULL,
+    case_number TEXT NOT NULL,
+    body TEXT NOT NULL,
+    updated_at BIGINT,
+    PRIMARY KEY (user_id, case_key)
+  );
+  -- status: pending | approved | dismissed | replaced (a newer suggestion was written on top of it)
+  CREATE TABLE IF NOT EXISTS case_brief_suggestions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_key TEXT NOT NULL,
+    case_number TEXT NOT NULL,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    body TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at BIGINT DEFAULT ${NOW},
+    decided_at BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_case_brief_suggestions ON case_brief_suggestions(user_id, case_key, status);
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brief_upto INTEGER;
+`);
+
+// One reading an hour of the numbers that grow (server/serverHealth.js), so the master's
+// Server health screen can show how fast the disk, memory and database are filling up.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS server_health (
+    id SERIAL PRIMARY KEY,
+    at BIGINT NOT NULL DEFAULT ${NOW},
+    disk_used BIGINT NOT NULL,
+    disk_total BIGINT NOT NULL,
+    mem_used BIGINT NOT NULL,
+    mem_total BIGINT NOT NULL,
+    app_mem BIGINT NOT NULL,
+    db_bytes BIGINT NOT NULL,
+    uploads_bytes BIGINT NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_server_health_at ON server_health(at);
 `);

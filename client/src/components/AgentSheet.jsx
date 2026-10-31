@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import { Check, ChevronDown, Sparkles } from 'lucide-react';
-import Sheet from './Sheet';
+import { Check, ChevronDown, ChevronRight, Lightbulb, MessageSquare, Plus, Scale, Sparkles, Trash2 } from 'lucide-react';
+import Page from './Page';
+import { CaseBrief, CaseHomeBody } from './CaseHome';
 import Picker from './Picker';
 import { FilesPanel } from './Knowledge';
 import Avatar, { AGENT_ICONS, AGENT_COLORS } from './Avatar';
@@ -10,21 +11,61 @@ const field = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p
 const label = 'mb-1.5 block text-xs font-medium tracking-wide text-mute';
 
 /**
- * What an agent looks like to someone who was given it rather than made it: its name,
- * what it is for, and nothing to press. Every control in the editable version is
- * refused by the server for a non-master, so offering them would only ever produce an
- * error - and the persona is master-authored configuration they are not shown anyway.
+ * What an agent looks like to someone who was given it rather than made it: its name, its
+ * case, its persona to read, and nothing to press. Every control in the editable version is
+ * refused by the server for a non-master, so offering them would only ever produce an error.
  */
-function PersonaReadOnly({ agent }) {
+/**
+ * "Works only on case", for the person an agent was given to: they know which case each of
+ * their attorneys is for. The server refuses it for an agent other people use too.
+ */
+function CaseField({ agent, onSaved }) {
+  const [number, setNumber] = useState(agent.case_number || '');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true); setMsg('');
+    try { onSaved(await api.put(`/agents/${agent.id}/case`, { case_number: number })); } catch (err) { setMsg(err.message); }
+    setBusy(false);
+  };
+  return (
+    <form onSubmit={save}>
+      <label className={label}>WORKS ONLY ON CASE</label>
+      <div className="flex gap-2">
+        <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Case number, e.g. E-205791. Empty = any chat" className={field} />
+        <button disabled={busy || number.trim() === (agent.case_number || '')}
+          className="shrink-0 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 text-sm font-medium text-white disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>
+      </div>
+      <p className="mt-1 text-xs text-mute">Every chat about this case goes to {agent.name}, and it answers nothing else. Tapping it opens the case.</p>
+      {msg && <p className="mt-1 text-sm text-bad">{msg}</p>}
+    </form>
+  );
+}
+
+function PersonaReadOnly({ agent, onSaved }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <Avatar icon={agent.icon} color={agent.color} size={48} />
         <div className="min-w-0">
           <p className="truncate text-lg font-light">{agent.name}</p>
-          <p className="text-xs text-mute">One of your agents</p>
+          <p className="text-xs text-mute">{agent.case_number ? `Works only on case ${agent.case_number}` : 'One of your agents'}</p>
         </div>
       </div>
+      <CaseField agent={agent} onSaved={onSaved} />
+      {agent.case_number && (
+        <p className="rounded-xl bg-p1/10 px-3 py-2.5 text-sm text-txt/90">
+          Every chat about case {agent.case_number} goes to {agent.name}, and {agent.name} answers nothing else.
+          A chat you start with it is about this case, even if you do not type the number.
+        </p>
+      )}
+      {agent.persona && (
+        <div>
+          <span className={label}>WHAT IT DOES · ITS INSTRUCTIONS</span>
+          <p className="max-h-[40dvh] overflow-y-auto whitespace-pre-wrap rounded-xl bg-white/5 px-3 py-2.5 text-sm leading-relaxed text-txt/85">{agent.persona}</p>
+        </div>
+      )}
       {agent.starters?.length > 0 && (
         <div>
           <span className={label}>THINGS TO ASK IT</span>
@@ -40,12 +81,150 @@ function PersonaReadOnly({ agent }) {
   );
 }
 
+function Toggle({ on, onClick, title, children }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} onClick={onClick}
+      className={`flex w-full items-start gap-3 rounded-2xl border p-3 text-left transition ${on ? 'border-p1/50 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.06]'}`}>
+      <span className={`mt-0.5 grid size-[18px] shrink-0 place-items-center rounded-md transition ${on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/20'}`}>
+        {on && <Check size={12} strokeWidth={3.5} />}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className="block text-xs leading-relaxed text-mute">{children}</span>
+      </span>
+    </button>
+  );
+}
+
+const hours = (s) => (s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m` : `${Math.round(s / 60)}m`);
+const day = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const ago = (t) => (t ? new Date(t * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
+
+/**
+ * The cases this person has worked on with the case agent (server/caseFocus.js agentCases):
+ * what they open the agent to see. A case opens to its chats; one tap goes back into one.
+ */
+function CasesTab({ agent, onOpenChat, onOpenCase }) {
+  const [cases, setCases] = useState(null);
+  const [open, setOpen] = useState(null); // the case key shown with its chats
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get(`/case-focus/agent/${agent.id}/cases`).then(setCases).catch((e) => { setError(e.message); setCases([]); });
+  }, [agent.id]);
+
+  if (!cases) return <p className="text-sm text-mute">Loading cases…</p>;
+  return (
+    <div className="space-y-3">
+      <button type="button" onClick={() => onOpenChat(null, `@${agent.name} `)}
+        className="flex w-full items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 text-sm font-medium text-white">
+        <Plus size={15} /> New case chat
+      </button>
+      {error && <p className="text-sm text-bad">{error}</p>}
+      {!cases.length && !error && (
+        <p className="text-sm text-mute">No cases yet. Start a chat and name the case number, or attach its file, and it will appear here.</p>
+      )}
+      {cases.map((c) => (
+        <div key={c.key} className="rounded-2xl border border-stroke bg-white/[0.03]">
+          <button type="button" onClick={() => setOpen(open === c.key ? null : c.key)} className="w-full p-3 text-left">
+            <div className="flex items-center gap-2">
+              <Scale size={15} className="shrink-0 text-p1" />
+              <span className="font-medium">{c.number}</span>
+              <ChevronDown size={14} className={`ml-auto shrink-0 text-mute transition ${open === c.key ? 'rotate-180' : ''}`} />
+            </div>
+            {(c.partyA || c.partyB || c.title) && (
+              <p className="mt-1 text-sm text-txt/85">{c.partyA || c.partyB ? `${c.partyA || '?'} vs ${c.partyB || '?'}` : c.title}</p>
+            )}
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-mute">
+              <span>{c.chats.length} {c.chats.length === 1 ? 'chat' : 'chats'}</span>
+              <span>{c.files} {c.files === 1 ? 'file' : 'files'}</span>
+              {c.seconds > 0 && <span>{hours(c.seconds)} spent</span>}
+              {c.next && <span className="text-p1">Next: {c.next.what} · {day(c.next.due)}</span>}
+              {c.suggestion && <span className="text-p1">Brief update waiting</span>}
+            </div>
+          </button>
+          {open === c.key && (
+            <CaseBrief c={c} onChange={(b) => setCases((all) => all.map((x) => (x.key === c.key ? { ...x, ...b } : x)))} />
+          )}
+          {open === c.key && (
+            <div className="rise space-y-1 border-t border-stroke/60 p-2">
+              <button type="button" onClick={() => onOpenCase(c.key)}
+                className="flex w-full items-center gap-2 rounded-xl bg-p1/10 px-2.5 py-2 text-left text-sm font-medium text-p1 hover:bg-p1/20">
+                <Scale size={14} /> <span className="flex-1">Open case: files, dates, time</span> <ChevronRight size={14} />
+              </button>
+              {c.chats.map((ch) => (
+                <button type="button" key={ch.id} onClick={() => onOpenChat(ch.id)}
+                  className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm hover:bg-white/5">
+                  <MessageSquare size={14} className="shrink-0 text-mute" />
+                  <span className="min-w-0 flex-1 truncate">{ch.title}</span>
+                  <span className="shrink-0 text-xs text-mute">{ago(ch.updated_at)}</span>
+                </button>
+              ))}
+              <button type="button" onClick={() => onOpenChat(null, `Case ${c.number}: `)}
+                className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm text-p1 hover:bg-p1/10">
+                <Plus size={14} /> New chat on this case
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The rules the master taught this agent from chat (server/lessons.js), and the ones every
+ * agent follows. Removing one is a No too: Reem will not offer it again. Master only.
+ */
+function RulesTab({ agent }) {
+  const [rules, setRules] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get(`/lessons/agent/${agent.id}`).then(setRules).catch((e) => { setError(e.message); setRules({ own: [], all: [] }); });
+  }, [agent.id]);
+
+  const remove = async (l) => {
+    if (!confirm(`Remove this rule?\n\n“${l.rule}”\n\nReem will not offer it again.`)) return;
+    setError('');
+    try {
+      await api.del(`/lessons/${l.id}`);
+      setRules((r) => ({ own: r.own.filter((x) => x.id !== l.id), all: r.all.filter((x) => x.id !== l.id) }));
+    } catch (e) { setError(e.message); }
+  };
+
+  if (!rules) return <p className="text-sm text-mute">Loading rules…</p>;
+  const row = (l, from) => (
+    <div key={l.id} className="flex items-start gap-2 rounded-2xl border border-stroke bg-white/[0.03] p-3 text-sm">
+      <Lightbulb size={15} className="mt-0.5 shrink-0 text-p1" />
+      <div className="min-w-0 flex-1">
+        <p>{l.rule}</p>
+        {from && <p className="mt-0.5 text-xs text-mute">From All agents</p>}
+      </div>
+      <button type="button" onClick={() => remove(l)} aria-label="Remove rule" className="shrink-0 rounded-full p-1 text-mute hover:text-bad">
+        <Trash2 size={15} />
+      </button>
+    </div>
+  );
+  const total = rules.own.length + rules.all.length;
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-mute">{agent.name} follows these in every chat, with everyone.</p>
+      {error && <p className="text-sm text-bad">{error}</p>}
+      {!total && <p className="text-sm text-mute">None yet. When you correct this agent in a chat, Reem offers to learn it as a rule.</p>}
+      {rules.own.map((l) => row(l, false))}
+      {rules.all.map((l) => row(l, true))}
+      {total >= 50 && <p className="text-xs text-mute">Only the newest 50 rules are used in a chat.</p>}
+    </div>
+  );
+}
+
 function PersonaTab({ agent, config, onSaved }) {
   const [f, setF] = useState({
     name: agent.name || '', icon: agent.icon || 'sparkles', color: agent.color || 'violet', persona: agent.persona || '',
     model: agent.model || config.models[0]?.id, voice: agent.voice || 'alloy',
     starters: (agent.starters || []).join('\n'),
     private: !!agent.private,
+    handles_cases: !!agent.handles_cases,
+    case_number: agent.case_number || '',
   });
   const [picker, setPicker] = useState(false);
   const [more, setMore] = useState(false);
@@ -122,19 +301,21 @@ function PersonaTab({ agent, config, onSaved }) {
           className={`${field} resize-none leading-relaxed`} />
       </div>
 
-      <button type="button" role="switch" aria-checked={f.private} onClick={() => setF({ ...f, private: !f.private })}
-        className={`flex w-full items-start gap-3 rounded-2xl border p-3 text-left transition ${f.private ? 'border-p1/50 bg-p1/10' : 'border-stroke bg-white/[0.03] hover:bg-white/[0.06]'}`}>
-        <span className={`mt-0.5 grid size-[18px] shrink-0 place-items-center rounded-md transition ${f.private ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/20'}`}>
-          {f.private && <Check size={12} strokeWidth={3.5} />}
-        </span>
-        <span className="min-w-0">
-          <span className="block text-sm font-medium">Private agent</span>
-          <span className="block text-xs leading-relaxed text-mute">
-            Only the people you tick it for in People can use it. Nobody else sees it or reads its shelf,
-            and your own chats use it only when you type @{f.name || 'its name'}.
-          </span>
-        </span>
-      </button>
+      <Toggle on={f.private} onClick={() => setF({ ...f, private: !f.private })} title="Private agent">
+        Only the people you tick it for in People can use it. Nobody else sees it or reads its shelf,
+        and your own chats use it only when you type @{f.name || 'its name'}.
+      </Toggle>
+      <div>
+        <label className={label}>WORKS ONLY ON CASE</label>
+        <input value={f.case_number} onChange={set('case_number')} placeholder="Case number, e.g. E-205791. Empty = any chat" className={field} />
+        <p className="mt-1 text-xs text-mute">
+          Every chat about this case goes to {f.name || 'this agent'}, and it answers nothing else. Tapping it opens the case.
+        </p>
+      </div>
+      <Toggle on={f.handles_cases} onClick={() => setF({ ...f, handles_cases: !f.handles_cases })} title="Handles case chats">
+        Every chat about a case goes to {f.name || 'this agent'} and stays with it. Only one agent can have this;
+        ticking it here takes it off any other.
+      </Toggle>
 
       <button type="button" onClick={() => setMore(!more)} className="flex items-center gap-1 text-xs text-mute hover:text-txt">
         <ChevronDown size={14} className={`transition ${more ? 'rotate-180' : ''}`} /> More options
@@ -173,19 +354,47 @@ function PersonaTab({ agent, config, onSaved }) {
   );
 }
 
-export default function AgentSheet({ agent, config, me, onClose, onSaved }) {
-  const [tab, setTab] = useState('persona');
+// An agent is a full page, not a popup: a case's brief, chats and files need the whole screen,
+// which a dialog does not give on a tablet.
+export default function AgentSheet({ agent, config, me, modules = [], onClose, onSaved, onOpenChat, onOpenCase, onOpenShelf }) {
+  // An agent opens on its work, not its settings: an agent bound to a case opens on that case
+  // (all of it), any other on the cases discussed with it.
+  const cases = agent.id && modules.includes('case_focus');
+  const first = cases ? (agent.case_key ? [['case', `Case ${agent.case_number}`]] : [['cases', 'Cases']]) : [];
+  // A bound agent's own files are listed and uploaded on its case tab: one place for files.
+  const tabs = agent.id ? [...first, ['persona', 'About'], ...(me?.role === 'master' ? [['rules', 'Rules']] : []),
+    ...(first[0]?.[0] === 'case' ? [] : [['files', 'Agent files']])] : [];
+  const [tab, setTab] = useState(first[0]?.[0] || 'persona');
   return (
-    <Sheet title={agent.id ? agent.name : 'New agent'} onClose={onClose} tab={tab} onTab={setTab}
-      tabs={agent.id ? [['persona', 'Persona'], ['files', 'Shelf']] : []}
-      icon={agent.id && <Avatar icon={agent.icon} color={agent.color} size={32} className="shadow-none" />}>
-      {tab === 'persona' ? (
+    <Page onBack={onClose}
+      title={<span className="flex min-w-0 items-center gap-2.5">
+        {agent.id && <Avatar icon={agent.icon} color={agent.color} size={32} className="shadow-none" />}
+        <span className="truncate">{agent.id ? agent.name : 'New agent'}</span>
+      </span>}>
+      {tabs.length > 0 && (
+        <div className="mx-auto mb-4 grid max-w-6xl rounded-full bg-white/5 p-1 text-sm" style={{ gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}>
+          {tabs.map(([k, l]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className={`truncate rounded-full px-2 py-2 transition ${tab === k ? 'bg-white/15 text-txt' : 'text-mute'}`}>{l}</button>
+          ))}
+        </div>
+      )}
+      <div className={tab === 'case' ? '' : 'mx-auto max-w-2xl'}>
+      {tab === 'case' ? (
+        <CaseHomeBody caseKey={agent.case_key} number={agent.case_number} folders={config.folders || []} me={me}
+          newChat={`@${agent.name} `} agentId={agent.id} onOpenChat={onOpenChat} onOpenShelf={onOpenShelf} />
+      ) : tab === 'cases' ? (
+        <CasesTab agent={agent} onOpenChat={onOpenChat} onOpenCase={onOpenCase} />
+      ) : tab === 'rules' ? (
+        <RulesTab agent={agent} />
+      ) : tab === 'persona' ? (
         me?.role === 'master'
           ? <PersonaTab agent={agent} config={config} onSaved={onSaved} />
-          : <PersonaReadOnly agent={agent} />
+          : <PersonaReadOnly agent={agent} onSaved={onSaved} />
       ) : (
         <FilesPanel agentId={agent.id} folders={config.folders || []} me={me} hint={`Only ${agent.name} uses these files. They also help Reem know when to pick ${agent.name}.`} />
       )}
-    </Sheet>
+      </div>
+    </Page>
   );
 }

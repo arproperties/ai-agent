@@ -181,7 +181,7 @@ export function CaseFiles({ files, number, onOpen, onOpenShelf }) {
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px]">{f.title || f.name}</span>
-              <span className="block text-[11px] text-mute">{f.summary ? 'Case summary · ' : ''}{when(f.created_at)}</span>
+              <span className="block text-[11px] text-mute">{f.summary ? 'Case summary · ' : f.agentFile ? 'Agent file · ' : ''}{when(f.created_at)}</span>
             </span>
           </button>
         ))}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, FileClock, Gavel, ChevronRight, Search, PawPrint, Timer } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, Activity, FileClock, Gavel, ChevronRight, Search, PawPrint, Timer, Plug } from 'lucide-react';
 import Icon from './Icon';
 import { CaseTimeSheet } from './CaseRails';
 import { Row, Count } from './NavRow';
@@ -43,7 +43,7 @@ function Group({ title, open, onToggle, count = 0, q = '', children }) {
   );
 }
 
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, aiKeysOpen, onAiKeys, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, modules = [], petOn, onPet, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, healthOpen, onHealth, aiKeysOpen, onAiKeys, appsOpen, onApps, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, hasBuildings, buildingsOpen, inventoryOpen, modules = [], petOn, onPet, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -137,8 +137,12 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
             {has('memory') && <Row role="menuitem" icon={<Icon name="brain" size={17} />} label="Memory" onClick={go(onMemory)} />}
             {/* What the AI cost, by person, job and model. The master's alone. */}
             {user.role === 'master' && <Row role="menuitem" icon={<Receipt size={17} strokeWidth={1.75} />} label="Billing" active={billingOpen} onClick={go(onBilling)} />}
+            {/* Disk, memory, database and backups, and how fast they grow. The master's alone. */}
+            {user.role === 'master' && onHealth && <Row role="menuitem" icon={<Activity size={17} strokeWidth={1.75} />} label="Server health" active={healthOpen} onClick={go(onHealth)} />}
             {/* The Claude and OpenAI keys everyone uses; anyone's own are on their profile in People. */}
             {user.role === 'master' && onAiKeys && <Row role="menuitem" icon={<KeyRound size={17} strokeWidth={1.75} />} label="AI keys" active={aiKeysOpen} onClick={go(onAiKeys)} />}
+            {/* Mailboxes connected to Claude.ai as custom connectors. The master's alone. */}
+            {user.role === 'master' && onApps && <Row role="menuitem" icon={<Plug size={17} strokeWidth={1.75} />} label="Apps" active={appsOpen} onClick={go(onApps)} />}
             {/* The pet is still being tried out: the master's alone, off until switched on here.
                 A switch, not a place, so the menu stays open. */}
             {user.role === 'master' && onPet && (

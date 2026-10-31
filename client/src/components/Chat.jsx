@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ListTodo, Lightbulb, X, Bell, Scale } from 'lucide-react';
 import { api, streamChat } from '../lib/api';
-import { speakText, stopSpeaking, togglePause } from '../lib/voice';
+import { speakPieces, stopSpeaking, togglePause } from '../lib/voice';
 import { cutSelection } from '../lib/cut';
 import Icon from './Icon';
 import Orb from './Orb';
@@ -11,6 +11,7 @@ import DraftCard from './DraftCard';
 import TeamReminderCard from './TeamReminderCard';
 import ResponsibilityCard from './ResponsibilityCard';
 import AddressCard from './AddressCard';
+import LessonCard from './LessonCard';
 import InventoryCard from './InventoryCard';
 import CaseCard from './CaseCard';
 import BookingCard from './BookingCard';
@@ -49,7 +50,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '', onOpenCase }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -57,6 +58,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [status, setStatus] = useState('');
   const [toast, setToast] = useState('');
   const [voice, setVoice] = useState({ id: null, state: 'idle' }); // reply being read aloud
+  const [readNow, setReadNow] = useState(null); // a spoken question's reply, to read once it shows
   const [live, setLive] = useState(false); // hands-free voice mode is open
   const [viewer, setViewer] = useState(null); // file open in the full-screen viewer
   const [details, setDetails] = useState(null); // file open in the details sheet
@@ -66,6 +68,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [reminders, setReminders] = useState([]); // reminders for other people got ready in this chat
   const [duties, setDuties] = useState([]); // responsibility changes got ready in this chat (master only)
   const [addresses, setAddresses] = useState([]); // company addresses waiting for Add (master only)
+  const [lessons, setLessons] = useState([]); // rules Reem offers to learn from a correction (master only)
   const [stock, setStock] = useState([]); // inventory items got ready in this chat, waiting for Add
   const [cases, setCases] = useState([]); // case folders got ready from the inbox, waiting for Save (external only)
   const [bookings, setBookings] = useState([]); // ARS bookings got ready in this chat, waiting for Create
@@ -111,6 +114,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       api.get(`/team-reminders?conversation=${conversationId}`).then(setReminders).catch(() => {});
       if (user.role === 'master') api.get(`/responsibilities/proposals?conversation=${conversationId}`).then(setDuties).catch(() => {});
       if (user.role === 'master') api.get(`/address-book/proposals?conversation=${conversationId}`).then(setAddresses).catch(() => {});
+      if (user.role === 'master') api.get(`/lessons/proposals?conversation=${conversationId}`).then(setLessons).catch(() => {});
       api.get(`/saifsys/ars/bookings?conversation=${conversationId}`).then(setBookings).catch(() => {});
       api.get(`/inventory/proposals?conversation=${conversationId}`).then(setStock).catch(() => {});
       if (user.external) api.get(`/cases/proposals?conversation=${conversationId}`).then(setCases).catch(() => {});
@@ -135,14 +139,16 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const openFile = (id) => api.get(`/documents/${id}`).then(setViewer).catch((e) => flash(e.message));
   const showChatFiles = () => api.get(`/documents?ids=${docIds.join(',')}`).then(setChatFiles).catch((e) => flash(e.message));
 
-  // Tapping the reply that is already talking pauses or resumes it; tapping one
-  // that is still being generated gives up on it. Anything else starts fresh.
-  const say = (text, id, agentId) => {
-    if (voice.id === id) {
+  // Without pieces: the reply already talking pauses or resumes, one still being generated
+  // is given up on. With pieces (from the top, from where it stopped, or from a tapped
+  // word): reading starts there, even on the reply already talking.
+  const say = (id, agentId, pieces) => {
+    if (!pieces) {
+      if (voice.id !== id) return;
       if (voice.state === 'loading') return stopSpeaking();
       return togglePause();
     }
-    speakText(text, agentId, (s) => {
+    speakPieces(pieces, agentId, (s) => {
       if (s === 'error') { flash("Couldn't play that out loud. Please try again."); s = 'idle'; }
       setVoice(s === 'idle' ? { id: null, state: 'idle' } : { id, state: s });
       setOrb(s === 'speaking' ? 'speaking' : s === 'loading' ? 'thinking' : 'idle');
@@ -209,6 +215,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           else if (event === 'teamReminder') { acted = true; setReminders((rs) => [...rs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'responsibility') { acted = true; setDuties((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'companyAddress') { acted = true; setAddresses((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'lesson') { acted = true; setLessons((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'inventoryAdd') { acted = true; setStock((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'caseFolder') { acted = true; setCases((cs) => [...cs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'tenantNotice') { acted = true; setNotices((ns) => [...ns.filter((x) => x.id !== d.id), d]); toBottom(); }
@@ -236,7 +243,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     setBusy(false); setOrb('idle'); setStatus('');
     setAnswered((n) => n + 1);
     onConversation(null);
-    if (voice && reply) say(reply, aid, agentId);
+    if (voice && reply) setReadNow(aid); // the reply reads itself, from what it shows
     return { reply, agentId }; // live voice mode reads the reply out itself
   };
 
@@ -350,6 +357,9 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         <aside className="hidden w-44 shrink-0 overflow-y-auto border-r border-stroke/60 px-3 py-4 lg:block xl:w-56 2xl:w-64">
           <b className="mb-2 block px-1 text-xs font-medium uppercase tracking-wide text-mute">Case files</b>
           <CaseFiles files={caseFiles} number={focus.primary.number} onOpen={openFile} onOpenShelf={onOpenFiles} />
+          {onOpenCase && focus.primary.key && (
+            <button onClick={() => onOpenCase(focus.primary.key)} className="mt-3 px-1 text-xs text-p1 hover:underline">Open Case Home</button>
+          )}
         </aside>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -457,7 +467,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
               <Message key={m.id} msg={m} agent={byId[m.agent_id]} voiceEnabled={voiceEnabled} onOpenFile={openFile}
                 savedId={shareIdOf(m)} drawingFrom={exportAsked(m.content) ? drawingUpTo(messages, i) : undefined}
                 voice={voice.id === m.id ? voice.state : 'idle'} onStopSpeak={stopSpeaking}
-                onSpeak={() => say(m.content, m.id, m.agent_id)}
+                onSpeak={(pieces) => say(m.id, m.agent_id, pieces)}
+                readNow={readNow === m.id} onReadStarted={() => setReadNow(null)}
                 onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined}
                 onDelete={savedIdOf(m) && !m.streaming ? () => removeMessage(m) : undefined}
                 onReplyTo={m.role === 'assistant' ? setQuote : undefined}
@@ -481,6 +492,10 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
               <AddressCard key={p.id} proposal={p}
                 onChanged={(u) => setAddresses((ps) => ps.map((x) => (x.id === u.id ? u : x)))}
                 onAdded={(email) => send(`I added ${email} to the address book. Carry on.`, [])} />
+            ))}
+            {lessons.map((p) => (
+              <LessonCard key={p.id} proposal={p} onChanged={(u) => setLessons((ps) => ps.map((x) => (x.id === u.id ? u : x)))}
+                onStale={() => convId && api.get(`/lessons/proposals?conversation=${convId}`).then(setLessons).catch(() => {})} />
             ))}
             {stock.map((p) => (
               <InventoryCard key={p.id} proposal={p}
@@ -511,7 +526,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             <span className="truncate">Using {carrying.join(' · ')}</span>
           </div>
         )}
-        <Composer busy={busy} voiceEnabled={voiceEnabled} carry={carry} onPickChats={() => setPicking(true)}
+        <Composer busy={busy} voiceEnabled={voiceEnabled} carry={carry} draft={draft} onPickChats={() => setPicking(true)}
           quote={quote} onDropQuote={() => setQuote('')}
           onDropChat={(id) => setCarry((c) => c.filter((x) => x.id !== id))}
           onSend={send} onStop={() => abortRef.current?.abort()}
@@ -548,6 +563,10 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           {focusOpen === 'time' && <CaseTimer timer={timer} />}
           {focusOpen === 'dates' && <CaseDeadlines deadlines={deadlines} onOpen={(id) => { setFocusOpen(false); openFile(id); }} />}
           {focusOpen === 'case' && <div className="space-y-4 text-sm">
+            {onOpenCase && focus.primary.key && (
+              <button onClick={() => { setFocusOpen(false); onOpenCase(focus.primary.key); }}
+                className="w-full rounded-full bg-gradient-to-br from-p1 to-p2 py-2.5 font-medium text-white">Open Case Home</button>
+            )}
             {(focus.primary.partyA || focus.primary.partyB || focus.primary.title) && (
               <p>{focus.primary.partyA || focus.primary.partyB
                 ? `${focus.primary.partyA || 'Party A unknown'} vs ${focus.primary.partyB || 'Party B unknown'}` : focus.primary.title}</p>
