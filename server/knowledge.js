@@ -333,7 +333,11 @@ export async function addMemory(userId, text, { judge = whichReplaced } = {}) {
     .run(userId, text, lit, lit && EMBED_MODEL);
 
   // Only memories close to the new one can be about the same thing, so only those are judged.
-  const near = await rank('memories', { sql: 't.user_id = ? AND t.replaced_at IS NULL AND t.id <> ?', params: [userId, id] }, text, vec, 8);
+  // Closeness alone missed corrections: the embedding scores every "JVC School" fact alike, so
+  // "Shakir was only a candidate" never met "Shakir must send daily reports". Memories that
+  // name the same person or thing are judged too.
+  const close = await rank('memories', { sql: 't.user_id = ? AND t.replaced_at IS NULL AND t.id <> ?', params: [userId, id] }, text, vec, 8);
+  const near = [...new Set([...close, ...(await sameNames(userId, id, text))])].slice(0, 20);
   if (near.length) {
     const rows = await db.prepare(`SELECT id, text FROM memories WHERE id IN (${near.map(() => '?').join(',')})`).all(...near);
     const old = (await judge(text, rows).catch(() => [])).filter((x) => rows.some((r) => r.id === x));
@@ -348,6 +352,24 @@ export async function addMemory(userId, text, { judge = whichReplaced } = {}) {
   return id;
 }
 
+// Capitalised words that are not names, so they never count as "the same subject".
+const NOT_NAMES = new Set('User Users The This That They There These Those When What Which Where With From Into About After Before Their Today Tomorrow Monday Tuesday Wednesday Thursday Friday Saturday Sunday January February March April June July August September October November December'.split(' '));
+// A name in more memories than this is a topic (the company, the main project), not a person:
+// matching on it would only drown out the facts really about the same subject.
+const COMMON_NAME = 25;
+
+/** Current memories that share a name (a capitalised word, 4+ letters) with `text`; at most 12. */
+export async function sameNames(userId, newId, text) {
+  const words = [...new Set(String(text).match(/\b\p{Lu}[\p{L}'-]{3,}/gu) || [])].filter((w) => !NOT_NAMES.has(w)).slice(0, 8);
+  const ids = [];
+  for (const w of words) {
+    const rows = await db.prepare(`SELECT id FROM memories WHERE user_id = ? AND replaced_at IS NULL AND id <> ?
+      AND text ~* ? ORDER BY id DESC LIMIT ${COMMON_NAME + 1}`).all(userId, newId, `\\m${w.replace(/[^\p{L}'-]/gu, '')}\\M`);
+    if (rows.length <= COMMON_NAME) ids.push(...rows.map((r) => r.id));
+  }
+  return [...new Set(ids)].slice(0, 12);
+}
+
 /** The ids among `rows` that `text` makes out of date: same subject, newer value. */
 async function whichReplaced(text, rows) {
   const out = await ask(
@@ -356,7 +378,9 @@ async function whichReplaced(text, rows) {
       maxTokens: 100,
       system: 'You maintain the long-term memory of an assistant. A new fact has just been learned. Which remembered facts does it ' +
         'make out of date - the same subject, now with a different value or status (a new rent, a changed phone number, a ' +
-        'preference that changed)? A fact that merely adds detail, or is about something else, is NOT out of date. ' +
+        'preference that changed)? Also any it shows to be wrong: the user corrected it (someone was only a candidate, never ' +
+        'had that role, a role now held by someone else, a status that has ended). ' +
+        'A fact that merely adds detail, or is about something else, is NOT out of date. ' +
         'Reply with ONLY a JSON array of their ids, e.g. [12], or [] for none.',
     }
   );
