@@ -33,6 +33,8 @@ export const MODULES = [
   { key: 'document_renewals', label: 'Document Renewals', about: 'Employee and company documents (visas, contracts, trade licences, insurance): see them, get their expiry alerts, and renew or end employee contracts with approvals and the PRO.', company: true },
   { key: 'duties', label: 'My responsibilities', about: 'See what they look after, as you have written it.', everyone: true, company: true },
   { key: 'checklists', label: 'Checklists', about: 'The points of a job, ticked each time it is done.', everyone: true, company: true },
+  // The screen only: recording a delivery or a day's manpower is done in chat by whoever is on the project.
+  { key: 'projects', label: 'Projects', about: 'A building job: stock on site, deliveries waiting for a manager, and daily manpower, recorded from chat.', company: true },
   { key: 'memory', label: 'Memory', about: 'See and remove what Reem remembers about them.', everyone: true },
   { key: 'email', label: 'Email', about: 'Connect their own mailbox and see what Reem has sent from it.', everyone: true },
   // Not a screen: what a chat does with /explain, /breakdown and /explore (server/pictures.js).

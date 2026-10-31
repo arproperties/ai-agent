@@ -116,3 +116,23 @@ export function externalFence(req, res, next) {
   if (EXTERNAL_OPEN.has(first)) return next();
   res.status(404).json({ error: 'Not found' });
 }
+
+/**
+ * A person's place on a project (server/projects.js): 'master' for the master, who sees
+ * every project; 'store' or 'manager' for a member; null for anyone else. Someone external
+ * is never on one, whatever a row says: a project is the company's own work.
+ */
+export async function projectRole(user, projectId) {
+  const id = Number(projectId) || 0;
+  if (!id || isExternal(user)) return null;
+  if (isMaster(user)) return (await db.prepare('SELECT 1 FROM projects WHERE id = ?').get(id)) ? 'master' : null;
+  return (await db.prepare('SELECT role FROM project_members WHERE project_id = ? AND user_id = ?').get(id, user.id))?.role || null;
+}
+
+/** The projects this person is on, with their place on each - the same rule as projectRole. */
+export async function projectsOf(user) {
+  if (isExternal(user)) return [];
+  if (isMaster(user)) return (await db.prepare('SELECT *, \'master\' AS role FROM projects ORDER BY name, id').all());
+  return db.prepare(`SELECT p.*, m.role FROM projects p JOIN project_members m ON m.project_id = p.id
+    WHERE m.user_id = ? ORDER BY p.name, p.id`).all(user.id);
+}

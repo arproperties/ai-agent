@@ -48,6 +48,7 @@ const TABLES = [
   'legal_case_settings', 'legal_cases', 'legal_case_events', 'legal_case_files', 'legal_case_alerts', 'legal_case_leases', 'legal_case_advice',
   'case_settings', 'case_folders', 'case_emails', 'case_proposals', 'case_time', 'case_deadline_scans', 'case_deadlines',
   'case_briefs', 'case_brief_suggestions', 'server_health', 'app_connectors',
+  'projects', 'project_members', 'project_proposals', 'project_moves', 'project_manpower',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

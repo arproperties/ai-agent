@@ -2406,3 +2406,79 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_server_health_at ON server_health(at);
 `);
+
+// Projects: a building job (the JVC school), recorded from chat - see server/projects.js.
+//   projects:          the job. floors are the labels each entry can carry (Basement, Ground…).
+//                      agent_id is the agent that speaks for it: its chats default to this project.
+//                      reminded_on is the Dubai day the 5 pm manpower reminder last went out.
+//   project_members:   who works on it. store = the store keeper on site, who records;
+//                      manager = decides the deliveries that failed a check.
+//   project_proposals: a delivery, material given out or a day's manpower got ready in chat,
+//                      waiting on its card. A delivery that failed a check waits at 'sent'
+//                      for a manager.
+//   project_moves:     material in (accepted deliveries) and out. Stock is their sum.
+//   project_manpower:  how many of each trade worked on a day; a later report of the same
+//                      day replaces the earlier one.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS projects (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    floors JSONB NOT NULL DEFAULT '["Basement","Ground","1st","2nd","3rd","Roof"]',
+    agent_id INTEGER REFERENCES agents(id) ON DELETE SET NULL,
+    reminded_on TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS project_members (
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('store', 'manager')),
+    PRIMARY KEY (project_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS project_proposals (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('delivery', 'out', 'manpower')),
+    data JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+      CHECK (status IN ('pending', 'sent', 'accepted', 'accepted_note', 'rejected', 'confirmed', 'cancelled')),
+    failed JSONB,
+    note TEXT,
+    decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_proposals_chat ON project_proposals(user_id, conversation_id, id);
+  CREATE INDEX IF NOT EXISTS idx_project_proposals_waiting ON project_proposals(project_id, status);
+  CREATE TABLE IF NOT EXISTS project_moves (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    proposal_id INTEGER REFERENCES project_proposals(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('in', 'out')),
+    item TEXT NOT NULL,
+    counted_in TEXT NOT NULL DEFAULT 'pcs',
+    quantity NUMERIC NOT NULL CHECK (quantity > 0),
+    floor TEXT,
+    supplier TEXT,
+    party TEXT,
+    day TEXT NOT NULL,
+    note TEXT,
+    by_user INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_moves ON project_moves(project_id, lower(item));
+  CREATE TABLE IF NOT EXISTS project_manpower (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    day TEXT NOT NULL,
+    trade TEXT NOT NULL,
+    subcontractor TEXT NOT NULL DEFAULT '',
+    count INTEGER NOT NULL CHECK (count > 0),
+    floor TEXT,
+    by_user INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_manpower ON project_manpower(project_id, day);
+`);

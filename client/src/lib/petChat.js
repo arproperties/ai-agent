@@ -8,7 +8,7 @@ const KEY = 'jarvis:pet-chat';
 const CARRY_ON_MS = 10 * 60 * 1000;
 // What a turn can put on screen for the person to confirm. The pet does not rebuild these cards;
 // it says one is waiting and opens the chat, where they live.
-const CARDS = new Set(['teamReminder', 'responsibility', 'companyAddress', 'lesson','inventoryAdd', 'caseFolder', 'tenantNotice', 'arsBooking', 'draft']);
+const CARDS = new Set(['teamReminder', 'responsibility', 'companyAddress', 'lesson','inventoryAdd', 'projectCard', 'caseFolder', 'tenantNotice', 'arsBooking', 'draft']);
 
 const lastChat = () => {
   try {
