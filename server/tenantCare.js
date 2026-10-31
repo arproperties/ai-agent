@@ -6,6 +6,7 @@ import { encrypt, decrypt } from './secrets.js';
 import { client, detectHost, friendly, withMailbox, sentPath, applySmtp, replySubject, buildRefs } from './imap.js';
 import { compose, sendRaw, friendlySmtp } from './smtp.js';
 import { sendPush } from './push.js';
+import { mailText } from './mailText.js';
 import { askSaifsys, saifsysConfigured } from './saifsys/client.js';
 
 // Tenant care: the one inbox tenants write to, looked after by a few people together.
@@ -224,7 +225,7 @@ async function readNew(acc) {
         const sender = (p.replyTo?.value?.[0]) || p.from?.value?.[0] || {};
         mail.push({
           uid: m.uid, headers: p.headers, from: sender.address, name: p.from?.value?.[0]?.name || '',
-          subject: p.subject || '', text: p.text || '', messageId: p.messageId || null, inReplyTo: p.inReplyTo || null,
+          subject: p.subject || '', text: mailText(p), messageId: p.messageId || null, inReplyTo: p.inReplyTo || null,
           refs: buildRefs(Array.isArray(p.references) ? p.references.join(' ') : p.references, p.messageId),
           at: Math.floor(new Date(p.date || m.internalDate || Date.now()).getTime() / 1000),
         });

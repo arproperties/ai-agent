@@ -6,6 +6,7 @@ import { db } from './db.js';
 import { encrypt, decrypt } from './secrets.js';
 import { smtpDefaults } from './smtp.js';
 import { pickAttachment, attachmentText } from './emailAttachments.js';
+import { mailText } from './mailText.js';
 
 // Any IMAP mailbox (Titan, Gmail, Zoho, Yahoo, cPanel hosting…). Read-only: folders are opened with EXAMINE,
 // so reading never marks mail as read, and nothing is sent, moved or deleted.
@@ -281,7 +282,7 @@ async function searchEmail(userId, { query = '', folder, unread_only, since, lim
       lock = await c.getMailboxLock(path, { readOnly: true });
       try {
         for await (const m of c.fetch(heads.map((m) => m.uid), { uid: true, source: { maxLength: 20000 } }, { uid: true })) {
-          previews.set(m.uid, await simpleParser(m.source).then((p) => p.text || '').catch(() => ''));
+          previews.set(m.uid, await simpleParser(m.source).then(mailText).catch(() => ''));
         }
       } finally { lock.release(); }
       for (const m of heads) out.push({ id: `${path}:${m.uid}`, m, preview: previews.get(m.uid) || '', replied: replied.has(m.uid) ? replied.get(m.uid) || true : false });
@@ -330,7 +331,7 @@ const readAttachment = async (userId, input) => attachmentText(await emailFile(u
 async function readEmail(userId, { id }) {
   const { p, path } = await fetchParsed(userId, id);
   const files = attached(p).map((a) => a.name);
-  const body = String(p.text || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
+  const body = mailText(p).replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
   return [
     `Subject: ${p.subject || '(no subject)'}`,
     `From: ${p.from?.text || 'unknown'}`,
@@ -363,7 +364,7 @@ export async function recentInbox(userId, { since, limit = 20 } = {}) {
       for await (const m of c.fetch(uids, { uid: true, envelope: true, internalDate: true, source: { maxLength: 20000 } }, { uid: true })) {
         const at = new Date(m.envelope?.date || m.internalDate || 0);
         if (at < since) continue; // IMAP "since" is by day; the hours are ours to check
-        const text = await simpleParser(m.source).then((p) => p.text || '').catch(() => '');
+        const text = await simpleParser(m.source).then(mailText).catch(() => '');
         out.push({ id: `INBOX:${m.uid}`, from: person(m.envelope?.from), subject: m.envelope?.subject || '(no subject)', at, text: text.replace(/\s+/g, ' ').slice(0, 600) });
       }
       return out;
@@ -398,7 +399,7 @@ export async function imapMatching(userId, { term = '', since, limit = 500 } = {
             key: `${path}:${m.uid}`, messageId: p.messageId || null, at,
             from: [].concat(p.from || []).map((x) => x.text).filter(Boolean).join(', ') || 'unknown',
             to: [].concat(p.to || []).map((x) => x.text).filter(Boolean).join(', '), subject: p.subject || '(no subject)',
-            text: String(p.text || ''), attachments: attached(p),
+            text: mailText(p), attachments: attached(p),
           });
         }
       } finally { lock.release(); }

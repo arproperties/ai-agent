@@ -7,6 +7,7 @@ import { client, detectHost, friendly, withMailbox, sentPath, applySmtp, replySu
 import { compose, sendRaw, friendlySmtp } from './smtp.js';
 import { ask } from './ai.js';
 import { sendPush } from './push.js';
+import { mailText } from './mailText.js';
 
 // Mail routing: the one mailbox the whole company is written to (a Gmail everyone used to
 // share), and who each email is for.
@@ -53,7 +54,7 @@ async function parse(m) {
   return {
     uid: m.uid, headers: p.headers, from: lower(from.address), name: from.name || '',
     replyTo: lower(p.replyTo?.value?.[0]?.address) || null,
-    to: addrs(p.to), cc: addrs(p.cc), subject: p.subject || '', text: p.text || '',
+    to: addrs(p.to), cc: addrs(p.cc), subject: p.subject || '', text: mailText(p),
     messageId: p.messageId || null, date: p.date || m.internalDate || null,
     at: Math.floor(new Date(p.date || m.internalDate || Date.now()).getTime() / 1000),
     attachments: (p.attachments || []).map((a) => ({ filename: a.filename || 'attachment', contentType: a.contentType, content: a.content })),
