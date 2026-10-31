@@ -7,6 +7,7 @@ import { extractText, readVideo, recall, learn, memoryKit } from './knowledge.js
 import { saveUpload, processDocument, isImage, isVideo, fileName, libraryCatalog } from './files.js';
 import { connectedMailbox, senderName } from './email.js';
 import { listDrafts } from './drafts.js';
+import { unbacked, claimNote } from './claims.js';
 import { todoKit } from './todos.js';
 import { teamReminderKit } from './teamReminders.js';
 import { responsibilityKit } from './responsibilities.js';
@@ -183,7 +184,8 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'read every part of every file it depends on with read_file before answering, never only the first part or a summary. ' +
     'Where two files are marked as copies of one document, read one and treat them as one. ' +
     'If there is more to read than you can get through in this answer, say which files or parts you have not read yet and offer to carry on; never answer as if you had read them. ' +
-    'The app puts a line under your answer listing what you read, so do not write one yourself.');
+    'The app puts a line under your answer listing what you read, so do not write one yourself. ' +
+    'Never say what a file or an email says unless you opened it in this answer or it is in front of you here.');
   // A case table said the court ordered "2 kg of 24K gold". The judgment's order says 2 kg of
   // gold, no karat; 24K was the wife's own claim, quoted earlier in the same judgment.
   parts.push('A judgment quotes what each party asked for and argued before it says what the court decided. ' +
@@ -214,13 +216,22 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
       "When you use an email, mention its sender and date (and link it when an 'Open in Outlook' link is given). " +
       `Listing the inbox already leaves out emails ${user.name} has replied to. Never list an email marked ALREADY REPLIED as needing a reply, ` +
       'and do not bring up replied emails in an update unless asked.');
+    // The boss was told "no reply from any of the three" with no search behind it, and "no
+    // evidence she forwarded it" about an email Rona had sent, copying him, seven minutes later.
+    parts.push(`Before you say there is no reply, no email, or that someone did not send, answer or do something, search for it in this answer ` +
+      '(by the sender, the company and the subject, in every folder) - an earlier answer in this chat is not a search. ' +
+      'When a search finds nothing, say what you searched and that you could not find it: never that it does not exist or did not happen. ' +
+      `You only see ${user.name}'s own mailbox, so an email between other people that did not copy ${user.name} is invisible to you: ` +
+      'say you cannot see it, not that it was not sent.');
     if (mailbox.canWrite) {
       parts.push(`You can also act on this mailbox. create_draft and reply_email write an email and put it in front of ${user.name} with ` +
         'Approve and Reject buttons — you never send anything yourself, and send_email cannot bypass that. Prefer reply_email over create_draft ' +
         'when answering an email that already exists, so it threads; if you no longer have its id, find it again with search_email first. mark_read, mark_unread and move_email take effect immediately. ' +
         'Both can carry attachments: a saved file from <file_library> or one attached in this chat, by its file name, or a file from an email ' +
         '(its email id and attachment name) to forward it. Attach only what they asked for, and name the attached files in your reply. ' +
-        `When you draft something, say so plainly and tell ${user.name} it is waiting for their approval. Never claim an email has been sent.`);
+        `When you draft something, say so plainly and tell ${user.name} it is waiting for their approval. Never claim an email has been sent. ` +
+        'A draft cannot be edited where it is: to change one (another cc, a new line), write it again with replaces set to its id, ' +
+        'and only then say it is updated.');
       if (senderName(mailbox.address)) {
         parts.push(`Every email you draft goes out from ${mailbox.address}, so sign it off as ${senderName(mailbox.address)}. ` +
           'The sign-off follows the sending address only: never sign with a name from earlier in this conversation, from memory, ' +
@@ -633,6 +644,8 @@ export async function chat(req, res) {
   try {
     let prevType = null;
     let rekeyed = false;
+    const ran = new Set(); // tools that worked this turn, to check the reply's claims against
+    let checked = false;
     const { model, auto } = chatModel(user, agent);
     if (mailbox) await loadAddresses(); // the master may have added one since the last message
     const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto, focus, await lessonsFor(agent));
@@ -692,7 +705,18 @@ export async function chat(req, res) {
         const calls = msg.content.filter((b) => b.type === 'tool_use');
         // An unknown name cannot happen — the model only sees tools we listed — but if it
         // did, the first kit answers with "Unknown tool" rather than the turn dying here.
-        convo.push({ role: 'user', content: await Promise.all(calls.map((b) => (kitFor(b.name) ?? kits[0]).run(b))) });
+        const results = await Promise.all(calls.map((b) => (kitFor(b.name) ?? kits[0]).run(b)));
+        calls.forEach((b, i) => { if (!results[i]?.is_error) ran.add(b.name); });
+        convo.push({ role: 'user', content: results });
+        continue;
+      }
+      // "Draft is ready" with no draft made (claims.js): asked once to do it or say so.
+      const missing = !checked && msg.stop_reason === 'end_turn' && turn < MAX_ROUNDS - 1 ? unbacked(reply, ran) : [];
+      if (missing.length) {
+        checked = true;
+        convo.push({ role: 'assistant', content: msg.content });
+        convo.push({ role: 'user', content: [{ type: 'text', text: claimNote(missing) }] });
+        prevType = 'note'; // whatever it says next starts a new paragraph
         continue;
       }
       if (msg.stop_reason !== 'pause_turn') break;
