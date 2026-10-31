@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, HardHat, Loader2, Pencil, Plus } from 'lucide-react';
+import { ChevronRight, HardHat, Loader2, Pencil, Plus, Search } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
+import Picker from './Picker';
 import ProjectCard from './ProjectCard';
 
 // Projects: a building job (the JVC school). The store keeper records deliveries, material
@@ -14,6 +15,7 @@ const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p
 const LABEL = 'text-[11px] font-medium tracking-[0.14em] text-mute';
 const ROLE = { store: 'Store keeper', manager: 'Manager', master: 'Master' };
 const num = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 3 });
+const ROLE_OPTIONS = [{ value: 'store', label: 'Store keeper' }, { value: 'manager', label: 'Manager' }];
 const TABS = [['stock', 'Stock'], ['waiting', 'Waiting'], ['manpower', 'Manpower'], ['history', 'History']];
 
 // ---------- the master's set-up ----------
@@ -21,7 +23,8 @@ const TABS = [['stock', 'Stock'], ['waiting', 'Waiting'], ['manpower', 'Manpower
 function ProjectForm({ start, agents, onSaved, onCancel }) {
   const [name, setName] = useState(start?.project.name || '');
   const [floors, setFloors] = useState((start?.project.floors || ['Basement', 'Ground', '1st', '2nd', '3rd', 'Roof']).join(', '));
-  const [agentId, setAgentId] = useState(start?.project.agent_id || '');
+  const [agentId, setAgentId] = useState(start?.project.agent_id ? String(start.project.agent_id) : '');
+  const [q, setQ] = useState(''); // the people list is long: search it by name
   const [roles, setRoles] = useState(() => Object.fromEntries((start?.members || []).map((m) => [m.user_id, m.role])));
   const [people, setPeople] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -47,24 +50,30 @@ function ProjectForm({ start, agents, onSaved, onCancel }) {
       <label className="block space-y-1.5"><span className={LABEL}>FLOORS, IN ORDER</span>
         <input value={floors} onChange={(e) => setFloors(e.target.value)} className={FIELD} /></label>
       <label className="block space-y-1.5"><span className={LABEL}>AGENT FOR THIS PROJECT</span>
-        <select value={agentId} onChange={(e) => setAgentId(e.target.value)} className={FIELD}>
-          <option value="">None</option>
-          {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
+        <Picker value={agentId} onChange={setAgentId} none="None" placeholder="Pick an agent" searchPlaceholder="Search agents"
+          options={agents.map((a) => ({ value: String(a.id), label: a.name }))} />
         <span className="block text-xs text-mute">Its chats use this project without being told which.</span>
       </label>
       <div className="space-y-1.5">
         <span className={LABEL}>PEOPLE</span>
+        <div className="glass flex items-center gap-2 rounded-xl px-3">
+          <Search size={15} className="shrink-0 text-mute" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people" className="w-full bg-transparent py-2 text-sm outline-none placeholder:text-mute/70" />
+        </div>
         <div className="max-h-72 space-y-1 overflow-y-auto">
-          {people.map((u) => (
+          {/* Whoever is already on it stays at the top, so a search never hides who was picked. */}
+          {people.filter((u) => roles[u.id] || !q.trim() || u.name.toLowerCase().includes(q.trim().toLowerCase()))
+            .sort((a, b) => (roles[b.id] ? 1 : 0) - (roles[a.id] ? 1 : 0)).map((u) => (
             <div key={u.id} className="flex items-center gap-2 rounded-lg px-1 py-1">
               <span className="min-w-0 flex-1 truncate">{u.name}</span>
-              <select value={roles[u.id] || ''} onChange={(e) => setRoles((r) => ({ ...r, [u.id]: e.target.value }))}
-                className="glass rounded-lg px-2 py-1 text-sm outline-none">
-                <option value="">Not on it</option>
-                <option value="store">Store keeper</option>
-                <option value="manager">Manager</option>
-              </select>
+              <div className="flex shrink-0 gap-1">
+                {[{ value: '', label: 'Off' }, ...ROLE_OPTIONS].map((o) => (
+                  <button key={o.value} onClick={() => setRoles((r) => ({ ...r, [u.id]: o.value }))}
+                    className={`rounded-full px-2.5 py-1 text-xs transition ${(roles[u.id] || '') === o.value ? 'bg-p1/30 text-txt' : 'text-mute hover:bg-white/[0.06]'}`}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
         </div>
