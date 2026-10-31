@@ -5,10 +5,13 @@ import { listenUntilSilence, finishListening, stopListening, unlockAudio, TAP_TO
 const ACCEPT = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,audio/*,.opus,.ogg,.oga,.m4a,.aac,.amr,.caf,.mp3,.wav,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
 // quote: part of a reply picked with select → Reply. It rides above the box and goes with
-// the next message as "draft a reply to this", with whatever was typed as the instructions.
-const withQuote = (quote, said) => (quote
-  ? `Draft a reply email for this:\n\n${quote.split('\n').map((l) => `> ${l}`).join('\n')}${said ? `\n\n${said}` : ''}`
-  : said);
+// the next message. Sent on its own it asks for a reply email; with words typed, the words
+// are the ask - "give me more detail" on a quoted line had an email drafted instead.
+const withQuote = (quote, said) => {
+  if (!quote) return said;
+  const quoted = quote.split('\n').map((l) => `> ${l}`).join('\n');
+  return said ? `About this part of your answer:\n\n${quoted}\n\n${said}` : `Draft a reply email for this:\n\n${quoted}`;
+};
 
 export default function Composer({ busy, voiceEnabled, carry = [], quote = '', draft = '', onDropQuote, onPickChats, onDropChat, onSend, onStop, onVoiceState, onError }) {
   const [text, setText] = useState(draft); // draft: "New chat on this case" starts with the case number typed
