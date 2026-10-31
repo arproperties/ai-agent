@@ -274,22 +274,25 @@ export function LeasePanel({ c, ins, onInsight }) {
   );
 }
 
-/** Leases in saifsys that may need a case, for the list. Fetched when opened. */
+const PAGE = 15;
+
+/** Leases in saifsys that may need a case, for the list, a page at a time. Fetched when opened. */
 export function AtRisk({ onOpenCase, onStart }) {
   const [open, setOpen] = useState(false);
   const [days, setDays] = useState(30);
   const [list, setList] = useState(null);
+  const [page, setPage] = useState(0);
   const [error, setError] = useState('');
   useEffect(() => {
     if (!open) return;
-    setList(null); setError('');
+    setList(null); setError(''); setPage(0);
     api.get(`/legal-cases/leases/at-risk?days=${days}`).then((r) => setList(r.leases)).catch((e) => setError(e.message));
   }, [open, days]);
   return (
     <div className="rounded-2xl border border-stroke bg-white/[0.03]">
       <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm">
         <ShieldAlert size={16} className="text-warn" />
-        <span className="flex-1 font-medium">Leases that may need a case</span>
+        <span className="flex-1 font-medium">Leases that may need a case{list?.length ? ` (${list.length})` : ''}</span>
         <span className="text-xs text-mute max-sm:hidden">bounced cheques, rent overdue · from saifsys</span>
         <ChevronDown size={15} className={`text-mute transition ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -304,8 +307,9 @@ export function AtRisk({ onOpenCase, onStart }) {
           </div>
           {error ? <p className="text-sm text-bad">{error}</p> : !list ? <p className="flex items-center gap-2 py-2 text-sm text-mute"><Loader2 size={14} className="animate-spin" /> Asking saifsys…</p>
             : list.length === 0 ? <p className="py-2 text-sm text-mute">None. Every lease is paid up to {days} days, and no cheque is bounced.</p> : (
+              <>
               <ul className="divide-y divide-stroke">
-                {list.map((l) => (
+                {list.slice(page * PAGE, page * PAGE + PAGE).map((l) => (
                   <li key={l.lease_id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm">
                     <div className="min-w-0 flex-1 basis-56">
                       <p className="truncate font-medium">{l.tenant}</p>
@@ -321,6 +325,16 @@ export function AtRisk({ onOpenCase, onStart }) {
                   </li>
                 ))}
               </ul>
+              {list.length > PAGE && (
+                <div className="flex items-center justify-between gap-2 border-t border-stroke pt-2.5 text-xs text-mute">
+                  <span className="tabular-nums">{page * PAGE + 1}–{Math.min(list.length, page * PAGE + PAGE)} of {list.length}</span>
+                  <div className="flex gap-1.5">
+                    <Small disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</Small>
+                    <Small disabled={(page + 1) * PAGE >= list.length} onClick={() => setPage(page + 1)}>Next</Small>
+                  </div>
+                </div>
+              )}
+              </>
             )}
         </div>
       )}
