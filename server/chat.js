@@ -13,6 +13,7 @@ import { teamReminderKit } from './teamReminders.js';
 import { responsibilityKit } from './responsibilities.js';
 import { buildingKit } from './buildings.js';
 import { inventoryKit } from './inventory.js';
+import { projectKit } from './projects.js';
 import { caseKit } from './caseKit.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
@@ -603,7 +604,9 @@ export async function chat(req, res) {
       // The master correcting an agent: a "Learn this?" card, never a rule applied by itself.
       await lessonKit(user, { conversationId: convId, agent, onCard: (p) => send('lesson', p) }),
       await buildingKit(user),
-      await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) })]),
+      await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),
+      // A building job: deliveries, material given out and manpower, each on a card; only for people on a project.
+      await projectKit(user, { conversationId: convId, agentId: agent.id, onCard: (p) => send('projectCard', p) })]),
     // Their own case folders, from their own inbox: for someone from outside the company only.
     ...(external ? [await caseKit(user, { conversationId: convId, onCard: (c) => send('caseFolder', c) })] : []),
     await noticeKit(user, { conversationId: convId, onCard: (c) => send('tenantNotice', c) }), // only with Tenant notices
