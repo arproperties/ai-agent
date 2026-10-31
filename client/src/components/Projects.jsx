@@ -86,7 +86,11 @@ function ProjectForm({ start, agents, onSaved, onCancel }) {
 
 function Stock({ p, onItem }) {
   if (!p.stock.length) return <p className="py-10 text-center text-mute">Nothing recorded yet. Deliveries sent in chat and accepted show up here.</p>;
+  // Nobody counts the whole site on day one: old material is counted when its pile gets small.
+  const below = p.stock.some((s) => s.on_site < 0);
   return (
+    <div className="space-y-2">
+    {below && <p className="text-xs text-mute">Red = more given out than recorded: old stock not counted yet. When that pile is small, tell Reem what is left (e.g. "cement left: 6 bags").</p>}
     <div className="glass divide-y divide-stroke/60 rounded-2xl">
       {p.stock.map((s) => (
         <button key={`${s.item}|${s.counted_in}`} onClick={() => onItem(s.item)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.04]">
@@ -100,6 +104,7 @@ function Stock({ p, onItem }) {
           <ChevronRight size={16} className="text-mute" />
         </button>
       ))}
+    </div>
     </div>
   );
 }
@@ -137,7 +142,9 @@ function History({ p, item, onClear }) {
         <div className="glass divide-y divide-stroke/60 rounded-2xl">
           {moves.map((m) => (
             <div key={m.id} className="flex items-baseline gap-3 px-4 py-2.5">
-              <span className={`w-10 shrink-0 text-xs font-medium ${m.kind === 'in' ? 'text-ok' : 'text-warn'}`}>{m.kind === 'in' ? 'IN' : 'OUT'}</span>
+              <span className={`w-14 shrink-0 text-xs font-medium ${m.kind === 'in' ? 'text-ok' : m.kind === 'out' ? 'text-warn' : 'text-mute'}`}>
+                {{ in: 'IN', out: 'OUT', count_up: 'COUNT +', count_down: 'COUNT −' }[m.kind]}
+              </span>
               <span className="min-w-0 flex-1">
                 <span className="block">{num(m.quantity)} {m.counted_in} {m.item}</span>
                 <span className="text-xs text-mute">

@@ -2482,3 +2482,13 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_project_manpower ON project_manpower(project_id, day);
 `);
+
+// A count of what is left on site: the store keeper counts a pile once it is small, and the
+// difference from the record goes in as count_up / count_down, so stock is right again
+// without a big counting day. Received and given out leave these out.
+await db.exec(`
+  ALTER TABLE project_proposals DROP CONSTRAINT IF EXISTS project_proposals_kind_check;
+  ALTER TABLE project_proposals ADD CONSTRAINT project_proposals_kind_check CHECK (kind IN ('delivery', 'out', 'manpower', 'count'));
+  ALTER TABLE project_moves DROP CONSTRAINT IF EXISTS project_moves_kind_check;
+  ALTER TABLE project_moves ADD CONSTRAINT project_moves_kind_check CHECK (kind IN ('in', 'out', 'count_up', 'count_down'));
+`);

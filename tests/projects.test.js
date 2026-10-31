@@ -4,7 +4,7 @@ import { reset, makeUser, makeAgent, closeDb, db } from './helpers/db.js';
 import { projectRole, projectsOf } from '../server/access.js';
 import {
   saveProject, getProject, getProposal, stockOf, manpowerOf, checksFor, projectKit, remindManpower,
-  proposeDelivery, proposeOut, proposeManpower, acceptDelivery, sendToManager, decideDelivery, confirmCard, cancelCard,
+  proposeDelivery, proposeOut, proposeManpower, proposeCount, acceptDelivery, sendToManager, decideDelivery, confirmCard, cancelCard,
 } from '../server/projects.js';
 
 test.after(() => closeDb());
@@ -140,7 +140,7 @@ test('the chat tools only get cards ready, and the records say where recording b
   const { francisca, director, other } = await setup();
   const cards = [];
   const kit = await projectKit(francisca, { agentId: director, onCard: (c) => cards.push(c) });
-  assert.deepEqual(kit.definitions.map((d) => d.name).sort(), ['log_delivery', 'log_manpower', 'log_material_out', 'project_records', 'project_status']);
+  assert.deepEqual(kit.definitions.map((d) => d.name).sort(), ['log_count', 'log_delivery', 'log_manpower', 'log_material_out', 'project_records', 'project_status']);
   const before = await kit.run({ id: 't0', name: 'project_records', input: {} });
   assert.match(before.content, /Nothing has been recorded/);
   const r = await kit.run({ id: 't1', name: 'log_delivery', input: blocks() });
@@ -163,4 +163,22 @@ test('the 5 pm reminder goes once a day, only when no manpower was sent', async 
   await confirmCard(francisca, m.id);
   assert.equal(await remindManpower(push, at + 86400_000), 0); // the next day's was sent
   assert.ok(id);
+});
+
+test('a count of what is left puts the stock right, without touching received or given out', async () => {
+  const { francisca, id } = await setup();
+  // Old cement, never recorded, given out: the record goes below zero.
+  const out = await proposeOut(francisca, { item: 'Cement OPC', quantity: 20, counted_in: 'bags' });
+  await confirmCard(francisca, out.id);
+  assert.equal((await stockOf(id))[0].on_site, -20);
+  const c = await proposeCount(francisca, { item: 'cement opc', counted: 6, counted_in: 'bags' });
+  assert.equal(c.data.item, 'Cement OPC');
+  assert.equal(c.on_site, -20);
+  await confirmCard(francisca, c.id);
+  const [s] = await stockOf(id);
+  assert.deepEqual([s.on_site, s.received, s.given], [6, 0, 20]);
+  // Counting again with the record already right changes nothing.
+  const again = await proposeCount(francisca, { item: 'Cement OPC', counted: 6, counted_in: 'bags' });
+  await confirmCard(francisca, again.id);
+  assert.equal((await stockOf(id))[0].on_site, 6);
 });
