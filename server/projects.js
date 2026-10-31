@@ -60,12 +60,12 @@ export async function stockOf(projectId) {
   return db.prepare(`SELECT min(item) AS item, counted_in,
       sum(CASE WHEN kind = 'in' THEN quantity ELSE 0 END) AS received,
       sum(CASE WHEN kind = 'out' THEN quantity ELSE 0 END) AS given,
-      sum(CASE WHEN kind = 'in' THEN quantity ELSE -quantity END) AS on_site
+      sum(CASE WHEN kind IN ('in', 'count_up') THEN quantity ELSE -quantity END) AS on_site
     FROM project_moves WHERE project_id = ? GROUP BY lower(item), counted_in ORDER BY lower(min(item))`).all(projectId);
 }
 
 const onSite = async (projectId, item, countedIn) => Number((await db.prepare(`SELECT
-    coalesce(sum(CASE WHEN kind = 'in' THEN quantity ELSE -quantity END), 0) AS n
+    coalesce(sum(CASE WHEN kind IN ('in', 'count_up') THEN quantity ELSE -quantity END), 0) AS n
   FROM project_moves WHERE project_id = ? AND lower(item) = lower(?) AND counted_in = ?`).get(projectId, item, countedIn)).n);
 
 /** The name already used for this item, so "hollow block 200mm" and "Hollow Block 200MM" are one line of stock. */
@@ -254,6 +254,21 @@ export async function proposeManpower(user, input, { conversationId = null, agen
   return saveCard(user, p, 'manpower', { day, rows, floor: floorOf(p, input.floor), notes: line(input.notes, 400) || null, replaces: already }, conversationId);
 }
 
+/**
+ * A count of what is left, ready on a card. The store keeper counts a pile when it is small;
+ * confirming it puts the record right by the difference.
+ */
+export async function proposeCount(user, input, { conversationId = null, agentId = null } = {}) {
+  const p = await recorder(user, input, agentId);
+  const item = await sameName(p.id, line(input.item, 80));
+  if (!item) throw bad('Say what was counted.');
+  const counted = Math.round(Number(input.counted) * 1000) / 1000;
+  if (!(counted >= 0) || counted > MAX_QUANTITY) throw bad('Give the count as a number (0 if none is left).');
+  return saveCard(user, p, 'count', {
+    item, counted, counted_in: line(input.counted_in, 20) || 'pcs', day: dayOf(input.date), notes: line(input.notes, 400) || null,
+  }, conversationId);
+}
+
 // ---------- the taps on a card ----------
 
 /** Moves a card from one status to the next, once: the status is the lock, so a double tap does it once. */
@@ -342,7 +357,15 @@ export async function confirmCard(user, id) {
   const d = p.data;
   await tx(async () => {
     await step(p, 'pending', 'confirmed', { decided_by: user.id });
-    if (p.kind === 'out') {
+    if (p.kind === 'count') {
+      // The difference from the record at the moment of Confirm, not when the card was made.
+      const diff = Math.round((d.counted - await onSite(p.project_id, d.item, d.counted_in)) * 1000) / 1000;
+      if (diff) {
+        await db.prepare(`INSERT INTO project_moves (project_id, proposal_id, kind, item, counted_in, quantity, day, note, by_user)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(p.project_id, p.id, diff > 0 ? 'count_up' : 'count_down', d.item, d.counted_in, Math.abs(diff), d.day,
+          [`Counted ${num(d.counted)} on site`, d.notes].filter(Boolean).join(' · '), user.id);
+      }
+    } else if (p.kind === 'out') {
       await db.prepare(`INSERT INTO project_moves (project_id, proposal_id, kind, item, counted_in, quantity, floor, party, day, note, by_user)
         VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?, ?, ?)`).run(p.project_id, p.id, d.item, d.counted_in, d.quantity, d.floor, d.party, d.day, d.notes, user.id);
     } else {
@@ -387,7 +410,8 @@ const since = async (projectId) => (await db.prepare(`SELECT least((SELECT min(d
   (SELECT min(day) FROM project_manpower WHERE project_id = ?)) AS d`).get(projectId, projectId)).d;
 
 const NOT_BEFORE = (from) => (from
-  ? `Recording in Reem started on ${from}. Anything before that, or never recorded, is not in these numbers - say so rather than guessing.`
+  ? `Recording in Reem started on ${from}. Anything before that, or never recorded, is not in these numbers - say so rather than guessing. ` +
+    'Material that was already on site then is only in stock once it has been counted (COUNT lines); a stock below zero means old material was given out and not yet counted.'
   : 'Nothing has been recorded for this project yet. Say so plainly; do not estimate from files or guess.');
 
 async function statusForChat(user, input, agentId) {
@@ -420,16 +444,16 @@ async function recordsForChat(user, input, agentId) {
   const keep = (r) => (!input.item || has(r.item, input.item)) && (!input.floor || has(r.floor || '', input.floor)) && (!input.supplier || has(r.supplier || '', input.supplier));
 
   if (['all', 'deliveries', 'given_out'].includes(what)) {
-    const kinds = what === 'deliveries' ? ['in'] : what === 'given_out' ? ['out'] : ['in', 'out'];
+    const kinds = what === 'deliveries' ? ['in'] : what === 'given_out' ? ['out'] : ['in', 'out', 'count_up', 'count_down'];
     const rows = (await db.prepare(`SELECT * FROM project_moves WHERE project_id = ? AND day >= ? AND day <= ? AND kind = ANY(?::text[]) ORDER BY day, id`)
       .all(p.id, from, to, kinds)).filter(keep);
     const totals = new Map();
     for (const r of rows) {
-      const k = `${r.kind === 'in' ? 'Received' : 'Given out'}: ${r.item} (${r.counted_in})`;
+      const k = `${{ in: 'Received', out: 'Given out', count_up: 'Count found more', count_down: 'Count found less' }[r.kind]}: ${r.item} (${r.counted_in})`;
       totals.set(k, (totals.get(k) || 0) + Number(r.quantity));
     }
     out.push(`Material moves (${rows.length}):`,
-      ...rows.map((r) => `  ${r.day} ${r.kind === 'in' ? 'IN ' : 'OUT'} ${num(r.quantity)} ${r.counted_in} ${r.item}${r.floor ? ` [${r.floor}]` : ''}` +
+      ...rows.map((r) => `  ${r.day} ${{ in: 'IN ', out: 'OUT', count_up: 'COUNT +', count_down: 'COUNT -' }[r.kind]} ${num(r.quantity)} ${r.counted_in} ${r.item}${r.floor ? ` [${r.floor}]` : ''}` +
         `${r.supplier ? ` from ${r.supplier}` : ''}${r.party ? ` to ${r.party}` : ''}${r.note ? ` - ${r.note}` : ''}`),
       'Totals:', ...(totals.size ? [...totals].map(([k, n]) => `  ${k}: ${num(n)}`) : ['  none']), '');
   }
@@ -525,6 +549,25 @@ const DEFS = {
       required: ['item', 'quantity'],
     },
   },
+  count: {
+    name: 'log_count',
+    description: 'Get a count of what is left on site ready on a card: "cement left: 6 bags", "only 2 pallets of 200mm blocks left, about 200". ' +
+      'Confirming it sets the stock of that item to the count, by recording the difference. Use the name already in stock for it. ' +
+      'This is how material that was on site before recording started gets into the numbers, so suggest it when a stock is below zero or looks wrong. ' +
+      'This only shows a card: nothing changes until they tap Confirm. Never say it was recorded.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project: PROJECT,
+        item: { type: 'string' },
+        counted: { type: 'number', description: 'How many are left now. 0 if none.' },
+        counted_in: { type: 'string', description: 'The same unit the stock uses for it. Default pcs.' },
+        date: DATE,
+        notes: { type: 'string' },
+      },
+      required: ['item', 'counted'],
+    },
+  },
   manpower: {
     name: 'log_manpower',
     description: 'Get a day\'s manpower on site ready on a card: how many of each trade worked, e.g. "8 masons, 15 helpers, 2 steel fixers", optionally per subcontractor. ' +
@@ -577,6 +620,10 @@ export async function projectKit(user, ctx = {}) {
         const short = c.on_site < c.data.quantity;
         return `Card #${c.id}: ${num(c.data.quantity)} ${c.data.counted_in} ${c.data.item} out${c.data.party ? ` to ${c.data.party}` : ''}. ` +
           `Recorded on site now: ${num(c.on_site)}${short ? ' - LESS than this; mention it (a delivery may not have been recorded)' : ''}.${READY} and tap Confirm.`;
+      },
+      log_count: async (input) => {
+        const c = shown(await proposeCount(user, input, opts));
+        return `Card #${c.id}: counted ${num(c.data.counted)} ${c.data.counted_in} ${c.data.item}; the record says ${num(c.on_site)}.${READY} and tap Confirm.`;
       },
       log_manpower: async (input) => {
         const c = shown(await proposeManpower(user, input, opts));

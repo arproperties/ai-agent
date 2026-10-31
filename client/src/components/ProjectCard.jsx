@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Check, X, Send, Truck, PackageMinus, Users } from 'lucide-react';
+import { Loader2, Check, X, Send, Truck, PackageMinus, Users, ClipboardCheck } from 'lucide-react';
 import { api } from '../lib/api';
 
 // A delivery, material given out, or a day's manpower that Reem got ready from chat for a
@@ -16,7 +16,7 @@ const STATE = {
   rejected: { label: 'Rejected', tone: 'border-bad/40 bg-bad/[0.06]', dot: 'text-bad' },
   cancelled: { label: 'Cancelled', tone: 'border-stroke bg-white/[0.03]', dot: 'text-mute' },
 };
-const KIND = { delivery: ['Delivery', Truck], out: ['Material out', PackageMinus], manpower: ['Manpower', Users] };
+const KIND = { delivery: ['Delivery', Truck], out: ['Material out', PackageMinus], manpower: ['Manpower', Users], count: ['Count', ClipboardCheck] };
 const num = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 3 });
 const FIELD = 'w-full rounded-xl border border-stroke bg-white/[0.04] px-3 py-2 text-sm outline-none focus:border-p1/70';
 const MAIN = 'flex flex-1 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 active:scale-[0.98] disabled:opacity-50';
@@ -46,7 +46,22 @@ export default function ProjectCard({ card: c, onChanged }) {
         <KindIcon size={13} strokeWidth={2} /> {c.project.name} · {kindLabel} · {s.label}
       </p>
 
-      {c.kind !== 'manpower' && (
+      {/* A count puts the record right: what was counted against what Reem had. */}
+      {c.kind === 'count' && (
+        <>
+          <p className="text-[15px] font-medium leading-snug">{num(d.counted)} {d.counted_in} {d.item} left</p>
+          <p className="mt-0.5 text-xs text-mute">{[d.day, c.by && `by ${c.by}`].filter(Boolean).join(' · ')}</p>
+          {c.status === 'pending' && (
+            <p className="mt-1 text-txt/85">
+              Reem had {num(c.on_site)} {d.counted_in}
+              {d.counted !== c.on_site ? ` — confirming corrects it by ${d.counted > c.on_site ? '+' : '−'}${num(Math.abs(d.counted - c.on_site))}.` : ' — already right.'}
+            </p>
+          )}
+          {d.notes && <p className="mt-1 text-txt/85">{d.notes}</p>}
+        </>
+      )}
+
+      {['delivery', 'out'].includes(c.kind) && (
         <>
           <p className="text-[15px] font-medium leading-snug">
             {c.kind === 'out' && '− '}{num(d.quantity)} {d.counted_in} {d.item}
@@ -56,7 +71,7 @@ export default function ProjectCard({ card: c, onChanged }) {
           </p>
           {d.notes && <p className="mt-1 text-txt/85">{d.notes}</p>}
           {c.kind === 'out' && c.status === 'pending' && c.on_site < d.quantity && (
-            <p className="mt-1 text-xs text-warn">Only {num(c.on_site)} {d.counted_in} on record — a delivery may not have been recorded.</p>
+            <p className="mt-1 text-xs text-warn">Only {num(c.on_site)} {d.counted_in} on record — old stock not counted yet? Tell Reem what is left, e.g. "{d.item} left: 50".</p>
           )}
         </>
       )}
