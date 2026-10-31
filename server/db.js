@@ -2102,6 +2102,31 @@ await db.exec(`
     ON CONFLICT (name) DO NOTHING;
 `);
 
+// A legal case's lease in saifsys, and Reem's advice on the case (server/legalLease.js).
+//   legal_case_leases: the lease linked to the case (saifsys re_leases.id) and the last copy
+//     of its file as saifsys gave it, so the case still shows it when saifsys is away.
+//   legal_case_advice: each "Ask Reem" answer on a case, kept with who asked and when; the
+//     newest is shown, the older ones stay as a record of what was advised.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS legal_case_leases (
+    case_id INTEGER PRIMARY KEY REFERENCES legal_cases(id) ON DELETE CASCADE,
+    lease_id INTEGER NOT NULL,
+    data JSONB,
+    fetched_at BIGINT,
+    linked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    linked_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_legal_case_leases_lease ON legal_case_leases(lease_id);
+  CREATE TABLE IF NOT EXISTS legal_case_advice (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
+    data JSONB NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_legal_case_advice ON legal_case_advice(case_id, id);
+`);
+
 // Company mailboxes the master added to the address book (server/addressBook.js), next to
 // the ones written into the code. Only addresses on our own domains: anything else is
 // never checked, so it needs no entry.

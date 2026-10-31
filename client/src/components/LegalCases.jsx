@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import Page from './Page';
 import Sheet from './Sheet';
 import Picker from './Picker';
+import { LeaseFinder, ReemCard, LeasePanel, AtRisk } from './LegalLease';
 
 // Legal cases (server/legalCases.js): Alreem's legal case flow, from the case type to the
 // end. The list has the dashboard's counts on top and is searched and filtered here; a
@@ -154,6 +155,8 @@ export default function LegalCasesPage({ onBack, open: openFirst }) {
             </div>
           )}
 
+          {data.saifsys && <AtRisk onOpenCase={setOpen} onStart={(lease) => setCreating({ lease })} />}
+
           {shown.length === 0 ? (
             <p className="pt-12 text-center text-sm text-mute">{all.length ? 'Nothing here.' : 'No legal cases yet. Tap New case to open the first one.'}</p>
           ) : (
@@ -163,7 +166,7 @@ export default function LegalCasesPage({ onBack, open: openFirst }) {
           )}
         </div>
       )}
-      {creating && <NewCase meta={data} onClose={() => setCreating(false)} onDone={(c) => { setCreating(false); load(); setOpen(c.id); }} />}
+      {creating && <NewCase meta={data} start={creating === true ? null : creating} onClose={() => setCreating(false)} onDone={(c) => { setCreating(false); load(); setOpen(c.id); }} />}
       {settingsOpen && <SettingsSheet meta={data} onClose={() => setSettingsOpen(false)} onSaved={load} />}
     </Page>
   );
@@ -303,18 +306,49 @@ function CaseForm({ meta, v, set, isNew }) {
   );
 }
 
-function NewCase({ meta, onClose, onDone }) {
-  const [v, setV] = useState({ priority: 'normal' });
+/** What a lease from saifsys fills in on a new case: only what is still empty. */
+const fromLease = (v, l) => ({
+  ...v, lease: l,
+  party_name: v.party_name || l.tenant, building: v.building || l.building, unit: v.unit || l.unit, contract_ref: v.contract_ref || l.lease_number,
+});
+
+function NewCase({ meta, start, onClose, onDone }) {
+  const bounceType = meta.types.find((t) => t.active && /cheque/i.test(t.name))?.id;
+  const [v, setV] = useState(() => {
+    const base = { priority: 'normal' };
+    if (!start?.lease) return base;
+    return { ...fromLease(base, start.lease), type_id: start.lease.bounced > 0 ? bounceType : undefined };
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (k) => (x) => setV((o) => ({ ...o, [k]: x }));
   const save = async () => {
     setBusy(true); setError('');
-    try { onDone(await api.post('/legal-cases', v)); } catch (e) { setError(e.message); setBusy(false); }
+    const { lease, ...body } = v;
+    let made;
+    try { made = await api.post('/legal-cases', body); } catch (e) { setError(e.message); setBusy(false); return; }
+    // The case is open either way; a lease saifsys could not give now can be linked on the case.
+    if (lease) await api.put(`/legal-cases/${made.id}/lease`, { lease_id: lease.lease_id }).catch(() => {});
+    onDone(made);
   };
   return (
     <Sheet title="New legal case" onClose={onClose} wide="text">
       <div className="space-y-4">
+        {meta.saifsys && (
+          <div className="space-y-1.5 text-sm">
+            <span>Lease in saifsys</span>
+            {v.lease ? (
+              <div className="flex items-center gap-2 rounded-2xl border border-p1/40 bg-p1/[0.07] px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium">{v.lease.tenant}</p>
+                  <p className="truncate text-xs text-mute">{v.lease.building} · Unit {v.lease.unit} · {v.lease.lease_number || `#${v.lease.lease_id}`}</p>
+                </div>
+                <button type="button" onClick={() => set('lease')(null)} aria-label="Remove the lease" className="text-mute hover:text-txt"><X size={15} /></button>
+              </div>
+            ) : <LeaseFinder onPick={(l) => setV((o) => fromLease(o, l))} />}
+            <p className="text-xs text-mute">Linking the lease lets Reem check the rent owed, cheques and Ejari, and advise on the case.</p>
+          </div>
+        )}
         <CaseForm meta={meta} v={v} set={set} isNew />
         <p className="text-xs text-mute">The case gets its number and starts its initial cooling period of {meta.settings.initial_days} days today.</p>
         <Problem text={error} />
@@ -376,8 +410,15 @@ function CaseView({ id, meta: given, onBack }) {
   const [c, setC] = useState(null);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(false);
+  const [ins, setIns] = useState(null);
   const load = useCallback(() => api.get(`/legal-cases/${id}`).then(setC).catch((e) => setError(e.message)), [id]);
   useEffect(() => { load(); }, [load]);
+  // The lease, the checks and Reem's advice: again whenever the case itself changes.
+  const insight = useCallback((x) => { setIns(x); load(); }, [load]);
+  useEffect(() => {
+    if (!c) return;
+    api.get(`/legal-cases/${id}/insight`).then(setIns).catch(() => setIns((o) => o || { saifsys: false, lease: null, checks: [], advice: null }));
+  }, [id, c?.updatedAt, c?.stage, c?.files?.length]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!given) api.get('/legal-cases').then(setMeta).catch((e) => setError(e.message)); }, [given]);
 
   if (!c || !meta) {
@@ -429,6 +470,7 @@ function CaseView({ id, meta: given, onBack }) {
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_24rem] lg:items-start">
           <div className="min-w-0 space-y-5">
+            <ReemCard c={c} ins={ins} onInsight={insight} />
             {c.stage === 'closed' ? (
               <div className="rounded-3xl border border-ok/30 bg-ok/[0.06] p-5">
                 <p className="flex items-center gap-2 font-medium"><Lock size={16} /> Closed: {c.outcome}</p>
@@ -445,7 +487,8 @@ function CaseView({ id, meta: given, onBack }) {
             </div>
           </div>
 
-          <aside className="rounded-3xl border border-stroke bg-white/[0.04] lg:sticky lg:top-4">
+          <aside className="divide-y divide-stroke rounded-3xl border border-stroke bg-white/[0.04]">
+            <LeasePanel c={c} ins={ins} onInsight={insight} />
             <Documents c={c} flow={flow} master={meta.master} maxMb={meta.settings.max_file_mb} onChanged={setC} />
           </aside>
         </div>

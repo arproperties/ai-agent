@@ -24,6 +24,7 @@ import { carry, noteCarried, pickedIds } from './chatRecap.js';
 import { focusTurn } from './caseFocus.js';
 import { primaryCaseBlock, labelExcerpt, sameCase } from './primaryCase.js';
 import { userModules } from './modules.js';
+import { legalKit } from './legalLease.js';
 import { pictureTag, makePicture, pictureKit } from './pictures.js';
 import { AUTO_MODEL, ADVISOR_MODEL, MASTER_MODEL } from './config.js';
 import { addressPrompt, addressKit, loadAddresses } from './addressBook.js';
@@ -520,6 +521,8 @@ export async function chat(req, res) {
   const saifsys = await saifsysKit(user);
   // Doing things in saifsys (today: creating an ARS booking) — proposed here, done only from the card.
   const saifsysAct = await saifsysActionKit(user, { conversationId: convId, onCard: (b) => send('arsBooking', b) });
+  // Legal cases with their saifsys leases, read only: for whoever has the Legal cases module.
+  const legal = await legalKit(user);
   // What the reply carries: pictures drawn for it, and saved files the agent showed.
   // Both go out on the 'picture' event, which sets the reply's files on screen.
   const pictures = [];
@@ -544,7 +547,7 @@ export async function chat(req, res) {
     // Their own case folders, from their own inbox: for someone from outside the company only.
     ...(external ? [await caseKit(user, { conversationId: convId, onCard: (c) => send('caseFolder', c) })] : []),
     await noticeKit(user, { conversationId: convId, onCard: (c) => send('tenantNotice', c) }), // only with Tenant notices
-    ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
+    ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(legal ? [legal] : []), ...(email ? [email] : [])];
   // A picture asked for in their own words. It is hung on this reply; its own words are
   // what the reply says if the agent adds none.
   let caption = '';

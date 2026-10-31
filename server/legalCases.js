@@ -10,7 +10,7 @@ import { fileName } from './files.js';
 import { sendPush } from './push.js';
 import { needsModule } from './modules.js';
 import { directory } from './tenantCare.js';
-import { dubaiDate } from './saifsys/client.js';
+import { dubaiDate, saifsysConfigured } from './saifsys/client.js';
 
 // Legal cases: Alreem's legal case flow (the Azinova SRS of 31 Aug 2026), one case from its
 // type to its end. Whoever has the module (server/modules.js) opens a case, fills in each
@@ -260,7 +260,7 @@ export async function caseDetail(id) {
 // ---------- writing ----------
 
 /** A line on the timeline. */
-async function log(caseId, kind, title, { stage = null, data = null, user = null } = {}) {
+export async function log(caseId, kind, title, { stage = null, data = null, user = null } = {}) {
   await db.prepare('INSERT INTO legal_case_events (case_id, kind, stage, title, data, user_id, at) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(caseId, kind, stage, title, data ? JSON.stringify(data) : null, user?.id || null, secs());
 }
@@ -660,7 +660,7 @@ legalCaseRoutes.get('/', wrap(async (req, res) => {
   res.json({
     cases: await listCases(), types: await listTypes(), flow: flow(), statuses: STATUSES, reports: REPORTS,
     people: (await holders()).map((p) => ({ id: p.id, name: p.name || p.email })),
-    canDecide: await canDecide(req.user), master: isMaster(req.user), today: today(),
+    canDecide: await canDecide(req.user), master: isMaster(req.user), today: today(), saifsys: saifsysConfigured(),
     settings: { initial_days: s.initial_days, legal_days: s.legal_days, warn_days: s.warn_days, max_file_mb: s.max_file_mb, deciders: s.deciders.map(Number) },
   });
 }));
