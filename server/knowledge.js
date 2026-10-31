@@ -340,6 +340,9 @@ export async function addMemory(userId, text, { judge = whichReplaced } = {}) {
     if (old.length) {
       await db.prepare(`UPDATE memories SET replaced_at = extract(epoch from now())::bigint, replaced_by = ?
         WHERE user_id = ? AND replaced_at IS NULL AND id = ANY(?::int[])`).run(id, userId, old);
+      // A pinned fact that changes stays pinned: the new version is the one every chat needs.
+      await db.prepare(`UPDATE memories SET pinned = true WHERE id = ? AND EXISTS
+        (SELECT 1 FROM memories WHERE user_id = ? AND pinned AND id = ANY(?::int[]))`).run(id, userId, old);
     }
   }
   return id;
@@ -536,10 +539,22 @@ export function notOtherCases(user, scope, t = 't') {
  * also why this is the one part of recall that can be used on its own, away from the
  * document shelves. `qvec` is optional: without it the ranking is keyword-only.
  */
+/**
+ * Pinned memories go into every chat, whatever is asked. With a thousand memories, "Hani Al
+ * Jasmi Advocates are our own lawyers" was not recalled for "proceed with the email", and a
+ * draft told staff to proceed against them.
+ */
+export const MAX_PINNED = 40;
+export async function pinnedMemories(user) {
+  const rows = await db.prepare(`SELECT text FROM memories WHERE user_id = ? AND replaced_at IS NULL AND pinned
+    ORDER BY id LIMIT ${MAX_PINNED}`).all(user.id);
+  return rows.map((r) => r.text);
+}
+
 export async function personalMemories(user, query, qvec, k = 12) {
   // Current versions only; each carries the day it was saved, so if two still disagree
-  // the model can tell which is newer.
-  const scope = { sql: 't.user_id = ? AND t.replaced_at IS NULL', params: [user.id] };
+  // the model can tell which is newer. Pinned ones come separately (pinnedMemories).
+  const scope = { sql: 't.user_id = ? AND t.replaced_at IS NULL AND NOT t.pinned', params: [user.id] };
   const { n } = await db.prepare('SELECT COUNT(*)::int n FROM memories t WHERE ' + scope.sql).get(...scope.params);
   const ids = n <= 25 // small memory: include it all
     ? null
@@ -555,8 +570,9 @@ export async function personalMemories(user, query, qvec, k = 12) {
 export async function recall(user, query) {
   const [qvec] = await embed([query], 'query');
   const memories = await personalMemories(user, query, qvec);
+  const pinned = await pinnedMemories(user);
   const knowledge = await search('chunks', agentScope(user), query, qvec, 6);
-  return { memories, knowledge };
+  return { memories, pinned, knowledge };
 }
 
 // ---------- learning: pull lasting facts out of each exchange ----------

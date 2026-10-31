@@ -22,7 +22,7 @@
 import { db } from './db.js';
 import { ask, embed } from './ai.js';
 import { transcript } from './dmSummary.js';
-import { personalMemories } from './knowledge.js';
+import { personalMemories, pinnedMemories } from './knowledge.js';
 
 const CONTEXT = 12;   // recent messages shown when tidying: enough to catch the topic and the tone
 const DRAFT_CONTEXT = 25; // writing a reply from scratch needs more of the thread than tidying does
@@ -124,7 +124,7 @@ async function aboutMe(userId, query) {
     const user = await db.prepare('SELECT id, name FROM users WHERE id = ?').get(userId);
     if (!user) return '';
     const [qvec] = await embed([query], 'query').catch(() => []);
-    const lines = await personalMemories(user, query, qvec, 10);
+    const lines = [...await pinnedMemories(user), ...await personalMemories(user, query, qvec, 10)];
     if (!lines.length) return '';
     return `ABOUT YOU (what this app remembers about ${user.name}, for context only - never quote it):\n${lines.map((m) => `- ${m}`).join('\n')}`;
   } catch {

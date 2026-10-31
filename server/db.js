@@ -277,6 +277,8 @@ await db.exec(`
 await db.exec(`
   ALTER TABLE memories ADD COLUMN IF NOT EXISTS replaced_at BIGINT;
   ALTER TABLE memories ADD COLUMN IF NOT EXISTS replaced_by INTEGER REFERENCES memories(id) ON DELETE SET NULL;
+  -- pinned: a key fact (who someone is, which side they are on) read into every chat, not only when recalled
+  ALTER TABLE memories ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false;
   CREATE INDEX IF NOT EXISTS idx_mem_replaced_by ON memories(replaced_by);
 `);
 

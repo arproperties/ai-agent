@@ -9,7 +9,7 @@ import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks, setAgentCase } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
 import { deleteMessage, editReply, chat } from './chat.js';
-import { addMemory, memoryChain } from './knowledge.js';
+import { addMemory, memoryChain, MAX_PINNED } from './knowledge.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument, editDocumentKind, kindFieldsIn } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
@@ -426,11 +426,11 @@ app.get('/api/memories', wrap(async (req, res) => {
   const { total } = await db.prepare(`SELECT COUNT(*)::int total FROM memories m WHERE ${where}`).get(...params);
   const page = Math.max(1, Math.min(Number(req.query.page) || 1, Math.ceil(total / MEMORY_PAGE) || 1));
   const items = await db.prepare(`
-    SELECT m.id, m.text, m.created_at, (
+    SELECT m.id, m.text, m.created_at, m.pinned, (
       WITH RECURSIVE older AS (
         SELECT m.id AS id UNION SELECT o2.id FROM memories o2 JOIN older o ON o2.replaced_by = o.id
       ) SELECT COUNT(*)::int - 1 FROM older) AS versions
-    FROM memories m WHERE ${where} ORDER BY m.id DESC LIMIT ${MEMORY_PAGE} OFFSET ${(page - 1) * MEMORY_PAGE}`).all(...params);
+    FROM memories m WHERE ${where} ORDER BY m.pinned DESC, m.id DESC LIMIT ${MEMORY_PAGE} OFFSET ${(page - 1) * MEMORY_PAGE}`).all(...params);
   res.json({ items, total, page, pages: Math.ceil(total / MEMORY_PAGE) });
 }));
 app.get('/api/memories/:id/history', wrap(async (req, res) => {
@@ -440,6 +440,18 @@ app.post('/api/memories', wrap(async (req, res) => {
   const text = String(req.body.text || '').trim().slice(0, 500);
   if (!text) return res.status(400).json({ error: 'Empty memory' });
   res.json({ id: await addMemory(req.user.id, text) });
+}));
+// Pinned memories go into every chat (pinnedMemories), so there is a ceiling on how many.
+app.patch('/api/memories/:id', wrap(async (req, res) => {
+  const pinned = req.body.pinned === true;
+  if (pinned) {
+    const { n } = await db.prepare('SELECT COUNT(*)::int n FROM memories WHERE user_id = ? AND replaced_at IS NULL AND pinned').get(req.user.id);
+    if (n >= MAX_PINNED) return res.status(400).json({ error: `You can pin up to ${MAX_PINNED}. Unpin one first.` });
+  }
+  const { changes } = await db.prepare('UPDATE memories SET pinned = ? WHERE id = ? AND user_id = ? AND replaced_at IS NULL')
+    .run(pinned, Number(req.params.id) || 0, req.user.id);
+  if (!changes) return notFound(res);
+  res.json({ ok: true, pinned });
 }));
 // Forgetting a memory forgets its earlier versions too, or they would linger out of sight.
 app.delete('/api/memories/:id', wrap(async (req, res) => {
