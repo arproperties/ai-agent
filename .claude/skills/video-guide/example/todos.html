@@ -1,0 +1,215 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  :root { --bg:#06050f; --txt:#f2f0ff; --mute:#9a95bd; --p1:#a78bfa; --p2:#f472b6; --ok:#4ade80; --warn:#fbbf24; --bad:#fb7185; --stroke:rgba(255,255,255,.1); }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { width:1280px; height:720px; overflow:hidden; background:var(--bg); color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  #sky { position:absolute; inset:0;
+    background: radial-gradient(600px 420px at 20% 30%, rgba(167,139,250,.22), transparent 70%),
+                radial-gradient(520px 380px at 85% 80%, rgba(244,114,182,.16), transparent 70%); }
+  #dots { position:absolute; inset:0; opacity:.25;
+    background-image: radial-gradient(rgba(255,255,255,.18) 1px, transparent 1px); background-size:28px 28px; }
+
+  /* phone */
+  #phone { position:absolute; left:150px; top:30px; width:330px; height:660px; border-radius:46px;
+    background:#0b0a18; border:9px solid #1d1a36; box-shadow:0 30px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.08); overflow:hidden; }
+  #screen { position:absolute; inset:0; }
+  .layer { position:absolute; inset:0; }
+  .status { height:34px; display:flex; align-items:center; justify-content:space-between; padding:0 22px; font-size:12px; font-weight:600; }
+  .notch { position:absolute; top:8px; left:50%; width:90px; height:22px; margin-left:-45px; border-radius:14px; background:#000; }
+  .head { padding:6px 16px 0; }
+  .head h1 { font-size:22px; font-weight:600; letter-spacing:-.01em; }
+  .tabs { display:flex; gap:18px; margin-top:10px; font-size:13px; color:var(--mute); border-bottom:1px solid rgba(255,255,255,.06); }
+  .tabs span { padding-bottom:8px; }
+  .tabs .on { color:var(--txt); border-bottom:2px solid var(--p1); }
+  .add { margin:12px 14px 10px; border:1px solid var(--stroke); background:rgba(255,255,255,.04); border-radius:16px; padding:8px; }
+  .addrow { display:flex; align-items:center; gap:4px; }
+  .input { flex:1; min-width:0; font-size:14px; padding:6px 4px; white-space:nowrap; overflow:hidden; }
+  .ph { color:rgba(154,149,189,.7); }
+  .caret { display:inline-block; width:1.5px; height:16px; background:var(--p1); vertical-align:-3px; margin-left:1px; }
+  .ib { width:32px; height:32px; border-radius:50%; display:grid; place-items:center; color:var(--mute); flex-shrink:0; }
+  .ib.warnon { background:rgba(251,191,36,.2); color:var(--warn); }
+  .ib.go { background:linear-gradient(135deg,var(--p1),var(--p2)); color:#fff; box-shadow:0 6px 16px rgba(167,139,250,.3); }
+  .ib.go.off { opacity:.4; box-shadow:none; }
+  svg.i { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .chips { display:flex; gap:5px; flex-wrap:wrap; margin-top:8px; overflow:hidden; }
+  .chip { border:1px solid var(--stroke); background:rgba(255,255,255,.04); border-radius:99px; padding:4px 10px; font-size:11px; color:var(--mute); }
+  .chip.on { border-color:rgba(251,191,36,.5); color:var(--warn); background:rgba(251,191,36,.12); }
+  .dt { margin-top:7px; border:1px solid var(--stroke); border-radius:10px; padding:6px 9px; font-size:12px; color:var(--mute); }
+  .dt.set { color:var(--txt); }
+  .list { padding:0 14px; }
+  .grp { font-size:10px; font-weight:500; letter-spacing:.14em; padding:12px 6px 4px; color:var(--mute); }
+  .row { display:flex; gap:10px; align-items:flex-start; padding:8px 6px; border-radius:14px; overflow:hidden; }
+  .circ { width:20px; height:20px; border-radius:50%; border:1.5px solid rgba(255,255,255,.25); display:grid; place-items:center; color:transparent; flex-shrink:0; margin-top:1px; }
+  .circ.done { border-color:rgba(74,222,128,.6); background:rgba(74,222,128,.2); color:var(--ok); }
+  .circ svg { width:12px; height:12px; stroke-width:3; }
+  .rt { font-size:14px; line-height:1.3; }
+  .rt.struck { text-decoration:line-through; color:var(--mute); }
+  .meta { font-size:10.5px; margin-top:3px; display:flex; align-items:center; gap:4px; color:var(--mute); }
+  .meta svg { width:11px; height:11px; }
+
+  /* chat */
+  .chathead { display:flex; align-items:center; gap:10px; padding:8px 16px 12px; border-bottom:1px solid rgba(255,255,255,.06); }
+  .orb { width:30px; height:30px; border-radius:50%; background:radial-gradient(circle at 35% 30%, #fff 0, var(--p1) 35%, var(--p2) 100%); box-shadow:0 0 18px rgba(167,139,250,.5); }
+  .chatbody { padding:16px 14px; display:flex; flex-direction:column; gap:12px; }
+  .me { align-self:flex-end; max-width:82%; background:linear-gradient(135deg,var(--p1),var(--p2)); color:#fff; padding:10px 13px; border-radius:18px 18px 4px 18px; font-size:13.5px; line-height:1.35; }
+  .bot { align-self:flex-start; max-width:86%; background:#252140; padding:10px 13px; border-radius:18px 18px 18px 4px; font-size:13.5px; line-height:1.4; }
+  .typing { display:flex; gap:4px; padding:12px 14px; }
+  .typing i { width:6px; height:6px; border-radius:50%; background:var(--mute); }
+  .composer { position:absolute; left:12px; right:12px; bottom:22px; height:44px; border-radius:22px; border:1px solid var(--stroke); background:rgba(255,255,255,.04);
+    display:flex; align-items:center; padding:0 16px; font-size:13px; color:rgba(154,149,189,.7); }
+
+  /* tap */
+  #tap { position:absolute; width:38px; height:38px; margin:-19px 0 0 -19px; border-radius:50%; border:2.5px solid rgba(255,255,255,.9);
+    background:rgba(255,255,255,.18); pointer-events:none; opacity:0; }
+
+  /* caption side */
+  #cap { position:absolute; left:580px; top:0; width:600px; height:720px; display:flex; flex-direction:column; justify-content:center; }
+  .kick { font-size:15px; font-weight:600; letter-spacing:.22em; color:var(--p1); }
+  .title { font-size:52px; font-weight:700; line-height:1.08; letter-spacing:-.02em; margin-top:14px; }
+  .title em { font-style:normal; background:linear-gradient(90deg,var(--p1),var(--p2)); -webkit-background-clip:text; color:transparent; }
+  .sub { font-size:22px; color:var(--mute); line-height:1.45; margin-top:18px; max-width:540px; }
+  #bar { position:absolute; left:580px; bottom:70px; display:flex; gap:8px; }
+  #bar i { width:34px; height:4px; border-radius:2px; background:rgba(255,255,255,.12); overflow:hidden; position:relative; }
+  #bar i b { position:absolute; inset:0; background:linear-gradient(90deg,var(--p1),var(--p2)); transform-origin:left; }
+  #brand { position:absolute; right:40px; top:34px; font-size:14px; color:var(--mute); letter-spacing:.08em; }
+  #brand b { color:var(--txt); }
+</style></head>
+<body>
+<div id="sky"></div><div id="dots"></div>
+<div id="brand"><b>Reem</b> · Guide</div>
+<div id="phone"><div id="screen"></div><div class="notch"></div><div id="tap"></div></div>
+<div id="cap"></div>
+<div id="bar"></div>
+<script>
+const I = {
+  user: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>',
+  bell: '<svg class="i" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>',
+  plus: '<svg class="i" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
+  check: '<svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
+};
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const ease = (x) => { x = clamp(x); return x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x + 2, 3) / 2; };
+const ramp = (t, a, b) => ease((t - a) / (b - a));
+const typed = (s, t, a, b) => s.slice(0, Math.round(clamp((t - a) / (b - a)) * s.length));
+
+// Scenes: [start, end, kicker, title, sub]
+const SCENES = [
+  [0, 4, 'REEM GUIDE', 'How to use <em>To-dos</em>', 'Write down what needs doing. Reem keeps the list for you.'],
+  [4, 10, 'STEP 1', 'Type the task,<br>tap <em>+</em>', 'It goes straight onto your list.'],
+  [10, 17, 'STEP 2', 'Need a reminder?<br>Tap the <em>bell</em>', 'Pick Tonight, Tomorrow or Next week, or choose any time.'],
+  [17, 22, 'STEP 3', 'Tap the circle<br>when it’s <em>done</em>', 'It moves to Done. Tap it again to re-open.'],
+  [22, 27.5, 'TIP', 'Or just tell<br><em>Reem</em> in chat', 'Ask in your own words and Reem adds it to your list.'],
+  [27.5, 30, 'THAT’S IT', '<em>Add.</em> Remind.<br>Tick off.', 'Your list is under Lists → To-do.'],
+];
+const TAPS = [7.2, 12.4, 13.6, 14.8, 18.5];
+
+function row(text, meta, tone, opts = {}) {
+  const h = opts.h ?? 1, o = opts.o ?? 1;
+  return `<div class="row" id="${opts.id || ''}" style="opacity:${o};max-height:${h * 64}px;padding-top:${8*h}px;padding-bottom:${8*h}px;transform:translateY(${(1-o)*-8}px)">
+    <div class="circ ${opts.done ? 'done' : ''}">${I.check}</div>
+    <div><div class="rt ${opts.done ? 'struck' : ''}">${text}</div>
+    <div class="meta" style="color:${tone}">${meta}</div></div></div>`;
+}
+
+function listScreen(t) {
+  // the add box
+  let text = '', caret = false;
+  if (t >= 4.6 && t < 7.35) { text = typed('Renew trade licence', t, 4.8, 6.6); caret = true; }
+  if (t >= 10.4 && t < 14.95) { text = typed('Pay DEWA bill', t, 10.6, 11.8); caret = true; }
+  const blink = caret && Math.floor(t * 2) % 2 === 0;
+  const bellOn = t >= 12.45 && t < 14.95;
+  const chipsH = bellOn ? ramp(t, 12.45, 12.8) : 0;
+  const tomorrow = t >= 13.65;
+  const add = `<div class="add"><div class="addrow">
+      <div class="input">${text ? text : '<span class="ph">What needs doing?</span>'}${caret ? `<span class="caret" style="opacity:${blink ? 1 : 0}"></span>` : ''}</div>
+      <div class="ib">${I.user}</div>
+      <div class="ib ${bellOn ? 'warnon' : ''}" id="bell">${I.bell}</div>
+      <div class="ib go ${text ? '' : 'off'}" id="plus">${I.plus}</div></div>
+      <div style="max-height:${chipsH * 80}px;opacity:${chipsH};overflow:hidden">
+        <div class="chips"><span class="chip">Tonight</span><span class="chip ${tomorrow ? 'on' : ''}" id="tmr">Tomorrow</span><span class="chip">Next week</span></div>
+        <div class="dt ${tomorrow ? 'set' : ''}">${tomorrow ? '29/10/2026, 09:00' : 'dd/mm/yyyy, --:--'}</div>
+      </div></div>`;
+
+  // the list
+  const bell = (s) => `${I.bell} ${s}`;
+  const dewa = ramp(t, 15.0, 15.5);
+  const lic = ramp(t, 7.45, 7.95);
+  const licDone = t >= 18.6;
+  const licGone = 1 - ramp(t, 20.0, 20.6);
+  let html = `<div class="grp" style="color:var(--warn)">COMING UP · ${dewa > .5 ? 2 : 1}</div>`;
+  if (dewa > 0) html += row('Pay DEWA bill', bell('Tomorrow, 09:00'), 'var(--warn)', { h: dewa, o: dewa });
+  html += row('Collect cheques from unit 304', bell('Tomorrow, 10:00'), 'var(--warn)');
+  const noRem = (lic > .5 && licGone > .5) ? 2 : 1;
+  html += `<div class="grp">NO REMINDER · ${noRem}</div>`;
+  if (lic > 0 && licGone > 0) html += row('Renew trade licence', 'Added Today, 10:02', 'var(--mute)', { h: lic * licGone, o: lic * licGone, done: licDone, id: 'lic' });
+  html += row('Call tenant in 204 about the AC', 'Added Today, 09:15', 'var(--mute)');
+  const doneIn = ramp(t, 20.3, 20.8);
+  if (doneIn > 0) html += `<div class="grp" style="opacity:${doneIn};padding-top:18px">DONE · 1 ›</div>`;
+
+  return `<div class="status"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="head"><h1>Lists</h1><div class="tabs"><span class="on">To-do</span><span>Routines</span></div></div>
+    ${add}<div class="list">${html}</div>`;
+}
+
+function chatScreen(t) {
+  const me = ramp(t, 22.9, 23.3);
+  const dots = t >= 23.6 && t < 24.7;
+  const bot = ramp(t, 24.7, 25.1);
+  const dot = (k) => `<i style="opacity:${.35 + .65 * Math.max(0, Math.sin((t * 6) - k))}"></i>`;
+  return `<div class="status"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="chathead"><div class="orb"></div><div><div style="font-size:15px;font-weight:600">Reem</div><div style="font-size:11px;color:var(--mute)">Assistant</div></div></div>
+    <div class="chatbody">
+      ${me > 0 ? `<div class="me" style="opacity:${me};transform:translateY(${(1-me)*12}px)">Remind me to call the tenant in 101 about renewal on Sunday at 10</div>` : ''}
+      ${dots ? `<div class="bot typing">${dot(0)}${dot(1)}${dot(2)}</div>` : ''}
+      ${bot > 0 ? `<div class="bot" style="opacity:${bot};transform:translateY(${(1-bot)*12}px)">Done. It’s on your to-do list, with a reminder on <b>Sunday 1 Nov at 10:00</b>.</div>` : ''}
+    </div>
+    <div class="composer">Message Reem…</div>`;
+}
+
+function render(t) {
+  // phone: list, cross-fading to chat for the tip
+  const toChat = ramp(t, 22.0, 22.6);
+  const phoneIn = ramp(t, 0.2, 1.2);
+  const phone = document.getElementById('phone');
+  phone.style.opacity = phoneIn;
+  phone.style.transform = `translateY(${(1 - phoneIn) * 30}px)`;
+  const scr = document.getElementById('screen');
+  scr.innerHTML = (toChat < 1 ? `<div class="layer" style="opacity:${1 - toChat}">${listScreen(t)}</div>` : '')
+                + (toChat > 0 ? `<div class="layer" style="opacity:${toChat}">${chatScreen(t)}</div>` : '');
+
+  // tap ring on whatever is being pressed
+  const tap = document.getElementById('tap');
+  tap.style.opacity = 0;
+  const targets = { 7.2: 'plus', 12.4: 'bell', 13.6: 'tmr', 14.8: 'plus', 18.5: 'lic' };
+  for (const at of TAPS) {
+    const d = t - at;
+    if (d > -0.3 && d < 0.45) {
+      const el = document.getElementById(targets[at]);
+      if (!el) continue;
+      const pr = phone.getBoundingClientRect(), r = (at === 18.5 ? el.querySelector('.circ') : el).getBoundingClientRect();
+      tap.style.left = (r.left + r.width / 2 - pr.left - 9) + 'px';
+      tap.style.top = (r.top + r.height / 2 - pr.top - 9) + 'px';
+      const p = d < 0 ? 1 - Math.abs(d) / 0.3 : 1 - d / 0.45;
+      tap.style.opacity = clamp(p);
+      tap.style.transform = `scale(${d < 0 ? 1.4 - .4 * (1 - Math.abs(d) / .3) : 1 + d * 1.2})`;
+    }
+  }
+
+  // caption
+  const cap = document.getElementById('cap');
+  const s = SCENES.find(([a, b]) => t >= a && t < b) || SCENES[SCENES.length - 1];
+  const [a, b, kick, title, sub] = s;
+  const fin = ramp(t, a, a + 0.5), fout = b >= 30 ? 1 : 1 - ramp(t, b - 0.35, b);
+  const k = Math.min(fin, fout);
+  cap.innerHTML = `<div style="opacity:${k};transform:translateY(${(1 - fin) * 18}px)">
+      <div class="kick">${kick}</div><div class="title">${title}</div>
+      <div class="sub" style="opacity:${ramp(t, a + .25, a + .8)}">${sub}</div></div>`;
+
+  // progress dashes, one per step
+  const bar = document.getElementById('bar');
+  bar.innerHTML = SCENES.map(([a, b]) => `<i><b style="transform:scaleX(${clamp((t - a) / (b - a))})"></b></i>`).join('');
+}
+render(0);
+</script></body></html>
