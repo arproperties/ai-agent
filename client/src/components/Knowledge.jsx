@@ -931,6 +931,74 @@ export function FilesPanel({ agentId, hint, folders, me }) {
 }
 
 // ---------- memory ----------
+// "Please check": memories Reem thinks are wrong or out of date. Nothing changes until the
+// person taps Keep, Fix or Remove. The scan runs on the server; this asks again until it ends.
+function MemoryCheck({ onChanged }) {
+  const [items, setItems] = useState([]);
+  const [running, setRunning] = useState(false);
+  const [checked, setChecked] = useState(false); // a scan finished while the screen was open
+  const [fixing, setFixing] = useState({}); // review id -> corrected text being typed
+  const [busy, setBusy] = useState(null);
+  const load = () => api.get('/memories/review').then((d) => { setItems(d.items); setRunning(d.running); return d; });
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(async () => {
+      const d = await load().catch(() => null);
+      if (d && !d.running) setChecked(true);
+    }, 4000);
+    return () => clearInterval(t);
+  }, [running]);
+  const scan = async () => {
+    setChecked(false);
+    try { const d = await api.post('/memories/review/scan', {}); setItems(d.items); setRunning(d.running); } catch (e) { alert(e.message); }
+  };
+  const answer = async (r, action) => {
+    setBusy(r.id);
+    try {
+      await api.post(`/memories/review/${r.id}`, { action, text: fixing[r.id] });
+      setFixing(({ [r.id]: _, ...rest }) => rest);
+      await load();
+      onChanged();
+    } catch (e) { alert(e.message); } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-medium">{items.length ? `Please check (${items.length})` : 'Check for mistakes'}</p>
+        <button onClick={scan} disabled={running}
+          className="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-xs text-mute hover:text-txt disabled:opacity-60">
+          {running ? <><Loader2 size={13} className="animate-spin" /> Checking…</> : <><Sparkles size={13} /> Check my memory</>}
+        </button>
+      </div>
+      {!items.length && !running && (
+        <p className="text-xs text-mute">{checked ? 'Nothing looks wrong.' : 'Reem reads your memories and lists any that look wrong or out of date. Nothing changes until you decide.'}</p>
+      )}
+      {items.map((r) => (
+        <div key={r.id} className="rounded-xl border border-warn/30 bg-warn/[0.06] p-3 text-sm">
+          <p>{r.text}</p>
+          <p className="mt-1 text-xs text-warn">{r.reason}</p>
+          {r.id in fixing ? (
+            <form onSubmit={(e) => { e.preventDefault(); answer(r, 'fix'); }} className="mt-2 flex gap-2">
+              <input autoFocus value={fixing[r.id]} onChange={(e) => setFixing((f) => ({ ...f, [r.id]: e.target.value }))}
+                className="glass w-full rounded-lg px-3 py-2 text-sm outline-none focus:border-p1/70" />
+              <button disabled={busy === r.id || !fixing[r.id]?.trim()} className="shrink-0 rounded-lg bg-p1/25 px-3 text-xs hover:bg-p1/40 disabled:opacity-50">Save</button>
+              <button type="button" onClick={() => setFixing(({ [r.id]: _, ...rest }) => rest)} className="shrink-0 px-1 text-xs text-mute">Cancel</button>
+            </form>
+          ) : (
+            <div className="mt-2 flex gap-2">
+              <button disabled={busy === r.id} onClick={() => answer(r, 'keep')} className="rounded-full bg-white/5 px-3 py-1 text-xs hover:bg-white/10">Keep</button>
+              <button disabled={busy === r.id} onClick={() => setFixing((f) => ({ ...f, [r.id]: r.text }))} className="rounded-full bg-white/5 px-3 py-1 text-xs hover:bg-white/10">Fix</button>
+              <button disabled={busy === r.id} onClick={() => answer(r, 'remove')} className="rounded-full bg-white/5 px-3 py-1 text-xs text-bad hover:bg-bad/15">Remove</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function MemoryPanel() {
   // One page of memories at a time; the search runs on the server so it reaches every page.
   const [data, setData] = useState(null); // { items, total, page, pages }
@@ -973,6 +1041,7 @@ export function MemoryPanel() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-mute">Your agents learn lasting facts about you from your chats, and all of them share this memory. Teach something new, or remove what they should forget. When something changes, the old version is kept under History. Pin the key facts - who someone is, which side they are on - and every chat uses them.</p>
+      {hasAny && <MemoryCheck onChanged={() => load()} />}
       <form onSubmit={add} className="flex gap-2">
         <input value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. My company is AR Properties"
           className="glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70" />

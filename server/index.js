@@ -10,6 +10,7 @@ import { agentOut, agentIn, agentLinks, setAgentCase } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
 import { deleteMessage, editReply, chat } from './chat.js';
 import { addMemory, memoryChain, MAX_PINNED } from './knowledge.js';
+import { memoryReviewRoutes } from './memoryReview.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument, editDocumentKind, kindFieldsIn } from './files.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
@@ -418,6 +419,7 @@ app.get('/api/access', wrap(async (req, res) => {
 
 // ---------- memory (shared by all of the user's agents) ----------
 app.use('/api/memories', needsModule('memory'));
+app.use('/api/memories/review', memoryReviewRoutes); // "Please check": before the /:id routes below
 // Current memories only, newest first, one page at a time; `versions` counts the earlier
 // ones a memory replaced, for its History link. `q` keeps memories holding every word of it,
 // searched here rather than in the page so it reaches memories on other pages.

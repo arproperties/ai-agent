@@ -282,6 +282,21 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_mem_replaced_by ON memories(replaced_by);
 `);
 
+// "Please check" (memoryReview.js): memories Reem thinks are wrong or out of date, for the
+// person to keep, fix or remove. resolution: 'keep' | 'fix' | 'remove'; a kept one is not flagged again.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS memory_reviews (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    resolved_at BIGINT,
+    resolution TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_memory_reviews_user ON memory_reviews(user_id, resolved_at);
+`);
+
 // Columns added for the master/assignment model. ADD COLUMN IF NOT EXISTS is safe to
 // re-run, so this block is idempotent and runs on every boot like the rest of the schema.
 // users.role deliberately has no CHECK constraint: more roles may follow, and a
