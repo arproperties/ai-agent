@@ -155,9 +155,9 @@ export async function drawPicture(prompt) {
 }
 
 // Quick one-shot Claude call returning plain text
-export async function ask(prompt, { system, content, maxTokens = 1024 } = {}) {
+export async function ask(prompt, { system, content, maxTokens = 1024, model = FAST_MODEL } = {}) {
   const res = await claude.messages.create({
-    model: FAST_MODEL,
+    model,
     max_tokens: maxTokens,
     system,
     messages: [{ role: 'user', content: content ?? prompt }],

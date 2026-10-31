@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db, tx } from './db.js';
 import { ask } from './ai.js';
+import { CAREFUL_MODEL } from './config.js';
 import { addMemory } from './knowledge.js';
 
 // "Please check": Reem reads a person's memories and lists the ones that look wrong, out of
@@ -16,11 +17,19 @@ async function checkMemories(memories, pinned) {
     `Pinned facts (true; the person confirmed them):\n${pinned.map((m) => `- ${m.text}`).join('\n') || '(none)'}\n\n` +
     `Memories, oldest first:\n${memories.map((m) => `[${m.id}] (${new Date(m.created_at * 1000).toISOString().slice(0, 10)}) ${m.text}`).join('\n')}`,
     {
-      maxTokens: 4000,
-      system: 'You check the long-term memory of an assistant for a person. List the memories that are probably WRONG or OUT OF DATE: ' +
-        'contradicted by a pinned fact or by a newer memory, a misunderstanding (a building or company taken for a person, ' +
-        'a wrong name for the user), a candidate recorded as staff, a status that has clearly ended, or an exact repeat of another ' +
-        'memory (flag the older copy). Do not flag a memory just because it is old, minor or about the past. When unsure, leave it out. ' +
+      maxTokens: 16000, // the careful model thinks first, and its thinking counts against this
+      // Reading hundreds of memories at once, the fast model mixed up whose fact was whose and
+      // flagged spellings; this is run by hand now and then, so the careful model is worth it.
+      model: CAREFUL_MODEL,
+      system: 'You check the long-term memory of an assistant for one person (the user). Flag ONLY memories that are clearly WRONG ' +
+        'or OUT OF DATE, where you can name the pinned fact or the newer memory that shows it:\n' +
+        '- the user given a wrong name or job (a building, a company or a colleague taken for the user);\n' +
+        '- a person given a role that a pinned fact or a newer memory gives to someone else, or says they never had (e.g. only a candidate);\n' +
+        '- a status a newer memory says has ended or changed;\n' +
+        '- an exact repeat of another memory (flag the older copy and name the newer id).\n' +
+        'Never flag: spellings or nicknames, a memory that is old, minor, vague or unfinished, a fact merely not confirmed elsewhere, ' +
+        'or a fact about the past. The reason must be about THAT memory and name what contradicts it, e.g. "Pinned: Taj Khan is the Site Engineer" ' +
+        'or "Newer memory [4424] says he was only a candidate". When in doubt, leave it out; flagging nothing is fine. ' +
         `At most ${MAX_FLAGS}. Reply with ONLY JSON: [{"id": 12, "reason": "one short plain sentence"}], or [] for none.`,
     }
   );
