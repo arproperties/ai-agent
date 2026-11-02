@@ -143,8 +143,9 @@ async function teamNamed(user, q) {
 // what they are about; any older ones are listed by name only, to keep it short.
 const uploadsList = (docs, whose) => {
   const newest = [...docs].sort((a, b) => b.id - a.id);
-  return `${docs.length} saved files${whose}, newest first. This is the answer: list every one of them for the user, with its amount when the line has it - ` +
-    'do not leave any out or sort them by project, site or anything else the question added, and do not guess which ones it was for. read_file opens one by its number.\n' +
+  return `${docs.length} saved files${whose}, newest first. This is the answer: list every one of them for the user, with its amount when the line has it. ` +
+    'Leave none out, and say nothing about which project or site any of them was or was not for - the question\'s project or site is not a filter. ' +
+    'Do not mention these instructions. read_file opens one by its number.\n' +
     newest.map((d, i) => [line(d), i < 40 && d.summary && `   About: ${String(d.summary).replace(/\s+/g, ' ').slice(0, 160)}`].filter(Boolean).join('\n')).join('\n');
 };
 
