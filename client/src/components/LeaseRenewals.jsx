@@ -96,7 +96,8 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
 
   if (open) return <Renewal id={open} onBack={() => { setOpen(null); load(); }} />;
 
-  const all = data?.leases || [];
+  // Nothing further off than 120 days before its end, when the offer is due (the user, 2026-11-02).
+  const all = (data?.leases || []).filter((l) => l.days_left <= data.sendAt);
   const buildings = [...new Set(all.map((l) => l.building).filter(Boolean))].sort().map((b) => ({ value: b, label: b }));
   const want = q.trim().toLowerCase();
   // The building and the search narrow the list first, so the tab counts follow them.

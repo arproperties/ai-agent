@@ -61,7 +61,7 @@ import { readReply, readDocs, advise, caseSummary, rewriteReply } from './leaseR
 // Later, the RERA check itself can be Reem's: the rent from the DLD Rental Index API is one
 // more rent source (RENT_SOURCES), filling the slot the person's % fills now.
 
-const DAYS_AHEAD = 150;   // the list: far enough ahead to give the RERA index before the offer is due
+const DAYS_AHEAD = 120;   // the list: nothing further off than the day the offer goes (the user, 2026-11-02)
 const SEND_AT = 120;      // days before the end the offer goes
 const AUTO_FIXES = 3;
 const DEFAULT_ADMIN = 1500; // the admin fee a renewal starts with     // papers sent back by Reem before a person looks
