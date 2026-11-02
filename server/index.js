@@ -41,7 +41,7 @@ import { projectRoutes, startProjects } from './projects.js';
 import { caseRoutes } from './caseRoutes.js';
 import { startCaseFolders } from './caseWatch.js';
 import { caseShareRoutes, publicCaseRoutes } from './caseShare.js';
-import { caseFocusRoutes } from './caseFocus.js';
+import { caseFocusRoutes, claimPastChats } from './caseFocus.js';
 import { serverHealthRoutes, startServerHealth } from './serverHealth.js';
 import { startCaseBriefs } from './caseBrief.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
@@ -194,12 +194,15 @@ app.put('/api/agents/:id', requireMaster, wrap(async (req, res) => {
     // Made private: it stops being lent out as a hidden shelf. The people it is ticked for keep it.
     if (a.private) await db.prepare("DELETE FROM agent_assignments WHERE agent_id = ? AND mode = 'knowledge'").run(Number(req.params.id));
   });
+  if (a.case_key) await claimPastChats(Number(req.params.id)); // its earlier chats join the case it now works on
   res.json(agentOut(await own('agents', req.params.id, req.user.id), req.user));
 }));
 // The case an agent works on: also for the person it was given to, when it is theirs alone.
 app.put('/api/agents/:id/case', wrap(async (req, res) => {
   try {
-    res.json(agentOut(await setAgentCase(req.user, req.params.id, req.body?.case_number), req.user));
+    const agent = await setAgentCase(req.user, req.params.id, req.body?.case_number);
+    await claimPastChats(agent.id); // its chats from before the case was set join the case
+    res.json(agentOut(agent, req.user));
   } catch (e) {
     if (!e.status) throw e;
     res.status(e.status).json({ error: e.message });
@@ -558,6 +561,7 @@ app.listen(PORT, '0.0.0.0', () => {
   billAs({ userId: null, job: 'renewals' }, startLeaseRenewals); // reads tenants' replies to renewals and sends the reminders
   billAs({ userId: null, job: 'other' }, startLegalCases); // tells people when a cooling period is about to end, or has run over
   billAs({ userId: null, job: 'mail' }, startMailRouting); // does nothing until the shared mailbox is connected
+  claimPastChats().catch((e) => console.error('[case focus]', e.message)); // chats of agents bound to a case before this ran
   startCaseFolders(); // external users' case folders take in new case mail; each folder is billed to its owner
   // Case brief suggestions from quiet case chats, billed to each chat's owner. Live only unless
   // asked for: a local copy of the live database would pay to read every real case chat.
