@@ -75,6 +75,19 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', d
     onVoiceState('idle');
   };
 
+  // A screenshot pasted with Cmd/Ctrl+V lands as an attachment, the same as picking it with 📎.
+  // Browsers call every pasted picture "image.png", so it gets a time in its name to tell them apart.
+  const onPaste = (e) => {
+    const pasted = [...(e.clipboardData?.files || [])];
+    if (!pasted.length) return; // plain text pastes as usual
+    e.preventDefault();
+    const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '.');
+    const named = pasted.map((f, i) => (f.name === 'image.png' || !f.name
+      ? new File([f], `Screenshot ${stamp}${pasted.length > 1 ? `-${i + 1}` : ''}.${(f.type.split('/')[1] || 'png')}`, { type: f.type })
+      : f));
+    setFiles([...files, ...named].slice(0, 10));
+  };
+
   const onKey = (e) => {
     // Enter sends on desktop; on phones Enter makes a new line
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && window.matchMedia('(pointer: fine)').matches) submit(e);
@@ -131,7 +144,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', d
             <Icon name="history" />
           </button>
         )}
-        <textarea ref={areaRef} rows={1} value={text} onKeyDown={onKey}
+        <textarea ref={areaRef} rows={1} value={text} onKeyDown={onKey} onPaste={onPaste}
           onChange={(e) => { setText(e.target.value); grow(e.target); }}
           placeholder={rec === 'recording' ? 'Listening… tap ■ to send'
             : rec ? 'Transcribing…'
