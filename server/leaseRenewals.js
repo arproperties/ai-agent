@@ -506,6 +506,7 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera
     const lease = (await dueLeases()).find((l) => l.lease_id === Number(leaseId));
     if (!lease) throw bad(`That lease is not in saifsys's list of leases ending within ${DAYS_AHEAD} days.`, 404);
     if (lease.saifsys_renewal) throw bad(`The staff already have a renewal for this lease in saifsys (${lease.saifsys_renewal}).`, 409);
+    if (lease.saifsys_rejected) throw bad('The staff rejected this renewal in saifsys: the tenant is not renewing.', 409);
     if (!String(lease.email || '').includes('@')) throw bad('saifsys has no email for this tenant. Add it in saifsys first.', 409);
     if (await db.prepare('SELECT 1 FROM lease_renewals WHERE lease_id = ? AND end_date = ?').get(lease.lease_id, lease.end_date)) throw bad('This renewal has already started.', 409);
     r = { id: null, lease, status: null };
@@ -1088,7 +1089,7 @@ export async function nudge() {
   nudgedAt = D.now();
   const started = new Set((await db.prepare('SELECT lease_id, end_date FROM lease_renewals').all()).map((x) => `${x.lease_id}:${x.end_date}`));
   const told = new Set((await db.prepare('SELECT lease_id, end_date FROM lease_renewal_nudges').all()).map((x) => `${x.lease_id}:${x.end_date}`));
-  const fresh = (await dueLeases()).filter((l) => daysLeft(l.end_date) <= SEND_AT && !l.saifsys_renewal
+  const fresh = (await dueLeases()).filter((l) => daysLeft(l.end_date) <= SEND_AT && !l.saifsys_renewal && !l.saifsys_rejected
     && !started.has(`${l.lease_id}:${l.end_date}`) && !told.has(`${l.lease_id}:${l.end_date}`));
   if (!fresh.length) return 0;
   for (const l of fresh) await db.prepare('INSERT INTO lease_renewal_nudges (lease_id, end_date) VALUES (?, ?) ON CONFLICT DO NOTHING').run(l.lease_id, l.end_date);
@@ -1141,6 +1142,7 @@ const card = (l, r) => ({
   lease_id: l.lease_id, building: l.building, unit: l.unit, unit_type: l.unit_type, bedrooms: l.bedrooms, tenant: l.tenant, email: l.email || null,
   premises_number: l.premises_number || null, ejari: l.ejari || null, start_date: l.start_date, end_date: l.end_date,
   annual_rent: l.annual_rent, cheques: l.cheques, days_left: daysLeft(l.end_date), saifsys_renewal: l.saifsys_renewal || null,
+  saifsys_rejected: !!l.saifsys_rejected,
   renewal: out(r),
 });
 
