@@ -686,6 +686,15 @@ export async function send(user, body) {
   return getRenewal(r.id);
 }
 
+/** "Read again": a tenant's email Reem could not read goes back to be read, now. */
+export async function reread(id, eventId) {
+  const { changes } = await db.prepare(`UPDATE lease_renewal_events SET status = 'new', error = NULL WHERE id = ? AND renewal_id = ? AND kind = 'in' AND status = 'error'`)
+    .run(Number(eventId) || 0, Number(id) || 0);
+  if (!changes) throw bad('That email has already been read.', 409);
+  await readInbound();
+  return getRenewal(id);
+}
+
 /** Steps without an email: the papers are fine, the tenant's email needs no answer, or the person takes it from here. */
 export async function mark(user, id, what) {
   const r = await getRenewal(id);
@@ -711,6 +720,7 @@ export async function mark(user, id, what) {
   if (what === 'auto_on' || what === 'auto_off') {
     const on = what === 'auto_on';
     if (on === r.auto) return r;
+    if (on && r.dispute) throw bad('The tenant disputes this renewal, so Reem does not email them by itself any more. Staff answer it by hand.', 409);
     await step(r, on ? 'Handed back to Reem' : 'Taken over: staff run it by hand', { user });
     return update(r.id, { auto: on, ...(on ? { error: null } : {}) });
   }
@@ -856,7 +866,7 @@ async function handle(r, e) {
         JSON.stringify({ check, docs }), secs());
     await update(r.id, { received, papers: check, waiting: 'papers', status: 'agreed' });
     await mirror(r, `The tenant emailed ${files.length} file${files.length > 1 ? 's' : ''}. ${check.complete ? 'Papers complete.' : `To fix: ${[...check.wrong, ...check.missing].join('; ')}`}`, { text: e.body, files });
-    if (r.auto && !s.paused) return autoPapers(await getRenewal(r.id), check);
+    if (r.auto && !s.paused && !r.dispute) return autoPapers(await getRenewal(r.id), check);
     return tell(r, check.complete ? 'The papers are complete. Check them and convert in saifsys.' : 'The tenant sent papers: some things need fixing.');
   }
 
@@ -883,6 +893,8 @@ async function handle(r, e) {
       await update(r.id, { waiting: 'reply', error: String(err.message).slice(0, 500) });
       await stopAuto(r, `it could not answer "${title}" (${err.message})`);
     }
+  } else if (reading.dispute && r.auto) {
+    await stopAuto(r, `the tenant disputes the renewal, so Reem will not email them by itself`);
   } else {
     await tell(r, `${reading.dispute ? '⚠️ Dispute: ' : ''}${title}${r.auto && !s.paused ? ' (needs you)' : ''}`);
   }
@@ -894,13 +906,16 @@ async function handle(r, e) {
 
 /**
  * What Reem answers by itself, on an automatic renewal: an acceptance of the rent on offer
- * gets the contract; a dispute, a counter or a request for less gets the RERA index rent,
- * once (never a counter-offer of Reem's own). Anything else is for a person: null.
+ * gets the contract; a counter or a request for less gets the RERA index rent, once (never
+ * a counter-offer of Reem's own). Anything else is for a person: null.
+ * A tenant who disputes it (RDC, a lawyer, "illegal") never gets an email from Reem by
+ * itself again, on this renewal: a person answers every step (the user, 2026-11-02).
  */
 export function autoAnswer(r, reading) {
   if (!r.auto || !['offer_sent', 'negotiating'].includes(r.status)) return null;
-  if (reading.intent === 'accept' && !reading.dispute) return { ask: { action: 'accept', rent: r.offer }, did: `agreed at ${aed(r.offer)} and sent the contract` };
-  const pushback = reading.dispute || reading.intent === 'counter' || reading.asksLess;
+  if (reading.dispute || r.dispute) return null;
+  if (reading.intent === 'accept') return { ask: { action: 'accept', rent: r.offer }, did: `agreed at ${aed(r.offer)} and sent the contract` };
+  const pushback = reading.intent === 'counter' || reading.asksLess;
   if (pushback && r.rent_source?.kind === 'manual' && r.rera_pct !== null) {
     const index = indexRentFrom(r.lease.annual_rent, r.rera_pct);
     if (index < r.offer) return { ask: { action: 'index', pct: r.rera_pct }, did: `offered the RERA index rent, ${aed(index)}` };
@@ -1022,11 +1037,11 @@ export async function casePack(r) {
 
 // ---------- silence ----------
 
-/** Reminders after ten days of silence, twice, by Reem itself; then No answer, for a person. */
+/** Reminders after ten days of silence, twice, by Reem itself; then No answer, for a person. None to a tenant who disputes it. */
 export async function chase() {
   const s = await settings();
   if (!s.reminders) return;
-  const rows = await db.prepare(`SELECT id FROM lease_renewals WHERE status IN ('offer_sent', 'negotiating', 'agreed') AND waiting IS NULL`).all();
+  const rows = await db.prepare(`SELECT id FROM lease_renewals WHERE status IN ('offer_sent', 'negotiating', 'agreed') AND waiting IS NULL AND dispute IS NULL`).all();
   const nowS = secs();
   for (const { id } of rows) {
     const r = await getRenewal(id);
@@ -1183,6 +1198,8 @@ leaseRenewalRoutes.post('/check', wrap(async (req, res) => {
   await D.checkMail();
   res.json({ read: await readInbound() });
 }));
+
+leaseRenewalRoutes.post('/:id/events/:event/read', wrap(async (req, res) => { res.json(out(await reread(req.params.id, req.params.event))); }));
 
 leaseRenewalRoutes.post('/:id/advise', wrap(async (req, res) => {
   const r = await getRenewal(req.params.id);
