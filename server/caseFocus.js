@@ -95,8 +95,8 @@ export async function claimCase(userId, conversationId, agent) {
 
 /**
  * An agent bound to a case after it already had chats: those chats are about the case too.
- * Only chats with no case yet, and only those this agent alone answered, so a general chat
- * it once joined is left alone. With no agentId, every bound agent (run at boot, so a binding
+ * Only chats with no case yet, and only those this agent answered first (started with it, as
+ * "@Frazier …"), so a general chat it joined later is left alone. With no agentId, every bound agent (run at boot, so a binding
  * made before this existed catches up). Returns how many chats it linked.
  */
 export async function claimPastChats(agentId = null) {
@@ -106,10 +106,9 @@ export async function claimPastChats(agentId = null) {
   for (const a of agents) {
     const { changes } = await db.prepare(`UPDATE conversations c SET primary_case = ?::jsonb
       WHERE c.primary_case IS NULL
-        AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.agent_id = ?)
-        AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.role = 'assistant'
-          AND m.agent_id IS DISTINCT FROM ?)`)
-      .run(JSON.stringify({ number: a.case_number, key: a.case_key, source: 'agent' }), a.id, a.id);
+        AND (SELECT m.agent_id FROM messages m WHERE m.conversation_id = c.id AND m.role = 'assistant'
+          ORDER BY m.id LIMIT 1) = ?`)
+      .run(JSON.stringify({ number: a.case_number, key: a.case_key, source: 'agent' }), a.id);
     linked += changes;
   }
   return linked;
