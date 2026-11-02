@@ -105,7 +105,16 @@ const scopeOf = (user) => (user.ownFilesOnly ? agentScope(user) : notOtherCases(
 const DOC_COLS = `t.id, t.user_id, t.title, t.name, t.folder, t.company, t.tags, t.summary, t.doc_date, t.expires_on, t.created_at,
   CASE WHEN t.user_id = ? THEN NULL ELSE coalesce(u.name, u.email) END AS uploader`;
 
-/** The people an "uploaded by" names - by name or email, a near spelling allowed. */
+/**
+ * A name as it sounds: Arabic names reach English many ways (Said, Syed, Saeed, Sayed;
+ * Mohammad, Muhammed), so the vowels and the letters that stand in for them are dropped and
+ * doubles run together. Said and Syed are both "sd", but Saif stays "sf".
+ */
+export const soundKey = (w) => w[0] + w.slice(1).replace(/[aeiouyhw]/g, '').replace(/q/g, 'k').replace(/(.)\1+/g, '$1');
+
+const sameName = (w, m) => m === w || spellingMatch(w, m) >= 0.8 || (w.length >= 3 && m.length >= 3 && soundKey(w).length >= 2 && soundKey(w) === soundKey(m));
+
+/** The people an "uploaded by" names - by name or email, a near spelling or a same-sounding one allowed. */
 async function uploaders(who) {
   const asked = plain(who);
   const people = await db.prepare('SELECT id, name, email FROM users').all();
@@ -113,11 +122,29 @@ async function uploaders(who) {
   if (exact.length) return exact;
   return people.filter((p) => {
     const mine = words(`${p.name || ''} ${String(p.email || '').split('@')[0]}`);
-    return words(who).some((w) => w.length >= 3 && mine.some((m) => m === w || spellingMatch(w, m) >= 0.8));
+    return words(who).some((w) => w.length >= 3 && mine.some((m) => sameName(w, m)));
   });
 }
 
-export async function searchFiles(user, query, uploadedBy) {
+// "What has Syed purchased?" is a question about what Said uploaded, not about files with
+// the word Syed in them; old ledgers that name someone else made Reem answer with the
+// master's own files. So when a search names someone on the team, their uploads come first.
+// Only words written as names (a capital first letter) count, so "left side" is not Said.
+async function teamNamed(user, q) {
+  const asked = String(q).split(/[^\p{L}]+/u).filter((w) => /^\p{Lu}/u.test(w)).flatMap(words)
+    .filter((w) => w.length >= 3 && !STOP.has(w));
+  if (!asked.length) return [];
+  const people = await db.prepare("SELECT id, name, email FROM users WHERE id <> ? AND coalesce(name, '') <> ''").all(user.id);
+  return people.filter((p) => words(p.name).some((m) => asked.some((w) => sameName(w, m))));
+}
+
+const uploadsList = (docs, whose) => {
+  const newest = [...docs].sort((a, b) => b.id - a.id).slice(0, 40);
+  return `${docs.length} saved files${whose}${docs.length > newest.length ? `, the newest ${newest.length} here` : ''}, newest first. read_file opens one by its number.\n` +
+    newest.map((d) => [line(d), d.summary && `   About: ${String(d.summary).replace(/\s+/g, ' ').slice(0, 160)}`].filter(Boolean).join('\n')).join('\n');
+};
+
+export async function searchFiles(user, query, uploadedBy, { noTeam = false } = {}) {
   const q = String(query || '').trim().slice(0, 300);
   const who = String(uploadedBy || '').trim().slice(0, 100);
   if (!q && !who) throw new Error('Say what to look for');
@@ -136,9 +163,19 @@ export async function searchFiles(user, query, uploadedBy) {
   // Everything one person uploaded, newest first - the question was who, not what.
   if (!q) {
     if (!docs.length) return `No saved file${whose} that you can see.`;
-    const newest = [...docs].sort((a, b) => b.id - a.id).slice(0, 40);
-    return `${docs.length} saved files${whose}${docs.length > newest.length ? `, the newest ${newest.length} here` : ''}, newest first. read_file opens one by its number.\n` +
-      newest.map((d) => [line(d), d.summary && `   About: ${String(d.summary).replace(/\s+/g, ' ').slice(0, 160)}`].filter(Boolean).join('\n')).join('\n');
+    return uploadsList(docs, whose);
+  }
+
+  // A team member named in the search: what they uploaded comes first, the search after it.
+  if (!by && !noTeam) {
+    const team = await teamNamed(user, q);
+    const theirs = docs.filter((d) => team.some((p) => p.id === d.user_id));
+    if (theirs.length) {
+      const names = team.filter((p) => theirs.some((d) => d.user_id === p.id)).map((p) => p.name).join(' or ');
+      return `"${q}" names ${names} from the team. When the user asks what ${names} bought, paid, sent or uploaded, these are the files - ` +
+        `not ones that only mention the name - so answer from them.\n${uploadsList(theirs, ` uploaded by ${names}`)}\n\n` +
+        `Files that only mention the words (often someone else with that name):\n${await searchFiles(user, q, null, { noTeam: true })}`;
+    }
   }
 
   // Two lists - named like it, and saying it inside - merged the way search() merges its own.
@@ -267,7 +304,8 @@ export const SHELF_TOOLS = [
       'Use it whenever they ask for a file, or about something a file would answer, and it is not already in <knowledge>. ' +
       'Always use it before saying a file is not there. Names are often spelt as they were heard: if nothing comes back, try another spelling or other words. ' +
       'Every file knows who uploaded it: when they ask what someone uploaded or sent to the Shelf, pass uploaded_by, and leave query out to get all of them (the list says what each is, so pick the invoices etc. from it) - ' +
-      'never search for the person\'s name inside the files for that.',
+      'never search for the person\'s name inside the files for that. "What has Syed bought", "Said\'s bills" and the like are questions about what that person uploaded; ' +
+      'a team member\'s name may be spelt as heard (Syed, Saeed for Said) and is still them.',
     input_schema: {
       type: 'object',
       properties: {
