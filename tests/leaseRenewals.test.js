@@ -493,13 +493,13 @@ test('charges: each extra listed, VAT taken from saifsys\'s own total, shown as 
 
 const autoStart = (boss, rent = 42000, rera = 5) => R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent, rera_pct: rera });
 
-test('automatic: a dispute gets the RERA index rent, an acceptance the contract, papers are sent back, then staff renew', async () => {
+test('automatic: asking for less gets the RERA index rent, an acceptance the contract, papers are sent back, then staff renew', async () => {
   const boss = await setup();
   const cheques = quoteOf(37800).cheques;
   const photo = (name) => ({ contentType: 'image/jpeg', filename: name, content: Buffer.from(name) });
   stub({
     replies: [
-      { intent: 'unclear', summary: 'Says the increase is illegal', dispute: true, disputeNote: 'Claims it breaks the index' },
+      { intent: 'unclear', summary: 'Asks for less', asksLess: true, dispute: false },
       { intent: 'accept', summary: 'Accepts', dispute: false },
     ],
     docs: [
@@ -510,7 +510,7 @@ test('automatic: a dispute gets the RERA index rent, an acceptance the contract,
   let r = await autoStart(boss);
   assert.deepEqual([r.status, r.auto, r.rera_pct], ['offer_sent', true, 5]);
 
-  await arrives({ text: 'This is illegal' });
+  await arrives({ text: 'Can you do less?' });
   await R.readInbound();
   r = await R.getRenewal(r.id);
   assert.deepEqual([r.status, r.offer, r.waiting, r.rent_source], ['negotiating', 37800, null, { kind: 'rera_index', pct: 5 }]);
@@ -542,6 +542,48 @@ test('automatic: a dispute gets the RERA index rent, an acceptance the contract,
     'out: Offer sent · AED 42,000', 'out: RERA index rent offered · AED 37,800', 'out: Agreed · AED 37,800',
     'out: Asked to fix the papers', 'out: Renewed in saifsys · AED 37,800',
   ]);
+});
+
+test('automatic: a tenant who disputes it never gets an email from Reem by itself again', async () => {
+  const boss = await setup();
+  stub({ replies: [
+    { intent: 'unclear', summary: 'Will go to RDC over the chiller fee', dispute: true, disputeNote: 'Refuses the chiller increase, cites RDC' },
+    { intent: 'accept', summary: 'Accepts', dispute: false },
+  ] });
+  let r = await autoStart(boss);
+  const mails = world.sent.length;
+  await arrives({ text: 'I will go to the Rental Dispute Center' });
+  await R.readInbound();
+  r = await R.getRenewal(r.id);
+  assert.equal(world.sent.length, mails, 'no RERA index offer, no email at all');
+  assert.deepEqual([r.auto, r.offer, r.waiting], [false, 42000, 'reply']);
+  assert.match(world.pushes.at(-1), /Reem stopped on this lease: the tenant disputes the renewal/);
+  assert.ok((await timeline(r.id)).some((t) => /Reem stopped: the tenant disputes/.test(t)));
+
+  await assert.rejects(R.mark(boss, r.id, 'auto_on'), /disputes this renewal/, 'it can not be handed back to Reem');
+  await db.prepare('UPDATE lease_renewals SET auto = true WHERE id = ?').run(r.id);
+  assert.equal(R.autoAnswer(await R.getRenewal(r.id), { intent: 'accept' }), null, 'a later acceptance waits for a person too');
+
+  // Silence: no reminders go to a tenant who disputes it.
+  await db.prepare('UPDATE lease_renewals SET waiting = NULL, last_out_at = last_out_at - 30 * 86400 WHERE id = ?').run(r.id);
+  await R.chase();
+  assert.equal(world.sent.length, mails);
+});
+
+test('an email Reem could not read shows why, and Read again reads it', async () => {
+  const boss = await setup();
+  let r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 42000 });
+  let fail = true;
+  R.useForTests({ readReply: async () => { if (fail) throw new Error('Reem could not read that: the answer was too long and got cut off.'); return { intent: 'question', summary: 'Asks about parking', dispute: false }; } });
+  await arrives({ text: 'a long email' });
+  await R.readInbound();
+  const e = await db.prepare(`SELECT id, status, error FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'in'`).get(r.id);
+  assert.deepEqual([e.status, e.error], ['error', 'Reem could not read that: the answer was too long and got cut off.']);
+  fail = false;
+  await R.reread(r.id, e.id);
+  const again = await db.prepare('SELECT status, title, error FROM lease_renewal_events WHERE id = ?').get(e.id);
+  assert.deepEqual([again.status, again.title, again.error], ['read', 'Asks about parking', null]);
+  await assert.rejects(R.reread(r.id, e.id), /already been read/);
 });
 
 test('automatic: never a counter of its own; a second push-back, a question or not renewing waits for a person', async () => {

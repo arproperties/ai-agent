@@ -23,9 +23,18 @@ export function parseJson(text) {
   return JSON.parse(s.slice(start, end + 1));
 }
 
-async function askJson(system, content, maxTokens = 1500) {
+// Room enough for a long dispute email: answers cut off half-way can't be read (2026-11-02, PARK PLACE 203).
+async function askJson(system, content, maxTokens = 4000) {
   const res = await claude.messages.create({ model: MODEL, max_tokens: maxTokens, system, messages: [{ role: 'user', content }] });
-  return parseJson(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+  const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  if (res.stop_reason === 'max_tokens') throw new Error('Reem could not read that: the answer was too long and got cut off.');
+  try {
+    return parseJson(text);
+  } catch (e) {
+    // What came back, in the log only (it can hold the tenant's words), so the cause can be found.
+    console.warn(`[renewal ai] unreadable answer (stop: ${res.stop_reason}):`, text.slice(0, 300));
+    throw new Error(`${e.message.replace(/\.$/, '')}${res.stop_reason === 'refusal' ? ': the AI declined to answer' : ''}.`);
+  }
 }
 
 const num = (v) => (v === null || v === undefined || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
@@ -54,7 +63,7 @@ Answer with JSON only:
 /** What a tenant's email means, given the renewal's facts and the conversation so far. */
 export async function readReply({ facts, history, text }) {
   const out = await askJson(REPLY, [{ type: 'text', text:
-    `Facts of this renewal:\n${facts}\n\nThe conversation so far, oldest first:\n${history || '(none)'}\n\nThe tenant's new email:\n"""\n${String(text || '').slice(0, 6000)}\n"""` }], 1000);
+    `Facts of this renewal:\n${facts}\n\nThe conversation so far, oldest first:\n${history || '(none)'}\n\nThe tenant's new email:\n"""\n${String(text || '').slice(0, 6000)}\n"""` }]);
   const intents = ['accept', 'counter', 'reject', 'question', 'documents', 'unclear'];
   const intent = intents.includes(out.intent) ? out.intent : 'unclear';
   const amount = num(out.amount);
@@ -88,7 +97,7 @@ export async function readDocs(files) {
     content.push(block(f));
   }
   content.push({ type: 'text', text: 'Read these files.' });
-  const out = await askJson(DOCS, content, 2000);
+  const out = await askJson(DOCS, content);
   return {
     agreement: ['signed', 'unsigned', 'none'].includes(out.agreement) ? out.agreement : 'none',
     cheques: (Array.isArray(out.cheques) ? out.cheques : []).map((c) => ({
@@ -116,7 +125,7 @@ Rules you never break:
 /** One advisor's view of a renewal, in its own persona. agent: { name, persona }. */
 export async function advise({ agent, facts, thread, dispute }) {
   const out = await askJson(`${agent.persona || `You are ${agent.name}.`}\n\n${ADVISE}`, [{ type: 'text', text:
-    `Facts of this renewal:\n${facts}\n\n${dispute ? `The tenant disputes it: ${dispute}\n\n` : ''}The emails, oldest first:\n${thread || '(none yet)'}` }], 1200);
+    `Facts of this renewal:\n${facts}\n\n${dispute ? `The tenant disputes it: ${dispute}\n\n` : ''}The emails, oldest first:\n${thread || '(none yet)'}` }]);
   return {
     view: String(out.view || '').trim().slice(0, 2000),
     reply: out.reply ? String(out.reply).trim().slice(0, 3000) : null,
@@ -130,7 +139,7 @@ Answer with JSON only: {"summary": string}
 
 /** The renewal's story in a few neutral paragraphs, for the RDC case pack. */
 export async function caseSummary({ facts, story }) {
-  const out = await askJson(STORY, [{ type: 'text', text: `Facts of this renewal:\n${facts}\n\nWhat happened, oldest first:\n${story}` }], 1200);
+  const out = await askJson(STORY, [{ type: 'text', text: `Facts of this renewal:\n${facts}\n\nWhat happened, oldest first:\n${story}` }]);
   return String(out.summary || '').trim().slice(0, 4000);
 }
 
@@ -146,7 +155,7 @@ Answer with JSON only: {"reply": string}
 /** The person's draft reply, written again by Reem as the building management team. */
 export async function rewriteReply({ facts, thread, draft }) {
   const out = await askJson(REWRITE, [{ type: 'text', text:
-    `Facts of this renewal:\n${facts}\n\nThe emails, oldest first:\n${thread || '(none yet)'}\n\nThe draft reply to rewrite:\n"""\n${String(draft || '').slice(0, 6000)}\n"""` }], 1200);
+    `Facts of this renewal:\n${facts}\n\nThe emails, oldest first:\n${thread || '(none yet)'}\n\nThe draft reply to rewrite:\n"""\n${String(draft || '').slice(0, 6000)}\n"""` }]);
   const reply = String(out.reply || '').trim();
   if (!reply) throw new Error('Reem could not rewrite that. Try again.');
   return reply.slice(0, 4000);

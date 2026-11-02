@@ -511,6 +511,11 @@ function Renewal({ id, onBack }) {
     setBusy('');
   };
   const done = () => { setSheet(null); load(); };
+  const readAgain = async (eventId) => {
+    setBusy(`read-${eventId}`); setError('');
+    try { await api.post(`/lease-renewals/${id}/events/${eventId}/read`); await load(); } catch (e) { setError(e.message); }
+    setBusy('');
+  };
 
   if (!r) {
     return (
@@ -588,12 +593,14 @@ function Renewal({ id, onBack }) {
                 <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-stroke pt-3">
                   <p className="min-w-0 flex-1 basis-56 text-sm text-mute">{r.paused
                     ? 'Reem is paused on every lease (Settings): staff do each step by hand.'
+                    : rn.dispute && !rn.auto
+                    ? 'The tenant disputes it, so Reem never emails them by itself: staff answer every step by hand.'
                     : rn.auto
                     ? 'Reem is running this lease by itself.'
                     : 'Staff are running this lease by hand. Reem only reads the emails and checks the papers.'}</p>
                   {rn.auto
                     ? <Btn busy={busy === 'auto_off'} onClick={() => mark('auto_off')}><HandCoins size={14} /> Take over</Btn>
-                    : <Btn busy={busy === 'auto_on'} onClick={() => mark('auto_on')}><Sparkles size={14} /> Hand back to Reem</Btn>}
+                    : !rn.dispute && <Btn busy={busy === 'auto_on'} onClick={() => mark('auto_on')}><Sparkles size={14} /> Hand back to Reem</Btn>}
                 </div>
               )}
               {rn.error && rn.waiting && <div className="mt-3"><Problem text={rn.error} /></div>}
@@ -611,7 +618,7 @@ function Renewal({ id, onBack }) {
                   </button>
                 )}
               </div>
-              <Timeline r={r} onReply={!DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
+              <Timeline r={r} busy={busy} onReadAgain={readAgain} onReply={!DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
             </div>
           </div>
 
@@ -746,13 +753,13 @@ const DOT = {
   out: ['bg-p1/20 text-p1', Send], in: ['bg-white/10 text-txt', Inbox], step: ['bg-white/5 text-mute', CircleDot],
 };
 
-function Timeline({ r, onReply }) {
+function Timeline({ r, busy, onReadAgain, onReply }) {
   return (
     <ol className="relative space-y-3 pl-11">
       <span className="absolute bottom-3 left-[17px] top-3 w-px bg-gradient-to-b from-p1/50 via-stroke to-transparent" aria-hidden />
       {r.events.map((e, i) => (e.kind === 'advice'
         ? <Advice key={e.id} e={e} newest={i === 0} onReply={onReply} />
-        : <Event key={e.id} e={e} r={r} newest={i === 0} />))}
+        : <Event key={e.id} e={e} r={r} newest={i === 0} busy={busy === `read-${e.id}`} onReadAgain={onReadAgain} />))}
     </ol>
   );
 }
@@ -791,7 +798,7 @@ function Advice({ e, newest, onReply }) {
   );
 }
 
-function Event({ e, r, newest }) {
+function Event({ e, r, newest, busy, onReadAgain }) {
   const [openBody, setOpenBody] = useState(newest && e.kind === 'in');
   const papers = e.kind === 'papers';
   const ok = papers && e.data?.check?.complete;
@@ -822,6 +829,15 @@ function Event({ e, r, newest }) {
 
         {e.reading?.dispute && e.reading.disputeNote && <p className="mt-2 text-sm text-bad">{e.reading.disputeNote}</p>}
         {e.kind === 'out' && e.status === 'failed' && e.error && <p className="mt-2 text-xs text-bad">{e.error} Reem tries again by itself.</p>}
+        {e.kind === 'in' && e.status === 'error' && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <p className="min-w-0 flex-1 text-xs text-bad">{e.error || 'Reem could not read this email.'}</p>
+            <button onClick={() => onReadAgain(e.id)} disabled={busy}
+              className="flex items-center gap-1.5 rounded-full border border-stroke px-3 py-1 text-xs text-mute transition hover:text-txt disabled:opacity-60">
+              <RefreshCw size={12} className={busy ? 'animate-spin' : ''} /> {busy ? 'Reading…' : 'Read again'}
+            </button>
+          </div>
+        )}
 
         {papers && (
           <ul className="mt-2 space-y-1 text-sm">
