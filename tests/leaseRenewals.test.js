@@ -140,6 +140,14 @@ test('a lease the staff started in saifsys, or with no email, cannot be started 
   await assert.rejects(R.draft(boss, { action: 'start', lease_id: 300, rent: 40000 }), /no email/);
 });
 
+test('a lease the staff rejected in saifsys is not started here, nor nudged', async () => {
+  const boss = await setup();
+  stub({ leases: [{ ...LEASE, saifsys_rejected: true }] });
+  await assert.rejects(start(boss), /rejected this renewal in saifsys/);
+  R.resetNudge();
+  assert.equal(await R.nudge(), 0);
+});
+
 // ---------- the conversation ----------
 
 test('negotiation: a counter, a dispute, the RERA index rent, agreement, papers, convert', async () => {

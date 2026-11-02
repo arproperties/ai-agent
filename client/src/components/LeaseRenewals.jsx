@@ -41,8 +41,11 @@ function chipOf(l) {
   if (r?.status === 'scheduled') return [`Sends ${day(r.sendOn)}`, 'p1'];
   if (r) return STATUS[r.status];
   if (l.saifsys_renewal) return ['Staff in saifsys', 'mute'];
+  if (l.saifsys_rejected) return ['Rejected in saifsys', 'mute'];
   return [l.days_left < 0 ? 'Ended' : l.days_left === 0 ? 'Ends today' : `${l.days_left} days`, l.days_left <= 30 ? 'bad' : l.days_left <= 90 ? 'warn' : 'mute'];
 }
+// Not renewing: the tenant said so in Reem, or the staff rejected the renewal in saifsys.
+const rejected = (l) => l.renewal?.status === 'not_renewing' || (!l.renewal && l.saifsys_rejected);
 const needsYou = (l) => !!(l.renewal?.waiting || (l.renewal?.dispute && !DONE.includes(l.renewal.status)) || l.renewal?.status === 'papers_ok');
 
 const Chip = ({ c: [label, tone] }) => <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs ${CHIP[tone]}`}>{label}</span>;
@@ -103,8 +106,9 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
     ['all', 'All', leases],
     ['you', 'Needs you', leases.filter(needsYou)],
     ['going', 'In progress', leases.filter((l) => l.renewal && !DONE.includes(l.renewal.status))],
-    ['new', 'Not started', leases.filter((l) => !l.renewal && !l.saifsys_renewal)],
-    ['done', 'Done', leases.filter((l) => l.renewal && DONE.includes(l.renewal.status))],
+    ['new', 'Not started', leases.filter((l) => !l.renewal && !l.saifsys_renewal && !l.saifsys_rejected)],
+    ['done', 'Done', leases.filter((l) => l.renewal && DONE.includes(l.renewal.status) && !rejected(l))],
+    ['rejected', 'Rejected', leases.filter(rejected)],
   ];
   const shown = (tabs.find((t) => t[0] === tab) || tabs[0])[2];
   const dld = (
@@ -142,7 +146,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
           </div>
           {shown.length === 0 ? <p className="pt-12 text-center text-sm text-mute">Nothing here.</p> : (
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.saifsys_renewal ? null : setStarting(l))} />)}
+              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.saifsys_renewal || l.saifsys_rejected ? null : setStarting(l))} />)}
             </ul>
           )}
           {data.master && <Settings s={data.settings} agents={data.agents} inbox={data.inbox} onSaved={load} />}
@@ -158,7 +162,7 @@ function LeaseCard({ l, onOpen }) {
   const live = r && !DONE.includes(r.status);
   return (
     <li>
-      <button onClick={onOpen} disabled={!r && !!l.saifsys_renewal}
+      <button onClick={onOpen} disabled={!r && !!(l.saifsys_renewal || l.saifsys_rejected)}
         className={`flex h-full w-full flex-col gap-2 rounded-2xl border bg-white/[0.04] p-4 text-left transition hover:bg-white/[0.07] disabled:cursor-default ${needsYou(l) ? 'border-warn/50' : 'border-stroke'}`}>
         <div className="flex w-full items-start gap-2">
           <div className="min-w-0 flex-1">
@@ -178,7 +182,7 @@ function LeaseCard({ l, onOpen }) {
         {!r && (l.premises_number || l.ejari) && (
           <p className="truncate text-xs text-mute">{[l.premises_number && `Premises ${l.premises_number}`, l.ejari && `Ejari ${l.ejari}`].filter(Boolean).join(' · ')}</p>
         )}
-        {!r && !l.saifsys_renewal && <p className="text-xs text-p1">{l.days_left <= 120 ? 'Check the RERA index to start' : 'Tap to start the renewal'}</p>}
+        {!r && !l.saifsys_renewal && !l.saifsys_rejected && <p className="text-xs text-p1">{l.days_left <= 120 ? 'Check the RERA index to start' : 'Tap to start the renewal'}</p>}
       </button>
     </li>
   );
