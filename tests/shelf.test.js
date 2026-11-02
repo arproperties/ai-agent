@@ -133,10 +133,14 @@ test('"what has Syed purchased" gives what Said uploaded first, not files that o
 
   const asked = (await call(master, 'search_files', { query: 'Syed purchases school site' })).content;
   assert.match(asked, /names Said from the team/);
-  const [theirs, mention] = asked.split('Files that only mention the words');
-  assert.match(theirs, new RegExp(`#${bill} `));
-  assert.doesNotMatch(theirs, new RegExp(`#${ledger} `));
-  assert.match(mention, new RegExp(`#${ledger} `));
+  assert.match(asked, new RegExp(`#${bill} `));
+  assert.doesNotMatch(asked, new RegExp(`#${ledger} `), 'nothing mixed in that Said did not upload');
+
+  // All of them, however many: none held back for being old.
+  for (let i = 0; i < 45; i++) await doc(said, `Receipt ${i}`);
+  const all = (await call(master, 'search_files', { uploaded_by: 'Said' })).content;
+  assert.match(all, /^46 saved files uploaded by Said/);
+  assert.match(all, new RegExp(`#${bill} `), 'the oldest is listed too');
 
   // A plain word that sounds like the name is not the person.
   assert.doesNotMatch((await call(master, 'search_files', { query: 'ledger left side' })).content, /from the team/);
