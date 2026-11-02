@@ -91,7 +91,9 @@ test("an agent given a case later takes in the chats it already had", async () =
   const other = await makeAgent(jeff, 'Other');
   const reply = (conv, agentId) => db.prepare(`INSERT INTO messages (conversation_id, agent_id, role, content) VALUES (?, ?, 'assistant', 'ok')`).run(conv, agentId);
   const before = await makeConv(jeff); await say(before, '@Frazier B-0210947 bring the case here'); await reply(before, frazier);
-  const mixed = await makeConv(jeff); await reply(mixed, frazier); await reply(mixed, other);
+  // Reem's general agent answered some of it too: still the case's, as Frazier answered first.
+  await reply(before, other); await reply(before, frazier);
+  const mixed = await makeConv(jeff); await reply(mixed, other); await reply(mixed, frazier);
   const elsewhere = await makeConv(jeff); await reply(elsewhere, other);
   const settled = await makeConv(jeff); await reply(settled, frazier);
   await claimCase(jeff, settled, { case_number: '111222', case_key: '111222' });
@@ -99,7 +101,7 @@ test("an agent given a case later takes in the chats it already had", async () =
   await db.prepare("UPDATE agents SET case_number = 'B-0210947', case_key = 'b0210947' WHERE id = ?").run(frazier);
   assert.equal(await claimPastChats(), 1);
   assert.equal((await focusOf(jeff, before)).primary.number, 'B-0210947');
-  // A chat another agent also answered, one it never answered, and one with its case already: untouched.
+  // A chat another agent started, one it never answered, and one with its case already: untouched.
   assert.equal((await focusOf(jeff, mixed)).primary, null);
   assert.equal((await focusOf(jeff, elsewhere)).primary, null);
   assert.equal((await focusOf(jeff, settled)).primary.number, '111222');
