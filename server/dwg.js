@@ -47,11 +47,19 @@ export function readDrawing(buffer, name) {
   }
   // One at a time, for the same memory reason: two people sending drawings at once must
   // not convert two side by side.
-  const next = queue.then(() => convertAndRead(buffer, name));
+  return oneAtATime(() => convertAndRead(buffer, name));
+}
+let queue = Promise.resolve();
+
+/**
+ * Runs heavy file readings one after another: a drawing conversion and an IFC model reading
+ * (ifc.js) each take a few hundred MB, and the server has under 2 GB.
+ */
+export function oneAtATime(fn) {
+  const next = queue.then(fn);
   queue = next.catch(() => {});
   return next;
 }
-let queue = Promise.resolve();
 
 /** A DXF already on disk, read as readDrawing reads one (used to check a large drawing by hand). */
 export async function readDxfFile(path, name) {

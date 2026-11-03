@@ -10,7 +10,7 @@ import { CAREFUL_MODEL } from './config.js';
 import { isMaster } from './access.js';
 import { EMBED_MODEL } from './config.js';
 import { isDrawing, readDrawing } from './dwg.js';
-import { isIfc, isRevit, ifcHeader, REVIT_HELP } from './ifc.js';
+import { isIfc, isRevit, ifcHeader, readIfc, REVIT_HELP } from './ifc.js';
 
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 export const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v', 'video/3gpp'];
@@ -27,7 +27,11 @@ export async function extractText({ buffer, mimetype, originalname }, { onProgre
   }
   if (ext === 'docx') return (await mammoth.extractRawText({ buffer })).value;
   if (isDrawing(originalname)) { onProgress?.(`Opening the drawing ${originalname}…`); return readDrawing(buffer, originalname); }
-  if (isIfc(originalname)) return ifcHeader(buffer, originalname);
+  if (isIfc(originalname)) {
+    ifcHeader(buffer, originalname); // not an IFC at all: refused here, before any reading
+    onProgress?.(`Reading the model ${originalname}…`);
+    return readIfc(buffer, originalname);
+  }
   if (isRevit(originalname)) throw new Error(`${originalname}: ${REVIT_HELP}`);
   if (mimetype.startsWith('text/') || TEXT_EXT.includes(ext)) return buffer.toString('utf8');
   throw new Error(`Unsupported file type: ${originalname}`);
