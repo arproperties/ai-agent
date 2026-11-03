@@ -24,10 +24,18 @@ export function parseJson(text) {
 }
 
 // Room enough for a long dispute email: answers cut off half-way can't be read (2026-11-02, PARK PLACE 203).
-async function askJson(system, content, maxTokens = 4000) {
-  const res = await claude.messages.create({ model: MODEL, max_tokens: maxTokens, system, messages: [{ role: 'user', content }] });
-  const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+// Claude fills in a form (a tool it must call) rather than writing JSON in its text: a long
+// dispute email once came back as prose and could not be read at all (2026-11-03, PARK PLACE 203).
+async function askJson(system, content, schema, maxTokens = 4000) {
+  const res = await claude.messages.create({
+    model: MODEL, max_tokens: maxTokens, system, messages: [{ role: 'user', content }],
+    tools: [{ name: 'answer', description: 'Give your answer here, in this shape.', input_schema: schema }],
+    tool_choice: { type: 'tool', name: 'answer' },
+  });
   if (res.stop_reason === 'max_tokens') throw new Error('Reem could not read that: the answer was too long and got cut off.');
+  const used = res.content.find((b) => b.type === 'tool_use' && b.name === 'answer');
+  if (used?.input && typeof used.input === 'object') return used.input;
+  const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
   try {
     return parseJson(text);
   } catch (e) {
@@ -37,12 +45,18 @@ async function askJson(system, content, maxTokens = 4000) {
   }
 }
 
+// The forms' shapes. Nullable fields are a type pair, so "not sure" stays null, never a guess.
+const S = (properties) => ({ type: 'object', properties, required: Object.keys(properties) });
+const str = { type: 'string' };
+const strOrNull = { type: ['string', 'null'] };
+const numOrNull = { type: ['number', 'null'] };
+
 const num = (v) => (v === null || v === undefined || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
 
 // ---------- the tenant's email ----------
 
 const REPLY = `You read a tenant's email in a lease renewal conversation for a Dubai landlord and say what it means. The email may be in any language.
-Answer with JSON only:
+Answer by filling in the answer tool:
 {"intent": "accept"|"counter"|"reject"|"question"|"documents"|"unclear", "amount": number|null, "summary": string,
  "asks_less": boolean, "dispute": boolean, "dispute_note": string|null, "suggested_reply": string|null}
 - accept: they agree to the rent last offered to them.
@@ -63,7 +77,10 @@ Answer with JSON only:
 /** What a tenant's email means, given the renewal's facts and the conversation so far. */
 export async function readReply({ facts, history, text }) {
   const out = await askJson(REPLY, [{ type: 'text', text:
-    `Facts of this renewal:\n${facts}\n\nThe conversation so far, oldest first:\n${history || '(none)'}\n\nThe tenant's new email:\n"""\n${String(text || '').slice(0, 6000)}\n"""` }]);
+    `Facts of this renewal:\n${facts}\n\nThe conversation so far, oldest first:\n${history || '(none)'}\n\nThe tenant's new email:\n"""\n${String(text || '').slice(0, 6000)}\n"""` }], S({
+    intent: { type: 'string', enum: ['accept', 'counter', 'reject', 'question', 'documents', 'unclear'] }, amount: numOrNull, summary: str,
+    asks_less: { type: 'boolean' }, dispute: { type: 'boolean' }, dispute_note: strOrNull, suggested_reply: strOrNull,
+  }));
   const intents = ['accept', 'counter', 'reject', 'question', 'documents', 'unclear'];
   const intent = intents.includes(out.intent) ? out.intent : 'unclear';
   const amount = num(out.amount);
@@ -81,7 +98,7 @@ export async function readReply({ facts, history, text }) {
 // ---------- the signed agreement and the cheques ----------
 
 const DOCS = `You check the papers a tenant sent back to renew a lease: photos or scans of the signed renewal agreement (the tenancy contract) and of cheques.
-Answer with JSON only:
+Answer by filling in the answer tool:
 {"agreement": "signed"|"unsigned"|"none", "cheques": [{"amount": number|null, "date": "YYYY-MM-DD"|null, "payee": string|null, "signed": boolean|null, "file": string}],
  "unreadable": [string], "note": string}
 - agreement: "signed" only if a page of the renewal agreement or tenancy contract shows the tenant's signature; "unsigned" if the agreement is there without it; "none" if it was not sent.
@@ -97,7 +114,11 @@ export async function readDocs(files) {
     content.push(block(f));
   }
   content.push({ type: 'text', text: 'Read these files.' });
-  const out = await askJson(DOCS, content);
+  const out = await askJson(DOCS, content, S({
+    agreement: { type: 'string', enum: ['signed', 'unsigned', 'none'] },
+    cheques: { type: 'array', items: S({ amount: numOrNull, date: strOrNull, payee: strOrNull, signed: { type: ['boolean', 'null'] }, file: str }) },
+    unreadable: { type: 'array', items: str }, note: str,
+  }));
   return {
     agreement: ['signed', 'unsigned', 'none'].includes(out.agreement) ? out.agreement : 'none',
     cheques: (Array.isArray(out.cheques) ? out.cheques : []).map((c) => ({
@@ -112,40 +133,45 @@ export async function readDocs(files) {
 
 // ---------- the advisors ----------
 
-const ADVISE = `You are advising the landlord's team on a lease renewal in Dubai. Read the renewal's facts and the emails, then give your view from your own expertise.
-Answer with JSON only: {"view": string, "reply": string|null}
-- view: 3 to 6 short lines in plain English for the landlord's team: what is going on, what the risk is, and what to do next.
-- reply: a short, polite email to the tenant the team could send, in English, using ONLY the facts given. Only the body: no greeting
-  ("Dear ...") and no sign-off, as both are added. null if no email should go now.
+// The person asks something ("help me negotiate the chiller fee") and picks who answers. An
+// email to the tenant is written only when they ask for one (the user, 2026-11-03).
+const ADVISE = `You are advising the landlord's team on a lease renewal in Dubai. Read the renewal's facts and every email in full,
+then answer what the team asks you, from your own expertise.
+Answer by filling in the answer tool: {"view": string, "reply": string|null}
+- view: your answer to what the team asked, in short plain-English lines for the landlord's team. Say what the tenant actually said,
+  what the risk is, and what to do next. Options you suggest (e.g. a figure to offer) are clearly your suggestion for the team to decide.
+- reply: an email to the tenant ONLY when the team asks you to write one; otherwise null. In English, polite, using only the facts
+  given and anything the team tells you in their request. Only the body: no greeting ("Dear ...") and no sign-off, as both are added.
 Rules you never break:
 - Never say whether the rent increase is legal or allowed. If the tenant raises it, say the team should check the unit on DLD's Rental Index calculator and offer what it allows.
 - Never file, or tell the team to file, a case. Never threaten the tenant with one.
-- No new figures, dates or promises that are not in the facts.`;
+- Never present a figure, date or promise as already agreed when it is not in the facts.`;
 
-/** One advisor's view of a renewal, in its own persona. agent: { name, persona }. */
-export async function advise({ agent, facts, thread, dispute }) {
+/** One advisor's answer to what a person asked about a renewal, in its own persona. agent: { name, persona }. */
+export async function advise({ agent, facts, thread, dispute, ask }) {
   const out = await askJson(`${agent.persona || `You are ${agent.name}.`}\n\n${ADVISE}`, [{ type: 'text', text:
-    `Facts of this renewal:\n${facts}\n\n${dispute ? `The tenant disputes it: ${dispute}\n\n` : ''}The emails, oldest first:\n${thread || '(none yet)'}` }]);
+    `Facts of this renewal:\n${facts}\n\n${dispute ? `The tenant disputes it: ${dispute}\n\n` : ''}The emails, oldest first:\n${thread || '(none yet)'}\n\n` +
+    `The team asks you:\n"""\n${String(ask || 'Give your view: what is going on and what should we do next?').slice(0, 2000)}\n"""` }], S({ view: str, reply: strOrNull }));
   return {
-    view: String(out.view || '').trim().slice(0, 2000),
-    reply: out.reply ? String(out.reply).trim().slice(0, 3000) : null,
+    view: String(out.view || '').trim().slice(0, 4000),
+    reply: out.reply ? String(out.reply).trim().slice(0, 4000) : null,
   };
 }
 
 const STORY = `You write the "what happened" part of a case pack a Dubai landlord will upload to the Rental Dispute Settlement Centre themselves.
-Answer with JSON only: {"summary": string}
+Answer by filling in the answer tool: {"summary": string}
 - summary: one to three short paragraphs in plain English, in the order things happened, with the dates and figures given.
 - Facts only: who wrote what and when. No opinions, no legal argument, and never whether the rent increase is legal.`;
 
 /** The renewal's story in a few neutral paragraphs, for the RDC case pack. */
 export async function caseSummary({ facts, story }) {
-  const out = await askJson(STORY, [{ type: 'text', text: `Facts of this renewal:\n${facts}\n\nWhat happened, oldest first:\n${story}` }]);
+  const out = await askJson(STORY, [{ type: 'text', text: `Facts of this renewal:\n${facts}\n\nWhat happened, oldest first:\n${story}` }], S({ summary: str }));
   return String(out.summary || '').trim().slice(0, 4000);
 }
 
 const REWRITE = `You are the building management team of a Dubai landlord, writing to a tenant about the renewal of their lease.
 Rewrite the draft reply you are given into a clear, professional, courteous email from the building management team.
-Answer with JSON only: {"reply": string}
+Answer by filling in the answer tool: {"reply": string}
 - reply: only the body: no greeting ("Dear ...") and no sign-off, as both are added.
 - Keep what the draft is trying to say. Answer what the tenant last asked, using ONLY the facts given.
 - Professional and warm, never cold or pushy; short paragraphs; plain English; no slang, no emojis.
@@ -155,7 +181,7 @@ Answer with JSON only: {"reply": string}
 /** The person's draft reply, written again by Reem as the building management team. */
 export async function rewriteReply({ facts, thread, draft }) {
   const out = await askJson(REWRITE, [{ type: 'text', text:
-    `Facts of this renewal:\n${facts}\n\nThe emails, oldest first:\n${thread || '(none yet)'}\n\nThe draft reply to rewrite:\n"""\n${String(draft || '').slice(0, 6000)}\n"""` }]);
+    `Facts of this renewal:\n${facts}\n\nThe emails, oldest first:\n${thread || '(none yet)'}\n\nThe draft reply to rewrite:\n"""\n${String(draft || '').slice(0, 6000)}\n"""` }], S({ reply: str }));
   const reply = String(out.reply || '').trim();
   if (!reply) throw new Error('Reem could not rewrite that. Try again.');
   return reply.slice(0, 4000);

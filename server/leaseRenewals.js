@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import { db } from './db.js';
 import { DATA_DIR } from './config.js';
-import { isMaster } from './access.js';
+import { isMaster, listedAgents } from './access.js';
 import { decrypt } from './secrets.js';
 import { compose, sendRaw, friendlySmtp } from './smtp.js';
 import { withMailbox, replySubject } from './imap.js';
@@ -899,9 +899,7 @@ async function handle(r, e) {
   } else {
     await tell(r, `${reading.dispute ? '⚠️ Dispute: ' : ''}${title}${r.auto && !s.paused ? ' (needs you)' : ''}`);
   }
-  // A dispute is put to the advisors straight away. Their answer is advice on the timeline,
-  // never an email, so it waits for the same person as everything else.
-  if (reading.dispute) await askAdvisors(await getRenewal(r.id)).catch((err) => console.warn('[lease renewals] advisors:', err.message));
+  // Advisors answer only when a person asks them something (the user, 2026-11-03).
   return null;
 }
 
@@ -968,29 +966,48 @@ async function advisors(s) {
   return db.prepare('SELECT id, name, icon, color, persona FROM agents WHERE id = ANY(?::int[]) ORDER BY id').all(ids);
 }
 
+/**
+ * Who a person may ask about a renewal: the picked advisors, and the agents in their own
+ * sidebar. Picked advisors are ticked first.
+ */
+async function askable(user, s) {
+  const picked = await advisors(s);
+  const own = user ? await listedAgents(user) : [];
+  const seen = new Set(picked.map((a) => a.id));
+  return [...picked.map((a) => ({ ...a, picked: true })),
+    ...own.filter((a) => !seen.has(a.id) && seen.add(a.id)).map(({ id, name, icon, color, persona }) => ({ id, name, icon, color, persona, picked: false }))];
+}
+
+// Emails are given whole (up to 6,000 characters): a long dispute email cut at 2,000 lost
+// what the tenant said about last year's RDC case (2026-11-03, PARK PLACE 203).
 async function thread(renewalId) {
   const rows = await db.prepare(`SELECT kind, body, at FROM lease_renewal_events WHERE renewal_id = ? AND kind IN ('out', 'in') ORDER BY at DESC, id DESC LIMIT 12`).all(renewalId);
-  return rows.reverse().map((x) => `${x.kind === 'out' ? 'We wrote' : 'Tenant wrote'} (${dubaiDate(Number(x.at) * 1000)}):\n${String(x.body || '').slice(0, 2000)}`).join('\n\n');
+  return rows.reverse().map((x) => `${x.kind === 'out' ? 'We wrote' : 'Tenant wrote'} (${dubaiDate(Number(x.at) * 1000)}):\n${String(x.body || '').slice(0, 6000)}`).join('\n\n');
 }
 
 /**
- * Each advisor's view of the renewal, side by side on its timeline: what it thinks and a
- * reply a person could send. One that fails is left out and the others still answer.
+ * What a person asked, answered by each agent they picked, side by side on the timeline:
+ * an answer, and an email to the tenant only when they asked for one. With no agents
+ * named, the picked advisors answer. One that fails is left out and the others still answer.
  */
-export async function askAdvisors(r, { user = null } = {}) {
+export async function askAdvisors(r, { user = null, ask = '', agentIds = null } = {}) {
   const s = await settings();
-  const team = await advisors(s);
+  const reach = await askable(user, s);
+  const wanted = Array.isArray(agentIds) ? new Set(agentIds.map(Number).filter(Boolean)) : null;
+  const team = wanted ? reach.filter((a) => wanted.has(a.id)) : reach.filter((a) => a.picked);
   if (!team.length) return 0;
+  const question = String(ask || '').trim().slice(0, 2000);
   const facts = factsOf(r, s);
   const emails = await thread(r.id);
-  const answers = await Promise.allSettled(team.map((agent) => D.advise({ agent, facts, thread: emails, dispute: r.dispute })));
+  const answers = await Promise.allSettled(team.map((agent) => D.advise({ agent, facts, thread: emails, dispute: r.dispute, ask: question })));
   let n = 0;
   for (const [i, a] of answers.entries()) {
     const agent = team[i];
     if (a.status !== 'fulfilled' || !a.value.view) { console.warn(`[lease renewals] ${agent.name} could not advise:`, a.reason?.message || 'no answer'); continue; }
     await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, data, user_id, at) VALUES (?, 'advice', ?, ?, ?, ?, ?)`)
       .run(r.id, `${agent.name}'s view`, a.value.view,
-        JSON.stringify({ agent: { id: agent.id, name: agent.name, icon: agent.icon, color: agent.color }, reply: a.value.reply, asked: !!user }), user?.id || null, secs());
+        JSON.stringify({ agent: { id: agent.id, name: agent.name, icon: agent.icon, color: agent.color }, reply: a.value.reply, asked: !!user, ask: question || null }),
+        user?.id || null, secs());
     n += 1;
   }
   if (!n) throw bad('None of the advisors could answer just now. Try again in a minute.', 502);
@@ -1181,6 +1198,8 @@ leaseRenewalRoutes.get('/:id', wrap(async (req, res) => {
   const files = await db.prepare('SELECT id, event_id, name, mime FROM lease_renewal_files WHERE renewal_id = ? ORDER BY id').all(r.id);
   res.json({
     ...card(r.lease, r), advisors: (await advisors(await settings())).length, paused: !!(await settings()).paused,
+    // Who "Ask advisors" offers: the picked advisors (ticked), then the person's own agents.
+    askable: (await askable(req.user, await settings())).map(({ id, name, icon, color, picked }) => ({ id, name, icon, color, picked })),
     events: events.map((e) => ({ ...e, at: Number(e.at), files: files.filter((f) => f.event_id === e.id) })),
   });
 }));
@@ -1206,8 +1225,13 @@ leaseRenewalRoutes.post('/:id/events/:event/read', wrap(async (req, res) => { re
 leaseRenewalRoutes.post('/:id/advise', wrap(async (req, res) => {
   const r = await getRenewal(req.params.id);
   if (!r) return res.status(404).json({ error: 'Not found' });
-  if (!(await advisors(await settings())).length) throw bad('No advisors are picked yet: the master picks them in the Lease renewals settings.', 409);
-  res.json({ added: await askAdvisors(r, { user: req.user }) });
+  const b = req.body || {};
+  const ids = Array.isArray(b.agents) ? b.agents : null;
+  if (ids && !ids.length) throw bad('Pick at least one agent to ask.');
+  if (!ids && !(await advisors(await settings())).length) throw bad('No advisors are picked yet: pick an agent to ask.', 409);
+  const added = await askAdvisors(r, { user: req.user, ask: b.ask, agentIds: ids });
+  if (!added) throw bad('None of those agents can be asked here.');
+  res.json({ added });
 }));
 
 // "Rewrite with Reem": the reply in the box, written again as the building management team. Nothing is sent.
