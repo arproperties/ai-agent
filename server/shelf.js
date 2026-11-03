@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { retrievalScope, agentScope, notOtherCases, findChunks } from './knowledge.js';
 import { isMaster, masterReach } from './access.js';
 import { copiesOf } from './copies.js';
+import { dubaiDate } from './saifsys/client.js';
 
 // The Shelf, for the agent to look through itself.
 //
@@ -94,7 +95,7 @@ export function byName(docs, query) {
 }
 
 const label = (text) => text.replace(/^\[[^\]]*\]\s*/, ''); // indexChunks() puts the title in front of every piece
-const day = (secs) => new Date(Number(secs) * 1000).toISOString().slice(0, 10);
+const day = (secs) => dubaiDate(Number(secs) * 1000);
 const line = (d) => `#${d.id} ${d.title || d.name} (${d.folder || 'Other'}${d.doc_date ? `, ${d.doc_date}` : ''}${d.expires_on ? `; expires ${d.expires_on}` : ''}; file: ${d.name}` +
   `${d.uploader ? `; uploaded by ${d.uploader}${d.created_at ? ` on ${day(d.created_at)}` : ''}` : ''})`;
 

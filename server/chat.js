@@ -254,7 +254,9 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   // Everything above stays the same from one message to the next, so it is cached: read back at
   // a tenth of the price for five minutes. What changes every message (the time, what was
   // recalled) comes after the cache mark, or it would spoil the match.
-  const context = [`Current date and time: ${new Date().toString()}.`];
+  // Dubai time: the server runs on UTC, and between midnight and 4 am Dubai that is still yesterday.
+  const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Dubai', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  const context = [`Current date and time: ${now} (Dubai, UTC+04:00).`];
   if (pinned.length) {
     context.push(`<key_facts>\nKey facts ${user.name} pinned: who people are, which side they are on, how things are done. ` +
       'They hold in every answer and every draft, unless this conversation says otherwise:\n' +

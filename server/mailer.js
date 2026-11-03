@@ -14,8 +14,9 @@ const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': 
 
 export async function sendPasswordReset(user, link) {
   if (!transport) {
-    // No email configured (local development): print the link so it can still be used
-    console.log(`\n[password reset] No SMTP configured. Reset link for ${user.email}:\n${link}\n`);
+    // No email configured. The link is never printed: anyone who can read the server's log could
+    // use it to take over the account. The master sets a new password instead (scripts/reset-password.js).
+    console.log(`[password reset] asked for user ${user.id}, but no SMTP is configured, so no email went out`);
     return;
   }
   await transport.sendMail({

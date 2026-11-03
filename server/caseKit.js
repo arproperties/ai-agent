@@ -1,5 +1,6 @@
 import { isExternal } from './access.js';
 import { propose, findFolder, refresh } from './caseFolders.js';
+import { dubaiDate } from './saifsys/client.js';
 
 // The case folder tools in the chat, same shape as inventoryKit(). Only for someone from
 // outside the company. pull_case only puts a card in front of them: nothing is kept until
@@ -33,7 +34,7 @@ const UPDATE = {
   },
 };
 
-const day = (at) => (at ? new Date(at * 1000).toISOString().slice(0, 10) : '?');
+const day = (at) => (at ? dubaiDate(at * 1000) : '?');
 const emails = (n) => `${n} ${n === 1 ? 'email' : 'emails'}`;
 const newOnes = (n) => (n ? `${n} new ${n === 1 ? 'email' : 'emails'} added` : 'no new emails');
 

@@ -8,6 +8,8 @@
 
 const aed = (n) => `AED ${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 const days = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+// The Dubai day of a time in seconds (UTC+4 all year), so a case touched after midnight is not a day older.
+const dubaiDay = (secs) => new Date(secs * 1000 + 4 * 3600000).toISOString().slice(0, 10);
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const words = (s) => new Set(String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').split(' ').filter((w) => w.length > 1));
 const sameish = (a, b) => { const x = words(a); return [...words(b)].some((w) => x.has(w)); };
@@ -31,7 +33,7 @@ export function checks(c, lease, on) {
     add('notice_missing', 'warn', 'No legal notice is on the case yet. Upload the notice as served, with proof of delivery.');
   }
   if (open && c.updatedAt) {
-    const idle = days(new Date(c.updatedAt * 1000).toISOString().slice(0, 10), on);
+    const idle = days(dubaiDay(c.updatedAt), on);
     if (idle >= 14) add('idle', 'warn', `Nothing has changed on this case for ${idle} days.`);
   }
   if (!open) return out;
