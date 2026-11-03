@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
-import { existsSync } from 'node:fs';
-import { ROOT, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS } from './config.js';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { ROOT, DATA_DIR, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS } from './config.js';
 import { db, tx } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo, timingsFor } from './tts.js';
@@ -74,15 +74,30 @@ app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
 export const MAX_UPLOAD_MB = 25;
 // Multer takes up to the drawing limit (CAD drawings run large); everything else is then held
 // to the usual one, so raising it for drawings does not let a 35 MB video in.
-const multerUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: Math.max(MAX_UPLOAD_MB, MAX_DRAWING_MB) * 1024 * 1024, files: 10 } });
+// Uploads land in a folder on disk, not in memory: two people each sending ten big files at
+// once could run the 2 GB server out of memory. A file is read from disk only while it is
+// being used; one that is kept is moved into the uploads folder (saveUpload), and whatever
+// is left here goes when the request ends. Inside data/, so it is never shipped or replaced.
+const UPLOAD_TMP = `${DATA_DIR}/upload-tmp`;
+rmSync(UPLOAD_TMP, { recursive: true, force: true }); // left by a request the last restart cut off
+mkdirSync(UPLOAD_TMP, { recursive: true });
+const multerUpload = multer({ dest: UPLOAD_TMP, limits: { fileSize: Math.max(MAX_UPLOAD_MB, MAX_DRAWING_MB) * 1024 * 1024, files: 10 } });
 const tooBig = () => Object.assign(new Error(`That file is too big — the limit is ${MAX_UPLOAD_MB} MB (${MAX_DRAWING_MB} MB for a DWG/DXF drawing). A shorter clip, or send it another way.`), { status: 413 });
 const withinLimit = (req, res, next) => {
   const files = req.files || (req.file ? [req.file] : []);
   next(files.some((f) => f.size > MAX_UPLOAD_MB * 1024 * 1024 && !isDrawing(f.originalname)) ? tooBig() : undefined);
 };
+// The rest of the code reads f.buffer as before; here it comes off disk each time it is asked for.
+const fromDisk = (req, res, next) => {
+  const files = req.files || (req.file ? [req.file] : []);
+  const temps = files.map((f) => f.path);
+  for (const f of files) Object.defineProperty(f, 'buffer', { get: () => readFileSync(f.path), enumerable: true, configurable: true });
+  res.on('close', () => { for (const p of temps) rmSync(p, { force: true }); });
+  next();
+};
 const upload = {
-  array: (...a) => [multerUpload.array(...a), withinLimit],
-  single: (...a) => [multerUpload.single(...a), withinLimit],
+  array: (...a) => [multerUpload.array(...a), fromDisk, withinLimit],
+  single: (...a) => [multerUpload.single(...a), fromDisk, withinLimit],
 };
 app.use(express.json({ limit: '1mb' }));
 

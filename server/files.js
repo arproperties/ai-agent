@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import mammoth from 'mammoth';
-import { mkdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, unlinkSync, existsSync, renameSync, copyFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { db, tx } from './db.js';
 import { ask } from './ai.js';
@@ -41,7 +41,12 @@ export async function saveUpload(userId, agentId, f, conversationId = null, kind
     .run(userId, agentId, conversationId, name, name, kind ?? (isImage(f) ? 'image' : isVideo(f) ? 'video' : 'doc'), f.size, f.mimetype, hash);
   mkdirSync(`${UPLOAD_DIR}/${userId}`, { recursive: true });
   const path = `${UPLOAD_DIR}/${userId}/${id}${extname(name).toLowerCase().replace(/[^.\w]/g, '')}`;
-  writeFileSync(path, f.buffer);
+  if (f.path && existsSync(f.path)) {
+    // An upload waiting on disk (index.js) is moved, not copied through memory. Filing that
+    // carries on after the reply reads f.buffer from here, once the waiting copy is gone.
+    try { renameSync(f.path, path); } catch { copyFileSync(f.path, path); }
+    f.path = path;
+  } else writeFileSync(path, f.buffer);
   await db.prepare('UPDATE documents SET path = ? WHERE id = ?').run(path, id);
   return { doc: await db.prepare('SELECT * FROM documents WHERE id = ?').get(id), duplicate: false };
 }
