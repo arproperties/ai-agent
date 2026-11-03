@@ -4,10 +4,13 @@ import { api } from '../lib/api';
 import Page from './Page';
 import Picker from './Picker';
 import ProjectCard from './ProjectCard';
+import ProjectProgress from './ProjectProgress';
+import ProjectIssues from './ProjectIssues';
 
 // Projects: a building job (the JVC school). The store keeper records deliveries, material
 // given out and each day's manpower in chat; this screen is where it is looked at - what is
-// on site, the deliveries waiting for a manager, the manpower day by day, and every move.
+// on site, the deliveries waiting for a manager, the manpower day by day, and every move,
+// how far the work is, floor by floor (ProjectProgress), and the issues and wall checks (ProjectIssues).
 // The master sets a project up here: its name, floors, its agent and its people.
 // The server is server/projects.js.
 
@@ -16,7 +19,7 @@ const LABEL = 'text-[11px] font-medium tracking-[0.14em] text-mute';
 const ROLE = { store: 'Store keeper', manager: 'Manager', master: 'Master' };
 const num = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 3 });
 const ROLE_OPTIONS = [{ value: 'store', label: 'Store keeper' }, { value: 'manager', label: 'Manager' }];
-const TABS = [['stock', 'Stock'], ['waiting', 'Waiting'], ['manpower', 'Manpower'], ['history', 'History']];
+const TABS = [['progress', 'Progress'], ['issues', 'Issues'], ['stock', 'Stock'], ['waiting', 'Waiting'], ['manpower', 'Manpower'], ['history', 'History']];
 
 // ---------- the master's set-up ----------
 
@@ -95,6 +98,7 @@ function ProjectForm({ start, agents, onSaved, onCancel }) {
 
 function Stock({ p, onItem }) {
   if (!p.stock.length) return <p className="py-10 text-center text-mute">Nothing recorded yet. Deliveries sent in chat and accepted show up here.</p>;
+  // Needed comes from the rooms' take-off (Progress → a floor → Areas); still to order = needed - received.
   // Nobody counts the whole site on day one: old material is counted when its pile gets small.
   const below = p.stock.some((s) => s.on_site < 0);
   return (
@@ -106,6 +110,11 @@ function Stock({ p, onItem }) {
           <span className="min-w-0 flex-1">
             <span className="block font-medium">{s.item}</span>
             <span className="text-xs text-mute">received {num(s.received)} · given out {num(s.given)}</span>
+            {s.needed !== null && s.needed !== undefined && (
+              <span className="block text-xs text-mute">
+                needed {num(s.needed)} · <span className={s.to_order > 0 ? 'text-warn' : 'text-ok'}>{s.to_order > 0 ? `still to order ${num(s.to_order)}` : 'all ordered'}</span>
+              </span>
+            )}
           </span>
           <span className={`text-right tabular-nums ${s.on_site < 0 ? 'text-bad' : ''}`}>
             <span className="text-lg">{num(s.on_site)}</span> <span className="text-xs text-mute">{s.counted_in}</span>
@@ -157,7 +166,7 @@ function History({ p, item, onClear }) {
               <span className="min-w-0 flex-1">
                 <span className="block">{num(m.quantity)} {m.counted_in} {m.item}</span>
                 <span className="text-xs text-mute">
-                  {[m.day, m.floor, m.supplier && `from ${m.supplier}`, m.party && `to ${m.party}`, m.by_name && `by ${m.by_name}`].filter(Boolean).join(' · ')}
+                  {[m.day, m.floor, m.area, m.supplier && `from ${m.supplier}`, m.party && `to ${m.party}`, m.by_name && `by ${m.by_name}`].filter(Boolean).join(' · ')}
                 </span>
                 {m.note && <span className="block text-xs text-txt/75">{m.note}</span>}
               </span>
@@ -171,7 +180,7 @@ function History({ p, item, onClear }) {
 
 function Project({ id, me, agents, onBack }) {
   const [p, setP] = useState(null);
-  const [tab, setTab] = useState('stock');
+  const [tab, setTab] = useState('progress');
   const [item, setItem] = useState(null);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
@@ -202,6 +211,8 @@ function Project({ id, me, agents, onBack }) {
               </button>
             ))}
           </div>
+          {tab === 'progress' && <ProjectProgress id={p.project.id} />}
+          {tab === 'issues' && <ProjectIssues id={p.project.id} />}
           {tab === 'stock' && <Stock p={p} onItem={(i) => { setItem(i); setTab('history'); }} />}
           {tab === 'waiting' && (
             <div className="space-y-3">
