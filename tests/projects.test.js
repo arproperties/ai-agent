@@ -140,7 +140,7 @@ test('the chat tools only get cards ready, and the records say where recording b
   const { francisca, director, other } = await setup();
   const cards = [];
   const kit = await projectKit(francisca, { agentId: director, onCard: (c) => cards.push(c) });
-  assert.deepEqual(kit.definitions.map((d) => d.name).sort(), ['log_count', 'log_delivery', 'log_manpower', 'log_material_out', 'project_records', 'project_status']);
+  assert.deepEqual(kit.definitions.map((d) => d.name).sort(), ['log_area', 'log_count', 'log_delivery', 'log_issue', 'log_manpower', 'log_material_out', 'log_progress', 'log_wall_check', 'project_issues', 'project_progress', 'project_records', 'project_status']);
   const before = await kit.run({ id: 't0', name: 'project_records', input: {} });
   assert.match(before.content, /Nothing has been recorded/);
   const r = await kit.run({ id: 't1', name: 'log_delivery', input: blocks() });
