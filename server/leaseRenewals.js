@@ -395,22 +395,38 @@ async function mail(r, { title, text, attachments = [], user = null, data = null
   return id;
 }
 
+// Emails being handed to the mail server right now. Staff tapping Send and the clock's retry
+// can reach the same email together; without this the tenant got it twice.
+const delivering = new Set();
+const MAX_TRIES = 12; // about a day and a half of retries, further apart each time
+
 async function deliver(acc, id, m) {
+  if (delivering.has(id)) return;
+  delivering.add(id);
   try {
     await D.send(acc, decrypt(acc.password_enc), m);
     await db.prepare(`UPDATE lease_renewal_events SET status = 'sent', error = NULL WHERE id = ?`).run(id);
     await D.file(acc, m.raw).catch((e) => console.warn('[lease renewals] could not file in Sent:', e.message));
   } catch (e) {
-    await db.prepare(`UPDATE lease_renewal_events SET status = 'failed', error = ? WHERE id = ?`).run(String(friendlySmtp(e, acc.smtp_host)).slice(0, 500), id);
-  }
+    const row = await db.prepare(`UPDATE lease_renewal_events SET status = 'failed', error = ?, tries = tries + 1, tried_at = ? WHERE id = ? RETURNING tries`)
+      .get(String(friendlySmtp(e, acc.smtp_host)).slice(0, 500), secs(), id);
+    if (row?.tries >= MAX_TRIES) {
+      await db.prepare(`UPDATE lease_renewal_events SET error = error || ' Reem has stopped trying: check the address and email the tenant by hand.' WHERE id = ?`).run(id);
+    }
+  } finally { delivering.delete(id); }
 }
 
-/** Emails that could not go out, tried again with the same bytes. */
-async function resend() {
+/** Emails that could not go out, tried again with the same bytes: 3 minutes after the first
+ *  failure, then twice as long each time (at most 6 hours apart), and never for a renewal that
+ *  has ended, so a reconnected inbox does not send old offers to a tenant who already said no. */
+export async function resend() {
   const acc = await inbox();
   if (!acc) return 0;
   const rows = await db.prepare(`SELECT e.id, e.raw, r.lease FROM lease_renewal_events e JOIN lease_renewals r ON r.id = e.renewal_id
-    WHERE e.kind = 'out' AND e.status = 'failed' ORDER BY e.id LIMIT 20`).all();
+    WHERE e.kind = 'out' AND e.status = 'failed' AND e.tries < ?
+      AND r.status NOT IN ('converted', 'not_renewing', 'closed')
+      AND (e.tried_at IS NULL OR e.tried_at <= ? - LEAST(180 * power(2, e.tries - 1), 21600))
+    ORDER BY e.id LIMIT 20`).all(MAX_TRIES, secs());
   const s = await settings();
   for (const x of rows) await deliver(acc, x.id, { raw: x.raw, envelope: { from: acc.email, to: [x.lease.email, ...bccFor(s, x)] } });
   return rows.length;

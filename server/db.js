@@ -1815,6 +1815,9 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_lease_renewal_events ON lease_renewal_events(renewal_id, id);
   CREATE INDEX IF NOT EXISTS idx_lease_renewal_events_mid ON lease_renewal_events(message_id);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_renewal_events_ref ON lease_renewal_events(ref) WHERE ref IS NOT NULL;
+  -- Sending tries (2026-11-03): an email that keeps failing is tried less and less often, then left.
+  ALTER TABLE lease_renewal_events ADD COLUMN IF NOT EXISTS tries INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE lease_renewal_events ADD COLUMN IF NOT EXISTS tried_at BIGINT;
   -- Advisors (2026-10-15): the master's picks, and their views on the timeline.
   ALTER TABLE lease_renewal_settings ADD COLUMN IF NOT EXISTS advisors JSONB NOT NULL DEFAULT '[]';
   ALTER TABLE lease_renewal_events DROP CONSTRAINT IF EXISTS lease_renewal_events_kind_check;

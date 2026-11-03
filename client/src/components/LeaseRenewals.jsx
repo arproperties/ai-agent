@@ -896,7 +896,7 @@ function Event({ e, r, newest, busy, onReadAgain }) {
         </div>
 
         {e.reading?.dispute && e.reading.disputeNote && <p className="mt-2 text-sm text-bad">{e.reading.disputeNote}</p>}
-        {e.kind === 'out' && e.status === 'failed' && e.error && <p className="mt-2 text-xs text-bad">{e.error} Reem tries again by itself.</p>}
+        {e.kind === 'out' && e.status === 'failed' && e.error && <p className="mt-2 text-xs text-bad">{e.error}{!/stopped trying/.test(e.error) && ' Reem tries again by itself.'}</p>}
         {e.kind === 'in' && e.status === 'error' && (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
             <p className="min-w-0 flex-1 text-xs text-bad">{e.error || 'Reem could not read this email.'}</p>
