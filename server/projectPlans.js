@@ -139,23 +139,23 @@ async function notesFromText(plan, name, text, working) {
 }
 
 /**
- * Everything in the file a planner needs, as notes. A PDF with its own text (drawings made
- * in CAD have it) is read from that text, which costs nothing to get; a scanned PDF is looked
- * at page by page as pictures. Anything else is read from the text the Shelf already keeps
- * for it, so a DWG costs nothing to open here.
+ * Everything in the file a planner needs, as notes. A PDF is looked at page by page, every
+ * time: Claude sees each page as a picture and gets its text too, so it reads the drawing
+ * itself (layouts, sections, hatching, what a schedule's columns line up with) and not only
+ * the words. Text alone loses what a plan is drawn to show. Anything else is read from the
+ * text the Shelf already keeps for it, so a DWG costs nothing to open here.
  */
 async function readNotes(plan, doc, working) {
   const pdf = doc.mime === 'application/pdf' || /\.pdf$/i.test(doc.name);
   if (pdf && doc.path && existsSync(doc.path)) {
     const buffer = readFileSync(doc.path);
-    const { text, pages, readPages } = await pdfTextLayer(buffer);
-    if (!readPages) return notesFromText(plan, doc.name, text, working);
+    const { pages } = await pdfTextLayer(buffer);
     if (pages > MAX_PDF_PAGES) throw bad(`${doc.name} has ${pages} pages; a plan can be made from up to ${MAX_PDF_PAGES}. Send the main drawings and schedules only.`);
     let groups;
     try {
       groups = await pageGroups(buffer, pages);
     } catch {
-      throw bad(`${doc.name} is a scan that cannot be split into pages to read. Send the drawings as a PDF saved from CAD, or as a DWG.`);
+      throw bad(`${doc.name} cannot be split into pages to look at. Save it again as a PDF from CAD, or send the DWG.`);
     }
     const notes = [];
     for (const g of groups) {
