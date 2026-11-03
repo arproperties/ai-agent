@@ -51,7 +51,8 @@ test('a long file is cut, and says so', async () => {
 });
 
 test('what cannot be read is refused with the file name, not a crash', async () => {
-  await assert.rejects(attachmentText({ name: 'plan.dwg', mimetype: 'application/octet-stream', buffer: Buffer.from('x') }), /Unsupported file type: plan\.dwg/);
+  await assert.rejects(attachmentText({ name: 'plan.rvt', mimetype: 'application/octet-stream', buffer: Buffer.from('x') }), /Unsupported file type: plan\.rvt/);
+  await assert.rejects(attachmentText({ name: 'plan.dwg', mimetype: 'application/octet-stream', buffer: Buffer.from('x') }), /drawing plan\.dwg/);
   await assert.rejects(attachmentText({ name: 'blank.txt', mimetype: undefined, buffer: Buffer.from('  ') }), /No readable text found in blank\.txt/);
   await assert.rejects(attachmentText({ name: 'huge.pdf', mimetype: 'application/pdf', buffer: { length: MAX_BYTES + 1 } }), /too large/);
 });

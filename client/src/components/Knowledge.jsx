@@ -16,7 +16,7 @@ import Picker from './Picker';
 import Orb from './Orb';
 import { CaseFolders, CaseFolder, useCaseFolders } from './CaseFolders';
 
-export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
+export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.dwg,.dxf,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
 // icon, icon colour, tinted background for each folder
 const FOLDER_STYLE = {
