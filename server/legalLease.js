@@ -128,7 +128,7 @@ export function factsOf(c, lease, list, on = today()) {
   const lines = [`Today: ${on}`, '', '# The case',
     `${c.number} · ${c.type} · ${c.title}`, `Stage now: ${c.stageLabel}${c.due ? ` (period ends ${c.due}${c.overdue ? ', OVERDUE' : ''})` : ''} · Status: ${c.statusLabel} · Priority: ${c.priority}`,
     `Party: ${c.party || '-'} ${c.partyPhone || ''} ${c.partyEmail || ''}`.trim(), `Property: ${[c.building, c.unit && `unit ${c.unit}`].filter(Boolean).join(' ') || '-'} · Contract: ${c.contractRef || '-'}`,
-    `Opened: ${new Date(c.createdAt * 1000).toISOString().slice(0, 10)}${c.incidentDate ? ` · Incident: ${c.incidentDate}` : ''} · Assigned: ${c.assigned?.name || 'nobody'}`];
+    `Opened: ${dubaiDate(c.createdAt * 1000)}${c.incidentDate ? ` · Incident: ${c.incidentDate}` : ''} · Assigned: ${c.assigned?.name || 'nobody'}`];
   if (c.description) lines.push(`Description: ${clip(c.description, 2000)}`);
   if (c.remarks) lines.push(`Remarks: ${clip(c.remarks, 1000)}`);
   const done = Object.entries(c.steps || {}).filter(([, v]) => v && Object.keys(v).length);
@@ -136,13 +136,13 @@ export function factsOf(c, lease, list, on = today()) {
     lines.push('', '## What each stage recorded');
     for (const [k, v] of done) {
       const { entered_at: _e, done_by: _b, ...rest } = v;
-      lines.push(`- ${STAGES[k]?.label || k}${v.done_at ? ' (done)' : ' (current)'}: ${j({ ...rest, done_at: v.done_at ? new Date(v.done_at * 1000).toISOString().slice(0, 10) : undefined })}`);
+      lines.push(`- ${STAGES[k]?.label || k}${v.done_at ? ' (done)' : ' (current)'}: ${j({ ...rest, done_at: v.done_at ? dubaiDate(v.done_at * 1000) : undefined })}`);
     }
   }
   if (c.files?.length) lines.push('', '## Documents on the case', ...c.files.map((f) => `- ${f.doc_type}: ${f.name} (${STAGES[f.stage]?.label || f.stage})`));
   if (c.events?.length) {
     lines.push('', '## Timeline, newest first');
-    for (const e of c.events.slice(0, 25)) lines.push(`- ${new Date(e.at * 1000).toISOString().slice(0, 10)} ${e.by ? `${e.by}: ` : ''}${clip(e.title, 300)}`);
+    for (const e of c.events.slice(0, 25)) lines.push(`- ${dubaiDate(e.at * 1000)} ${e.by ? `${e.by}: ` : ''}${clip(e.title, 300)}`);
   }
   lines.push('', '# The lease in saifsys');
   if (!lease) lines.push('No lease is linked to this case.');

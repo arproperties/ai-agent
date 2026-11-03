@@ -7,7 +7,7 @@ import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo, timingsFor } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks, setAgentCase } from './agents.js';
-import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence } from './access.js';
+import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence, masterReach } from './access.js';
 import { deleteMessage, editReply, chat } from './chat.js';
 import { addMemory, memoryChain, MAX_PINNED } from './knowledge.js';
 import { memoryReviewRoutes } from './memoryReview.js';
@@ -313,8 +313,10 @@ app.get('/api/documents', wrap(async (req, res) => {
     const ids = String(req.query.ids).split(',').map(Number).filter(Boolean).slice(0, 200);
     if (!ids.length) return res.json([]);
     // The master's chats can hold files Reem showed from someone else's Shelf.
-    const rows = await db.prepare(`${DOC_SELECT} WHERE (d.user_id = ? OR ?) AND d.id IN (${ids.map(() => '?').join(',')}) ORDER BY d.id DESC`)
-      .all(req.user.id, isMaster(req.user), ...ids);
+    // Never an external person's files, though: the master does not see theirs (access.js).
+    const reach = masterReach('d');
+    const rows = await db.prepare(`${DOC_SELECT} WHERE (d.user_id = ? OR (? AND ${reach.sql})) AND d.id IN (${ids.map(() => '?').join(',')}) ORDER BY d.id DESC`)
+      .all(req.user.id, isMaster(req.user), ...reach.params, ...ids);
     return res.json(rows.map((d) => docOut(d, req.user.id)));
   }
   // The list itself is the Shelf screen's. A chat's own files, above, are anybody's to see.

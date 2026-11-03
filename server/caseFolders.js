@@ -8,6 +8,7 @@ import { renderPdf, pdfName } from './replyDoc.js';
 import { DEFAULT_PATTERN, caseKey, caseRegex, folderName, mentionsCase, unquoted } from './caseMatch.js';
 import { collectCase, caseMailbox } from './caseMail.js';
 import { buildCasePdf, emailMarkdown } from './casePdf.js';
+import { dubaiDate } from './saifsys/client.js';
 
 // Case folders: an external user's emails about one case, kept together on their Shelf.
 //
@@ -244,7 +245,7 @@ async function saveFile(userId, folderId, { buffer, name, mimetype }, text, made
   return doc;
 }
 
-const emailPdfName = (row) => pdfName(`${new Date(row.at * 1000).toISOString().slice(0, 10)} ${row.subject || 'Email'}`);
+const emailPdfName = (row) => pdfName(`${dubaiDate(row.at * 1000)} ${row.subject || 'Email'}`);
 
 // Calendar invites and Outlook's winmail.dat wrappers say nothing a reader needs, and the
 // Shelf cannot open them: they would only sit in the folder as unreadable files.

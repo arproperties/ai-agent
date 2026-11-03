@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { compareTerms, compareWithContract } from './renewalCompare.js';
 import { readReturnedDoc } from './renewalAi.js';
 import { extname } from 'node:path';
+import { inlineType } from './files.js';
 import { imapAccount } from './imap.js';
 import { createDraft, decideDraft, draftOut, getDraft } from './drafts.js';
 import { keepFiles } from './draftFiles.js';
@@ -504,8 +505,12 @@ proTaskRoutes.get('/:id', wrap(async (req, res) => { res.json(await proTasks.tas
 proTaskRoutes.get('/:id/files/:docId', wrap(async (req, res) => {
   const d = await proTasks.taskFile(req.user, req.params.id, req.params.docId);
   if (!d.path) return res.status(404).json({ error: 'This paper has no file yet' });
+  // The type is the one the uploader's browser claimed, so only safe types open in the app; an
+  // HTML or SVG file shown on our address could act as the PRO who opened it. The rest download.
+  const inline = inlineType(d);
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.type(d.mime || 'application/octet-stream').sendFile(d.path, { dotfiles: 'allow' });
+  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(d.name || 'file')}`);
+  res.type(inline || 'application/octet-stream').sendFile(d.path, { dotfiles: 'allow' });
 }));
 proTaskRoutes.post('/:id/files', caseUpload.single('file'), wrap(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Choose a file' });

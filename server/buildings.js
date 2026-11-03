@@ -358,8 +358,16 @@ const file = (what) => wrap(async (req, res) => {
   if (!b) return res.status(404).json({ error: 'Not found' });
   const got = await fileFromSaifsys('operations', what, { ...scopeOf(b), id: Number(req.params.file) || 0 }, req.headers.range);
   res.status(got.status);
-  for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+  for (const h of ['content-length', 'content-range', 'accept-ranges']) {
     if (got.headers.get(h)) res.setHeader(h, got.headers.get(h));
+  }
+  // Photos, videos and PDFs show in the app. Anything else (an HTML or SVG file someone gave
+  // saifsys) only downloads: shown on our address it could act as whoever opened it.
+  const type = got.headers.get('content-type') || '';
+  if (/^(image\/(jpeg|png|gif|webp|heic|heif)|video\/[\w.+-]+|application\/pdf)\b/i.test(type)) res.setHeader('Content-Type', type);
+  else {
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment');
   }
   res.setHeader('Cache-Control', 'private, max-age=600');
   res.setHeader('X-Content-Type-Options', 'nosniff');
