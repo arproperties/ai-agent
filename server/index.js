@@ -38,6 +38,7 @@ import { sendingOn } from './renewalCases.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
 import { inventoryRoutes } from './inventory.js';
 import { projectRoutes, startProjects } from './projects.js';
+import { planRoutes, startPlanWatch } from './projectPlans.js';
 import { caseRoutes } from './caseRoutes.js';
 import { startCaseFolders } from './caseWatch.js';
 import { caseShareRoutes, publicCaseRoutes } from './caseShare.js';
@@ -151,6 +152,8 @@ app.use('/api/buildings', buildingRoutes); // who runs each building, and the st
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
 // A building job's stock, deliveries and manpower (module projects); the cards a chat makes stay open to whoever is on the project.
 app.use('/api/projects', needsModuleUnless('projects', (req) => req.path.startsWith('/proposals')), projectRoutes);
+// Project plans: the master's cards in a chat are open like the project cards; a project's Plan tab and its alerts need Projects.
+app.use('/api/plans', needsModuleUnless('projects', (req) => !/^\/(project|alerts)\//.test(req.path)), planRoutes);
 app.use('/api/cases', caseShareRoutes); // a case folder emailed, or its link turned on and off (external only)
 app.use('/api/cases', caseRoutes); // an external person's case folders, got ready from their inbox in chat (external only)
 app.use('/api/case-focus', caseFocusRoutes); // the case a chat is about, its references (module case_focus)
@@ -616,6 +619,8 @@ app.listen(PORT, '0.0.0.0', () => {
   // The 5 pm "today's manpower not sent" push to a project's store keeper. Live only unless asked
   // for, like the document alerts: a local copy of the live database holds real people's phones.
   if (process.env.NODE_ENV === 'production' || process.env.PROJECTS_PUSH === 'on') startProjects();
+  // Project plans: the daily check against the plan and the Sunday report push to people on site, so the same rule.
+  startPlanWatch({ watch: process.env.NODE_ENV === 'production' || process.env.PROJECTS_PUSH === 'on' });
   // The saifsys morning checkout reminder (startArs in server/saifsys/ars.js) is on hold
   // by the user's choice, 2026-09-25: they ask Reem instead. The tool still works.
   console.log(`Reem server → http://localhost:${PORT}`);

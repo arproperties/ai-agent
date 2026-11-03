@@ -12,6 +12,7 @@ import TeamReminderCard from './TeamReminderCard';
 import ResponsibilityCard from './ResponsibilityCard';
 import AddressCard from './AddressCard';
 import LessonCard from './LessonCard';
+import PlanCard from './PlanCard';
 import InventoryCard from './InventoryCard';
 import ProjectCard from './ProjectCard';
 import CaseCard from './CaseCard';
@@ -72,6 +73,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [lessons, setLessons] = useState([]); // rules Reem offers to learn from a correction (master only)
   const [stock, setStock] = useState([]); // inventory items got ready in this chat, waiting for Add
   const [site, setSite] = useState([]); // a project's deliveries, material out and manpower got ready in this chat
+  const [plans, setPlans] = useState([]); // project plans made from a file in this chat (master only)
   const [cases, setCases] = useState([]); // case folders got ready from the inbox, waiting for Save (external only)
   const [bookings, setBookings] = useState([]); // ARS bookings got ready in this chat, waiting for Create
   const [notices, setNotices] = useState([]); // tenant notices got ready in this chat, waiting for Send
@@ -117,6 +119,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       if (user.role === 'master') api.get(`/responsibilities/proposals?conversation=${conversationId}`).then(setDuties).catch(() => {});
       if (user.role === 'master') api.get(`/address-book/proposals?conversation=${conversationId}`).then(setAddresses).catch(() => {});
       if (user.role === 'master') api.get(`/lessons/proposals?conversation=${conversationId}`).then(setLessons).catch(() => {});
+      if (user.role === 'master') api.get(`/plans?conversation=${conversationId}`).then(setPlans).catch(() => {});
       api.get(`/saifsys/ars/bookings?conversation=${conversationId}`).then(setBookings).catch(() => {});
       api.get(`/inventory/proposals?conversation=${conversationId}`).then(setStock).catch(() => {});
       if (!user.external) api.get(`/projects/proposals?conversation=${conversationId}`).then(setSite).catch(() => {});
@@ -221,6 +224,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           else if (event === 'lesson') { acted = true; setLessons((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'inventoryAdd') { acted = true; setStock((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'projectCard') { acted = true; setSite((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'projectPlan') { acted = true; setPlans((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'caseFolder') { acted = true; setCases((cs) => [...cs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'tenantNotice') { acted = true; setNotices((ns) => [...ns.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'arsBooking') { acted = true; setBookings((bs) => [...bs.filter((x) => x.id !== d.id), d]); toBottom(); }
@@ -507,6 +511,9 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             ))}
             {site.map((c) => (
               <ProjectCard key={c.id} card={c} onChanged={(u) => setSite((ps) => ps.map((x) => (x.id === u.id ? u : x)))} />
+            ))}
+            {plans.map((p) => (
+              <PlanCard key={p.id} plan={p} onChanged={(u) => setPlans((ps) => ps.map((x) => (x.id === u.id ? u : x)))} />
             ))}
             {cases.map((c) => (
               <CaseCard key={c.id} card={c} onOpenShelf={onOpenFiles}
