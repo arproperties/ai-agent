@@ -142,7 +142,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const flash = (msg) => { setToast(msg); setTimeout(() => setToast(''), 4000); };
 
   const docIds = [...new Set(messages.flatMap((m) => (m.files || []).map((f) => f.docId)).filter(Boolean))];
-  const openFile = (id) => api.get(`/documents/${id}`).then(setViewer).catch((e) => flash(e.message));
+  // An IFC chip opens straight into the 3D view; the viewer behind it is where closing it lands.
+  const openFile = (id, { three = false } = {}) => api.get(`/documents/${id}`).then((d) => setViewer(three ? { ...d, open3d: true } : d)).catch((e) => flash(e.message));
   const showChatFiles = () => api.get(`/documents?ids=${docIds.join(',')}`).then(setChatFiles).catch((e) => flash(e.message));
 
   // Without pieces: the reply already talking pauses or resumes, one still being generated

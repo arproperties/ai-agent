@@ -27,10 +27,11 @@ export async function sendToShelf(files, agentId = null) {
       updateJob(job, { step: round + 1 < rounds ? 1 : 2 });
     }
     const dup = res.filter((r) => r.duplicate).length;
-    const added = res.length - dup;
+    const refused = res.filter((r) => r.refused).length; // e.g. a Revit file: the reason is shown on the Shelf
+    const added = res.length - dup - refused;
     finishJob(job, added
       ? `${plural(added, 'file')} on the Shelf. I'm reading and filing ${added === 1 ? 'it' : 'them'} now.${dup ? ` ${dup} ${dup === 1 ? 'was' : 'were'} already there.` : ''}`
-      : `Already on your Shelf, so nothing new to file.`);
+      : refused ? `Not added: ${res.find((r) => r.refused).refused}` : `Already on your Shelf, so nothing new to file.`);
     return res;
   } catch (e) {
     failJob(job, `Upload stopped: ${e.message}`);

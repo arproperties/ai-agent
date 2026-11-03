@@ -69,7 +69,8 @@ import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
 import { billingContext, billingRoutes, billAs } from './billing.js';
 import { legalCaseRoutes, startLegalCases } from './legalCases.js';
 import { legalLeaseRoutes } from './legalLease.js';
-import { uploadLimitMB, MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB } from './dwg.js';
+import { uploadLimitMB, MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB, MAX_IFC_MB } from './dwg.js';
+import { isRevit, REVIT_HELP } from './ifc.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -82,8 +83,8 @@ app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
 const UPLOAD_TMP = `${DATA_DIR}/upload-tmp`;
 rmSync(UPLOAD_TMP, { recursive: true, force: true }); // left by a request the last restart cut off
 mkdirSync(UPLOAD_TMP, { recursive: true });
-const multerUpload = multer({ dest: UPLOAD_TMP, limits: { fileSize: Math.max(MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB) * 1024 * 1024, files: 10 } });
-const tooBig = () => Object.assign(new Error(`That file is too big — the limit is ${MAX_UPLOAD_MB} MB (${MAX_PDF_MB} MB for a PDF, ${MAX_DRAWING_MB} MB for a DWG/DXF drawing). A shorter clip, or send it another way.`), { status: 413 });
+const multerUpload = multer({ dest: UPLOAD_TMP, limits: { fileSize: Math.max(MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB, MAX_IFC_MB) * 1024 * 1024, files: 10 } });
+const tooBig = () => Object.assign(new Error(`That file is too big — the limit is ${MAX_UPLOAD_MB} MB (${MAX_PDF_MB} MB for a PDF, ${MAX_DRAWING_MB} MB for a DWG/DXF drawing, ${MAX_IFC_MB} MB for an IFC model). A shorter clip, or send it another way.`), { status: 413 });
 const withinLimit = (req, res, next) => {
   const files = req.files || (req.file ? [req.file] : []);
   next(files.some((f) => f.size > uploadLimitMB(f.originalname) * 1024 * 1024) ? tooBig() : undefined);
@@ -362,6 +363,8 @@ app.post('/api/documents', needsModule('shelf'), upload.array('files', 10), wrap
   // One at a time here: two copies of the same file in one batch must meet the dedup check in turn.
   const results = [];
   for (const f of req.files || []) {
+    // Not stored at all: nothing could ever be read from it. Said back instead of failing quietly.
+    if (isRevit(f.originalname)) { results.push({ name: f.originalname, refused: REVIT_HELP }); continue; }
     const { doc, duplicate } = await saveUpload(req.user.id, agentId, f);
     if (!duplicate) await db.prepare("UPDATE documents SET status = 'queued' WHERE id = ?").run(doc.id);
     // Files dedup on their bytes alone, so the copy already held may be filed somewhere

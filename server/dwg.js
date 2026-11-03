@@ -20,10 +20,13 @@ export const MAX_DRAWING_MB = 35;
 // request, so a big file is read the same way as a small one. Nginx takes 50 MB.
 export const MAX_PDF_MB = 40;
 export const MAX_UPLOAD_MB = 25;
-/** How big one uploaded file may be: drawings and PDFs get more room than photos and videos. */
+// A whole building as an IFC model is the biggest file people send. It is opened in the
+// person's browser, not on the server, so it can be larger; nginx takes 50 MB per request.
+export const MAX_IFC_MB = 45;
+/** How big one uploaded file may be: models, drawings and PDFs get more room than photos and videos. */
 export const uploadLimitMB = (name) => {
   const ext = String(name).split('.').pop().toLowerCase();
-  return isDrawing(name) ? MAX_DRAWING_MB : ext === 'pdf' ? MAX_PDF_MB : MAX_UPLOAD_MB;
+  return ext === 'ifc' ? MAX_IFC_MB : isDrawing(name) ? MAX_DRAWING_MB : ext === 'pdf' ? MAX_PDF_MB : MAX_UPLOAD_MB;
 };
 
 /**

@@ -34,10 +34,12 @@ function VoiceNote({ f }) {
   );
 }
 
+const isIfcName = (n) => /\.ifc$/i.test(n || '');
+
 // The files sent with a message, or - under a reply - the saved files Reem showed.
 function Attachments({ files, onOpenFile, reply = false }) {
   if (!files?.length) return null;
-  const open = (f) => f.docId && onOpenFile(f.docId);
+  const open = (f) => f.docId && onOpenFile(f.docId, { three: isIfcName(f.name) });
   return (
     <div className={`flex flex-wrap gap-1.5 ${reply ? 'mt-3' : 'mb-1.5 justify-end'}`}>
       {files.map((f, i) => (isAud(f) && !f.docId ? <VoiceNote key={i} f={f} /> : isImg(f) && (f.preview || f.docId) ? (
@@ -51,7 +53,7 @@ function Attachments({ files, onOpenFile, reply = false }) {
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-p1/20 text-p1"><Icon name={isImg(f) ? 'image' : isVid(f) ? 'play' : 'file'} size={17} /></span>
           <span className="min-w-0">
             <span className="block truncate text-[13px]">{(reply && f.title) || f.name}</span>
-            <span className="text-[11px] text-mute">{f.docId ? 'Tap to view' : 'Uploading…'}</span>
+            <span className="text-[11px] text-mute">{!f.docId ? 'Uploading…' : isIfcName(f.name) ? 'View in 3D' : 'Tap to view'}</span>
           </span>
         </button>
       )))}
