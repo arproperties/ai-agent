@@ -565,21 +565,30 @@ app.listen(PORT, '0.0.0.0', () => {
   startOutbox().catch((e) => console.error('[outbox]', e.message));
   // files from a folder or ZIP import that were still waiting when the server stopped
   startImportQueue().catch((e) => console.error('[imports]', e.message));
+  // The timers below email tenants, forward mail, buzz phones and write to saifsys. On a laptop
+  // they only start with LOCAL_SENDING=on: a local copy of the live database holds the live
+  // mailboxes and real people's phones, and would answer tenants the live server already answered.
+  const sending = process.env.NODE_ENV === 'production' || process.env.LOCAL_SENDING === 'on';
+  if (!sending) console.log('[local] tenant care, renewals, mail routing, reminders, buildings, legal cases, case folders and recurring payments are off (LOCAL_SENDING=on starts them)');
   // The buzz when a to-do or a routine falls due. The badge and the first screen are
   // unchanged and keep working on their own if this timer ever stops.
-  startReminders();
+  if (sending) startReminders();
   // Each timer keeps the job it was started as, so what it costs shows under that job in Billing.
-  billAs({ userId: null, job: 'tenantcare' }, startTenantCare); // does nothing until the Tenant care inbox is connected
-  billAs({ userId: null, job: 'renewals' }, startLeaseRenewals); // reads tenants' replies to renewals and sends the reminders
-  billAs({ userId: null, job: 'other' }, startLegalCases); // tells people when a cooling period is about to end, or has run over
-  billAs({ userId: null, job: 'mail' }, startMailRouting); // does nothing until the shared mailbox is connected
+  if (sending) {
+    billAs({ userId: null, job: 'tenantcare' }, startTenantCare); // does nothing until the Tenant care inbox is connected
+    billAs({ userId: null, job: 'renewals' }, startLeaseRenewals); // reads tenants' replies to renewals and sends the reminders
+    billAs({ userId: null, job: 'other' }, startLegalCases); // tells people when a cooling period is about to end, or has run over
+    billAs({ userId: null, job: 'mail' }, startMailRouting); // does nothing until the shared mailbox is connected
+  }
   claimPastChats().catch((e) => console.error('[case focus]', e.message)); // chats of agents bound to a case before this ran
-  startCaseFolders(); // external users' case folders take in new case mail; each folder is billed to its owner
+  if (sending) startCaseFolders(); // external users' case folders take in new case mail; each folder is billed to its owner
   // Case brief suggestions from quiet case chats, billed to each chat's owner. Live only unless
   // asked for: a local copy of the live database would pay to read every real case chat.
   if (process.env.NODE_ENV === 'production' || process.env.CASE_BRIEFS === 'on') startCaseBriefs();
-  billAs({ userId: null, job: 'buildings' }, startBuildings); // buzzes a building's administrator when a staff job needs them
-  billAs({ userId: null, job: 'other' }, startRecurringPayments); // creates each recurring payment's line on its day of the month
+  if (sending) {
+    billAs({ userId: null, job: 'buildings' }, startBuildings); // buzzes a building's administrator when a staff job needs them
+    billAs({ userId: null, job: 'other' }, startRecurringPayments); // creates each recurring payment's line on its day of the month
+  }
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));

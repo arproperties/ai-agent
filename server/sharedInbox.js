@@ -3,7 +3,7 @@ import multer from 'multer';
 import { randomUUID } from 'node:crypto';
 import { db } from './db.js';
 import { ask } from './ai.js';
-import { fileName } from './files.js';
+import { fileName, inlineType } from './files.js';
 import { sendRaw } from './smtp.js';
 import { front, people, fetchOne, sendAnswer, summarizeSent } from './mailRouting.js';
 
@@ -132,9 +132,13 @@ sharedInboxRoutes.get('/:id/files/:i', guard, wrap(async (req, res) => {
   const mail = await engine.fetch(await connected(), row.uid, row.uid_validity);
   const a = mail.attachments[Number(req.params.i)];
   if (!a) throw bad('File not found', 404);
-  res.setHeader('Content-Type', a.contentType || 'application/octet-stream');
-  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(a.filename)}`);
-  res.send(a.content);
+  // The sender picks the attachment's type, so only safe types open in the app; an HTML or SVG
+  // file shown on our address could act as whoever opened it. Everything else downloads.
+  const name = a.filename || 'attachment';
+  const inline = inlineType({ mime: a.contentType, name });
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.type(inline || 'application/octet-stream').send(a.content);
 }));
 
 // Reem writes a reply from the person's notes (typed or spoken). Nothing is sent.

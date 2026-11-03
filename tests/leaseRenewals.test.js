@@ -840,3 +840,37 @@ test('Pest control & cleaning: its fee + VAT on the offer and in cheque 1, and i
   assert.match(d.text, /- Total: AED 57,151/);
   assert.match(d.text, /1\. 1 November 2026: AED 18,151 \(rent AED 13,000 \+ admin fee with VAT AED 1,575 \+ pest control & cleaning with VAT AED 3,276 \+ Ejari fee AED 300\)/);
 });
+
+test('an email that failed is tried again, further apart each time, never twice at once, and not for an ended renewal', async () => {
+  const boss = await setup();
+  stub();
+  let fail = true;
+  let release;
+  const sends = [];
+  R.useForTests({ send: async (acc, pw, m) => { sends.push(m); if (fail) throw new Error('mailbox busy'); if (release) await new Promise((ok) => { release = ok; }); world.sent.push(m); } });
+  const r = await start(boss);
+  const out = () => db.prepare(`SELECT status, tries FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'out'`).get(r.id);
+  assert.deepEqual(await out(), { status: 'failed', tries: 1 });
+  await R.resend();
+  assert.equal(sends.length, 1, 'not again within 3 minutes');
+  world.now = NOW + 180_000; await R.resend();
+  assert.deepEqual([sends.length, (await out()).tries], [2, 2]);
+  world.now = NOW + 400_000; await R.resend();
+  assert.equal(sends.length, 2, 'the next try waits 6 minutes after the last');
+  // A slow mail server: the clock's retry and a second retry reach the same email together.
+  fail = false; release = true;
+  world.now = NOW + 3_600_000;
+  const first = R.resend();
+  await new Promise((ok) => setTimeout(ok, 20));
+  await R.resend();
+  release(); await first;
+  assert.equal(world.sent.length, 1, 'the tenant gets it once');
+  assert.equal((await out()).status, 'sent');
+  // An ended renewal's failed email stays where it is.
+  fail = true; release = null;
+  await db.prepare(`UPDATE lease_renewal_events SET status = 'failed', tries = 1, tried_at = 0 WHERE renewal_id = ?`).run(r.id);
+  await db.prepare(`UPDATE lease_renewals SET status = 'closed' WHERE id = ?`).run(r.id);
+  const before = sends.length;
+  await R.resend();
+  assert.equal(sends.length, before);
+});
