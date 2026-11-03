@@ -82,6 +82,16 @@ test('one piece that is most of a layer is pointed out, with the total without i
   );
   const t = await readDrawing(drawing, 'rain.dxf');
   assert.match(t, /RAIN: 312 m \(13 pieces\)\. CHECK: a closed shape 100 m × 50\.0 m alone is 300 m.*without it the layer is 12\.0 m/);
+  // The same, as a point to send to whoever drew it; with no title block, the drawing number too.
+  assert.match(t, /## Tell the draftsman[\s\S]*1\. Layer "RAIN" has a closed shape 100 m × 50\.0 m[\s\S]*2\. No clear drawing number/);
+  assert.doesNotMatch(t, /units are not set/, 'the units were given');
+});
+
+test('a drawing with no units and its lines on layer 0 asks for both', async () => {
+  const lines = Array.from({ length: 3 }, (_, i) => [['0', 'LINE'], ['8', '0'], ['10', '0'], ['20', String(i)], ['11', '500'], ['21', String(i)]]).flat();
+  const t = await readDrawing(dxf(['0', 'SECTION'], ['2', 'ENTITIES'], ...lines, ['0', 'ENDSEC'], ['0', 'EOF']), 'x.dxf');
+  assert.match(t, /units are not set/);
+  assert.match(t, /1,500 drawing units of lines are on layer "0"/);
 });
 
 test('a 32.6 MB PDF drawing set can be uploaded; a video that size cannot', () => {
