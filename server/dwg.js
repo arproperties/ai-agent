@@ -262,6 +262,48 @@ function shape(e, c, v) {
   }
 }
 
+/**
+ * One piece that is most of a layer is usually a frame or boundary drawn on the wrong layer
+ * (the school drainage drawing had a 1,958 × 344 m rectangle on its rain-pipe layer). It is
+ * pointed out, with the total without it, rather than quietly trusted or dropped.
+ */
+function stray(L, units) {
+  const big = L.longest;
+  if (!big || L.pieces < 10 || big.len < 0.4 * L.length) return null; // a layer of a few pieces is often one long run
+  return { len: big.len, shape: big.box ? `a closed shape ${sayLength(big.box.w, units)} × ${sayLength(big.box.h, units)}` : 'one line' };
+}
+
+/**
+ * What the person who drew this should fix so Reem (and anyone else) can read it properly.
+ * Only what the file shows for certain; each point says what to do, in site language.
+ */
+function draftsmanList({ layers, titles, counts, units }, measured) {
+  const fixes = [];
+  const total = (k) => counts.get(k) || 0;
+  const drawn = total('LINE') + total('LWPOLYLINE') + total('POLYLINE') + total('ARC') + total('MLINE');
+  if (!UNIT_M[units] && drawn) {
+    fixes.push('The drawing units are not set, so lengths cannot be given in metres. Please set the units (UNITS command, e.g. millimetres) and save again.');
+  }
+  for (const [layer, L] of measured) {
+    const big = stray(L, units);
+    if (big) fixes.push(`Layer "${layer}" has ${big.shape} (${sayLength(big.len, units)} of line). Is it a frame or outline? Please move it to its own layer.`);
+  }
+  const all = measured.reduce((n, [, L]) => n + L.length, 0);
+  const zero = layers.get('0')?.length || 0;
+  if (zero && zero >= 0.15 * all) {
+    fixes.push(`${sayLength(zero, units)} of lines are on layer "0", which has no meaning. Please put them on named layers (pipe, wall, kerb…) so they can be measured by type.`);
+  }
+  // A drawing number is a title-block value with a digit in it under a tag like DWG_NO or DRAWING NO.
+  const number = [...titles].some(([tag, v]) => /dwg|draw|sheet|^no\.?$|num/i.test(tag) && /\d/.test(v) && v.length >= 3);
+  if (drawn && !number) {
+    fixes.push(`No clear drawing number was found in the title block${titles.size ? '' : ' (it has no filled-in fields)'}. Please fill in the drawing number and revision.`);
+  }
+  if (drawn > 200 && total('DIMENSION') < 5) {
+    fixes.push(`The drawing has only ${total('DIMENSION')} dimension${total('DIMENSION') === 1 ? '' : 's'}. Please add dimensions for the main sizes, so they do not have to be measured off the drawing.`);
+  }
+  return fixes;
+}
+
 /** A closed polyline's width and height, so a stray frame on a pipe layer can be described. */
 function box(e) {
   const p = e.pts || [];
@@ -313,16 +355,20 @@ function summarise({ layers, titles, counts, inside, units }, name) {
       'A wall or pipe drawn as two parallel lines counts twice. Lines inside symbols/blocks and curves drawn as splines are not included.',
       ...measured.slice(0, 80).map(([layer, L]) => {
         const line = `${layer}: ${sayLength(L.length, units)} (${L.pieces} pieces)`;
-        // One piece that is most of a layer is usually a frame or boundary drawn on the wrong
-        // layer (the school drainage drawing had a 1,958 × 344 m rectangle on its rain-pipe
-        // layer). Say so, with the total without it, rather than quietly trust or drop it.
-        const big = L.longest;
-        if (L.pieces < 10 || big.len < 0.4 * L.length) return line; // a layer of a few pieces is often one long run
-        const shape = big.box ? `a closed shape ${sayLength(big.box.w, units)} × ${sayLength(big.box.h, units)}` : 'one line';
-        return `${line}. CHECK: ${shape} alone is ${sayLength(big.len, units)}, likely a frame or outline on the wrong layer; ` +
+        const big = stray(L, units);
+        if (!big) return line;
+        return `${line}. CHECK: ${big.shape} alone is ${sayLength(big.len, units)}, likely a frame or outline on the wrong layer; ` +
           `without it the layer is ${sayLength(L.length - big.len, units)}. Ask the draftsman.`;
       }));
     if (measured.length > 80) out.push(`…and ${measured.length - 80} more layers with shorter totals.`);
+  }
+  const fixes = draftsmanList({ layers, titles, counts, units }, measured);
+  if (fixes.length) {
+    out.push('', '## Tell the draftsman',
+      'Things in this drawing that make it hard to read or measure, found by checking the file (no guessing). ' +
+      'When this drawing has just been sent, end your reply with these points under the heading "Tell the draftsman", ' +
+      'in short plain lines the person can copy and send to whoever made the drawing.',
+      ...fixes.map((f, i) => `${i + 1}. ${f}`));
   }
   const used = [...layers].filter(([, L]) => L.notes.size || L.dims.size || L.blocks.size);
   out.push('', `## Layers (${layers.size})`, [...layers.keys()].join(', '));
