@@ -1033,7 +1033,8 @@ async function earlierAdvice(renewalId) {
   return rows.reverse().map((x) => [
     `${dubaiDate(Number(x.at) * 1000)}, ${x.data?.agent?.name || 'An advisor'}${x.data?.ask ? `, asked by ${x.by || 'the team'}: "${x.data.ask}"` : ''}`,
     `Answer: ${String(x.body || '').slice(0, 1500)}`,
-    x.data?.reply ? `Suggested reply: ${String(x.data.reply).slice(0, 1000)}` : '',
+    // Only a suggestion: what went to the tenant is in the emails, so it is never taken as sent.
+    x.data?.reply ? `Reply it suggested (a draft only, NOT sent to the tenant): ${String(x.data.reply).slice(0, 1000)}` : '',
   ].filter(Boolean).join('\n')).join('\n\n');
 }
 
@@ -1271,6 +1272,14 @@ leaseRenewalRoutes.post('/send', wrap(async (req, res) => { res.json(out(await s
 leaseRenewalRoutes.post('/check', wrap(async (req, res) => {
   await D.checkMail();
   res.json({ read: await readInbound() });
+}));
+
+// An advisor's box taken off the timeline. Only advice: emails and steps stay, as they are the record.
+leaseRenewalRoutes.delete('/:id/advice/:event', wrap(async (req, res) => {
+  const { changes } = await db.prepare(`DELETE FROM lease_renewal_events WHERE id = ? AND renewal_id = ? AND kind = 'advice'`)
+    .run(Number(req.params.event) || 0, Number(req.params.id) || 0);
+  if (!changes) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
 }));
 
 leaseRenewalRoutes.post('/:id/events/:event/read', wrap(async (req, res) => { res.json(out(await reread(req.params.id, req.params.event))); }));

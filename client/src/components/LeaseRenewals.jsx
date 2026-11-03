@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles, Trash2,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -503,6 +503,12 @@ function Renewal({ id, onBack }) {
     setBusy('');
     return ok;
   };
+  // An advisor's box taken off the timeline: only advice, never an email or a step.
+  const removeAdvice = async (e) => {
+    if (!confirm(`Delete ${e.title}?`)) return;
+    setError('');
+    try { await api.del(`/lease-renewals/${id}/advice/${e.id}`); await load(); } catch (err) { setError(err.message); }
+  };
   useEffect(() => { load(); }, [load]);
 
   const mark = async (what) => {
@@ -625,7 +631,7 @@ function Renewal({ id, onBack }) {
                   </button>
                 )}
               </div>
-              <Timeline r={r} busy={busy} onReadAgain={readAgain} onReply={!DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
+              <Timeline r={r} busy={busy} onReadAgain={readAgain} onRemove={removeAdvice} onReply={!DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
             </div>
           </div>
 
@@ -758,12 +764,12 @@ const DOT = {
   out: ['bg-p1/20 text-p1', Send], in: ['bg-white/10 text-txt', Inbox], step: ['bg-white/5 text-mute', CircleDot],
 };
 
-function Timeline({ r, busy, onReadAgain, onReply }) {
+function Timeline({ r, busy, onReadAgain, onReply, onRemove }) {
   return (
     <ol className="relative space-y-3 pl-11">
       <span className="absolute bottom-3 left-[17px] top-3 w-px bg-gradient-to-b from-p1/50 via-stroke to-transparent" aria-hidden />
       {r.events.map((e, i) => (e.kind === 'advice'
-        ? <Advice key={e.id} e={e} newest={i === 0} onReply={onReply} />
+        ? <Advice key={e.id} e={e} newest={i === 0} onReply={onReply} onRemove={onRemove} />
         : <Event key={e.id} e={e} r={r} newest={i === 0} busy={busy === `read-${e.id}`} onReadAgain={onReadAgain} />))}
     </ol>
   );
@@ -816,7 +822,7 @@ function AskAdvisors({ agents, busy, onAsk }) {
 }
 
 /** One advisor's view, and the reply it suggests: opened in Compose to change and send. */
-function Advice({ e, newest, onReply }) {
+function Advice({ e, newest, onReply, onRemove }) {
   const a = e.data?.agent || {};
   const reply = e.data?.reply;
   const [openReply, setOpenReply] = useState(false);
@@ -824,7 +830,11 @@ function Advice({ e, newest, onReply }) {
     <li className="relative">
       <span className="absolute -left-11 top-1 rounded-full ring-4 ring-[var(--color-surface)]"><Avatar icon={a.icon} color={a.color} size={36} /></span>
       <div className={`rounded-2xl border p-3.5 ${TINT[a.color] || TINT.violet} ${newest ? 'shadow-lg shadow-black/20' : ''}`}>
-        <p className="font-medium leading-snug">{e.title}</p>
+        <div className="flex items-start gap-2">
+          <p className="min-w-0 flex-1 font-medium leading-snug">{e.title}</p>
+          {onRemove && <button onClick={() => onRemove(e)} title="Delete this advice" aria-label="Delete this advice"
+            className="-m-1 shrink-0 rounded-full p-1.5 text-mute transition hover:bg-white/10 hover:text-bad"><Trash2 size={14} /></button>}
+        </div>
         <p className="text-xs text-mute">{e.data?.asked ? `Asked by ${e.by || 'someone'}` : 'On the dispute, by itself'} · {when(e.at)}{newest ? ' · latest' : ''}</p>
         {e.data?.ask && <p className="mt-1.5 border-l-2 border-p1/40 pl-2 text-xs italic text-mute">“{e.data.ask}”</p>}
         <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{e.body}</p>

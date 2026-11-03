@@ -138,7 +138,7 @@ export async function readDocs(files) {
 // lease file from saifsys, so they never send the team off to pull the contract.
 const ADVISE = `You are advising the landlord's team on a lease renewal in Dubai. Read the renewal's facts, the current contract from
 saifsys and every email in full, then answer what the team asks you, from your own expertise.
-Answer by filling in the answer tool: {"view": string, "reply": string|null}
+Answer by filling in the answer tool: {"view": string, "reply": string}
 - view: your answer to what the team asked, for the landlord's team. Plain text only: no markdown, no ** or #; short lines, a dash
   for each point. Check what the tenant claims against the contract you were given and say whether it matches.
   Options you suggest (e.g. a figure to offer) are clearly your suggestion for the team to decide.
@@ -149,8 +149,11 @@ Answer by filling in the answer tool: {"view": string, "reply": string|null}
   still has to check goes in the view, never in the email.
 - Earlier questions from the team and the advisors' answers are given: build on them, don't repeat them. When the team asks
   you to suggest a figure, give one, with why.
-- reply: the email to the tenant that carries out your advice, ready to send (when you suggest a figure, it offers that figure): in English, polite, using only the facts given and
-  your suggestion. Only the body: no greeting ("Dear ...") and no sign-off, as both are added. null only if no email should go now.
+- reply: ALWAYS write it, never leave it empty: the email to the tenant that carries out your advice, ready to send (when you
+  suggest a figure, it offers that figure). The team decides whether to send it, so never tell them to hold the email.
+  In English, polite, using only the facts given and your suggestion. Only the body: no greeting ("Dear ...") and no sign-off,
+  as both are added.
+- Only the emails listed went to the tenant. Replies the advisors suggested before are drafts that were NOT sent.
 Rules you never break:
 - Never say whether the rent increase is legal or allowed. If the tenant raises it, say the team should check the unit on DLD's Rental Index calculator and offer what it allows.
 - Never file, or tell the team to file, a case. Never threaten the tenant with one.
@@ -161,7 +164,7 @@ export async function advise({ agent, facts, thread, dispute, ask, earlier }) {
   const out = await askJson(`${agent.persona || `You are ${agent.name}.`}\n\n${ADVISE}`, [{ type: 'text', text:
     `Facts of this renewal:\n${facts}\n\n${dispute ? `The tenant disputes it: ${dispute}\n\n` : ''}The emails, oldest first:\n${thread || '(none yet)'}\n\n` +
     `${earlier ? `What the team asked the advisors before, and their answers, oldest first:\n${earlier}\n\n` : ''}` +
-    `The team asks you:\n"""\n${String(ask || 'Give your view: what is going on and what should we do next?').slice(0, 2000)}\n"""` }], S({ view: str, reply: strOrNull }));
+    `The team asks you:\n"""\n${String(ask || 'Give your view: what is going on and what should we do next?').slice(0, 2000)}\n"""` }], S({ view: str, reply: str }));
   return {
     view: String(out.view || '').trim().slice(0, 4000),
     reply: out.reply ? String(out.reply).trim().slice(0, 4000) : null,
