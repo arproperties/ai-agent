@@ -229,6 +229,8 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_docs_user ON documents(user_id);
   CREATE INDEX IF NOT EXISTS idx_docs_hash ON documents(user_id, hash);
   CREATE INDEX IF NOT EXISTS idx_chunks_user ON chunks(user_id, agent_id);
+  -- One file's pieces (reading it, re-filing it, deleting it) without going through everyone's (2026-11-03).
+  CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(document_id);
   CREATE INDEX IF NOT EXISTS idx_mem_user ON memories(user_id);
   CREATE INDEX IF NOT EXISTS idx_chunks_tsv ON chunks USING GIN(tsv);
   CREATE INDEX IF NOT EXISTS idx_mem_tsv ON memories USING GIN(tsv);

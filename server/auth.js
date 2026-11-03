@@ -25,6 +25,8 @@ async function verifyPassword(password, stored) {
   const hash = await scryptAsync(password, salt, 64);
   return timingSafeEqual(hash, Buffer.from(hex, 'hex'));
 }
+// What an unknown email's password is checked against (see /login). Made once, matches nothing.
+const standIn = hashPassword(randomBytes(16).toString('hex'));
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 
 function readCookie(req, name) {
@@ -73,15 +75,23 @@ async function otherAccounts(req, res, activeId) {
   return kept;
 }
 
-// Simple in-memory brute-force guard: 10 failed attempts per IP+email per 15 minutes
+// Simple in-memory brute-force guard: 10 failed attempts per 15 minutes, counted both per
+// IP+email and per account. The account count stops someone who keeps changing connection;
+// it only blocks new sign-ins, so people already signed in carry on.
 const attempts = new Map();
+const WINDOW = 15 * 60000;
+// Old counts are cleared out, so a stream of made-up emails cannot fill the memory.
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, a] of attempts) if (a.until <= now) attempts.delete(k);
+}, WINDOW).unref();
 const tooMany = (key) => {
   const a = attempts.get(key);
   return a && a.until > Date.now() && a.count >= 10;
 };
 const fail = (key) => {
   const a = attempts.get(key);
-  attempts.set(key, a && a.until > Date.now() ? { ...a, count: a.count + 1 } : { count: 1, until: Date.now() + 15 * 60000 });
+  attempts.set(key, a && a.until > Date.now() ? { ...a, count: a.count + 1 } : { count: 1, until: Date.now() + WINDOW });
 };
 
 const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, external: !!u.external });
@@ -153,14 +163,20 @@ authRoutes.get('/me', async (req, res, next) => {
 authRoutes.post('/login', async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const key = `${req.ip}|${email}`;
-  if (tooMany(key)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+  const account = `account|${email}`;
+  if (tooMany(key) || tooMany(account)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
   const user = await db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-  if (!user || !(await verifyPassword(String(req.body.password || ''), user.password_hash))) {
+  // An unknown email is checked against a stand-in password too, so the answer takes as long
+  // as for a real account and the timing does not tell which emails have one.
+  const ok = await verifyPassword(String(req.body.password || ''), user?.password_hash || await standIn);
+  if (!user || !ok) {
     fail(key);
+    fail(account);
     return res.status(401).json({ error: 'Wrong email or password' });
   }
   if (user.disabled) return res.status(403).json({ error: 'This account has been disabled' });
   attempts.delete(key);
+  attempts.delete(account);
   // "Add another account": the account signed in now steps aside instead of being
   // replaced, so it is one tap away in the switcher. Its own session is untouched.
   const others = readOthers(req);
