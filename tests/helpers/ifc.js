@@ -1,0 +1,58 @@
+// A tiny IFC4 model written out by hand, so the IFC tests never need a file in the repo:
+// two storeys (ground at 0, first at +3.5 m), lengths in millimetres. Wall A (4 m long, with
+// a Qto_WallBaseQuantities set) and Door 1 are on the ground floor; Wall B, with no
+// quantities at all, is on the first floor.
+const gid = (n) => String(n).padStart(22, '0');
+export const TINY_IFC = `ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('ViewDefinition [ReferenceView]'),'2;1');
+FILE_NAME('tiny.ifc','2026-11-04T00:00:00',(''),(''),'Reem test','Reem test writer','');
+FILE_SCHEMA(('IFC4'));
+ENDSEC;
+DATA;
+#1=IFCPROJECT('${gid(1)}',$,'Tiny project',$,$,$,$,(#20),#10);
+#10=IFCUNITASSIGNMENT((#11,#12,#13));
+#11=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);
+#12=IFCSIUNIT(*,.AREAUNIT.,$,.SQUARE_METRE.);
+#13=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);
+#20=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,#21,$);
+#21=IFCAXIS2PLACEMENT3D(#22,$,$);
+#22=IFCCARTESIANPOINT((0.,0.,0.));
+#30=IFCSITE('${gid(2)}',$,'Tiny site',$,$,#31,$,$,.ELEMENT.,$,$,$,$,$);
+#31=IFCLOCALPLACEMENT($,#21);
+#40=IFCBUILDING('${gid(3)}',$,'Tiny school',$,$,#41,$,$,.ELEMENT.,$,$,$);
+#41=IFCLOCALPLACEMENT(#31,#21);
+#50=IFCBUILDINGSTOREY('${gid(4)}',$,'Ground floor',$,$,#51,$,$,.ELEMENT.,0.);
+#51=IFCLOCALPLACEMENT(#41,#21);
+#52=IFCBUILDINGSTOREY('${gid(5)}',$,'First floor',$,$,#53,$,$,.ELEMENT.,3500.);
+#53=IFCLOCALPLACEMENT(#41,#54);
+#54=IFCAXIS2PLACEMENT3D(#55,$,$);
+#55=IFCCARTESIANPOINT((0.,0.,3500.));
+#60=IFCRELAGGREGATES('${gid(6)}',$,$,$,#1,(#30));
+#61=IFCRELAGGREGATES('${gid(7)}',$,$,$,#30,(#40));
+#62=IFCRELAGGREGATES('${gid(8)}',$,$,$,#40,(#50,#52));
+#70=IFCWALL('${gid(9)}',$,'Wall A',$,$,#71,#72,$,.STANDARD.);
+#71=IFCLOCALPLACEMENT(#51,#21);
+#72=IFCPRODUCTDEFINITIONSHAPE($,$,(#73));
+#73=IFCSHAPEREPRESENTATION(#20,'Body','SweptSolid',(#74));
+#74=IFCEXTRUDEDAREASOLID(#75,#21,#78,3000.);
+#75=IFCRECTANGLEPROFILEDEF(.AREA.,$,#76,4000.,200.);
+#76=IFCAXIS2PLACEMENT2D(#77,$);
+#77=IFCCARTESIANPOINT((2000.,100.));
+#78=IFCDIRECTION((0.,0.,1.));
+#80=IFCWALL('${gid(10)}',$,'Wall B',$,$,#81,#82,$,.STANDARD.);
+#81=IFCLOCALPLACEMENT(#53,#21);
+#82=IFCPRODUCTDEFINITIONSHAPE($,$,(#83));
+#83=IFCSHAPEREPRESENTATION(#20,'Body','SweptSolid',(#84));
+#84=IFCEXTRUDEDAREASOLID(#75,#21,#78,3000.);
+#90=IFCRELCONTAINEDINSPATIALSTRUCTURE('${gid(11)}',$,$,$,(#70,#110),#50);
+#91=IFCRELCONTAINEDINSPATIALSTRUCTURE('${gid(12)}',$,$,$,(#80),#52);
+#100=IFCQUANTITYLENGTH('Length',$,$,4000.,$);
+#101=IFCQUANTITYAREA('NetSideArea',$,$,12.,$);
+#102=IFCQUANTITYVOLUME('NetVolume',$,$,2.4,$);
+#103=IFCELEMENTQUANTITY('${gid(13)}',$,'Qto_WallBaseQuantities',$,$,(#100,#101,#102));
+#104=IFCRELDEFINESBYPROPERTIES('${gid(14)}',$,$,$,(#70),#103);
+#110=IFCDOOR('${gid(15)}',$,'Door 1',$,$,#71,$,$,2100.,900.,.DOOR.,$,$);
+ENDSEC;
+END-ISO-10303-21;
+`;

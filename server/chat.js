@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { isRevit, REVIT_HELP } from './ifc.js';
 import { billNote } from './billing.js';
 import { claude } from './ai.js';
 import { isKeyError, keysFor } from './aiKeys.js';
@@ -407,6 +408,11 @@ async function readAttachments(user, convId, files, send, team, said = '') {
       }
     } catch (e) {
       send('notice', { message: e.message });
+      // A Revit file is said in the reply too, so the answer explains it rather than going
+      // on as if nothing had been sent.
+      if (isRevit(name)) blocks.push({ type: 'text', text: `<file name="${name}">
+Not opened. ${REVIT_HELP} Tell the person this in plain words.
+</file>` });
     }
   }
   return { blocks, meta };

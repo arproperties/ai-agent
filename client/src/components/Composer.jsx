@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
 import { listenUntilSilence, finishListening, stopListening, unlockAudio, TAP_TO_STOP } from '../lib/voice';
 
-const ACCEPT = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,audio/*,.opus,.ogg,.oga,.m4a,.aac,.amr,.caf,.mp3,.wav,.pdf,.docx,.dwg,.dxf,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
+const ACCEPT = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,audio/*,.opus,.ogg,.oga,.m4a,.aac,.amr,.caf,.mp3,.wav,.pdf,.docx,.dwg,.dxf,.ifc,.rvt,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 
 // quote: part of a reply picked with select → Reply. It rides above the box and goes with
 // the next message. Sent on its own it asks for a reply email; with words typed, the words

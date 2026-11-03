@@ -61,11 +61,16 @@ export default defineConfig({
       // now a line in src/sw.js, because a hand-written worker sets up its own routes.)
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // The 3D viewer is a few MB and fetched only when someone opens a model; every phone
+        // downloading it with each update would cost them data for nothing.
+        globIgnores: ['**/ifcWorker-*.js', '**/Model3D-*.js'],
       },
       // So notifications can be tried on localhost during development, not only once live.
       devOptions: { enabled: true, type: 'module', suppressWarnings: true },
     }),
   ],
+  // The 3D viewer's worker (src/lib/ifcWorker.js) imports web-ifc as a module.
+  worker: { format: 'es' },
   server: {
     // Drawings are drawn by server/drawingCore.js, shared with the server: let the dev server read it.
     fs: { allow: ['..'] },

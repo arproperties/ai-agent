@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileSignature, Building2, Receipt, Landmark, Scale, Users, IdCard, BadgeCheck, Mail, Megaphone, Image as ImageIcon,
   Folder, FolderOpen, Search, Download, ExternalLink, Loader2, AlertCircle, Upload, ChevronLeft, Trash2, MessageSquare, X, Info, PenLine, Sparkles,
-  FileArchive, FolderInput, CheckCircle2, Clock, Play, Pin,
+  FileArchive, FolderInput, CheckCircle2, Clock, Play, Pin, Box,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { startImport, importState, onImport, clearImportError } from '../lib/importer';
@@ -16,7 +16,14 @@ import Picker from './Picker';
 import Orb from './Orb';
 import { CaseFolders, CaseFolder, useCaseFolders } from './CaseFolders';
 
-export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.dwg,.dxf,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
+// The 3D viewer (three.js, and web-ifc for IFC models) is only fetched when someone opens a model.
+const Model3D = lazy(() => import('./Model3D'));
+
+// .rvt is accepted so that sending one gets an explanation (export it as IFC) rather than a
+// file picker that will not let it be chosen.
+export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.dwg,.dxf,.ifc,.rvt,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
+export const isIfc = (d) => /\.ifc$/i.test(d?.name || '');
+export const isCad = (d) => /\.(dwg|dxf)$/i.test(d?.name || '');
 
 // icon, icon colour, tinted background for each folder
 const FOLDER_STYLE = {
@@ -87,7 +94,10 @@ export function useFiles(agentId, { off = false } = {}) {
     setUploading(true);
     try {
       const res = await sendToShelf(files, agentId);
-      setNotes(res.filter((r) => r.duplicate).map((r) => `${r.name} is already in your files${r.shelf ? `, filed under ${r.shelf}` : ''}`));
+      setNotes([
+        ...res.filter((r) => r.refused).map((r) => `${r.name}: ${r.refused}`),
+        ...res.filter((r) => r.duplicate).map((r) => `${r.name} is already in your files${r.shelf ? `, filed under ${r.shelf}` : ''}`),
+      ]);
     } catch (e) { setNotes([e.message]); }
     setUploading(false);
     load();
@@ -176,6 +186,9 @@ export function FileCard({ d, onOpen, showShelf = false }) {
           </div>
         )}
         {d.status === 'error' && <AlertCircle size={18} className="absolute right-2.5 top-2.5 text-bad" />}
+        {isIfc(d) && !busy && (
+          <span className="on-dark absolute bottom-2.5 left-2.5 flex items-center gap-1 rounded-full bg-p1/85 px-2 py-0.5 text-[10px] font-medium text-white"><Box size={11} /> 3D</span>
+        )}
         {d.kind === 'fact' && !d.shared && (
           <span title="Noticed in a chat — not shared yet" className="absolute left-2.5 top-2.5 flex items-center gap-1 rounded-full bg-amber-400/90 px-2 py-0.5 text-[10px] font-medium text-[#141128]">
             <Sparkles size={11} /> Learned
@@ -200,6 +213,9 @@ export function FileCard({ d, onOpen, showShelf = false }) {
   );
 }
 
+// Phase 3 turns this on: the rough 3D view of a DWG/DXF plan.
+const ROUGH_3D = false;
+
 // how a file can be shown inside the app
 const viewMode = (d) => {
   if (d.kind === 'image') return 'image';
@@ -223,13 +239,17 @@ function TextView({ d }) {
 
 // Full-screen in-app viewer (never a new tab). onInfo shows the details sheet.
 export function FileViewer({ d, onClose, onInfo }) {
+  // An IFC opens as the real model; a DWG/DXF plan can be pushed up into a rough picture.
+  const [three, setThree] = useState(() => !!d.open3d && isIfc(d));
   useEffect(() => {
+    if (three) return undefined; // Escape then closes the 3D view only
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, three]);
   const mode = viewMode(d);
   const [FolderIcon, tone, bg] = folderStyle(d.folder);
+  const model = isIfc(d) ? 'ifc' : isCad(d) && ROUGH_3D ? 'rough' : null;
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col bg-[#07061a]/95 backdrop-blur-xl" onClick={onClose}>
@@ -239,6 +259,10 @@ export function FileViewer({ d, onClose, onInfo }) {
           <p className="truncate text-sm font-medium">{d.status === 'processing' ? d.name : d.title}</p>
           <p className="truncate text-xs text-mute">{[d.folder, fmtDate(d.doc_date), fmtSize(d.size)].filter(Boolean).join(' · ')}</p>
         </div>
+        {model && (
+          <button onClick={() => setThree(true)} title={model === 'ifc' ? 'View in 3D' : 'Rough 3D view'}
+            className="flex h-10 items-center gap-1.5 rounded-full bg-p1/20 px-3 text-sm text-p1 hover:bg-p1/30"><Box size={17} /> {model === 'ifc' ? '3D' : 'Rough 3D'}</button>
+        )}
         {onInfo && (
           <button onClick={() => onInfo(d)} aria-label="File details" title="Details"
             className="grid size-10 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Info size={19} /></button>
@@ -263,11 +287,33 @@ export function FileViewer({ d, onClose, onInfo }) {
         {!mode && (
           <div className="flex flex-col items-center gap-3 text-center">
             <Preview d={d} big className="size-40 rounded-3xl" />
-            <p className="text-sm text-mute">This file type can't be previewed here.</p>
-            <a href={`${fileUrl(d)}?download=1`} className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2.5 text-sm font-medium text-white"><Download size={16} /> Download</a>
+            {model ? (
+              <>
+                <p className="max-w-xs text-sm text-mute">{model === 'ifc'
+                  ? `A 3D building model (${fmtSize(d.size)}). It opens here on the phone; a big one may need a computer.`
+                  : 'A 2D CAD drawing. Reem can push its walls up into a rough 3D picture, for viewing only.'}</p>
+                <button onClick={() => setThree(true)} className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2.5 text-sm font-medium text-white">
+                  <Box size={16} /> {model === 'ifc' ? 'View in 3D' : 'Rough 3D view'}
+                </button>
+                <a href={`${fileUrl(d)}?download=1`} className="flex items-center gap-2 text-sm text-mute hover:text-txt"><Download size={15} /> Download</a>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-mute">This file type can't be previewed here.</p>
+                <a href={`${fileUrl(d)}?download=1`} className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2.5 text-sm font-medium text-white"><Download size={16} /> Download</a>
+              </>
+            )}
           </div>
         )}
       </div>
+      {three && (
+        // Clicks inside the 3D view must not reach this viewer's own click-to-close.
+        <div onClick={(e) => e.stopPropagation()}>
+          <Suspense fallback={<div className="fixed inset-0 z-[70] grid place-items-center bg-[#0b0a1a]"><Loader2 size={22} className="animate-spin text-white/70" /></div>}>
+            <Model3D doc={d} rough={model === 'rough'} onClose={() => setThree(false)} />
+          </Suspense>
+        </div>
+      )}
     </div>,
     document.body,
   );
