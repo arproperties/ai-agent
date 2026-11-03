@@ -213,8 +213,6 @@ export function FileCard({ d, onOpen, showShelf = false }) {
   );
 }
 
-// Phase 3 turns this on: the rough 3D view of a DWG/DXF plan.
-const ROUGH_3D = false;
 
 // how a file can be shown inside the app
 const viewMode = (d) => {
@@ -249,7 +247,7 @@ export function FileViewer({ d, onClose, onInfo }) {
   }, [onClose, three]);
   const mode = viewMode(d);
   const [FolderIcon, tone, bg] = folderStyle(d.folder);
-  const model = isIfc(d) ? 'ifc' : isCad(d) && ROUGH_3D ? 'rough' : null;
+  const model = isIfc(d) ? 'ifc' : isCad(d) ? 'rough' : null;
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col bg-[#07061a]/95 backdrop-blur-xl" onClick={onClose}>

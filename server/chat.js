@@ -146,6 +146,11 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'or <!--export:dxf--> for AutoCAD, and one short line such as "Here it is as a PDF." This comes before the document markers above whenever the thing to convert is a drawing. ' +
     'For any other format for a drawing (video, audio, Word or anything else), say in one line that drawings come as PDF, image or AutoCAD. ' +
     'A written document can only be made into a PDF.');
+  // 3D comes only from the two kinds of file that carry it (Knowledge.jsx FileViewer, Model3D.jsx).
+  parts.push('3D views: an IFC model (.ifc) opens in 3D with "View in 3D" on the file, in the chat or on the Shelf. ' +
+    'A DWG or DXF plan has "Rough 3D view", which stands its walls up to one storey height for viewing only, never for measuring. ' +
+    'A PDF cannot be made into 3D, and you cannot make 3D yourself: when asked, say it needs the DWG of the plan, or better an IFC export of the model ' +
+    '(Revit: File → Export → IFC). Revit files (.rvt) cannot be opened.');
   // Only for those given Pictures (server/pictures.js). Without this paragraph a request for
   // an image was answered in words, or with the line drawing above.
   if (canPicture) {

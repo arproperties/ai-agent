@@ -66,7 +66,7 @@ export async function readDxfFile(path, name) {
   return summarise(await scan(path), name);
 }
 
-async function convertAndRead(buffer, name) {
+async function convertAndRead(buffer, name, use = (scanned) => summarise(scanned, name)) {
   // On disk under data/, not the system temp folder: on the server that is held in memory,
   // and the DXF of a large drawing runs to hundreds of MB.
   mkdirSync(join(DATA_DIR, 'tmp'), { recursive: true });
@@ -84,7 +84,7 @@ async function convertAndRead(buffer, name) {
         // Otherwise dwg2dxf is complaining about parts it skipped; the file it wrote is still read.
       }
     } else writeFileSync(dxf, buffer);
-    return summarise(await scan(dxf), name);
+    return use(await scan(dxf));
   } catch (e) {
     if (e.code === 'ENOENT') throw new Error(`Could not open the drawing ${name}: it may be damaged or a DWG version that cannot be read`);
     throw e;
@@ -313,7 +313,7 @@ async function scan(path) {
   }
   finish();
   for (const name of inside.keys()) if (!placed.has(name)) inside.delete(name); // drawn nowhere
-  return { layers, titles, counts, inside, units, sizes: pipeSizes(pieces, labels, units, layers) };
+  return { layers, titles, counts, inside, units, sizes: pipeSizes(pieces, labels, units, layers), pieces, labels };
 }
 
 const GEOMETRY = new Set(['LINE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'VERTEX', 'MLINE', 'SPLINE']);
@@ -527,6 +527,14 @@ function draftsmanList({ layers, titles, counts, units }, measured) {
   if (drawn && !number) {
     fixes.push(`No clear drawing number was found in the title block${titles.size ? '' : ' (it has no filled-in fields)'}. Please fill in the drawing number and revision.`);
   }
+  // An architect's plan (it has door or window layers) whose walls sit on no layer named for
+  // walls cannot be measured as walls or shown as a rough 3D view.
+  const names = [...layers.keys()];
+  const doorsOrWindows = names.some((l) => /door|window|^a[-_ ]?(dr|wd|win)/i.test(l))
+    || [...layers.values()].some((L) => [...L.blocks.keys()].some((b) => /door|window/i.test(b)));
+  if (doorsOrWindows && !wallLayers(names).length) {
+    fixes.push('No layer is named for walls (such as WALL or A-WALL), so the walls cannot be measured or shown in 3D. Please put the walls on a layer named WALL.');
+  }
   if (drawn > 200 && total('DIMENSION') < 5) {
     fixes.push(`The drawing has only ${total('DIMENSION')} dimension${total('DIMENSION') === 1 ? '' : 's'}. Please add dimensions for the main sizes, so they do not have to be measured off the drawing.`);
   }
@@ -643,4 +651,103 @@ function summarise({ layers, titles, counts, inside, units, sizes }, name) {
     for (const [b, m] of [...inside].sort((a, c) => a[0].localeCompare(c[0]))) out.push(`${b}: ${listed(m).join(' | ')}`);
   }
   return out.join('\n');
+}
+
+// ---------- rough 3D from a 2D plan ----------
+
+// Layer names that hold walls, as architects and draftsmen name them: WALL, A-WALL, sh-wall,
+// WALLS-EXT, BLOCK WORK… One list, so a new naming seen on site is added in one place.
+export const WALL_LAYER = [/wall/i, /^a[-_ ]?wal/i, /block[-_ ]?work/i, /masonry/i, /partition/i, /^jdar|جدار/i];
+// …but not the hatch, dimensions or tags drawn for those walls, nor walls cut in a section,
+// elevation or detail, which stood up would make a plan out of a side view.
+const NOT_WALL_LAYER = /patt|hatch|dim|text|txt|tag|iden|note|anno|insul|fin(ish)?$|sect|elev|detail/i;
+export const wallLayers = (names) => names.filter((l) => WALL_LAYER.some((r) => r.test(l)) && !NOT_WALL_LAYER.test(l));
+
+const DEFAULT_STOREY_M = 3.5;
+const MAX_WALL_SEGMENTS = 60_000; // what a phone can still turn smoothly
+
+/**
+ * Levels written on the drawing: "FFL +3.45", "F.F.L. 0.00", "+6.90", "±0.00", "LEVEL +3.45".
+ * Only numbers with decimals, read as metres, as levels are written in the UAE.
+ */
+export function levelsIn(labels) {
+  const out = new Set();
+  for (const { text } of labels) {
+    const t = text.replace(/\s+/g, ' ').trim();
+    const m = t.match(/(?:F\.?\s?F\.?\s?L\.?|S\.?S\.?L\.?|T\.?O\.?S\.?|LEVEL|LVL|EL\.?)\s*[:=]?\s*([+±-]?\s?\d{1,3}\.\d{2,3})\b/i)
+      || t.match(/^([+±-]\s?\d{1,3}\.\d{2,3})\s*(m|M)?$/);
+    if (m) out.add(Number(m[1].replace(/[±\s]/g, '').replace(/^\+/, '')));
+  }
+  return [...out].filter(Number.isFinite).sort((a, b) => a - b);
+}
+
+/**
+ * Storey height from the level marks. Floors are followed up from the lowest level, each next
+ * floor being the first level at least 2.4 m higher, so a step at a door or a 15 cm kerb
+ * (+0.15) is never taken for a floor; the most common rise is the storey height, if it is
+ * at most 8 m. Null when the drawing does not give two levels a storey apart.
+ */
+export function storeyHeight(levels) {
+  const rises = new Map();
+  let at = levels[0];
+  for (const l of levels) {
+    const d = Math.round((l - at) * 100) / 100;
+    if (d < 2.4) continue;
+    if (d <= 8) rises.set(d, (rises.get(d) || 0) + 1);
+    at = l;
+  }
+  if (!rises.size) return null;
+  return [...rises].sort((a, b) => b[1] - a[1])[0][0];
+}
+
+/** The walls of a plan as segments in metres around its middle, ready for the 3D viewer. */
+export function roughWalls({ pieces, labels, layers, units }) {
+  const names = wallLayers([...layers.keys()]);
+  if (!names.length) {
+    return { error: 'This drawing has no layer named for walls (such as WALL or A-WALL), so a rough 3D view cannot be made from it. ' +
+      'Tell the draftsman: please put the walls on a layer named WALL and send the drawing again.' };
+  }
+  const use = new Set(names);
+  // A frame or outline drawn on a wall layer is pointed out in the reading; here it is left
+  // out, or it would stand up as one long wall around the whole sheet.
+  const strays = new Set(names.map((l) => stray(layers.get(l), units) && layers.get(l).longest.piece).filter(Boolean));
+  // Units the drawing does not give are taken from its size: a plan tens of thousands of
+  // units across is in millimetres. Said in the note, since it is a guess.
+  let m = UNIT_M[units], guessed = false;
+  const segs = [];
+  for (const p of pieces) {
+    if (!use.has(p.layer) || strays.has(p)) continue;
+    for (let i = 1; i < p.pts.length; i++) segs.push([p.pts[i - 1].x, p.pts[i - 1].y, p.pts[i].x, p.pts[i].y]);
+  }
+  if (!segs.length) return { error: 'The wall layers in this drawing have no lines on them, so there is nothing to show in 3D.' };
+  const xs = segs.flatMap((s) => [s[0], s[2]]).sort((a, b) => a - b);
+  const ys = segs.flatMap((s) => [s[1], s[3]]).sort((a, b) => a - b);
+  if (!m) { m = xs[xs.length - 1] - xs[0] > 2000 ? 0.001 : 1; guessed = true; }
+  const cx = xs[Math.floor(xs.length / 2)], cy = ys[Math.floor(ys.length / 2)];
+  const kept = segs.length > MAX_WALL_SEGMENTS
+    ? segs.map((s) => [s, Math.hypot(s[2] - s[0], s[3] - s[1])]).sort((a, b) => b[1] - a[1]).slice(0, MAX_WALL_SEGMENTS).map(([s]) => s)
+    : segs;
+  const r = (n) => Math.round(n * 100) / 100;
+  const walls = [];
+  for (const [x1, y1, x2, y2] of kept) {
+    if (x1 === x2 && y1 === y2) continue;
+    walls.push(r((x1 - cx) * m), r((y1 - cy) * m), r((x2 - cx) * m), r((y2 - cy) * m));
+  }
+  const levels = levelsIn(labels);
+  const read = storeyHeight(levels);
+  const height = read ?? DEFAULT_STOREY_M;
+  const shown = levels.slice(0, 6).map((l) => `${l > 0 ? '+' : ''}${l.toFixed(2)}`).join(', ');
+  const note = [
+    read ? `Wall height ${height} m, from the level marks in the drawing (${shown}).`
+      : `Wall height ${DEFAULT_STOREY_M} m by default: the drawing does not give two floor levels.`,
+    guessed ? `The drawing does not say its units; read as ${m === 0.001 ? 'millimetres' : 'metres'}.` : '',
+    kept.length < segs.length ? `Only the ${MAX_WALL_SEGMENTS.toLocaleString('en-US')} longest wall lines are shown.` : '',
+  ].filter(Boolean).join(' ');
+  return { walls, height, heightFrom: read ? 'levels' : 'default', thickness: 0.2, layers: names, note };
+}
+
+/** Rough 3D walls for a drawing: converted and scanned as readDrawing does, one at a time. */
+export function roughModel(buffer, name) {
+  if (buffer.length > MAX_DRAWING_MB * 1024 * 1024) return Promise.resolve({ error: `${name} is too big to open.` });
+  return oneAtATime(() => convertAndRead(buffer, name, roughWalls));
 }

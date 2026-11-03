@@ -71,6 +71,7 @@ import { legalCaseRoutes, startLegalCases } from './legalCases.js';
 import { legalLeaseRoutes } from './legalLease.js';
 import { uploadLimitMB, MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB, MAX_IFC_MB } from './dwg.js';
 import { isRevit, REVIT_HELP } from './ifc.js';
+import { roughModelFor } from './rough3d.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -403,6 +404,14 @@ app.get('/api/documents/:id/file', wrap(async (req, res) => {
   // dotfiles: the path is the one stored for this file, never the visitor's; a data folder
   // under a dot-named folder (a git worktree under .claude) must not turn every file into a 404.
   res.type(inline || 'application/octet-stream').sendFile(doc.path, { dotfiles: 'allow' });
+}));
+// A DWG/DXF plan's walls stood up into a rough 3D view (dwg.js roughWalls). Opens for whoever
+// may open the drawing itself; the walls come back as numbers and the phone draws them.
+app.get('/api/documents/:id/rough3d', wrap(async (req, res) => {
+  const model = await roughModelFor(req.user, req.params.id);
+  if (!model) return notFound(res);
+  if (model.error) return res.status(422).json({ error: model.error });
+  res.json(model);
 }));
 // Word documents rendered as HTML for the in-app viewer
 app.get('/api/documents/:id/preview', wrap(async (req, res) => {
