@@ -1023,6 +1023,21 @@ async function thread(renewalId) {
 }
 
 /**
+ * What the team already asked the advisors on this renewal and what they answered, oldest
+ * first, so a follow-up ("you should suggest the chiller fee") builds on it instead of
+ * starting again (the user, 2026-11-03).
+ */
+async function earlierAdvice(renewalId) {
+  const rows = await db.prepare(`SELECT e.body, e.data, e.at, u.name AS by FROM lease_renewal_events e LEFT JOIN users u ON u.id = e.user_id
+    WHERE e.renewal_id = ? AND e.kind = 'advice' ORDER BY e.at DESC, e.id DESC LIMIT 6`).all(renewalId);
+  return rows.reverse().map((x) => [
+    `${dubaiDate(Number(x.at) * 1000)}, ${x.data?.agent?.name || 'An advisor'}${x.data?.ask ? `, asked by ${x.by || 'the team'}: "${x.data.ask}"` : ''}`,
+    `Answer: ${String(x.body || '').slice(0, 1500)}`,
+    x.data?.reply ? `Suggested reply: ${String(x.data.reply).slice(0, 1000)}` : '',
+  ].filter(Boolean).join('\n')).join('\n\n');
+}
+
+/**
  * What a person asked, answered by each agent they picked, side by side on the timeline:
  * an answer, and an email to the tenant only when they asked for one. With no agents
  * named, the picked advisors answer. One that fails is left out and the others still answer.
@@ -1036,7 +1051,8 @@ export async function askAdvisors(r, { user = null, ask = '', agentIds = null } 
   const question = String(ask || '').trim().slice(0, 2000);
   const facts = `${factsOf(r, s)}\n\n${await contractOf(r)}`;
   const emails = await thread(r.id);
-  const answers = await Promise.allSettled(team.map((agent) => D.advise({ agent, facts, thread: emails, dispute: r.dispute, ask: question })));
+  const earlier = await earlierAdvice(r.id);
+  const answers = await Promise.allSettled(team.map((agent) => D.advise({ agent, facts, thread: emails, dispute: r.dispute, ask: question, earlier })));
   let n = 0;
   for (const [i, a] of answers.entries()) {
     const agent = team[i];

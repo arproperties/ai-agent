@@ -144,7 +144,12 @@ Answer by filling in the answer tool: {"view": string, "reply": string|null}
   Options you suggest (e.g. a figure to offer) are clearly your suggestion for the team to decide.
 - You already have the contract, its charges, Ejari and saifsys's legal cases: never tell the team to pull or check them. If
   something you need is not in what you were given, name exactly what is missing, once.
-- reply: the email to the tenant that carries out your advice, ready to send: in English, polite, using only the facts given and
+- What the tenant already said in the emails is known: use it. Never ask the tenant again for something they already told us,
+  and never ask them for the contract, the Ejari or a figure on them: we are the landlord and hold those. Anything the team
+  still has to check goes in the view, never in the email.
+- Earlier questions from the team and the advisors' answers are given: build on them, don't repeat them. When the team asks
+  you to suggest a figure, give one, with why.
+- reply: the email to the tenant that carries out your advice, ready to send (when you suggest a figure, it offers that figure): in English, polite, using only the facts given and
   your suggestion. Only the body: no greeting ("Dear ...") and no sign-off, as both are added. null only if no email should go now.
 Rules you never break:
 - Never say whether the rent increase is legal or allowed. If the tenant raises it, say the team should check the unit on DLD's Rental Index calculator and offer what it allows.
@@ -152,9 +157,10 @@ Rules you never break:
 - Never present a figure, date or promise as already agreed when it is not in the facts.`;
 
 /** One advisor's answer to what a person asked about a renewal, in its own persona. agent: { name, persona }. */
-export async function advise({ agent, facts, thread, dispute, ask }) {
+export async function advise({ agent, facts, thread, dispute, ask, earlier }) {
   const out = await askJson(`${agent.persona || `You are ${agent.name}.`}\n\n${ADVISE}`, [{ type: 'text', text:
     `Facts of this renewal:\n${facts}\n\n${dispute ? `The tenant disputes it: ${dispute}\n\n` : ''}The emails, oldest first:\n${thread || '(none yet)'}\n\n` +
+    `${earlier ? `What the team asked the advisors before, and their answers, oldest first:\n${earlier}\n\n` : ''}` +
     `The team asks you:\n"""\n${String(ask || 'Give your view: what is going on and what should we do next?').slice(0, 2000)}\n"""` }], S({ view: str, reply: strOrNull }));
   return {
     view: String(out.view || '').trim().slice(0, 4000),

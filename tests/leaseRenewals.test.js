@@ -411,8 +411,10 @@ test('advisors: they answer only when asked, the agents picked and what the pers
   assert.equal(world.sent.length, 1, 'advice never emails the tenant');
 
   // No agents named: the picked advisors answer; a reply they write opens as a draft to change.
-  R.useForTests({ advise: async ({ agent: a }) => ({ view: `${a.name} again`, reply: `Reply from ${a.name}` }) });
+  let earlier = null;
+  R.useForTests({ advise: async ({ agent: a, earlier: e }) => { earlier = e; return { view: `${a.name} again`, reply: `Reply from ${a.name}` }; } });
   assert.equal(await R.askAdvisors(await R.getRenewal(r.id), { user: boss, ask: 'Write a reply' }), 2);
+  assert.match(earlier, /Writer, asked by Boss: "Help me negotiate the chiller fee"\nAnswer: Writer: offer to meet halfway\./, 'a follow-up sees what was asked and answered before');
   const d = await R.draft(boss, { id: r.id, action: 'reply', words: 'Reply from RDC' });
   assert.match(d.text, /^Dear Mohamed Saeed,\n\nReply from RDC\n/);
 });
