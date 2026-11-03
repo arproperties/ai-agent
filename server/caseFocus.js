@@ -93,6 +93,27 @@ export async function claimCase(userId, conversationId, agent) {
   return Boolean(row);
 }
 
+/**
+ * An agent bound to a case after it already had chats: those chats are about the case too.
+ * Only chats with no case yet, and only those this agent answered first (started with it, as
+ * "@Frazier …"), so a general chat it joined later is left alone. With no agentId, every bound agent (run at boot, so a binding
+ * made before this existed catches up). Returns how many chats it linked.
+ */
+export async function claimPastChats(agentId = null) {
+  const agents = await db.prepare(`SELECT id, case_number, case_key FROM agents
+    WHERE case_key IS NOT NULL AND (?::int IS NULL OR id = ?::int)`).all(agentId, agentId);
+  let linked = 0;
+  for (const a of agents) {
+    const { changes } = await db.prepare(`UPDATE conversations c SET primary_case = ?::jsonb
+      WHERE c.primary_case IS NULL
+        AND (SELECT m.agent_id FROM messages m WHERE m.conversation_id = c.id AND m.role = 'assistant'
+          ORDER BY m.id LIMIT 1) = ?`)
+      .run(JSON.stringify({ number: a.case_number, key: a.case_key, source: 'agent' }), a.id);
+    linked += changes;
+  }
+  return linked;
+}
+
 const saveRefs = (conversationId, refs) =>
   db.prepare('UPDATE conversations SET reference_cases = ?::jsonb WHERE id = ?').run(JSON.stringify(refs.map(({ number, key }) => ({ number, key }))), conversationId);
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
-import { shelfKit, spellingMatch } from '../server/shelf.js';
+import { shelfKit, spellingMatch, soundKey } from '../server/shelf.js';
 import { libraryCatalog } from '../server/files.js';
 
 test.after(() => closeDb());
@@ -113,6 +113,37 @@ test('the master finds and opens what a team member uploaded, private files too,
   // Nobody else gets the same view.
   assert.match((await call(rona, 'search_files', { uploaded_by: 'Said' })).content, /No saved file uploaded by Said/);
   assert.equal((await call(rona, 'read_file', { id: tax })).is_error, true);
+});
+
+test('a name spelt as heard still finds the person: Syed is Said, Saif is not', () => {
+  for (const w of ['syed', 'saeed', 'sayed', 'saied']) assert.equal(soundKey(w), soundKey('said'), w);
+  assert.equal(soundKey('muhammed'), soundKey('mohammad'));
+  assert.notEqual(soundKey('saif'), soundKey('said'));
+});
+
+test('"what has Syed purchased" gives what Said uploaded first, not files that only mention Syed', async () => {
+  const { master } = await fixture();
+  const said = await makeUser('Said');
+  const bill = await doc(said, 'Invoice Royal Home Building Materials', { text: 'Cement 20 bags, AED 400.' });
+  // The master's old ledger: it says Syed, but Said did not upload it.
+  const ledger = await doc(master.id, 'General Ledger – Syed Purchaser Account', { text: 'Mr Syed Purchaser, generator oil.' });
+
+  const byName = await call(master, 'search_files', { uploaded_by: 'Syed' });
+  assert.match(byName.content, new RegExp(`^1 saved files uploaded by Said[\\s\\S]*#${bill} `));
+
+  const asked = (await call(master, 'search_files', { query: 'Syed purchases school site' })).content;
+  assert.match(asked, /names Said from the team/);
+  assert.match(asked, new RegExp(`#${bill} `));
+  assert.doesNotMatch(asked, new RegExp(`#${ledger} `), 'nothing mixed in that Said did not upload');
+
+  // All of them, however many: none held back for being old.
+  for (let i = 0; i < 45; i++) await doc(said, `Receipt ${i}`);
+  const all = (await call(master, 'search_files', { uploaded_by: 'Said' })).content;
+  assert.match(all, /^46 saved files uploaded by Said/);
+  assert.match(all, new RegExp(`#${bill} `), 'the oldest is listed too');
+
+  // A plain word that sounds like the name is not the person.
+  assert.doesNotMatch((await call(master, 'search_files', { query: 'ledger left side' })).content, /from the team/);
 });
 
 test('show_files hangs the files themselves on the reply, and only ones the person may open', async () => {

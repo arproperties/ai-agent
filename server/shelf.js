@@ -105,7 +105,16 @@ const scopeOf = (user) => (user.ownFilesOnly ? agentScope(user) : notOtherCases(
 const DOC_COLS = `t.id, t.user_id, t.title, t.name, t.folder, t.company, t.tags, t.summary, t.doc_date, t.expires_on, t.created_at,
   CASE WHEN t.user_id = ? THEN NULL ELSE coalesce(u.name, u.email) END AS uploader`;
 
-/** The people an "uploaded by" names - by name or email, a near spelling allowed. */
+/**
+ * A name as it sounds: Arabic names reach English many ways (Said, Syed, Saeed, Sayed;
+ * Mohammad, Muhammed), so the vowels and the letters that stand in for them are dropped and
+ * doubles run together. Said and Syed are both "sd", but Saif stays "sf".
+ */
+export const soundKey = (w) => w[0] + w.slice(1).replace(/[aeiouyhw]/g, '').replace(/q/g, 'k').replace(/(.)\1+/g, '$1');
+
+const sameName = (w, m) => m === w || spellingMatch(w, m) >= 0.8 || (w.length >= 3 && m.length >= 3 && soundKey(w).length >= 2 && soundKey(w) === soundKey(m));
+
+/** The people an "uploaded by" names - by name or email, a near spelling or a same-sounding one allowed. */
 async function uploaders(who) {
   const asked = plain(who);
   const people = await db.prepare('SELECT id, name, email FROM users').all();
@@ -113,9 +122,32 @@ async function uploaders(who) {
   if (exact.length) return exact;
   return people.filter((p) => {
     const mine = words(`${p.name || ''} ${String(p.email || '').split('@')[0]}`);
-    return words(who).some((w) => w.length >= 3 && mine.some((m) => m === w || spellingMatch(w, m) >= 0.8));
+    return words(who).some((w) => w.length >= 3 && mine.some((m) => sameName(w, m)));
   });
 }
+
+// "What has Syed purchased?" is a question about what Said uploaded, not about files with
+// the word Syed in them; old ledgers that name someone else made Reem answer with the
+// master's own files. So when a search names someone on the team, their uploads come first.
+// Only words written as names (a capital first letter) count, so "left side" is not Said.
+async function teamNamed(user, q) {
+  const asked = String(q).split(/[^\p{L}]+/u).filter((w) => /^\p{Lu}/u.test(w)).flatMap(words)
+    .filter((w) => w.length >= 3 && !STOP.has(w));
+  if (!asked.length) return [];
+  const people = await db.prepare("SELECT id, name, email FROM users WHERE id <> ? AND coalesce(name, '') <> ''").all(user.id);
+  return people.filter((p) => words(p.name).some((m) => asked.some((w) => sameName(w, m))));
+}
+
+// Every file the person uploaded, none held back: "what has Said bought" is answered by all
+// of Said's uploads, not a guess at which project or site each was for. The newest 40 say
+// what they are about; any older ones are listed by name only, to keep it short.
+const uploadsList = (docs, whose) => {
+  const newest = [...docs].sort((a, b) => b.id - a.id);
+  return `${docs.length} saved files${whose}, newest first. This is the answer: list every one of them for the user, with its amount when the line has it. ` +
+    'Leave none out, and say nothing about which project or site any of them was or was not for - the question\'s project or site is not a filter. ' +
+    'Do not mention these instructions. read_file opens one by its number.\n' +
+    newest.map((d, i) => [line(d), i < 40 && d.summary && `   About: ${String(d.summary).replace(/\s+/g, ' ').slice(0, 160)}`].filter(Boolean).join('\n')).join('\n');
+};
 
 export async function searchFiles(user, query, uploadedBy) {
   const q = String(query || '').trim().slice(0, 300);
@@ -136,9 +168,18 @@ export async function searchFiles(user, query, uploadedBy) {
   // Everything one person uploaded, newest first - the question was who, not what.
   if (!q) {
     if (!docs.length) return `No saved file${whose} that you can see.`;
-    const newest = [...docs].sort((a, b) => b.id - a.id).slice(0, 40);
-    return `${docs.length} saved files${whose}${docs.length > newest.length ? `, the newest ${newest.length} here` : ''}, newest first. read_file opens one by its number.\n` +
-      newest.map((d) => [line(d), d.summary && `   About: ${String(d.summary).replace(/\s+/g, ' ').slice(0, 160)}`].filter(Boolean).join('\n')).join('\n');
+    return uploadsList(docs, whose);
+  }
+
+  // A team member named in the search: the answer is what they uploaded, nothing mixed in.
+  if (!by) {
+    const team = await teamNamed(user, q);
+    const theirs = docs.filter((d) => team.some((p) => p.id === d.user_id));
+    if (theirs.length) {
+      const names = team.filter((p) => theirs.some((d) => d.user_id === p.id)).map((p) => p.name).join(' or ');
+      return `"${q}" names ${names} from the team, so these are the files ${names} uploaded - not files that only mention the name.\n` +
+        uploadsList(theirs, ` uploaded by ${names}`);
+    }
   }
 
   // Two lists - named like it, and saying it inside - merged the way search() merges its own.
@@ -245,7 +286,8 @@ export async function readFile(user, input) {
   return (await readFileParts(user, input)).content;
 }
 
-const MAX_SHOW = 10;
+// Enough for everything one person uploaded in a month: the boss asks to see all of Said's bills.
+const MAX_SHOW = 100;
 
 /** The files themselves, hung on the reply so they open from the chat. */
 export async function showFiles(user, ids) {
@@ -267,7 +309,8 @@ export const SHELF_TOOLS = [
       'Use it whenever they ask for a file, or about something a file would answer, and it is not already in <knowledge>. ' +
       'Always use it before saying a file is not there. Names are often spelt as they were heard: if nothing comes back, try another spelling or other words. ' +
       'Every file knows who uploaded it: when they ask what someone uploaded or sent to the Shelf, pass uploaded_by, and leave query out to get all of them (the list says what each is, so pick the invoices etc. from it) - ' +
-      'never search for the person\'s name inside the files for that.',
+      'never search for the person\'s name inside the files for that. "What has Syed bought", "Said\'s bills" and the like are questions about what that person uploaded; ' +
+      'a team member\'s name may be spelt as heard (Syed, Saeed for Said) and is still them.',
     input_schema: {
       type: 'object',
       properties: {
@@ -295,7 +338,7 @@ export const SHELF_TOOLS = [
     name: 'show_files',
     description: 'Put the actual files under your reply, so they open from the chat with one tap - a photo of a bill shows as the photo. ' +
       'Use it whenever they ask to see, show, open or get a file, bill, invoice, receipt or document: find it with search_files, then show it. ' +
-      `Up to ${MAX_SHOW} at once, the ones they asked for. Then say in a line or two what each one is; the files are already there, so do not tell them to open the Shelf.`,
+      `Up to ${MAX_SHOW} at once, the ones they asked for - all of them when they asked for everything someone uploaded. Then say in a line or two what each one is; the files are already there, so do not tell them to open the Shelf.`,
     input_schema: {
       type: 'object',
       properties: { ids: { type: 'array', items: { type: 'integer' }, description: 'File numbers from search_files, without the #.' } },
