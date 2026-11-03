@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { closeDb } from './helpers/db.js';
 import { extractText } from '../server/knowledge.js';
-import { readDrawing, isDrawing, MAX_DRAWING_MB, uploadLimitMB } from '../server/dwg.js';
+import { readDrawing, isDrawing, MAX_DRAWING_MB, uploadLimitMB, lengthOf, areaOf, pipeKey } from '../server/dwg.js';
 
 test.after(() => closeDb());
 
@@ -92,6 +92,46 @@ test('a drawing with no units and its lines on layer 0 asks for both', async () 
   const t = await readDrawing(dxf(['0', 'SECTION'], ['2', 'ENTITIES'], ...lines, ['0', 'ENDSEC'], ['0', 'EOF']), 'x.dxf');
   assert.match(t, /units are not set/);
   assert.match(t, /1,500 drawing units of lines are on layer "0"/);
+});
+
+test('a curve drawn as a spline is measured as AutoCAD measures it', () => {
+  // A quarter of a 1 m circle, the way CAD stores it: degree 2, weighted.
+  const q = { type: 'SPLINE', degree: 2, knots: [0, 0, 0, 1, 1, 1], weights: [1, Math.SQRT1_2, 1], ctrl: [{ x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }] };
+  assert.ok(Math.abs(lengthOf(q) - Math.PI * 500) < 0.1, `${lengthOf(q)} mm`);
+});
+
+test('areas of closed shapes, arcs included', () => {
+  assert.equal(areaOf({ type: 'LWPOLYLINE', flags: 1, pts: [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 3 }, { x: 0, y: 3 }] }), 12);
+  assert.ok(Math.abs(areaOf({ type: 'LWPOLYLINE', flags: 1, pts: [{ x: 0, y: 0, bulge: 1 }, { x: 2, y: 0, bulge: 1 }] }) - Math.PI) < 1e-9, 'a circle from two bulged points');
+  assert.ok(Math.abs(areaOf({ type: 'LWPOLYLINE', flags: 1, pts: [{ x: 0, y: 0 }, { x: 2, y: 0, bulge: 1 }, { x: 2, y: 2 }, { x: 0, y: 2 }] }) - (4 + Math.PI / 2)) < 1e-9);
+  assert.equal(areaOf({ type: 'LWPOLYLINE', flags: 0, pts: [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 3 }] }), 0, 'an open polyline has no area');
+});
+
+test('pipe labels are named one way per pipe', () => {
+  assert.equal(pipeKey('EACH 82MM V.PIPE'), '82MM V.PIPE');
+  assert.equal(pipeKey('110 MM RW .PIPE(F/A)'), '110MM RW.PIPE');
+  assert.equal(pipeKey('U.P.V.C PIPE 200MM Ø'), '200MM');
+  assert.equal(pipeKey('Ø160'), '160MM');
+});
+
+test('pipe length per size follows the labelled run; openings are not pipes', async () => {
+  const t = await readDrawing(dxf(
+    ['0', 'SECTION'], ['2', 'HEADER'], ['9', '$INSUNITS'], ['70', '4'], ['0', 'ENDSEC'],
+    ['0', 'SECTION'], ['2', 'ENTITIES'],
+    ['0', 'LINE'], ['8', 'WASTE'], ['10', '0'], ['20', '0'], ['11', '10000'], ['21', '0'],
+    ['0', 'LINE'], ['8', 'WASTE'], ['10', '10000'], ['20', '0'], ['11', '15000'], ['21', '0'], // joins the first: one 15 m run
+    ['0', 'LINE'], ['8', 'WASTE'], ['10', '0'], ['20', '5000'], ['11', '7000'], ['21', '5000'],
+    ['0', 'TEXT'], ['8', 'drainage'], ['10', '2000'], ['20', '150'], ['40', '200'], ['1', '110MM W.PIPE(T/B)'],
+    ['0', 'TEXT'], ['8', 'drainage'], ['10', '1000'], ['20', '5150'], ['40', '200'], ['1', '82MM'],
+    ['0', 'TEXT'], ['8', 'drainage'], ['10', '1000'], ['20', '8000'], ['40', '200'], ['1', '200X800 mm² OPENING'],
+    ['0', 'LWPOLYLINE'], ['8', 'ROOMS'], ['70', '1'], ['10', '0'], ['20', '0'], ['10', '4000'], ['20', '0'], ['10', '4000'], ['20', '3000'], ['10', '0'], ['20', '3000'],
+    ['0', 'ENDSEC'], ['0', 'EOF'],
+  ), 'pipes.dxf');
+  assert.match(t, /^110MM W\.PIPE: 15\.0 m \(1 run\)$/m);
+  assert.match(t, /^82MM: 7\.0 m \(1 run\)$/m);
+  assert.doesNotMatch(t, /OPENING: /);
+  assert.match(t, /^ROOMS: 12\.0 m² \(1 shape\)$/m);
+  assert.ok(t.indexOf('## Pipe lengths by size') < t.indexOf('## Layers'), 'the measured numbers come before the long lists');
 });
 
 test('a 32.6 MB PDF drawing set can be uploaded; a video that size cannot', () => {
