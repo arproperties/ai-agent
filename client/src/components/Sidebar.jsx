@@ -8,6 +8,7 @@ import { NotifyBell } from './Notifications';
 import { Row } from './NavRow';
 import SettingsMenu from './SettingsMenu';
 import UpdateButton from './UpdateButton';
+import AccountSwitcher from './AccountSwitcher';
 
 // The sidebar is deliberately monochrome. Every destination is the same quiet row, so
 // the eye lands on the chat you are looking for rather than on the furniture. Colour is
@@ -42,7 +43,7 @@ const Label = ({ children, action }) => (
   </div>
 );
 
-export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, translateOpen, onTranslate, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, healthOpen, onHealth, aiKeysOpen, onAiKeys, appsOpen, onApps, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, projectsOpen, onProjects, onInventory, renewalsOpen, onRenewals, modules, petOn, onPet, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onRenameConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onClose, onCollapse }) {
+export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, translateOpen, onTranslate, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, billingOpen, onBilling, healthOpen, onHealth, aiKeysOpen, onAiKeys, appsOpen, onApps, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, dutiesOpen, onDuties, checklistsOpen, onChecklists, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, projectsOpen, onProjects, onInventory, renewalsOpen, onRenewals, modules, petOn, onPet, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onRenameConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onSwitchAccount, onAddAccount, onClose, onCollapse }) {
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
   const [q, setQ] = useState('');
   const [searching, setSearching] = useState(false);
@@ -236,12 +237,8 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
 
       {/* relative: the settings menu opens against this, so it spans the sidebar. */}
       <div className="relative border-t border-stroke/60 p-2 pb-safe">
-        <div className="flex items-center gap-2.5 rounded-lg px-2.5 py-2">
-          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-medium">{user.name[0]?.toUpperCase()}</span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm">{user.name}</span>
-            <span className="block truncate text-xs text-mute">{user.email}</span>
-          </span>
+        <div className="flex items-center gap-1 rounded-lg px-1.5 py-2">
+          <AccountSwitcher user={user} onSwitch={onSwitchAccount} onAdd={onAddAccount} />
           {false && watched > 0 && ( /* hidden for everyone for now */
             <button onClick={onActivity} aria-label="Who has looked at your workspace" title="Who has looked at your workspace"
               className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">

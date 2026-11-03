@@ -98,6 +98,7 @@ export default function App() {
     try { if (on) localStorage.removeItem('jarvis:pet-on'); else localStorage.setItem('jarvis:pet-on', '1'); } catch { /* private mode */ }
     return !on;
   });
+  const [adding, setAdding] = useState(false); // signing in to another account beside this one
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
   const chatOpened = useCallback(() => setJumpToChat(null), []);
@@ -106,7 +107,11 @@ export default function App() {
     api.get('/auth/me').then((r) => setMe(r.user)).catch(() => setMe(null));
     const out = () => setMe(null);
     window.addEventListener('jarvis:signedout', out);
-    return () => window.removeEventListener('jarvis:signedout', out);
+    // Every tab shares the one sign-in, so when the account changes in one tab the others
+    // reload too; otherwise they would show one person's screens while acting as another.
+    const ch = 'BroadcastChannel' in window ? new BroadcastChannel('reem:account') : null;
+    if (ch) ch.onmessage = () => window.location.reload();
+    return () => { window.removeEventListener('jarvis:signedout', out); ch?.close(); };
   }, []);
 
   // This device's notifications follow whoever is signed in (see claimPush).
@@ -206,14 +211,26 @@ export default function App() {
     await api.patch(`/conversations/${id}`, { title });
     loadConvs();
   };
+  // Account switcher: a full reload is the simple way to drop every list, live connection
+  // and open screen of the account being left.
+  const accountChanged = () => {
+    try { const ch = new BroadcastChannel('reem:account'); ch.postMessage('changed'); ch.close(); } catch { /* old browser */ }
+    window.location.assign('/');
+  };
+  const switchAccount = async (id) => {
+    try { await api.post('/auth/switch', { id }); } catch (e) { return alert(e.message); }
+    accountChanged();
+  };
   const logout = async () => {
     await releasePush();
-    await api.post('/auth/logout').catch(() => {});
+    const r = await api.post('/auth/logout').catch(() => ({}));
+    if (r.user) return accountChanged(); // another account signed in here takes over
     setMe(null); setAgents([]); setConvs([]); setChat({ key: Date.now(), id: null }); setDrawer(false);
   };
 
   if (me === undefined) return null;
   const resetting = new URLSearchParams(window.location.search).has('reset'); // opened a password-reset link
+  if (adding && me) return <Auth adding onCancel={() => setAdding(false)} onAuthed={accountChanged} />;
   if (!me || resetting) return <Auth onAuthed={(u) => { setMe(u); setChat({ key: Date.now(), id: null }); }} />;
 
   return (
@@ -248,7 +265,7 @@ export default function App() {
           modules={modules || []}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
-          onLogout={logout} onClose={() => setDrawer(false)} onCollapse={() => toggleRail(true)} />
+          onLogout={logout} onSwitchAccount={switchAccount} onAddAccount={() => { setAdding(true); setDrawer(false); }} onClose={() => setDrawer(false)} onCollapse={() => toggleRail(true)} />
         </div>
       </aside>
 

@@ -9,11 +9,12 @@ const field = 'glass w-full rounded-2xl px-4 py-3 outline-none placeholder:text-
 // There is no sign-up: accounts are created by the master. Sign in, forgot and reset only.
 const COPY = {
   login: ['Welcome back', 'Sign in to talk to your agents', 'Sign in'],
+  add: ['Add another account', 'The account you are on stays signed in. Switch between them from the menu.', 'Sign in'],
   forgot: ['Forgot your password?', "Enter your email and we'll send you a reset link", 'Send reset link'],
   reset: ['Set a new password', 'Choose a password with at least 8 characters', 'Save and sign in'],
 };
 
-export default function Auth({ onAuthed }) {
+export default function Auth({ onAuthed, adding = false, onCancel }) {
   const resetToken = new URLSearchParams(window.location.search).get('reset');
   const [mode, setMode] = useState(resetToken ? 'reset' : 'login');
   const [f, setF] = useState({ email: '', password: '', confirm: '' });
@@ -22,7 +23,7 @@ export default function Auth({ onAuthed }) {
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => { setF({ ...f, [k]: k === 'email' ? cleanEmail(e.target.value) : e.target.value }); setError(''); };
   const go = (m) => { setMode(m); setError(''); setSent(false); };
-  const [title, subtitle, cta] = COPY[mode];
+  const [title, subtitle, cta] = COPY[adding && mode === 'login' ? 'add' : mode];
 
   const submit = async (e) => {
     e.preventDefault();
@@ -37,7 +38,7 @@ export default function Auth({ onAuthed }) {
         window.history.replaceState(null, '', '/');
         onAuthed(user);
       } else {
-        const { user } = await api.post('/auth/login', f);
+        const { user } = await api.post('/auth/login', { ...f, add: adding });
         onAuthed(user);
       }
     } catch (err) {
@@ -78,6 +79,9 @@ export default function Auth({ onAuthed }) {
           <button disabled={busy} className="w-full rounded-full bg-gradient-to-br from-p1 to-p2 py-3 font-medium text-white shadow-lg shadow-p1/25 transition active:scale-[0.98] disabled:opacity-60">
             {busy ? 'Please wait…' : cta}
           </button>
+        )}
+        {adding && mode === 'login' && (
+          <button type="button" onClick={onCancel} className="-mt-2 text-sm text-mute hover:text-txt">Cancel</button>
         )}
         {(mode === 'forgot' || mode === 'reset') && (
           <button type="button" onClick={() => { window.history.replaceState(null, '', '/'); go('login'); }} className="-mt-2 text-sm text-mute hover:text-txt">

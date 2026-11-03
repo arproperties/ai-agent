@@ -8,6 +8,12 @@ import { onlyPrivateAgents } from './access.js';
 const scryptAsync = promisify(scrypt);
 const SESSION_DAYS = 60;
 const COOKIE = 'jarvis_sid';
+// The other accounts signed in on this browser, for the account switcher: their session
+// tokens, dot-separated, behind httpOnly like the main one. Only one account is active at
+// a time (every tab shares the cookie), but the rest stay signed in so switching back
+// asks for no password.
+const OTHERS = 'reem_others';
+const MAX_OTHERS = 4;
 
 export async function hashPassword(password) {
   const salt = randomBytes(16).toString('hex');
@@ -26,13 +32,45 @@ function readCookie(req, name) {
   return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
 }
 
+const cookieOpts = (req) => ({ httpOnly: true, sameSite: 'lax', secure: req.secure, path: '/', maxAge: SESSION_DAYS * 86400 * 1000 });
+
 async function startSession(req, res, userId) {
   const token = randomBytes(32).toString('base64url');
   const expires = Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400;
   await db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha(token), userId, expires);
-  res.cookie(COOKIE, token, {
-    httpOnly: true, sameSite: 'lax', secure: req.secure, path: '/', maxAge: SESSION_DAYS * 86400 * 1000,
-  });
+  res.cookie(COOKIE, token, cookieOpts(req));
+  return token;
+}
+
+const readOthers = (req) => (readCookie(req, OTHERS) || '').split('.').filter(Boolean);
+function writeOthers(req, res, tokens) {
+  if (tokens.length) res.cookie(OTHERS, tokens.join('.'), cookieOpts(req));
+  else res.clearCookie(OTHERS, { path: '/' });
+}
+
+/** The user behind a token, if its session is still good and the account not disabled. */
+async function userOf(token) {
+  const u = await db.prepare(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ? AND s.expires_at > extract(epoch from now())`).get(sha(token));
+  return u && !u.disabled ? u : null;
+}
+
+/**
+ * The other accounts still signed in here, one entry per person. A token whose session
+ * ended (password changed, expired, account disabled) or that belongs to the active
+ * account is dropped from the cookie as it is found.
+ */
+async function otherAccounts(req, res, activeId) {
+  const kept = [];
+  const seen = new Set([activeId]);
+  for (const token of readOthers(req)) {
+    const u = await userOf(token);
+    if (!u || seen.has(u.id)) continue;
+    seen.add(u.id);
+    kept.push({ token, user: u });
+  }
+  if (kept.length !== readOthers(req).length) writeOthers(req, res, kept.map((k) => k.token));
+  return kept;
 }
 
 // Simple in-memory brute-force guard: 10 failed attempts per IP+email per 15 minutes
@@ -123,8 +161,46 @@ authRoutes.post('/login', async (req, res) => {
   }
   if (user.disabled) return res.status(403).json({ error: 'This account has been disabled' });
   attempts.delete(key);
+  // "Add another account": the account signed in now steps aside instead of being
+  // replaced, so it is one tap away in the switcher. Its own session is untouched.
+  const others = readOthers(req);
+  const current = req.body.add ? readCookie(req, COOKIE) : null;
+  if (current && (await userOf(current)) && !others.includes(current)) others.unshift(current);
   await startSession(req, res, user.id);
+  // Signing in to an account already parked here: the fresh session replaces the old one.
+  const kept = [];
+  for (const t of others) {
+    const u = await userOf(t);
+    if (u && u.id !== user.id) kept.push(t);
+  }
+  writeOthers(req, res, kept.slice(0, MAX_OTHERS));
   res.json({ user: publicUser(user) });
+});
+
+// ---------- account switcher ----------
+authRoutes.get('/accounts', async (req, res, next) => {
+  try {
+    const me = await currentUser(req);
+    if (!me) return res.json({ accounts: [] });
+    const others = await otherAccounts(req, res, me.id);
+    res.json({ accounts: others.map((o) => publicUser(o.user)) });
+  } catch (e) { next(e); }
+});
+
+authRoutes.post('/switch', async (req, res, next) => {
+  try {
+    const current = readCookie(req, COOKIE);
+    const me = current && await userOf(current);
+    const others = await otherAccounts(req, res, me?.id);
+    const to = others.find((o) => o.user.id === Number(req.body.id));
+    if (!to) return res.status(404).json({ error: 'That account is no longer signed in here. Please sign in again.' });
+    // Swap: the chosen account becomes active, the one being left is parked in its place.
+    const rest = others.filter((o) => o !== to).map((o) => o.token);
+    if (me) rest.unshift(current);
+    res.cookie(COOKIE, to.token, cookieOpts(req));
+    writeOthers(req, res, rest.slice(0, MAX_OTHERS));
+    res.json({ user: publicUser(to.user) });
+  } catch (e) { next(e); }
 });
 
 // ---------- forgot / reset password ----------
@@ -163,10 +239,19 @@ authRoutes.post('/reset', async (req, res) => {
   res.json({ user: publicUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id)) });
 });
 
+// Signs out the active account only. If another account is signed in on this browser,
+// it takes over, so signing out of one never signs out the rest.
 authRoutes.post('/logout', async (req, res) => {
   const token = readCookie(req, COOKIE);
   if (token) await db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha(token));
+  const [next, ...rest] = await otherAccounts(req, res, null);
+  if (next) {
+    res.cookie(COOKIE, next.token, cookieOpts(req));
+    writeOthers(req, res, rest.map((o) => o.token));
+    return res.json({ ok: true, user: publicUser(next.user) });
+  }
   res.clearCookie(COOKIE, { path: '/' });
+  res.clearCookie(OTHERS, { path: '/' });
   res.json({ ok: true });
 });
 
