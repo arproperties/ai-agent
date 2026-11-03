@@ -777,8 +777,8 @@ const TINT = {
 
 /**
  * "Ask advisors": tick the agents to ask (the picked advisors are ticked already) and type
- * what you need, e.g. "help me negotiate the chiller fee". They write an email to the
- * tenant only when asked for one.
+ * what you need, e.g. "help me negotiate the chiller fee". Each answer comes with a reply
+ * to use.
  */
 function AskAdvisors({ agents, busy, onAsk }) {
   const [open, setOpen] = useState(false);
@@ -807,7 +807,6 @@ function AskAdvisors({ agents, busy, onAsk }) {
       <textarea value={ask} onChange={(e) => setAsk(e.target.value)} rows={3} autoFocus
         placeholder="What do you need? e.g. Help me negotiate the chiller fee"
         className="w-full resize-y rounded-xl border border-stroke bg-black/20 p-2.5 text-sm outline-none placeholder:text-mute/70 focus:border-p1/50" />
-      <p className="text-xs text-mute">They write an email to the tenant only if you ask for one.</p>
       <div className="flex justify-end gap-2">
         <Btn onClick={() => setOpen(false)} disabled={busy}>Cancel</Btn>
         <Btn primary busy={busy} disabled={!picked.length || !ask.trim()} onClick={go}>{busy ? 'Asking…' : `Ask ${picked.length || ''}`.trim()}</Btn>

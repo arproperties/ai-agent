@@ -791,12 +791,49 @@ const factsOf = (r, s) => [
   `Premises: ${r.lease.building}, Unit ${r.lease.unit} (${r.lease.unit_type || 'unit'}). Tenant: ${r.lease.tenant}.`,
   `Current contract: ${longDate(r.lease.start_date)} to ${longDate(r.lease.end_date)}, ${aed(r.lease.annual_rent)} a year, ${r.lease.cheques} cheques.`,
   r.quote ? `Renewal on offer: ${aed(r.agreed ?? r.offer)} a year from ${longDate(r.quote.start_date)} to ${longDate(r.quote.end_date)}, ${r.quote.cheques.length} cheques: ${r.quote.cheques.map((ch) => `${longDate(ch.date)} ${aed(ch.amount)}`).join('; ')}.` : '',
+  r.quote ? offerCharges(r.quote) : '',
   r.quote?.rera ? `Ejari fee: ${aed(r.quote.rera)}.` : '',
   s.payee ? `Cheques are payable to ${s.payee}.` : '',
   ['agreed', 'papers_ok'].includes(r.status) ? `The rent is agreed at ${aed(r.agreed)}; the tenant still has to send the signed agreement${r.lease.payment_method === 'cheque' ? ' and photos of the cheques' : ''}.` : '',
   r.quote?.terms_text ? `Terms: ${r.quote.terms_text.replace(/\n/g, ' ')}` : '',
   r.quote?.required_documents_text ? `Documents needed: ${r.quote.required_documents_text.replace(/\n/g, '; ')}` : '',
 ].filter(Boolean).join('\n');
+
+/** The charges in the offer, each with its VAT: what the tenant was asked to pay besides the rent. */
+function offerCharges(q) {
+  const c = chargesOf(q);
+  if (!c.items.length) return '';
+  return `Charges in our offer: ${c.items.map((x) => `${x.label} ${aed(x.amount)}${x.vat ? ` + VAT ${aed(x.vat)}` : ''}`).join('; ')}.`;
+}
+
+/**
+ * The current contract as saifsys holds it (the Legal module's lease file): its charges,
+ * Ejari, notes and saifsys's own legal cases, so the advisors check what the tenant says
+ * against the lease instead of telling the team to go and pull it (the user, 2026-11-03).
+ */
+async function contractOf(r) {
+  let f;
+  try { f = await D.ask('legal', 'lease', { id: r.lease.lease_id }); f = f?.lease; } catch (err) {
+    console.warn('[lease renewals] lease file:', err.message);
+  }
+  if (!f?.lease) return 'The lease file could not be read from saifsys just now: say so if it matters, once.';
+  const l = f.lease;
+  const money = (label, v) => (Number(v) > 0 ? `${label} ${aed(v)}` : null);
+  const charges = [money('chiller fee', l.chiller_fee), money('admin fee', l.admin_fee), money('parking', l.parking_fee),
+    money('storeroom', l.store_fee), money('service charge a month', l.service_charge_monthly), money('security deposit', l.security_deposit)].filter(Boolean);
+  const legal = f.saifsys_legal || {};
+  return [
+    `The current contract in saifsys (lease ${l.number || l.id}, ${l.status}): ${longDate(l.start_date)} to ${longDate(l.end_date)}, ${aed(l.annual_rent)} a year, ${l.installments} cheques.`,
+    'chiller_fee' in l ? `Charges on it: ${charges.join('; ') || 'none recorded'}.` : (charges.length ? `On it: ${charges.join('; ')}.` : ''),
+    f.ejari?.number ? `Ejari ${f.ejari.number}${f.ejari.registration_date ? `, registered ${longDate(f.ejari.registration_date)}` : ''}${f.ejari.expiry_date ? `, expires ${longDate(f.ejari.expiry_date)}` : ''}.` : 'No Ejari number in saifsys.',
+    l.renewal_terms ? `Renewal terms on the lease: ${l.renewal_terms}` : '',
+    l.notes ? `Staff notes on the lease: ${l.notes}` : '',
+    f.money ? `Money: ${JSON.stringify(f.money)}` : '',
+    (legal.cases || []).length ? `saifsys legal cases on this lease: ${legal.cases.map((c) => `${c.number} "${c.title}" (${c.type}, ${c.status}${c.opened ? `, opened ${c.opened}` : ''}${c.closed ? `, closed ${c.closed}` : ''})`).join('; ')}.` : 'saifsys has no legal case on this lease.',
+    (legal.hearings || []).length ? `Hearings: ${legal.hearings.map((h) => `${h.date} ${h.title} ${h.status}${h.outcome ? `: ${h.outcome}` : ''}`).join('; ')}.` : '',
+    (f.other_leases || []).length ? `The tenant's other leases: ${f.other_leases.map((o) => `${o.lease_number} ${o.building} ${o.unit} (${o.status}, ends ${o.end_date})`).join('; ')}.` : '',
+  ].filter(Boolean).join('\n');
+}
 
 async function history(renewalId, before) {
   const rows = await db.prepare(`SELECT kind, body FROM lease_renewal_events WHERE renewal_id = ? AND id < ? AND kind IN ('out', 'in') ORDER BY id DESC LIMIT 8`).all(renewalId, before);
@@ -997,7 +1034,7 @@ export async function askAdvisors(r, { user = null, ask = '', agentIds = null } 
   const team = wanted ? reach.filter((a) => wanted.has(a.id)) : reach.filter((a) => a.picked);
   if (!team.length) return 0;
   const question = String(ask || '').trim().slice(0, 2000);
-  const facts = factsOf(r, s);
+  const facts = `${factsOf(r, s)}\n\n${await contractOf(r)}`;
   const emails = await thread(r.id);
   const answers = await Promise.allSettled(team.map((agent) => D.advise({ agent, facts, thread: emails, dispute: r.dispute, ask: question })));
   let n = 0;

@@ -31,7 +31,14 @@ function stub({ leases = [LEASE], replies = [], docs = [], files = {} } = {}) {
   world = { sent: [], acts: [], mirrored: [], todos: [], pushes: [], replies: [...replies], docs: [...docs] };
   R.useForTests({
     now: () => world.now ?? NOW,
-    ask: async (module, action) => { assert.equal(`${module}/${action}`, 'realestate/renewals_due'); return { ok: true, leases }; },
+    ask: async (module, action, params) => {
+      // The lease file the advisors read: the contract as saifsys holds it.
+      if (`${module}/${action}` === 'legal/lease') {
+        return { ok: true, lease: { lease: { id: params.id, number: 'L-7', status: 'active', start_date: '2025-08-01', end_date: '2026-07-31',
+          annual_rent: 36000, installments: 4, chiller_fee: 3500, admin_fee: 0, notes: '' }, ejari: { number: 'EJ-99' }, saifsys_legal: { cases: [] } } };
+      }
+      assert.equal(`${module}/${action}`, 'realestate/renewals_due'); return { ok: true, leases };
+    },
     act: async (module, action, body) => {
       assert.equal(module, 'realestate_renewal');
       world.acts.push({ action, ...body });
@@ -396,6 +403,7 @@ test('advisors: they answer only when asked, the agents picked and what the pers
   assert.equal(asked[1].ask, 'Help me negotiate the chiller fee');
   assert.equal(asked[1].dispute, 'Claims the increase breaks the index');
   assert.match(asked[1].facts, /AED 36,000 a year/);
+  assert.match(asked[1].facts, /current contract in saifsys \(lease L-7[\s\S]*chiller fee AED 3,500[\s\S]*Ejari EJ-99/, 'the contract from saifsys, with its charges');
   assert.match(asked[1].thread, /We wrote[\s\S]*Tenant wrote/, 'the emails, oldest first');
   const advice = await db.prepare(`SELECT title, data FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'advice'`).all(r.id);
   assert.deepEqual(advice.map((a) => [a.title, a.data.agent.name, a.data.reply, a.data.asked, a.data.ask]),

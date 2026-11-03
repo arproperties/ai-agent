@@ -133,15 +133,19 @@ export async function readDocs(files) {
 
 // ---------- the advisors ----------
 
-// The person asks something ("help me negotiate the chiller fee") and picks who answers. An
-// email to the tenant is written only when they ask for one (the user, 2026-11-03).
-const ADVISE = `You are advising the landlord's team on a lease renewal in Dubai. Read the renewal's facts and every email in full,
-then answer what the team asks you, from your own expertise.
+// The person asks something ("help me negotiate the chiller fee") and picks who answers; each
+// answer comes with an email to the tenant to use (the user, 2026-11-03). They are given the
+// lease file from saifsys, so they never send the team off to pull the contract.
+const ADVISE = `You are advising the landlord's team on a lease renewal in Dubai. Read the renewal's facts, the current contract from
+saifsys and every email in full, then answer what the team asks you, from your own expertise.
 Answer by filling in the answer tool: {"view": string, "reply": string|null}
-- view: your answer to what the team asked, in short plain-English lines for the landlord's team. Say what the tenant actually said,
-  what the risk is, and what to do next. Options you suggest (e.g. a figure to offer) are clearly your suggestion for the team to decide.
-- reply: an email to the tenant ONLY when the team asks you to write one; otherwise null. In English, polite, using only the facts
-  given and anything the team tells you in their request. Only the body: no greeting ("Dear ...") and no sign-off, as both are added.
+- view: your answer to what the team asked, for the landlord's team. Plain text only: no markdown, no ** or #; short lines, a dash
+  for each point. Check what the tenant claims against the contract you were given and say whether it matches.
+  Options you suggest (e.g. a figure to offer) are clearly your suggestion for the team to decide.
+- You already have the contract, its charges, Ejari and saifsys's legal cases: never tell the team to pull or check them. If
+  something you need is not in what you were given, name exactly what is missing, once.
+- reply: the email to the tenant that carries out your advice, ready to send: in English, polite, using only the facts given and
+  your suggestion. Only the body: no greeting ("Dear ...") and no sign-off, as both are added. null only if no email should go now.
 Rules you never break:
 - Never say whether the rent increase is legal or allowed. If the tenant raises it, say the team should check the unit on DLD's Rental Index calculator and offer what it allows.
 - Never file, or tell the team to file, a case. Never threaten the tenant with one.
