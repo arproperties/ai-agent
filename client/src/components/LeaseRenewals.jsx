@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles, Trash2,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -496,10 +496,18 @@ function Renewal({ id, onBack }) {
     } catch (e) { setError(e.message); }
     setBusy('');
   };
-  const askAdvisors = async () => {
+  const askAdvisors = async ({ agents, ask }) => {
     setBusy('advise'); setError('');
-    try { await api.post(`/lease-renewals/${id}/advise`); await load(); } catch (e) { setError(e.message); }
+    let ok = false;
+    try { await api.post(`/lease-renewals/${id}/advise`, { agents, ask }); await load(); ok = true; } catch (e) { setError(e.message); }
     setBusy('');
+    return ok;
+  };
+  // An advisor's box taken off the timeline: only advice, never an email or a step.
+  const removeAdvice = async (e) => {
+    if (!confirm(`Delete ${e.title}?`)) return;
+    setError('');
+    try { await api.del(`/lease-renewals/${id}/advice/${e.id}`); await load(); } catch (err) { setError(err.message); }
   };
   useEffect(() => { load(); }, [load]);
 
@@ -623,7 +631,7 @@ function Renewal({ id, onBack }) {
                   </button>
                 )}
               </div>
-              <Timeline r={r} busy={busy} onReadAgain={readAgain} onReply={!DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
+              <Timeline r={r} busy={busy} onReadAgain={readAgain} onRemove={removeAdvice} onReply={!DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
             </div>
           </div>
 
@@ -653,11 +661,9 @@ function Renewal({ id, onBack }) {
             )}
             <section className="p-5">
               <p className="font-medium">Advisors</p>
-              <p className="mt-1 text-xs text-mute">{r.advisors
-                ? 'Their view and a reply you can send. They answer by themselves on a dispute.'
-                : 'None picked yet: the master picks them in the settings.'}</p>
+              <p className="mt-1 text-xs text-mute">Pick who to ask and say what you need. They read every email and answer on the timeline.</p>
               <div className="mt-3 grid gap-2">
-                <Btn busy={busy === 'advise'} disabled={!r.advisors} onClick={askAdvisors} className="justify-center"><Users size={14} /> {busy === 'advise' ? 'Asking…' : 'Ask advisors'}</Btn>
+                <AskAdvisors id={id} agents={r.askable || []} busy={busy === 'advise'} onAsk={askAdvisors} />
                 <a href={`/api/lease-renewals/${id}/case-pack`} download
                   className="flex items-center justify-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt">
                   <FolderDown size={14} /> RDC case pack
@@ -758,12 +764,12 @@ const DOT = {
   out: ['bg-p1/20 text-p1', Send], in: ['bg-white/10 text-txt', Inbox], step: ['bg-white/5 text-mute', CircleDot],
 };
 
-function Timeline({ r, busy, onReadAgain, onReply }) {
+function Timeline({ r, busy, onReadAgain, onReply, onRemove }) {
   return (
     <ol className="relative space-y-3 pl-11">
       <span className="absolute bottom-3 left-[17px] top-3 w-px bg-gradient-to-b from-p1/50 via-stroke to-transparent" aria-hidden />
       {r.events.map((e, i) => (e.kind === 'advice'
-        ? <Advice key={e.id} e={e} newest={i === 0} onReply={onReply} />
+        ? <Advice key={e.id} e={e} newest={i === 0} onReply={onReply} onRemove={onRemove} />
         : <Event key={e.id} e={e} r={r} newest={i === 0} busy={busy === `read-${e.id}`} onReadAgain={onReadAgain} />))}
     </ol>
   );
@@ -775,8 +781,60 @@ const TINT = {
   amber: 'border-amber-400/40 bg-amber-500/[0.07]', rose: 'border-rose-400/40 bg-rose-500/[0.07]', slate: 'border-slate-400/40 bg-slate-500/[0.07]',
 };
 
+/**
+ * "Ask advisors": tick the agents to ask (the picked advisors are ticked already) and type
+ * what you need, e.g. "help me negotiate the chiller fee". Each answer comes with a reply
+ * to use.
+ */
+function AskAdvisors({ id, agents, busy, onAsk }) {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState([]);
+  const [ask, setAsk] = useState('');
+  const [drafting, setDrafting] = useState(false);
+  const typed = useRef(false);
+  // Reem fills the box from the latest email and what was asked before; what the person types wins.
+  const start = async () => {
+    setPicked(agents.filter((a) => a.picked).map((a) => a.id)); setOpen(true);
+    if (ask.trim()) return;
+    typed.current = false; setDrafting(true);
+    try {
+      const { ask: next } = await api.post(`/lease-renewals/${id}/advise/suggest`);
+      if (next && !typed.current) setAsk(next);
+    } catch { /* the box stays empty: the person types it */ }
+    setDrafting(false);
+  };
+  const toggle = (aid) => setPicked((p) => (p.includes(aid) ? p.filter((x) => x !== aid) : [...p, aid]));
+  const go = async () => { if (await onAsk({ agents: picked, ask })) { setOpen(false); setAsk(''); } };
+  if (!open) return <Btn disabled={!agents.length} onClick={start} className="justify-center"><Users size={14} /> Ask advisors</Btn>;
+  return (
+    <div className="space-y-3 rounded-2xl border border-stroke bg-white/[0.03] p-3">
+      <div>
+        <p className="text-xs text-mute">Who to ask</p>
+        <div className="mt-1.5 flex max-h-48 flex-wrap gap-1.5 overflow-y-auto">
+          {agents.map((a) => {
+            const on = picked.includes(a.id);
+            return (
+              <button key={a.id} type="button" onClick={() => toggle(a.id)}
+                className={`flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 text-xs transition ${on ? 'border-p1/60 bg-p1/15 text-txt' : 'border-stroke text-mute hover:text-txt'}`}>
+                <Avatar icon={a.icon} color={a.color} size={20} /> {a.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <textarea value={ask} onChange={(e) => { typed.current = true; setAsk(e.target.value); }} rows={4} autoFocus
+        placeholder={drafting ? 'Reem is writing the question…' : 'What do you need? e.g. Help me negotiate the chiller fee'}
+        className="w-full resize-y rounded-xl border border-stroke bg-black/20 p-2.5 text-sm outline-none placeholder:text-mute/70 focus:border-p1/50" />
+      <div className="flex justify-end gap-2">
+        <Btn onClick={() => setOpen(false)} disabled={busy}>Cancel</Btn>
+        <Btn primary busy={busy} disabled={!picked.length || !ask.trim()} onClick={go}>{busy ? 'Asking…' : `Ask ${picked.length || ''}`.trim()}</Btn>
+      </div>
+    </div>
+  );
+}
+
 /** One advisor's view, and the reply it suggests: opened in Compose to change and send. */
-function Advice({ e, newest, onReply }) {
+function Advice({ e, newest, onReply, onRemove }) {
   const a = e.data?.agent || {};
   const reply = e.data?.reply;
   const [openReply, setOpenReply] = useState(false);
@@ -784,8 +842,13 @@ function Advice({ e, newest, onReply }) {
     <li className="relative">
       <span className="absolute -left-11 top-1 rounded-full ring-4 ring-[var(--color-surface)]"><Avatar icon={a.icon} color={a.color} size={36} /></span>
       <div className={`rounded-2xl border p-3.5 ${TINT[a.color] || TINT.violet} ${newest ? 'shadow-lg shadow-black/20' : ''}`}>
-        <p className="font-medium leading-snug">{e.title}</p>
+        <div className="flex items-start gap-2">
+          <p className="min-w-0 flex-1 font-medium leading-snug">{e.title}</p>
+          {onRemove && <button onClick={() => onRemove(e)} title="Delete this advice" aria-label="Delete this advice"
+            className="-m-1 shrink-0 rounded-full p-1.5 text-mute transition hover:bg-white/10 hover:text-bad"><Trash2 size={14} /></button>}
+        </div>
         <p className="text-xs text-mute">{e.data?.asked ? `Asked by ${e.by || 'someone'}` : 'On the dispute, by itself'} · {when(e.at)}{newest ? ' · latest' : ''}</p>
+        {e.data?.ask && <p className="mt-1.5 border-l-2 border-p1/40 pl-2 text-xs italic text-mute">“{e.data.ask}”</p>}
         <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{e.body}</p>
         {reply && (
           <>
@@ -947,7 +1010,7 @@ function Settings({ s, agents, inbox, onSaved }) {
         <span className="text-mute">Advisors</span>
         <Picker multi value={advisors} onChange={setAdvisors} placeholder="Nobody advises yet" searchPlaceholder="Search the team"
           options={agents.map((a) => ({ value: a.id, label: a.name }))} />
-        <p className="text-xs text-mute">They read each dispute and give their view and a reply you can send. They never file a case or say whether an increase is legal.</p>
+        <p className="text-xs text-mute">They are ticked first when someone taps Ask advisors on a renewal. They never file a case or say whether an increase is legal.</p>
       </div>
       <p className="text-xs text-mute">saifsys records the renewals as its user with the Tenant care email{inbox ? ` (${inbox})` : ''}.</p>
       <Problem text={error} />

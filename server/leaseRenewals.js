@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import { db } from './db.js';
 import { DATA_DIR } from './config.js';
-import { isMaster } from './access.js';
+import { isMaster, listedAgents } from './access.js';
 import { decrypt } from './secrets.js';
 import { compose, sendRaw, friendlySmtp } from './smtp.js';
 import { withMailbox, replySubject } from './imap.js';
@@ -15,7 +15,7 @@ import { renderPdf } from './replyDoc.js';
 import { needsModule } from './modules.js';
 import { inbox, fileInSent, ownWords, claimTenantMail, checkTenantMail } from './tenantCare.js';
 import { askSaifsys, actSaifsys, saifsysConfigured, saifsysActionsConfigured, dubaiDate } from './saifsys/client.js';
-import { readReply, readDocs, advise, caseSummary, rewriteReply } from './leaseRenewalAi.js';
+import { readReply, readDocs, advise, nextAsk, caseSummary, rewriteReply } from './leaseRenewalAi.js';
 
 // Lease renewals: whoever has the module renews each lease with its tenant by email, from
 // Reem, instead of the staff in saifsys. The list is saifsys's leases ending within 150 days.
@@ -91,7 +91,7 @@ async function indexRent() { return null; }
 
 // Everything that reaches outside, swappable for the tests.
 const D = {
-  ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, caseSummary, rewriteReply, checkMail: checkTenantMail,
+  ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, nextAsk, caseSummary, rewriteReply, checkMail: checkTenantMail,
   send: sendRaw, file: fileInSent, fetch: fetchMessage, push: sendPush, todo: createTodo, actor: async () => (await inbox())?.email,
   mirror: (action, body) => saifsys(action, body),
   now: () => Date.now(),
@@ -791,12 +791,49 @@ const factsOf = (r, s) => [
   `Premises: ${r.lease.building}, Unit ${r.lease.unit} (${r.lease.unit_type || 'unit'}). Tenant: ${r.lease.tenant}.`,
   `Current contract: ${longDate(r.lease.start_date)} to ${longDate(r.lease.end_date)}, ${aed(r.lease.annual_rent)} a year, ${r.lease.cheques} cheques.`,
   r.quote ? `Renewal on offer: ${aed(r.agreed ?? r.offer)} a year from ${longDate(r.quote.start_date)} to ${longDate(r.quote.end_date)}, ${r.quote.cheques.length} cheques: ${r.quote.cheques.map((ch) => `${longDate(ch.date)} ${aed(ch.amount)}`).join('; ')}.` : '',
+  r.quote ? offerCharges(r.quote) : '',
   r.quote?.rera ? `Ejari fee: ${aed(r.quote.rera)}.` : '',
   s.payee ? `Cheques are payable to ${s.payee}.` : '',
   ['agreed', 'papers_ok'].includes(r.status) ? `The rent is agreed at ${aed(r.agreed)}; the tenant still has to send the signed agreement${r.lease.payment_method === 'cheque' ? ' and photos of the cheques' : ''}.` : '',
   r.quote?.terms_text ? `Terms: ${r.quote.terms_text.replace(/\n/g, ' ')}` : '',
   r.quote?.required_documents_text ? `Documents needed: ${r.quote.required_documents_text.replace(/\n/g, '; ')}` : '',
 ].filter(Boolean).join('\n');
+
+/** The charges in the offer, each with its VAT: what the tenant was asked to pay besides the rent. */
+function offerCharges(q) {
+  const c = chargesOf(q);
+  if (!c.items.length) return '';
+  return `Charges in our offer: ${c.items.map((x) => `${x.label} ${aed(x.amount)}${x.vat ? ` + VAT ${aed(x.vat)}` : ''}`).join('; ')}.`;
+}
+
+/**
+ * The current contract as saifsys holds it (the Legal module's lease file): its charges,
+ * Ejari, notes and saifsys's own legal cases, so the advisors check what the tenant says
+ * against the lease instead of telling the team to go and pull it (the user, 2026-11-03).
+ */
+async function contractOf(r) {
+  let f;
+  try { f = await D.ask('legal', 'lease', { id: r.lease.lease_id }); f = f?.lease; } catch (err) {
+    console.warn('[lease renewals] lease file:', err.message);
+  }
+  if (!f?.lease) return 'The lease file could not be read from saifsys just now: say so if it matters, once.';
+  const l = f.lease;
+  const money = (label, v) => (Number(v) > 0 ? `${label} ${aed(v)}` : null);
+  const charges = [money('chiller fee', l.chiller_fee), money('admin fee', l.admin_fee), money('parking', l.parking_fee),
+    money('storeroom', l.store_fee), money('service charge a month', l.service_charge_monthly), money('security deposit', l.security_deposit)].filter(Boolean);
+  const legal = f.saifsys_legal || {};
+  return [
+    `The current contract in saifsys (lease ${l.number || l.id}, ${l.status}): ${longDate(l.start_date)} to ${longDate(l.end_date)}, ${aed(l.annual_rent)} a year, ${l.installments} cheques.`,
+    'chiller_fee' in l ? `Charges on it: ${charges.join('; ') || 'none recorded'}.` : (charges.length ? `On it: ${charges.join('; ')}.` : ''),
+    f.ejari?.number ? `Ejari ${f.ejari.number}${f.ejari.registration_date ? `, registered ${longDate(f.ejari.registration_date)}` : ''}${f.ejari.expiry_date ? `, expires ${longDate(f.ejari.expiry_date)}` : ''}.` : 'No Ejari number in saifsys.',
+    l.renewal_terms ? `Renewal terms on the lease: ${l.renewal_terms}` : '',
+    l.notes ? `Staff notes on the lease: ${l.notes}` : '',
+    f.money ? `Money: ${JSON.stringify(f.money)}` : '',
+    (legal.cases || []).length ? `saifsys legal cases on this lease: ${legal.cases.map((c) => `${c.number} "${c.title}" (${c.type}, ${c.status}${c.opened ? `, opened ${c.opened}` : ''}${c.closed ? `, closed ${c.closed}` : ''})`).join('; ')}.` : 'saifsys has no legal case on this lease.',
+    (legal.hearings || []).length ? `Hearings: ${legal.hearings.map((h) => `${h.date} ${h.title} ${h.status}${h.outcome ? `: ${h.outcome}` : ''}`).join('; ')}.` : '',
+    (f.other_leases || []).length ? `The tenant's other leases: ${f.other_leases.map((o) => `${o.lease_number} ${o.building} ${o.unit} (${o.status}, ends ${o.end_date})`).join('; ')}.` : '',
+  ].filter(Boolean).join('\n');
+}
 
 async function history(renewalId, before) {
   const rows = await db.prepare(`SELECT kind, body FROM lease_renewal_events WHERE renewal_id = ? AND id < ? AND kind IN ('out', 'in') ORDER BY id DESC LIMIT 8`).all(renewalId, before);
@@ -899,9 +936,7 @@ async function handle(r, e) {
   } else {
     await tell(r, `${reading.dispute ? '⚠️ Dispute: ' : ''}${title}${r.auto && !s.paused ? ' (needs you)' : ''}`);
   }
-  // A dispute is put to the advisors straight away. Their answer is advice on the timeline,
-  // never an email, so it waits for the same person as everything else.
-  if (reading.dispute) await askAdvisors(await getRenewal(r.id)).catch((err) => console.warn('[lease renewals] advisors:', err.message));
+  // Advisors answer only when a person asks them something (the user, 2026-11-03).
   return null;
 }
 
@@ -968,29 +1003,65 @@ async function advisors(s) {
   return db.prepare('SELECT id, name, icon, color, persona FROM agents WHERE id = ANY(?::int[]) ORDER BY id').all(ids);
 }
 
+/**
+ * Who a person may ask about a renewal: the picked advisors, and the agents in their own
+ * sidebar. Picked advisors are ticked first.
+ */
+async function askable(user, s) {
+  const picked = await advisors(s);
+  const own = user ? await listedAgents(user) : [];
+  const seen = new Set(picked.map((a) => a.id));
+  return [...picked.map((a) => ({ ...a, picked: true })),
+    ...own.filter((a) => !seen.has(a.id) && seen.add(a.id)).map(({ id, name, icon, color, persona }) => ({ id, name, icon, color, persona, picked: false }))];
+}
+
+// Emails are given whole (up to 6,000 characters): a long dispute email cut at 2,000 lost
+// what the tenant said about last year's RDC case (2026-11-03, PARK PLACE 203).
 async function thread(renewalId) {
   const rows = await db.prepare(`SELECT kind, body, at FROM lease_renewal_events WHERE renewal_id = ? AND kind IN ('out', 'in') ORDER BY at DESC, id DESC LIMIT 12`).all(renewalId);
-  return rows.reverse().map((x) => `${x.kind === 'out' ? 'We wrote' : 'Tenant wrote'} (${dubaiDate(Number(x.at) * 1000)}):\n${String(x.body || '').slice(0, 2000)}`).join('\n\n');
+  return rows.reverse().map((x) => `${x.kind === 'out' ? 'We wrote' : 'Tenant wrote'} (${dubaiDate(Number(x.at) * 1000)}):\n${String(x.body || '').slice(0, 6000)}`).join('\n\n');
 }
 
 /**
- * Each advisor's view of the renewal, side by side on its timeline: what it thinks and a
- * reply a person could send. One that fails is left out and the others still answer.
+ * What the team already asked the advisors on this renewal and what they answered, oldest
+ * first, so a follow-up ("you should suggest the chiller fee") builds on it instead of
+ * starting again (the user, 2026-11-03).
  */
-export async function askAdvisors(r, { user = null } = {}) {
+async function earlierAdvice(renewalId) {
+  const rows = await db.prepare(`SELECT e.body, e.data, e.at, u.name AS by FROM lease_renewal_events e LEFT JOIN users u ON u.id = e.user_id
+    WHERE e.renewal_id = ? AND e.kind = 'advice' ORDER BY e.at DESC, e.id DESC LIMIT 6`).all(renewalId);
+  return rows.reverse().map((x) => [
+    `${dubaiDate(Number(x.at) * 1000)}, ${x.data?.agent?.name || 'An advisor'}${x.data?.ask ? `, asked by ${x.by || 'the team'}: "${x.data.ask}"` : ''}`,
+    `Answer: ${String(x.body || '').slice(0, 1500)}`,
+    // Only a suggestion: what went to the tenant is in the emails, so it is never taken as sent.
+    x.data?.reply ? `Reply it suggested (a draft only, NOT sent to the tenant): ${String(x.data.reply).slice(0, 1000)}` : '',
+  ].filter(Boolean).join('\n')).join('\n\n');
+}
+
+/**
+ * What a person asked, answered by each agent they picked, side by side on the timeline:
+ * an answer, and an email to the tenant only when they asked for one. With no agents
+ * named, the picked advisors answer. One that fails is left out and the others still answer.
+ */
+export async function askAdvisors(r, { user = null, ask = '', agentIds = null } = {}) {
   const s = await settings();
-  const team = await advisors(s);
+  const reach = await askable(user, s);
+  const wanted = Array.isArray(agentIds) ? new Set(agentIds.map(Number).filter(Boolean)) : null;
+  const team = wanted ? reach.filter((a) => wanted.has(a.id)) : reach.filter((a) => a.picked);
   if (!team.length) return 0;
-  const facts = factsOf(r, s);
+  const question = String(ask || '').trim().slice(0, 2000);
+  const facts = `${factsOf(r, s)}\n\n${await contractOf(r)}`;
   const emails = await thread(r.id);
-  const answers = await Promise.allSettled(team.map((agent) => D.advise({ agent, facts, thread: emails, dispute: r.dispute })));
+  const earlier = await earlierAdvice(r.id);
+  const answers = await Promise.allSettled(team.map((agent) => D.advise({ agent, facts, thread: emails, dispute: r.dispute, ask: question, earlier })));
   let n = 0;
   for (const [i, a] of answers.entries()) {
     const agent = team[i];
     if (a.status !== 'fulfilled' || !a.value.view) { console.warn(`[lease renewals] ${agent.name} could not advise:`, a.reason?.message || 'no answer'); continue; }
     await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, data, user_id, at) VALUES (?, 'advice', ?, ?, ?, ?, ?)`)
       .run(r.id, `${agent.name}'s view`, a.value.view,
-        JSON.stringify({ agent: { id: agent.id, name: agent.name, icon: agent.icon, color: agent.color }, reply: a.value.reply, asked: !!user }), user?.id || null, secs());
+        JSON.stringify({ agent: { id: agent.id, name: agent.name, icon: agent.icon, color: agent.color }, reply: a.value.reply, asked: !!user, ask: question || null }),
+        user?.id || null, secs());
     n += 1;
   }
   if (!n) throw bad('None of the advisors could answer just now. Try again in a minute.', 502);
@@ -1181,6 +1252,8 @@ leaseRenewalRoutes.get('/:id', wrap(async (req, res) => {
   const files = await db.prepare('SELECT id, event_id, name, mime FROM lease_renewal_files WHERE renewal_id = ? ORDER BY id').all(r.id);
   res.json({
     ...card(r.lease, r), advisors: (await advisors(await settings())).length, paused: !!(await settings()).paused,
+    // Who "Ask advisors" offers: the picked advisors (ticked), then the person's own agents.
+    askable: (await askable(req.user, await settings())).map(({ id, name, icon, color, picked }) => ({ id, name, icon, color, picked })),
     events: events.map((e) => ({ ...e, at: Number(e.at), files: files.filter((f) => f.event_id === e.id) })),
   });
 }));
@@ -1201,13 +1274,35 @@ leaseRenewalRoutes.post('/check', wrap(async (req, res) => {
   res.json({ read: await readInbound() });
 }));
 
+// "Ask advisors" opened: the question filled in from the latest email and what was asked before,
+// so the person only checks it and taps Ask (the user, 2026-11-03). Nothing is asked yet.
+leaseRenewalRoutes.post('/:id/advise/suggest', wrap(async (req, res) => {
+  const r = await getRenewal(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Not found' });
+  const ask = await D.nextAsk({ facts: factsOf(r, await settings()), thread: await thread(r.id), earlier: await earlierAdvice(r.id) });
+  res.json({ ask });
+}));
+
+// An advisor's box taken off the timeline. Only advice: emails and steps stay, as they are the record.
+leaseRenewalRoutes.delete('/:id/advice/:event', wrap(async (req, res) => {
+  const { changes } = await db.prepare(`DELETE FROM lease_renewal_events WHERE id = ? AND renewal_id = ? AND kind = 'advice'`)
+    .run(Number(req.params.event) || 0, Number(req.params.id) || 0);
+  if (!changes) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+}));
+
 leaseRenewalRoutes.post('/:id/events/:event/read', wrap(async (req, res) => { res.json(out(await reread(req.params.id, req.params.event))); }));
 
 leaseRenewalRoutes.post('/:id/advise', wrap(async (req, res) => {
   const r = await getRenewal(req.params.id);
   if (!r) return res.status(404).json({ error: 'Not found' });
-  if (!(await advisors(await settings())).length) throw bad('No advisors are picked yet: the master picks them in the Lease renewals settings.', 409);
-  res.json({ added: await askAdvisors(r, { user: req.user }) });
+  const b = req.body || {};
+  const ids = Array.isArray(b.agents) ? b.agents : null;
+  if (ids && !ids.length) throw bad('Pick at least one agent to ask.');
+  if (!ids && !(await advisors(await settings())).length) throw bad('No advisors are picked yet: pick an agent to ask.', 409);
+  const added = await askAdvisors(r, { user: req.user, ask: b.ask, agentIds: ids });
+  if (!added) throw bad('None of those agents can be asked here.');
+  res.json({ added });
 }));
 
 // "Rewrite with Reem": the reply in the box, written again as the building management team. Nothing is sent.
