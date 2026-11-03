@@ -2637,3 +2637,56 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_project_inspections ON project_inspections(project_id, day);
 `);
+
+// Project plans (server/projectPlans.js): the master attaches one project file in a chat;
+// Reem reads it, asks what it does not say, and writes the whole plan. Start puts the plan's
+// steps into the project (Progress). After that the plan is watched against what the site
+// reports, with no AI: what is late becomes a plan_alert, once per thing.
+//   project_plans: one per file and project; plan is the JSON the planner wrote.
+//   plan_alerts:   something late against the plan; key says what, so it is raised once.
+//                  change: the weeks Reem proposes, applied only when the master accepts.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS project_plans (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    project_said TEXT,
+    document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    file_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'reading' CHECK (status IN
+      ('reading', 'asking', 'planning', 'planned', 'started', 'cancelled', 'failed')),
+    working TEXT,
+    error TEXT,
+    notes TEXT,
+    facts JSONB,
+    answers TEXT,
+    change TEXT,
+    plan JSONB,
+    problems JSONB,
+    spent NUMERIC NOT NULL DEFAULT 0,
+    spend_limit NUMERIC NOT NULL DEFAULT 5,
+    report TEXT,
+    report_on TEXT,
+    watched_on TEXT,
+    report_doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    started_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_plans_chat ON project_plans(user_id, conversation_id, id);
+  CREATE INDEX IF NOT EXISTS idx_project_plans_project ON project_plans(project_id, status);
+  CREATE TABLE IF NOT EXISTS plan_alerts (
+    id SERIAL PRIMARY KEY,
+    plan_id INTEGER NOT NULL REFERENCES project_plans(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('not_started', 'not_finished', 'material', 'unsigned', 'blocked')),
+    step_id INTEGER REFERENCES project_steps(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    change JSONB,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'accepted', 'declined')),
+    decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    decided_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW},
+    UNIQUE (plan_id, key)
+  );
+`);

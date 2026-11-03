@@ -14,6 +14,7 @@ import { responsibilityKit } from './responsibilities.js';
 import { buildingKit } from './buildings.js';
 import { inventoryKit } from './inventory.js';
 import { projectKit } from './projects.js';
+import { planKit } from './projectPlans.js';
 import { caseKit } from './caseKit.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
@@ -608,7 +609,9 @@ export async function chat(req, res) {
       await buildingKit(user),
       await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),
       // A building job: deliveries, material given out and manpower, each on a card; only for people on a project.
-      await projectKit(user, { conversationId: convId, agentId: agent.id, onCard: (p) => send('projectCard', p) })]),
+      await projectKit(user, { conversationId: convId, agentId: agent.id, onCard: (p) => send('projectCard', p) }),
+      // The master's project plans: one file in, the full plan out, made in the background.
+      planKit(user, { conversationId: convId, onCard: (p) => send('projectPlan', p) })]),
     // Their own case folders, from their own inbox: for someone from outside the company only.
     ...(external ? [await caseKit(user, { conversationId: convId, onCard: (c) => send('caseFolder', c) })] : []),
     await noticeKit(user, { conversationId: convId, onCard: (c) => send('tenantNotice', c) }), // only with Tenant notices

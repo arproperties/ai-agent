@@ -6,11 +6,13 @@ import Picker from './Picker';
 import ProjectCard from './ProjectCard';
 import ProjectProgress from './ProjectProgress';
 import ProjectIssues from './ProjectIssues';
+import ProjectPlan from './ProjectPlan';
 
 // Projects: a building job (the JVC school). The store keeper records deliveries, material
 // given out and each day's manpower in chat; this screen is where it is looked at - what is
 // on site, the deliveries waiting for a manager, the manpower day by day, and every move,
-// how far the work is, floor by floor (ProjectProgress), and the issues and wall checks (ProjectIssues).
+// how far the work is, floor by floor (ProjectProgress), the plan made from the project file
+// and what is late against it (ProjectPlan), and the issues and wall checks (ProjectIssues).
 // The master sets a project up here: its name, floors, its agent and its people.
 // The server is server/projects.js.
 
@@ -19,7 +21,7 @@ const LABEL = 'text-[11px] font-medium tracking-[0.14em] text-mute';
 const ROLE = { store: 'Store keeper', manager: 'Manager', master: 'Master' };
 const num = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 3 });
 const ROLE_OPTIONS = [{ value: 'store', label: 'Store keeper' }, { value: 'manager', label: 'Manager' }];
-const TABS = [['progress', 'Progress'], ['issues', 'Issues'], ['stock', 'Stock'], ['waiting', 'Waiting'], ['manpower', 'Manpower'], ['history', 'History']];
+const TABS = [['progress', 'Progress'], ['plan', 'Plan'], ['issues', 'Issues'], ['stock', 'Stock'], ['waiting', 'Waiting'], ['manpower', 'Manpower'], ['history', 'History']];
 
 // ---------- the master's set-up ----------
 
@@ -212,6 +214,7 @@ function Project({ id, me, agents, onBack }) {
             ))}
           </div>
           {tab === 'progress' && <ProjectProgress id={p.project.id} />}
+          {tab === 'plan' && <ProjectPlan id={p.project.id} />}
           {tab === 'issues' && <ProjectIssues id={p.project.id} />}
           {tab === 'stock' && <Stock p={p} onItem={(i) => { setItem(i); setTab('history'); }} />}
           {tab === 'waiting' && (

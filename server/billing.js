@@ -58,6 +58,7 @@ export const JOBS = {
   notices: { name: 'Tenant notices', about: 'Writing notices to tenants' },
   setup: { name: 'Setting up', about: 'Making agents and other setup' },
   cases: { name: 'Case deadlines', about: "Reading a case's files and emails for its legal dates" },
+  project_planner: { name: 'Project planner', about: 'Reading a project file and writing its full plan' },
   other: { name: 'Other', about: 'Anything else' },
 };
 
