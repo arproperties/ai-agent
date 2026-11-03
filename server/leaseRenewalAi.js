@@ -1,5 +1,5 @@
 import { claude } from './ai.js';
-import { CAREFUL_MODEL } from './config.js';
+import { CAREFUL_MODEL, FAST_MODEL } from './config.js';
 
 // What Reem reads for Lease renewals (server/leaseRenewals.js): a tenant's email, and the
 // signed agreement and cheque photos. Each answer is JSON in a fixed shape, and anything
@@ -26,9 +26,9 @@ export function parseJson(text) {
 // Room enough for a long dispute email: answers cut off half-way can't be read (2026-11-02, PARK PLACE 203).
 // Claude fills in a form (a tool it must call) rather than writing JSON in its text: a long
 // dispute email once came back as prose and could not be read at all (2026-11-03, PARK PLACE 203).
-async function askJson(system, content, schema, maxTokens = 4000) {
+async function askJson(system, content, schema, maxTokens = 4000, model = MODEL) {
   const res = await claude.messages.create({
-    model: MODEL, max_tokens: maxTokens, system, messages: [{ role: 'user', content }],
+    model, max_tokens: maxTokens, system, messages: [{ role: 'user', content }],
     tools: [{ name: 'answer', description: 'Give your answer here, in this shape.', input_schema: schema }],
     tool_choice: { type: 'tool', name: 'answer' },
   });
@@ -169,6 +169,22 @@ export async function advise({ agent, facts, thread, dispute, ask, earlier }) {
     view: String(out.view || '').trim().slice(0, 4000),
     reply: out.reply ? String(out.reply).trim().slice(0, 4000) : null,
   };
+}
+
+const NEXT_ASK = `You help the landlord's team on a lease renewal in Dubai. From the facts, the emails and what the team already asked
+its advisors, write what the team most likely wants to ask its advisors now, so they don't have to type it.
+Answer by filling in the answer tool: {"ask": string}
+- ask: one or two short sentences in the team's voice, e.g. "The tenant accepts the rent but disputes the chiller fee (AED 7,000 vs
+  his AED 3,500). Suggest a chiller fee we can offer and write the reply."
+- Be specific to the tenant's latest email: name the figures and the point in question. Always end by asking for the reply to send.
+- Build on what was already asked; don't repeat a question that was answered unless the tenant wrote again since.`;
+
+/** The question the team most likely wants to put to its advisors next: the Ask box, filled in. Fast model: it only drafts a question. */
+export async function nextAsk({ facts, thread, earlier }) {
+  const out = await askJson(NEXT_ASK, [{ type: 'text', text:
+    `Facts of this renewal:\n${facts}\n\nThe emails, oldest first:\n${thread || '(none yet)'}\n\n` +
+    `What the team asked the advisors before, oldest first:\n${earlier || '(nothing yet)'}` }], S({ ask: str }), 600, FAST_MODEL);
+  return String(out.ask || '').trim().slice(0, 600);
 }
 
 const STORY = `You write the "what happened" part of a case pack a Dubai landlord will upload to the Rental Dispute Settlement Centre themselves.

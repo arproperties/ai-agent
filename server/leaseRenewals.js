@@ -15,7 +15,7 @@ import { renderPdf } from './replyDoc.js';
 import { needsModule } from './modules.js';
 import { inbox, fileInSent, ownWords, claimTenantMail, checkTenantMail } from './tenantCare.js';
 import { askSaifsys, actSaifsys, saifsysConfigured, saifsysActionsConfigured, dubaiDate } from './saifsys/client.js';
-import { readReply, readDocs, advise, caseSummary, rewriteReply } from './leaseRenewalAi.js';
+import { readReply, readDocs, advise, nextAsk, caseSummary, rewriteReply } from './leaseRenewalAi.js';
 
 // Lease renewals: whoever has the module renews each lease with its tenant by email, from
 // Reem, instead of the staff in saifsys. The list is saifsys's leases ending within 150 days.
@@ -91,7 +91,7 @@ async function indexRent() { return null; }
 
 // Everything that reaches outside, swappable for the tests.
 const D = {
-  ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, caseSummary, rewriteReply, checkMail: checkTenantMail,
+  ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, nextAsk, caseSummary, rewriteReply, checkMail: checkTenantMail,
   send: sendRaw, file: fileInSent, fetch: fetchMessage, push: sendPush, todo: createTodo, actor: async () => (await inbox())?.email,
   mirror: (action, body) => saifsys(action, body),
   now: () => Date.now(),
@@ -1272,6 +1272,15 @@ leaseRenewalRoutes.post('/send', wrap(async (req, res) => { res.json(out(await s
 leaseRenewalRoutes.post('/check', wrap(async (req, res) => {
   await D.checkMail();
   res.json({ read: await readInbound() });
+}));
+
+// "Ask advisors" opened: the question filled in from the latest email and what was asked before,
+// so the person only checks it and taps Ask (the user, 2026-11-03). Nothing is asked yet.
+leaseRenewalRoutes.post('/:id/advise/suggest', wrap(async (req, res) => {
+  const r = await getRenewal(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Not found' });
+  const ask = await D.nextAsk({ facts: factsOf(r, await settings()), thread: await thread(r.id), earlier: await earlierAdvice(r.id) });
+  res.json({ ask });
 }));
 
 // An advisor's box taken off the timeline. Only advice: emails and steps stay, as they are the record.

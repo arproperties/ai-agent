@@ -663,7 +663,7 @@ function Renewal({ id, onBack }) {
               <p className="font-medium">Advisors</p>
               <p className="mt-1 text-xs text-mute">Pick who to ask and say what you need. They read every email and answer on the timeline.</p>
               <div className="mt-3 grid gap-2">
-                <AskAdvisors agents={r.askable || []} busy={busy === 'advise'} onAsk={askAdvisors} />
+                <AskAdvisors id={id} agents={r.askable || []} busy={busy === 'advise'} onAsk={askAdvisors} />
                 <a href={`/api/lease-renewals/${id}/case-pack`} download
                   className="flex items-center justify-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt">
                   <FolderDown size={14} /> RDC case pack
@@ -786,11 +786,23 @@ const TINT = {
  * what you need, e.g. "help me negotiate the chiller fee". Each answer comes with a reply
  * to use.
  */
-function AskAdvisors({ agents, busy, onAsk }) {
+function AskAdvisors({ id, agents, busy, onAsk }) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState([]);
   const [ask, setAsk] = useState('');
-  const start = () => { setPicked(agents.filter((a) => a.picked).map((a) => a.id)); setOpen(true); };
+  const [drafting, setDrafting] = useState(false);
+  const typed = useRef(false);
+  // Reem fills the box from the latest email and what was asked before; what the person types wins.
+  const start = async () => {
+    setPicked(agents.filter((a) => a.picked).map((a) => a.id)); setOpen(true);
+    if (ask.trim()) return;
+    typed.current = false; setDrafting(true);
+    try {
+      const { ask: next } = await api.post(`/lease-renewals/${id}/advise/suggest`);
+      if (next && !typed.current) setAsk(next);
+    } catch { /* the box stays empty: the person types it */ }
+    setDrafting(false);
+  };
   const toggle = (aid) => setPicked((p) => (p.includes(aid) ? p.filter((x) => x !== aid) : [...p, aid]));
   const go = async () => { if (await onAsk({ agents: picked, ask })) { setOpen(false); setAsk(''); } };
   if (!open) return <Btn disabled={!agents.length} onClick={start} className="justify-center"><Users size={14} /> Ask advisors</Btn>;
@@ -810,8 +822,8 @@ function AskAdvisors({ agents, busy, onAsk }) {
           })}
         </div>
       </div>
-      <textarea value={ask} onChange={(e) => setAsk(e.target.value)} rows={3} autoFocus
-        placeholder="What do you need? e.g. Help me negotiate the chiller fee"
+      <textarea value={ask} onChange={(e) => { typed.current = true; setAsk(e.target.value); }} rows={4} autoFocus
+        placeholder={drafting ? 'Reem is writing the question…' : 'What do you need? e.g. Help me negotiate the chiller fee'}
         className="w-full resize-y rounded-xl border border-stroke bg-black/20 p-2.5 text-sm outline-none placeholder:text-mute/70 focus:border-p1/50" />
       <div className="flex justify-end gap-2">
         <Btn onClick={() => setOpen(false)} disabled={busy}>Cancel</Btn>
