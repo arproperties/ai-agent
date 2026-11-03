@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { closeDb } from './helpers/db.js';
 import { extractText } from '../server/knowledge.js';
-import { readDrawing, isDrawing, MAX_DRAWING_MB } from '../server/dwg.js';
+import { readDrawing, isDrawing, MAX_DRAWING_MB, uploadLimitMB } from '../server/dwg.js';
 
 test.after(() => closeDb());
 
@@ -47,6 +47,14 @@ test('drawings come through the same reader as PDFs, for chat and the Shelf', as
   assert.ok(isDrawing('Plan.DWG') && isDrawing('x.dxf') && !isDrawing('x.pdf'));
   const t = await extractText({ buffer: sample, mimetype: 'application/octet-stream', originalname: 'school.dxf' });
   assert.match(t, /Ø150 UPVC/);
+});
+
+test('a 32.6 MB PDF drawing set can be uploaded; a video that size cannot', () => {
+  assert.equal(uploadLimitMB('Arch-TRK.pdf'), 40);
+  assert.equal(uploadLimitMB('PLAN.PDF'), 40);
+  assert.equal(uploadLimitMB('site.dwg'), 35);
+  assert.equal(uploadLimitMB('clip.mp4'), 25);
+  assert.equal(uploadLimitMB('photo.jpg'), 25);
 });
 
 test('a drawing over the limit is refused before it is converted', async () => {

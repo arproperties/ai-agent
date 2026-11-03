@@ -69,13 +69,12 @@ import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
 import { billingContext, billingRoutes, billAs } from './billing.js';
 import { legalCaseRoutes, startLegalCases } from './legalCases.js';
 import { legalLeaseRoutes } from './legalLease.js';
-import { isDrawing, MAX_DRAWING_MB } from './dwg.js';
+import { uploadLimitMB, MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB } from './dwg.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
-export const MAX_UPLOAD_MB = 25;
-// Multer takes up to the drawing limit (CAD drawings run large); everything else is then held
-// to the usual one, so raising it for drawings does not let a 35 MB video in.
+// Multer takes up to the biggest limit (CAD drawings and PDF drawing sets run large); each file
+// is then held to the limit for its kind, so raising it for those does not let a 35 MB video in.
 // Uploads land in a folder on disk, not in memory: two people each sending ten big files at
 // once could run the 2 GB server out of memory. A file is read from disk only while it is
 // being used; one that is kept is moved into the uploads folder (saveUpload), and whatever
@@ -83,11 +82,11 @@ export const MAX_UPLOAD_MB = 25;
 const UPLOAD_TMP = `${DATA_DIR}/upload-tmp`;
 rmSync(UPLOAD_TMP, { recursive: true, force: true }); // left by a request the last restart cut off
 mkdirSync(UPLOAD_TMP, { recursive: true });
-const multerUpload = multer({ dest: UPLOAD_TMP, limits: { fileSize: Math.max(MAX_UPLOAD_MB, MAX_DRAWING_MB) * 1024 * 1024, files: 10 } });
-const tooBig = () => Object.assign(new Error(`That file is too big — the limit is ${MAX_UPLOAD_MB} MB (${MAX_DRAWING_MB} MB for a DWG/DXF drawing). A shorter clip, or send it another way.`), { status: 413 });
+const multerUpload = multer({ dest: UPLOAD_TMP, limits: { fileSize: Math.max(MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB) * 1024 * 1024, files: 10 } });
+const tooBig = () => Object.assign(new Error(`That file is too big — the limit is ${MAX_UPLOAD_MB} MB (${MAX_PDF_MB} MB for a PDF, ${MAX_DRAWING_MB} MB for a DWG/DXF drawing). A shorter clip, or send it another way.`), { status: 413 });
 const withinLimit = (req, res, next) => {
   const files = req.files || (req.file ? [req.file] : []);
-  next(files.some((f) => f.size > MAX_UPLOAD_MB * 1024 * 1024 && !isDrawing(f.originalname)) ? tooBig() : undefined);
+  next(files.some((f) => f.size > uploadLimitMB(f.originalname) * 1024 * 1024) ? tooBig() : undefined);
 };
 // The rest of the code reads f.buffer as before; here it comes off disk each time it is asked for.
 const fromDisk = (req, res, next) => {

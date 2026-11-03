@@ -975,7 +975,7 @@ const PLAN_ID = { type: 'integer', description: 'The plan number, only when ther
 const DEFS = [
   {
     name: 'start_project_plan',
-    description: 'The master wants the full plan of a building project made from ONE file attached in this chat (a drawing set: a PDF up to 25 MB, or a DWG up to 35 MB). ' +
+    description: 'The master wants the full plan of a building project made from ONE file attached in this chat (a drawing set: a PDF up to 40 MB, or a DWG up to 35 MB). ' +
       'Reem reads the whole file in the background, then shows the questions it needs answered on a card; after the answers it writes the plan ' +
       '(phases with quality checks, steps per floor with weeks and hold points, materials, manpower, risks), checks it and shows it on the card with Start. ' +
       'project: the name of an existing project it is for (it is merged into that project\'s Progress on Start), or "new". ' +
