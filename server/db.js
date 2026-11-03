@@ -2501,9 +2501,126 @@ await db.exec(`
 // A count of what is left on site: the store keeper counts a pile once it is small, and the
 // difference from the record goes in as count_up / count_down, so stock is right again
 // without a big counting day. Received and given out leave these out.
+// The card kinds are listed once, here, with the progress, area and issue ones (below) among them: this
+// runs at every boot, so a second list that left a kind out would fail on the rows it has.
 await db.exec(`
   ALTER TABLE project_proposals DROP CONSTRAINT IF EXISTS project_proposals_kind_check;
-  ALTER TABLE project_proposals ADD CONSTRAINT project_proposals_kind_check CHECK (kind IN ('delivery', 'out', 'manpower', 'count'));
+  ALTER TABLE project_proposals ADD CONSTRAINT project_proposals_kind_check
+    CHECK (kind IN ('delivery', 'out', 'manpower', 'count', 'progress', 'signoff', 'area', 'issue', 'issue_close', 'inspection'));
   ALTER TABLE project_moves DROP CONSTRAINT IF EXISTS project_moves_kind_check;
   ALTER TABLE project_moves ADD CONSTRAINT project_moves_kind_check CHECK (kind IN ('in', 'out', 'count_up', 'count_down'));
+`);
+
+// Progress (server/projectProgress.js): how far the work is, floor by floor.
+//   project_steps:        the steps of each floor, in order, under one of four stages, with
+//                         their status, %, hold point and planned weeks. Filled from a
+//                         template the first time the project's progress is opened.
+//   project_step_points:  the checklist inside a step, ticked one by one.
+//   project_step_updates: every confirmed change, in words, so the history is kept.
+//   projects.start_day:   week 1 of the programme; a manager can move it.
+// A change said in chat waits on a card in project_proposals ('progress', or 'signoff' for a
+// manager signing a hold point) like everything else on a project.
+await db.exec(`
+  ALTER TABLE projects ADD COLUMN IF NOT EXISTS start_day TEXT;
+  ALTER TABLE projects ADD COLUMN IF NOT EXISTS steps_seeded BOOLEAN NOT NULL DEFAULT false;
+  CREATE TABLE IF NOT EXISTS project_steps (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    floor TEXT NOT NULL,
+    stage TEXT NOT NULL CHECK (stage IN ('concrete', 'blockwork', 'mep', 'finishes')),
+    position INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    who TEXT,
+    hold_point TEXT,
+    week_from INTEGER,
+    week_to INTEGER,
+    status TEXT NOT NULL DEFAULT 'not_started' CHECK (status IN ('not_started', 'in_progress', 'done', 'blocked')),
+    percent INTEGER NOT NULL DEFAULT 0 CHECK (percent BETWEEN 0 AND 100),
+    note TEXT,
+    signed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    signed_note TEXT,
+    signed_at BIGINT,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_steps ON project_steps(project_id, floor, position);
+  CREATE TABLE IF NOT EXISTS project_step_points (
+    id SERIAL PRIMARY KEY,
+    step_id INTEGER NOT NULL REFERENCES project_steps(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    text TEXT NOT NULL,
+    done BOOLEAN NOT NULL DEFAULT false,
+    done_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    done_at BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_step_points ON project_step_points(step_id, position);
+  CREATE TABLE IF NOT EXISTS project_step_updates (
+    id SERIAL PRIMARY KEY,
+    step_id INTEGER NOT NULL REFERENCES project_steps(id) ON DELETE CASCADE,
+    proposal_id INTEGER REFERENCES project_proposals(id) ON DELETE SET NULL,
+    what TEXT NOT NULL,
+    by_user INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_step_updates ON project_step_updates(step_id, id);
+`);
+
+// Areas (server/projectAreas.js): the rooms of each floor with the material each needs (the
+// block take-off), how far each is, and - on material given out - which room it went to.
+// One room needing two materials (mortar: cement and sand) is two rows with the same name.
+await db.exec(`
+  ALTER TABLE projects ADD COLUMN IF NOT EXISTS areas_seeded BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE project_moves ADD COLUMN IF NOT EXISTS area TEXT;
+  CREATE TABLE IF NOT EXISTS project_areas (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    floor TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    item TEXT NOT NULL,
+    counted_in TEXT NOT NULL DEFAULT 'pcs',
+    needed NUMERIC NOT NULL CHECK (needed >= 0),
+    week_from INTEGER,
+    week_to INTEGER,
+    percent INTEGER NOT NULL DEFAULT 0 CHECK (percent BETWEEN 0 AND 100),
+    note TEXT,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_areas ON project_areas(project_id, position);
+`);
+
+// Issues and wall checks (server/projectIssues.js): questions for the consultant and problems
+// holding work up, open until a manager closes them with the answer; and the daily walk along
+// new blockwork, nine checks Pass or Fail for a room.
+await db.exec(`
+  ALTER TABLE projects ADD COLUMN IF NOT EXISTS issues_seeded BOOLEAN NOT NULL DEFAULT false;
+  CREATE TABLE IF NOT EXISTS project_issues (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    floor TEXT,
+    step_id INTEGER REFERENCES project_steps(id) ON DELETE SET NULL,
+    text TEXT NOT NULL,
+    asked TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+    answer TEXT,
+    opened_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    opened_at BIGINT DEFAULT ${NOW},
+    closed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    closed_at BIGINT
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_issues ON project_issues(project_id, status);
+  CREATE TABLE IF NOT EXISTS project_inspections (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    proposal_id INTEGER REFERENCES project_proposals(id) ON DELETE SET NULL,
+    floor TEXT,
+    area TEXT,
+    day TEXT NOT NULL,
+    results JSONB NOT NULL,
+    note TEXT,
+    by_user INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_project_inspections ON project_inspections(project_id, day);
 `);

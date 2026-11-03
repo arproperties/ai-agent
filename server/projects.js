@@ -3,6 +3,13 @@ import { db, tx } from './db.js';
 import { isMaster, projectRole, projectsOf } from './access.js';
 import { sendPush } from './push.js';
 import { dubaiDate, dubaiHour } from './saifsys/client.js';
+import {
+  PROGRESS_DEFS, progressHandlers, applyStepCard, pushBlocked, progressOf, stepHistory, setStartDay, saveStep, deleteStep, moveStep, weekOf,
+} from './projectProgress.js';
+import {
+  ISSUE_DEFS, issueHandlers, applyIssueCard, pushFailedCheck, issuesOf, saveIssue, closeIssueOnScreen,
+} from './projectIssues.js';
+import { AREA_DEF, ensureAreas, stockWithNeeds, shortages, shortageLines, findArea, proposeArea, applyAreaCard, saveArea, deleteArea } from './projectAreas.js';
 
 // Projects: a building job (the JVC school), recorded from chat by the people on site.
 //
@@ -18,6 +25,7 @@ import { dubaiDate, dubaiHour } from './saifsys/client.js';
 // was recorded before.
 //
 // Who: access.js projectRole - the master sees every project, a member their own.
+// How far the work itself is (steps per floor, %, hold points) is in projectProgress.js.
 
 const NOW = 'extract(epoch from now())::bigint';
 const MAX_ROWS = 40; // trades in one day's manpower
@@ -25,13 +33,13 @@ const MAX_QUANTITY = 10_000_000;
 const MAX_CHAT_LINES = 250;
 const PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
-const bad = (message, status = 400) => Object.assign(new Error(message), { status });
-const line = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
-const has = (text, part) => String(text).toLowerCase().includes(String(part ?? '').trim().toLowerCase());
+export const bad = (message, status = 400) => Object.assign(new Error(message), { status });
+export const line = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+export const has = (text, part) => String(text).toLowerCase().includes(String(part ?? '').trim().toLowerCase());
 const num = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
-const canRecord = (role) => ['store', 'manager', 'master'].includes(role);
-const canDecide = (role) => ['manager', 'master'].includes(role);
+export const canRecord = (role) => ['store', 'manager', 'master'].includes(role);
+export const canDecide = (role) => ['manager', 'master'].includes(role);
 
 // What to look at when each kind of material arrives. Matched on the item's name; the first
 // check is for every delivery. A photo cannot prove strength, so the certificates are asked
@@ -119,12 +127,12 @@ export async function getProject(user, id) {
   const waiting = await db.prepare(`SELECT id FROM project_proposals WHERE project_id = ? AND status = 'sent' ORDER BY id`).all(p.id);
   const members = await db.prepare(`SELECT m.user_id, m.role, u.name FROM project_members m JOIN users u ON u.id = m.user_id
     WHERE m.project_id = ? ORDER BY m.role, u.name`).all(p.id);
-  const moves = await db.prepare(`SELECT m.id, m.kind, m.item, m.counted_in, m.quantity, m.floor, m.supplier, m.party, m.day, m.note, m.at, u.name AS by_name
+  const moves = await db.prepare(`SELECT m.id, m.kind, m.item, m.counted_in, m.quantity, m.floor, m.area, m.supplier, m.party, m.day, m.note, m.at, u.name AS by_name
     FROM project_moves m LEFT JOIN users u ON u.id = m.by_user WHERE m.project_id = ? ORDER BY m.day DESC, m.id DESC LIMIT 300`).all(p.id);
   const rejected = await db.prepare(`SELECT id FROM project_proposals WHERE project_id = ? AND status = 'rejected' ORDER BY id DESC LIMIT 50`).all(p.id);
   return {
     project: { id: p.id, name: p.name, floors: p.floors, agent_id: p.agent_id }, role: p.role, members,
-    stock: await stockOf(p.id),
+    stock: await stockWithNeeds(p.id),
     waiting: await Promise.all(waiting.map((r) => getProposal(user, r.id))),
     rejected: await Promise.all(rejected.map((r) => getProposal(user, r.id))),
     moves,
@@ -208,7 +216,7 @@ async function recorder(user, input, agentId) {
   return p;
 }
 
-async function saveCard(user, p, kind, data, conversationId) {
+export async function saveCard(user, p, kind, data, conversationId) {
   const { id } = await db.prepare('INSERT INTO project_proposals (project_id, user_id, conversation_id, kind, data) VALUES (?, ?, ?, ?, ?::jsonb) RETURNING id')
     .run(p.id, user.id, conversationId || null, kind, JSON.stringify(data));
   return getProposal(user, id);
@@ -236,9 +244,18 @@ export async function proposeOut(user, input, { conversationId = null, agentId =
   const p = await recorder(user, input, agentId);
   const item = await sameName(p.id, line(input.item, 80));
   if (!item) throw bad('Say what material was given out.');
+  // The room it went to, when said: it counts against that room's take-off.
+  let area = null;
+  let floor = floorOf(p, input.floor);
+  if (line(input.area, 120)) {
+    await ensureAreas(p.id);
+    const [a] = await findArea(p.id, floor, input.area);
+    area = a.name;
+    floor = a.floor;
+  }
   return saveCard(user, p, 'out', {
     item, quantity: amountOf(input.quantity), counted_in: line(input.counted_in, 20) || 'pcs',
-    floor: floorOf(p, input.floor), party: line(input.given_to, 80) || null, day: dayOf(input.date), notes: line(input.notes, 400) || null,
+    floor, area, party: line(input.given_to, 80) || null, day: dayOf(input.date), notes: line(input.notes, 400) || null,
   }, conversationId);
 }
 
@@ -313,8 +330,7 @@ export async function sendToManager(user, id, { passed = [], note = '' } = {}, p
   const said = line(note, 400);
   if (!failed.length && !said) throw bad('Every check passed: tap Accept. To send it anyway, say what is wrong in the note.');
   await step(p, 'pending', 'sent', { failed: JSON.stringify(failed), note: said || null });
-  let managers = (await db.prepare(`SELECT user_id FROM project_members WHERE project_id = ? AND role = 'manager'`).all(p.project_id)).map((r) => r.user_id);
-  if (!managers.length) managers = (await db.prepare(`SELECT id AS user_id FROM users WHERE role = 'master'`).all()).map((r) => r.user_id);
+  const managers = await managersOf(p.project_id);
   const d = p.data;
   push(managers, {
     title: `${p.project}: a delivery needs you`,
@@ -322,6 +338,12 @@ export async function sendToManager(user, id, { passed = [], note = '' } = {}, p
     url: `/?projects=${p.project_id}`, tag: `project-delivery-${p.id}`,
   }).catch(() => {});
   return getProposal(user, id);
+}
+
+/** Who hears about a problem on a project: its managers, else the master. */
+export async function managersOf(projectId) {
+  const managers = (await db.prepare(`SELECT user_id FROM project_members WHERE project_id = ? AND role = 'manager'`).all(projectId)).map((r) => r.user_id);
+  return managers.length ? managers : (await db.prepare(`SELECT id AS user_id FROM users WHERE role = 'master'`).all()).map((r) => r.user_id);
 }
 
 /** A manager's answer on a delivery sent to them: accept (with a note) or reject. */
@@ -348,13 +370,17 @@ export async function decideDelivery(user, id, { verdict, note = '' } = {}, push
   return getProposal(user, id);
 }
 
-/** Confirm material given out, or a day's manpower. */
-export async function confirmCard(user, id) {
+/**
+ * Confirm material given out, a day's manpower, a count, a change to a step's or room's
+ * progress, an issue, or a wall check (body.passed: the checks ticked on its card).
+ */
+export async function confirmCard(user, id, push = sendPush, body = {}) {
   const p = await loaded(user, id);
   if (!p) return null;
   if (p.kind === 'delivery') throw bad('A delivery is accepted or sent to the manager, not confirmed.');
   if (p.user_id !== user.id && !canDecide(await projectRole(user, p.project_id))) throw bad('Only whoever recorded this, or a manager, can confirm it.', 403);
   const d = p.data;
+  let failed = [];
   await tx(async () => {
     await step(p, 'pending', 'confirmed', { decided_by: user.id });
     if (p.kind === 'count') {
@@ -365,9 +391,15 @@ export async function confirmCard(user, id) {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(p.project_id, p.id, diff > 0 ? 'count_up' : 'count_down', d.item, d.counted_in, Math.abs(diff), d.day,
           [`Counted ${num(d.counted)} on site`, d.notes].filter(Boolean).join(' · '), user.id);
       }
+    } else if (p.kind === 'progress' || p.kind === 'signoff') {
+      await applyStepCard(user, p);
+    } else if (p.kind === 'area') {
+      await applyAreaCard(user, p);
+    } else if (['issue', 'issue_close', 'inspection'].includes(p.kind)) {
+      failed = await applyIssueCard(user, p, body);
     } else if (p.kind === 'out') {
-      await db.prepare(`INSERT INTO project_moves (project_id, proposal_id, kind, item, counted_in, quantity, floor, party, day, note, by_user)
-        VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?, ?, ?)`).run(p.project_id, p.id, d.item, d.counted_in, d.quantity, d.floor, d.party, d.day, d.notes, user.id);
+      await db.prepare(`INSERT INTO project_moves (project_id, proposal_id, kind, item, counted_in, quantity, floor, area, party, day, note, by_user)
+        VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(p.project_id, p.id, d.item, d.counted_in, d.quantity, d.floor, d.area || null, d.party, d.day, d.notes, user.id);
     } else {
       await db.prepare('DELETE FROM project_manpower WHERE project_id = ? AND day = ?').run(p.project_id, d.day);
       for (const r of d.rows) {
@@ -376,6 +408,8 @@ export async function confirmCard(user, id) {
       }
     }
   });
+  if (p.kind === 'progress' && d.status === 'blocked') await pushBlocked(p, user, push);
+  if (failed.length) await pushFailedCheck(p, failed, user, push);
   return getProposal(user, id);
 }
 
@@ -391,7 +425,7 @@ export async function cancelCard(user, id) {
 // ---------- Reem in chat ----------
 
 /** The project a chat means: the one named, else the one this agent speaks for, else their only one. */
-async function pickProject(user, name, agentId) {
+export async function pickProject(user, name, agentId) {
   const mine = await projectsOf(user);
   if (!mine.length) throw bad('This user is on no project.');
   if (line(name, 120)) {
@@ -416,9 +450,11 @@ const NOT_BEFORE = (from) => (from
 
 async function statusForChat(user, input, agentId) {
   const p = await pickProject(user, input.project, agentId);
-  const stock = await stockOf(p.id);
+  await ensureAreas(p.id);
+  const stock = await stockWithNeeds(p.id);
+  const week = weekOf(p.start_day);
   const waiting = await db.prepare(`SELECT data, failed, note FROM project_proposals WHERE project_id = ? AND status = 'sent' ORDER BY id`).all(p.id);
-  const week = await db.prepare(`SELECT day, sum(count)::int AS n FROM project_manpower WHERE project_id = ? AND day > ? GROUP BY day ORDER BY day DESC`)
+  const lastWeek = await db.prepare(`SELECT day, sum(count)::int AS n FROM project_manpower WHERE project_id = ? AND day > ? GROUP BY day ORDER BY day DESC`)
     .all(p.id, dubaiDate(Date.now() - 7 * 86400_000));
   const today = dubaiDate();
   return [
@@ -426,12 +462,14 @@ async function statusForChat(user, input, agentId) {
     NOT_BEFORE(await since(p.id)),
     '',
     'On site now (received minus given out):',
-    ...(stock.length ? stock.map((s) => `  - ${s.item}: ${num(s.on_site)} ${s.counted_in} (received ${num(s.received)}, given out ${num(s.given)})`) : ['  nothing recorded']),
+    ...(stock.length ? stock.map((s) => `  - ${s.item}: ${num(s.on_site)} ${s.counted_in} (received ${num(s.received)}, given out ${num(s.given)}` +
+      `${s.needed !== null ? `; the areas need ${num(s.needed)}, still to order ${num(s.to_order)}` : ''})`) : ['  nothing recorded']),
+    ...shortageLines(await shortages(p.id, week), week),
     '',
     `Deliveries waiting for a manager: ${waiting.length}`,
     ...waiting.map((w) => `  - ${num(w.data.quantity)} ${w.data.counted_in} ${w.data.item}${w.data.supplier ? ` from ${w.data.supplier}` : ''}; failed: ${(w.failed || []).join(', ') || '-'}${w.note ? `; note: ${w.note}` : ''}`),
     '',
-    `Manpower, last 7 days: ${week.length ? week.map((w) => `${w.day}: ${w.n}`).join(', ') : 'none sent'}${week.some((w) => w.day === today) ? '' : ' (today not sent yet)'}`,
+    `Manpower, last 7 days: ${lastWeek.length ? lastWeek.map((w) => `${w.day}: ${w.n}`).join(', ') : 'none sent'}${lastWeek.some((w) => w.day === today) ? '' : ' (today not sent yet)'}`,
   ].join('\n');
 }
 
@@ -453,7 +491,7 @@ async function recordsForChat(user, input, agentId) {
       totals.set(k, (totals.get(k) || 0) + Number(r.quantity));
     }
     out.push(`Material moves (${rows.length}):`,
-      ...rows.map((r) => `  ${r.day} ${{ in: 'IN ', out: 'OUT', count_up: 'COUNT +', count_down: 'COUNT -' }[r.kind]} ${num(r.quantity)} ${r.counted_in} ${r.item}${r.floor ? ` [${r.floor}]` : ''}` +
+      ...rows.map((r) => `  ${r.day} ${{ in: 'IN ', out: 'OUT', count_up: 'COUNT +', count_down: 'COUNT -' }[r.kind]} ${num(r.quantity)} ${r.counted_in} ${r.item}${r.floor ? ` [${r.floor}${r.area ? `, ${r.area}` : ''}]` : ''}` +
         `${r.supplier ? ` from ${r.supplier}` : ''}${r.party ? ` to ${r.party}` : ''}${r.note ? ` - ${r.note}` : ''}`),
       'Totals:', ...(totals.size ? [...totals].map(([k, n]) => `  ${k}: ${num(n)}`) : ['  none']), '');
   }
@@ -481,8 +519,9 @@ const DATE = { type: 'string', description: 'YYYY-MM-DD, only when the user says
 const DEFS = {
   status: {
     name: 'project_status',
-    description: 'A building project as recorded in Reem now: material on site (received minus given out), deliveries waiting for a manager, and manpower of the last 7 days. ' +
-      'Use for "what is on site?", "how much cement is left?", "anything waiting for me?". Answer only from what it returns.',
+    description: 'A building project as recorded in Reem now: material on site (received minus given out), what the areas need and what is still to order, ' +
+      'what runs short soon, deliveries waiting for a manager, and manpower of the last 7 days. ' +
+      'Use for "what is on site?", "how much cement is left?", "what do I need to order?", "anything waiting for me?". Answer only from what it returns.',
     input_schema: { type: 'object', properties: { project: PROJECT } },
   },
   records: {
@@ -532,8 +571,9 @@ const DEFS = {
   },
   out: {
     name: 'log_material_out',
-    description: 'Get material given out from the store ready on a card: "gave 900 blocks to the GF masons", "10 bags cement to the plaster team for 1st floor". ' +
-      'One call per material. Reuse the names already in stock. This only shows a card: nothing is taken off stock until they tap Confirm. Never say it was recorded.',
+    description: 'Get material given out from the store ready on a card: "gave 900 blocks to the GF masons", "10 bags cement to the plaster team for 1st floor", ' +
+      '"500 blocks to the pump room". One call per material. Reuse the names already in stock. When they say the room, put it in area (the areas are listed by project_progress). ' +
+      'This only shows a card: nothing is taken off stock until they tap Confirm. Never say it was recorded.',
     input_schema: {
       type: 'object',
       properties: {
@@ -542,6 +582,7 @@ const DEFS = {
         quantity: { type: 'number' },
         counted_in: { type: 'string', description: 'The same unit the stock uses for it. Default pcs.' },
         floor: { type: 'string' },
+        area: { type: 'string', description: 'The room or area it went to, if said, e.g. "Pump room".' },
         given_to: { type: 'string', description: 'The team, subcontractor or person it went to.' },
         date: DATE,
         notes: { type: 'string' },
@@ -604,6 +645,7 @@ const READY = ' NOT recorded yet - tell the user in one short line to check the 
 export async function projectKit(user, ctx = {}) {
   const mine = await projectsOf(user);
   const records = mine.some((p) => canRecord(p.role));
+  const decides = mine.some((p) => canDecide(p.role));
   const opts = { conversationId: ctx.conversationId, agentId: ctx.agentId };
   const shown = (c) => { ctx.onCard?.(c); return c; };
   const handlers = mine.length ? {
@@ -631,10 +673,18 @@ export async function projectKit(user, ctx = {}) {
         return `Card #${c.id}: ${total} people on ${c.data.day}.${c.data.replaces ? ' This day was already sent; confirming replaces it.' : ''}${READY} and tap Confirm.`;
       },
     }),
+    ...progressHandlers(user, { agentId: ctx.agentId, records, decides, opts, shown, ready: READY }),
+    ...issueHandlers(user, { agentId: ctx.agentId, records, decides, opts, shown, ready: READY }),
+    ...(records && {
+      log_area: async (input) => {
+        const c = shown(await proposeArea(user, input, opts));
+        return `Card #${c.id}: ${c.data.floor} - ${c.data.area} → ${c.data.percent}% (was ${c.data.was}%).${READY} and tap Confirm.`;
+      },
+    }),
   } : {};
   return {
-    definitions: Object.values(DEFS).filter((d) => handlers[d.name]),
-    status: (name) => (name.startsWith('log_') ? 'Getting the card ready…' : 'Looking at the project records…'),
+    definitions: [...Object.values(DEFS), ...Object.values(PROGRESS_DEFS), AREA_DEF, ...Object.values(ISSUE_DEFS)].filter((d) => handlers[d.name]),
+    status: (name) => (name.startsWith('log_') || ['sign_off', 'close_issue'].includes(name) ? 'Getting the card ready…' : 'Looking at the project records…'),
     run: async (block) => {
       try {
         const fn = handlers[block.name];
@@ -647,22 +697,36 @@ export async function projectKit(user, ctx = {}) {
   };
 }
 
-// ---------- the 5 pm manpower reminder ----------
+// ---------- the 5 pm reminder ----------
 
-/** Once a Dubai day, from 5 pm: the store keeper of a project with no manpower sent for today gets a push. */
+/**
+ * Once a Dubai day, from 5 pm: the store keeper of a project gets one push for what was not
+ * sent today - the manpower, and (once the project's progress is in use) anything done or
+ * blocked. Both sent: no push.
+ */
 export async function remindManpower(push = sendPush, at = Date.now()) {
   if (dubaiHour(at) < 17 || dubaiHour(at) >= 22) return 0;
   const today = dubaiDate(at);
-  const due = await db.prepare(`SELECT p.id, p.name FROM projects p
-    WHERE p.reminded_on IS DISTINCT FROM ?
-      AND NOT EXISTS (SELECT 1 FROM project_manpower m WHERE m.project_id = p.id AND m.day = ?)`).all(today, today);
+  const midnight = Math.floor(Date.parse(`${today}T00:00:00+04:00`) / 1000);
+  const due = await db.prepare(`SELECT p.id, p.name,
+      NOT EXISTS (SELECT 1 FROM project_manpower m WHERE m.project_id = p.id AND m.day = ?) AS no_manpower,
+      p.steps_seeded AND NOT EXISTS (SELECT 1 FROM project_proposals c WHERE c.project_id = p.id
+        AND c.kind IN ('progress', 'area') AND c.status = 'confirmed' AND c.decided_at >= ?) AS no_progress
+    FROM projects p WHERE p.reminded_on IS DISTINCT FROM ?`).all(today, midnight, today);
   let n = 0;
-  for (const p of due) {
+  for (const p of due.filter((x) => x.no_manpower || x.no_progress)) {
     const { changes } = await db.prepare('UPDATE projects SET reminded_on = ? WHERE id = ? AND reminded_on IS DISTINCT FROM ?').run(today, p.id, today);
     if (!changes) continue;
     const store = (await db.prepare(`SELECT user_id FROM project_members WHERE project_id = ? AND role = 'store'`).all(p.id)).map((r) => r.user_id);
     if (!store.length) continue;
-    await push(store, { title: `${p.name}: today's manpower`, body: 'Not sent yet. Tell Reem in a chat, e.g. "8 masons, 15 helpers, 2 steel fixers".', url: '/', tag: `project-manpower-${p.id}` }).catch(() => {});
+    const asks = [
+      p.no_manpower && 'today\'s manpower ("8 masons, 15 helpers")',
+      p.no_progress && 'anything done or blocked today ("pump room walls done", "plaster blocked: waiting for MEP")',
+    ].filter(Boolean);
+    await push(store, {
+      title: `${p.name}: ${p.no_manpower ? 'today\'s manpower' : 'today\'s progress'}`,
+      body: `Not sent yet: ${asks.join(', and ')}. Tell Reem in a chat.`, url: '/', tag: `project-manpower-${p.id}`,
+    }).catch(() => {});
     n++;
   }
   return n;
@@ -697,8 +761,17 @@ projectRoutes.get('/proposals/:id/photo/:doc', wrap(async (req, res) => {
 projectRoutes.post('/proposals/:id/accept', wrap(async (req, res) => send(res, await acceptDelivery(req.user, req.params.id, req.body || {}))));
 projectRoutes.post('/proposals/:id/send', wrap(async (req, res) => send(res, await sendToManager(req.user, req.params.id, req.body || {}))));
 projectRoutes.post('/proposals/:id/decide', wrap(async (req, res) => send(res, await decideDelivery(req.user, req.params.id, req.body || {}))));
-projectRoutes.post('/proposals/:id/confirm', wrap(async (req, res) => send(res, await confirmCard(req.user, req.params.id))));
+projectRoutes.post('/proposals/:id/confirm', wrap(async (req, res) => send(res, await confirmCard(req.user, req.params.id, sendPush, req.body || {}))));
 projectRoutes.post('/proposals/:id/cancel', wrap(async (req, res) => send(res, await cancelCard(req.user, req.params.id))));
+
+// Progress: read by anyone on the project; the steps shaped by its managers.
+projectRoutes.get('/steps/:id/history', wrap(async (req, res) => send(res, await stepHistory(req.user, req.params.id))));
+projectRoutes.put('/steps/:id', wrap(async (req, res) => send(res, await saveStep(req.user, null, req.params.id, req.body || {}))));
+projectRoutes.delete('/steps/:id', wrap(async (req, res) => send(res, await deleteStep(req.user, req.params.id))));
+projectRoutes.post('/issues/:id/close', wrap(async (req, res) => send(res, await closeIssueOnScreen(req.user, req.params.id, req.body || {}))));
+projectRoutes.put('/areas/:id', wrap(async (req, res) => send(res, await saveArea(req.user, null, req.params.id, req.body || {}))));
+projectRoutes.delete('/areas/:id', wrap(async (req, res) => send(res, await deleteArea(req.user, req.params.id))));
+projectRoutes.post('/steps/:id/move', wrap(async (req, res) => send(res, await moveStep(req.user, req.params.id, req.body || {}))));
 
 projectRoutes.get('/', wrap(async (req, res) => {
   res.json((await projectsOf(req.user)).map((p) => ({ id: p.id, name: p.name, role: p.role })));
@@ -706,4 +779,10 @@ projectRoutes.get('/', wrap(async (req, res) => {
 projectRoutes.post('/', wrap(async (req, res) => send(res, await saveProject(req.user, null, req.body))));
 projectRoutes.put('/:id', wrap(async (req, res) => send(res, await saveProject(req.user, req.params.id, req.body))));
 projectRoutes.get('/:id', wrap(async (req, res) => send(res, await getProject(req.user, req.params.id))));
+projectRoutes.get('/:id/progress', wrap(async (req, res) => send(res, await progressOf(req.user, req.params.id))));
+projectRoutes.put('/:id/progress/start', wrap(async (req, res) => send(res, await setStartDay(req.user, req.params.id, req.body || {}))));
+projectRoutes.get('/:id/issues', wrap(async (req, res) => send(res, await issuesOf(req.user, req.params.id))));
+projectRoutes.post('/:id/issues', wrap(async (req, res) => send(res, await saveIssue(req.user, req.params.id, req.body || {}))));
+projectRoutes.post('/:id/areas', wrap(async (req, res) => send(res, await saveArea(req.user, req.params.id, null, req.body || {}))));
+projectRoutes.post('/:id/steps', wrap(async (req, res) => send(res, await saveStep(req.user, req.params.id, null, req.body || {}))));
 projectRoutes.get('/:id/manpower', wrap(async (req, res) => send(res, await manpowerOf(req.user, req.params.id, req.query))));

@@ -31,7 +31,14 @@ function stub({ leases = [LEASE], replies = [], docs = [], files = {} } = {}) {
   world = { sent: [], acts: [], mirrored: [], todos: [], pushes: [], replies: [...replies], docs: [...docs] };
   R.useForTests({
     now: () => world.now ?? NOW,
-    ask: async (module, action) => { assert.equal(`${module}/${action}`, 'realestate/renewals_due'); return { ok: true, leases }; },
+    ask: async (module, action, params) => {
+      // The lease file the advisors read: the contract as saifsys holds it.
+      if (`${module}/${action}` === 'legal/lease') {
+        return { ok: true, lease: { lease: { id: params.id, number: 'L-7', status: 'active', start_date: '2025-08-01', end_date: '2026-07-31',
+          annual_rent: 36000, installments: 4, chiller_fee: 3500, admin_fee: 0, notes: '' }, ejari: { number: 'EJ-99' }, saifsys_legal: { cases: [] } } };
+      }
+      assert.equal(`${module}/${action}`, 'realestate/renewals_due'); return { ok: true, leases };
+    },
     act: async (module, action, body) => {
       assert.equal(module, 'realestate_renewal');
       world.acts.push({ action, ...body });
@@ -367,39 +374,47 @@ test('the Lease renewals routes are only for those with the module', async () =>
 const agent = async (owner, name, color = 'slate') => (await db.prepare(`INSERT INTO agents (user_id, name, icon, color, persona) VALUES (?, ?, 'scale', ?, ?) RETURNING id`)
   .get(owner, name, color, `You are ${name}.`)).id;
 
-test('advisors: on a dispute each picked agent gives its view by itself; a failing one is left out', async () => {
+test('advisors: they answer only when asked, the agents picked and what the person typed; a failing one is left out', async () => {
   const boss = await setup();
   const lawyer = await agent(boss.id, 'Lawyer');
   const rdc = await agent(boss.id, 'RDC', 'rose');
   const writer = await agent(boss.id, 'Writer');
+  const stranger = await makeUser('stranger');
+  const theirs = await agent(stranger, 'Not yours');
   await db.prepare(`UPDATE lease_renewal_settings SET advisors = ?`).run(JSON.stringify([lawyer, rdc]));
   stub({ replies: [{ intent: 'unclear', summary: 'Says it is illegal', dispute: true, disputeNote: 'Claims the increase breaks the index' }] });
   const asked = [];
   R.useForTests({
-    advise: async ({ agent: a, facts, thread, dispute }) => {
-      asked.push({ name: a.name, persona: a.persona, facts, thread, dispute });
+    advise: async ({ agent: a, facts, thread, dispute, ask }) => {
+      asked.push({ name: a.name, persona: a.persona, facts, thread, dispute, ask });
       if (a.name === 'Lawyer') throw new Error('overloaded');
-      return { view: `${a.name}: send the 90-day notice proof.`, reply: 'We have noted your concern.' };
+      return { view: `${a.name}: offer to meet halfway.`, reply: null };
     },
   });
   const r = await start(boss, 42000);
   await arrives({ text: 'This is illegal, I will go to RDC' });
   await R.readInbound();
+  assert.equal(asked.length, 0, 'a dispute alone asks nobody');
 
-  assert.deepEqual(asked.map((a) => a.name), ['Lawyer', 'RDC'], 'only the picked agents, never the Writer');
-  assert.equal(asked[1].persona, 'You are RDC.', 'each answers in its own persona');
+  // The person picks Lawyer and Writer (not a picked advisor), and someone else's agent, which is dropped.
+  assert.equal(await R.askAdvisors(await R.getRenewal(r.id), { user: boss, ask: 'Help me negotiate the chiller fee', agentIds: [lawyer, writer, theirs] }), 1);
+  assert.deepEqual(asked.map((a) => a.name), ['Lawyer', 'Writer'], 'only the agents ticked that the person may use');
+  assert.equal(asked[1].persona, 'You are Writer.', 'each answers in its own persona');
+  assert.equal(asked[1].ask, 'Help me negotiate the chiller fee');
   assert.equal(asked[1].dispute, 'Claims the increase breaks the index');
   assert.match(asked[1].facts, /AED 36,000 a year/);
+  assert.match(asked[1].facts, /current contract in saifsys \(lease L-7[\s\S]*chiller fee AED 3,500[\s\S]*Ejari EJ-99/, 'the contract from saifsys, with its charges');
   assert.match(asked[1].thread, /We wrote[\s\S]*Tenant wrote/, 'the emails, oldest first');
-  const advice = await db.prepare(`SELECT title, body, data FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'advice'`).all(r.id);
-  assert.deepEqual(advice.map((a) => [a.title, a.data.agent.color, a.data.reply, a.data.asked]), [["RDC's view", 'rose', 'We have noted your concern.', false]]);
+  const advice = await db.prepare(`SELECT title, data FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'advice'`).all(r.id);
+  assert.deepEqual(advice.map((a) => [a.title, a.data.agent.name, a.data.reply, a.data.asked, a.data.ask]),
+    [["Writer's view", 'Writer', null, true, 'Help me negotiate the chiller fee']]);
   assert.equal(world.sent.length, 1, 'advice never emails the tenant');
-  assert.equal(writer > 0, true);
 
-  // Asked again by a person: one more bubble each, and the reply opens as a draft to change.
-  R.useForTests({ advise: async ({ agent: a }) => ({ view: `${a.name} again`, reply: `Reply from ${a.name}` }) });
-  assert.equal(await R.askAdvisors(await R.getRenewal(r.id), { user: boss }), 2);
-  assert.equal((await db.prepare(`SELECT count(*)::int AS n FROM lease_renewal_events WHERE kind = 'advice' AND (data->>'asked')::boolean`).get()).n, 2);
+  // No agents named: the picked advisors answer; a reply they write opens as a draft to change.
+  let earlier = null;
+  R.useForTests({ advise: async ({ agent: a, earlier: e }) => { earlier = e; return { view: `${a.name} again`, reply: `Reply from ${a.name}` }; } });
+  assert.equal(await R.askAdvisors(await R.getRenewal(r.id), { user: boss, ask: 'Write a reply' }), 2);
+  assert.match(earlier, /Writer, asked by Boss: "Help me negotiate the chiller fee"\nAnswer: Writer: offer to meet halfway\./, 'a follow-up sees what was asked and answered before');
   const d = await R.draft(boss, { id: r.id, action: 'reply', words: 'Reply from RDC' });
   assert.match(d.text, /^Dear Mohamed Saeed,\n\nReply from RDC\n/);
 });
@@ -428,6 +443,7 @@ test('the RDC case pack: a PDF of the story and its papers, without the advisors
   const r = await start(boss, 42000);
   await arrives({ text: 'This is illegal' });
   await R.readInbound();
+  await R.askAdvisors(await R.getRenewal(r.id), { user: boss, ask: 'What now?' });
   const bytes = await R.casePack(await R.getRenewal(r.id));
   const text = Buffer.from(bytes).toString('latin1');
   assert.match(text, /^%PDF-/);
