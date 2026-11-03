@@ -9,6 +9,7 @@ import { ask, claude, embed, transcribe } from './ai.js';
 import { CAREFUL_MODEL } from './config.js';
 import { isMaster } from './access.js';
 import { EMBED_MODEL } from './config.js';
+import { isDrawing, readDrawing } from './dwg.js';
 
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 export const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v', 'video/3gpp'];
@@ -24,6 +25,7 @@ export async function extractText({ buffer, mimetype, originalname }, { onProgre
     return readPages ? readPdfPages(buffer, pages, { name: originalname, onProgress }) : text;
   }
   if (ext === 'docx') return (await mammoth.extractRawText({ buffer })).value;
+  if (isDrawing(originalname)) { onProgress?.(`Opening the drawing ${originalname}…`); return readDrawing(buffer, originalname); }
   if (mimetype.startsWith('text/') || TEXT_EXT.includes(ext)) return buffer.toString('utf8');
   throw new Error(`Unsupported file type: ${originalname}`);
 }

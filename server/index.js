@@ -67,11 +67,23 @@ import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
 import { billingContext, billingRoutes, billAs } from './billing.js';
 import { legalCaseRoutes, startLegalCases } from './legalCases.js';
 import { legalLeaseRoutes } from './legalLease.js';
+import { isDrawing, MAX_DRAWING_MB } from './dwg.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
 export const MAX_UPLOAD_MB = 25;
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024, files: 10 } });
+// Multer takes up to the drawing limit (CAD drawings run large); everything else is then held
+// to the usual one, so raising it for drawings does not let a 35 MB video in.
+const multerUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: Math.max(MAX_UPLOAD_MB, MAX_DRAWING_MB) * 1024 * 1024, files: 10 } });
+const tooBig = () => Object.assign(new Error(`That file is too big — the limit is ${MAX_UPLOAD_MB} MB (${MAX_DRAWING_MB} MB for a DWG/DXF drawing). A shorter clip, or send it another way.`), { status: 413 });
+const withinLimit = (req, res, next) => {
+  const files = req.files || (req.file ? [req.file] : []);
+  next(files.some((f) => f.size > MAX_UPLOAD_MB * 1024 * 1024 && !isDrawing(f.originalname)) ? tooBig() : undefined);
+};
+const upload = {
+  array: (...a) => [multerUpload.array(...a), withinLimit],
+  single: (...a) => [multerUpload.single(...a), withinLimit],
+};
 app.use(express.json({ limit: '1mb' }));
 
 app.use('/api/auth', authRoutes);
@@ -503,7 +515,7 @@ app.use((err, req, res, next) => {
   // Multer says "File too large" and nothing else - not the limit, not which file. Videos
   // are the ones that reach it, so the message has to be one somebody can act on.
   if (err.code === 'LIMIT_FILE_SIZE') {
-    err = Object.assign(new Error(`That file is too big — the limit is ${MAX_UPLOAD_MB} MB. A shorter clip, or send it another way.`), { status: 413 });
+    err = tooBig();
   }
   console.error('[error]', err.message);
   // Written down as well as printed: the console scrolls away and nobody reads it, which
