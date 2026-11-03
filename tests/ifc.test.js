@@ -27,7 +27,7 @@ test('an IFC file is accepted and named from its header', () => {
 test('a Revit file is refused in plain words, pointing to an IFC export', async () => {
   await assert.rejects(
     extractText({ buffer: Buffer.from('not really revit'), mimetype: 'application/octet-stream', originalname: 'Tower.rvt' }),
-    (e) => e.message === REVIT_HELP,
+    (e) => e.message === `Tower.rvt: ${REVIT_HELP}`,
   );
   assert.match(REVIT_HELP, /File → Export → IFC/);
 });
