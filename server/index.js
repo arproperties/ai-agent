@@ -43,6 +43,7 @@ import { startCaseFolders } from './caseWatch.js';
 import { caseShareRoutes, publicCaseRoutes } from './caseShare.js';
 import { caseFocusRoutes, claimPastChats } from './caseFocus.js';
 import { serverHealthRoutes, startServerHealth } from './serverHealth.js';
+import { backupRoutes, startBackupReminder } from './backups.js';
 import { startCaseBriefs } from './caseBrief.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
 import { fromSaifsys } from './fromSaifsys.js';
@@ -163,6 +164,7 @@ app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewa
 app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
 app.use('/api/billing', requireMaster, billingRoutes); // what the AI cost: by person, job and model (master only)
 app.use('/api/server-health', requireMaster, serverHealthRoutes); // disk, memory, database, backups and their growth (master only)
+app.use('/api/backups', requireMaster, backupRoutes); // download the database and every uploaded file, password asked again (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -610,6 +612,7 @@ app.listen(PORT, '0.0.0.0', () => {
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));
   startServerHealth(); // an hourly reading of disk, memory and database, for the master's Server health screen
+  if (sending) startBackupReminder(); // a buzz to the master when nobody has downloaded a backup for a week
   // The 5 pm "today's manpower not sent" push to a project's store keeper. Live only unless asked
   // for, like the document alerts: a local copy of the live database holds real people's phones.
   if (process.env.NODE_ENV === 'production' || process.env.PROJECTS_PUSH === 'on') startProjects();
