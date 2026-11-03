@@ -30,7 +30,7 @@ export const categoryOf = (typeName) => CATEGORY_OF.get(String(typeName).toUpper
 /** "IFCWALLSTANDARDCASE" → "Wall standard case", the way a person would say it. */
 export function sayType(typeName) {
   const t = String(typeName || '').toUpperCase().replace(/^IFC/, '');
-  const words = { STANDARDCASE: ' standard case', ELEMENTEDCASE: ' elemented case', BUILDINGELEMENTPROXY: 'building element (other)', FLOWSEGMENT: 'flow segment', FLOWFITTING: 'flow fitting', FLOWTERMINAL: 'flow terminal' };
+  const words = { STANDARDCASE: ' standard case', ELEMENTEDCASE: ' elemented case', BUILDINGELEMENTPROXY: 'building element (other)', BUILDINGELEMENTPART: 'building element part', DISTRIBUTIONELEMENT: 'distribution element', FLOWSEGMENT: 'flow segment', FLOWFITTING: 'flow fitting', FLOWTERMINAL: 'flow terminal', FURNISHINGELEMENT: 'furnishing element', DISCRETEACCESSORY: 'discrete accessory', MECHANICALFASTENER: 'mechanical fastener' };
   for (const [k, v] of Object.entries(words)) if (t.endsWith(k) && t !== k) return cap(t.slice(0, -k.length).toLowerCase().replace(/segment$|fitting$/, (m) => ` ${m}`) + v);
   if (words[t]) return cap(words[t]);
   return cap(t.toLowerCase().replace(/(segment|fitting|terminal|flight|element|covering|opening)$/, ' $1').trim());
@@ -253,3 +253,45 @@ export function describeElement(api, W, model, id, { storeys, storeyOf, quantiti
     quantities: once(quantities.get(id) || []).map(({ set, name, value, unit }) => ({ set, name, value, unit })),
   };
 }
+
+// Property names a pipe or duct's size is written under, as the common property sets and
+// the main design programs write them.
+const SIZE_NAMES = /^(nominal ?diameter|size|diameter|outer ?diameter|nominal ?size)$/i;
+
+/**
+ * The size of each pipe or duct the file names one for: Map(elementId → "110 mm" or the
+ * label as written). Read from the element's own property sets only; an element with no
+ * size property gets none, and is never sized from its shape.
+ */
+export function readSizes(api, W, model, units = readUnits(api, W, model), only = null) {
+  const out = new Map();
+  for (const r of ids(api, model, W.IFCRELDEFINESBYPROPERTIES)) {
+    const rel = line(api, model, r);
+    const targets = refs(rel?.RelatedObjects).filter((e) => !only || only.has(e));
+    if (!targets.length) continue;
+    for (const defId of refs(rel?.RelatingPropertyDefinition)) {
+      if (typeName(api, model, defId).toUpperCase() !== 'IFCPROPERTYSET') continue;
+      for (const pid of refs(line(api, model, defId)?.HasProperties)) {
+        const p = line(api, model, pid);
+        if (!SIZE_NAMES.test(text(p?.Name))) continue;
+        const v = val(p?.NominalValue);
+        let size = null;
+        if (typeof v === 'number' && v > 0) size = units.length != null ? `${Math.round(v * units.length * 1000)} mm` : `${v} (model units)`;
+        else if (typeof v === 'string' && v.trim()) size = v.trim();
+        if (size) for (const e of targets) if (!out.has(e)) out.set(e, size);
+      }
+    }
+  }
+  return out;
+}
+
+/** A door or window's own width and height (its OverallWidth/OverallHeight), in mm. */
+export function openingSize(api, model, id, units) {
+  const l = line(api, model, id);
+  const w = Number(val(l?.OverallWidth)), h = Number(val(l?.OverallHeight));
+  if (!(w > 0 && h > 0) || units.length == null) return null;
+  const mm = (n) => Math.round(n * units.length * 1000);
+  return `${mm(w)} × ${mm(h)} mm`;
+}
+
+export { once as uniqueQuantities };
