@@ -22,6 +22,7 @@ import MailRoutingPage from './components/MailRouting';
 import AddressBookPage from './components/AddressBook';
 import AiKeysPage from './components/AiKeys';
 import AppsPage from './components/Apps';
+import BackupsPage from './components/Backups';
 import BillingPage from './components/Billing';
 import ServerHealthPage from './components/ServerHealth';
 import SharedInboxPage from './components/SharedInbox';
@@ -251,6 +252,7 @@ export default function App() {
           addressBookOpen={panel === 'addressbook'} onAddressBook={() => { setPanel('addressbook'); setDrawer(false); }}
           billingOpen={panel === 'billing'} onBilling={() => { setPanel('billing'); setDrawer(false); }}
           healthOpen={panel === 'health'} onHealth={() => { setPanel('health'); setDrawer(false); }}
+          backupsOpen={panel === 'backups'} onBackups={() => { setPanel('backups'); setDrawer(false); }}
           aiKeysOpen={panel === 'aikeys'} onAiKeys={() => { setPanel('aikeys'); setDrawer(false); }}
           appsOpen={panel === 'apps'} onApps={() => { setPanel('apps'); setDrawer(false); }}
           sharedInbox={sharedInbox} sharedInboxOpen={panel === 'sharedinbox'} onSharedInbox={() => { setPanel('sharedinbox'); setDrawer(false); }}
@@ -314,6 +316,7 @@ export default function App() {
         {panel === 'health' && me.role === 'master' && <ServerHealthPage onBack={() => setPanel(null)} />}
         {panel === 'aikeys' && me.role === 'master' && <AiKeysPage onBack={() => setPanel(null)} />}
         {panel === 'apps' && me.role === 'master' && <AppsPage onBack={() => setPanel(null)} />}
+        {panel === 'backups' && me.role === 'master' && <BackupsPage onBack={() => setPanel(null)} />}
         {panel === 'sharedinbox' && <SharedInboxPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
         {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}

@@ -27,6 +27,11 @@ async function verifyPassword(password, stored) {
 }
 // What an unknown email's password is checked against (see /login). Made once, matches nothing.
 const standIn = hashPassword(randomBytes(16).toString('hex'));
+/** Is this the person's password? For asking again before something sensitive (backups.js). */
+export async function checkPassword(userId, password) {
+  const u = await db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+  return !!u?.password_hash && await verifyPassword(String(password || ''), u.password_hash);
+}
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 
 function readCookie(req, name) {

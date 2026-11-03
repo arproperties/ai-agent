@@ -231,6 +231,14 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_chunks_user ON chunks(user_id, agent_id);
   -- One file's pieces (reading it, re-filing it, deleting it) without going through everyone's (2026-11-03).
   CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(document_id);
+  -- Backups (2026-11-03): when the master last downloaded each kind, for the weekly reminder.
+  CREATE TABLE IF NOT EXISTS backup_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    database_at BIGINT,
+    files_at BIGINT,
+    reminded_at BIGINT,
+    started_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
   CREATE INDEX IF NOT EXISTS idx_mem_user ON memories(user_id);
   CREATE INDEX IF NOT EXISTS idx_chunks_tsv ON chunks USING GIN(tsv);
   CREATE INDEX IF NOT EXISTS idx_mem_tsv ON memories USING GIN(tsv);
