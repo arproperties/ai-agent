@@ -29,6 +29,7 @@
     "mailparser": "^3.9.28",
     "mammoth": "^1.12.3",
     "multer": "^2.4.0",
+    "mupdf": "^1.28.1",
     "nodemailer": "^10.0.10",
     "openai": "^7.18.0",
     "pdf-lib": "^1.17.1",

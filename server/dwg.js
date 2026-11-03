@@ -16,8 +16,8 @@ export const isDrawing = (name) => DRAWING_EXT.includes(String(name).split('.').
 export const MAX_DRAWING_MB = 35;
 
 // A drawing set saved as PDF runs large too: a 51-page Trakhees building-permit set exported
-// from CAD came to 32.6 MB. Its text is what Reem reads, and every reading splits it into pages,
-// so a big PDF costs no more to read than the same pages in a smaller one. Nginx takes 50 MB.
+// from CAD came to 32.6 MB. Every reading splits a PDF into groups of pages that fit one
+// request, so a big file is read the same way as a small one. Nginx takes 50 MB.
 export const MAX_PDF_MB = 40;
 export const MAX_UPLOAD_MB = 25;
 /** How big one uploaded file may be: drawings and PDFs get more room than photos and videos. */

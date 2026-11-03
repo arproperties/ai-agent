@@ -71,12 +71,32 @@ const TRANSCRIBE = 'Transcribe all text in these pages exactly and completely, k
 
 /** Pages [from, to) of a PDF as a new PDF. */
 export async function pdfPages(buffer, from, to) {
-  const { PDFDocument } = await import('pdf-lib');
-  const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
-  const out = await PDFDocument.create();
-  const idx = Array.from({ length: Math.min(to, src.getPageCount()) - from }, (_, i) => from + i);
-  for (const p of await out.copyPages(src, idx)) out.addPage(p);
-  return Buffer.from(await out.save());
+  try {
+    const { PDFDocument } = await import('pdf-lib');
+    const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
+    const out = await PDFDocument.create();
+    const idx = Array.from({ length: Math.min(to, src.getPageCount()) - from }, (_, i) => from + i);
+    for (const p of await out.copyPages(src, idx)) out.addPage(p);
+    return Buffer.from(await out.save());
+  } catch {
+    return mupdfPages(buffer, from, to);
+  }
+}
+
+// Some PDFs saved from CAD have a broken index that pdf-lib cannot open at all (a 51-page
+// Trakhees drawing set did this), though every viewer shows them fine. MuPDF repairs them as
+// it reads, so those pages can still be looked at.
+async function mupdfPages(buffer, from, to) {
+  const mupdf = await import('mupdf');
+  const src = mupdf.Document.openDocument(buffer, 'application/pdf').asPDF();
+  const out = new mupdf.PDFDocument();
+  try {
+    for (let i = from; i < Math.min(to, src.countPages()); i++) out.graftPage(-1, src, i);
+    return Buffer.from(out.saveToBuffer('garbage,compress').asUint8Array());
+  } finally {
+    out.destroy();
+    src.destroy();
+  }
 }
 
 const pdfBlock = (buf) => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buf.toString('base64') } });
