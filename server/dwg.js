@@ -700,9 +700,12 @@ export function storeyHeight(levels) {
   return [...rises].sort((a, b) => b[1] - a[1])[0][0];
 }
 
-/** The walls of a plan as segments in metres around its middle, ready for the 3D viewer. */
-export function roughWalls({ pieces, labels, layers, units }) {
-  const names = wallLayers([...layers.keys()]);
+/**
+ * The walls of a plan as segments in metres around its middle, ready for the 3D viewer.
+ * `chosen`: the wall layers when the names do not say (picked by Reem, see rough3d.js).
+ */
+export function roughWalls({ pieces, labels, layers, units }, chosen = null) {
+  const names = chosen?.length ? chosen.filter((l) => layers.has(l)) : wallLayers([...layers.keys()]);
   if (!names.length) {
     return { error: 'This drawing has no layer named for walls (such as WALL or A-WALL), so a rough 3D view cannot be made from it. ' +
       'Tell the draftsman: please put the walls on a layer named WALL and send the drawing again.' };
@@ -743,11 +746,28 @@ export function roughWalls({ pieces, labels, layers, units }) {
     guessed ? `The drawing does not say its units; read as ${m === 0.001 ? 'millimetres' : 'metres'}.` : '',
     kept.length < segs.length ? `Only the ${MAX_WALL_SEGMENTS.toLocaleString('en-US')} longest wall lines are shown.` : '',
   ].filter(Boolean).join(' ');
-  return { walls, height, heightFrom: read ? 'levels' : 'default', thickness: 0.2, layers: names, note };
+  const size = `Size as drawn: ${((xs[xs.length - 1] - xs[0]) * m).toFixed(2)} × ${((ys[ys.length - 1] - ys[0]) * m).toFixed(2)} m, from the drawing's own coordinates.`;
+  const picked = chosen?.length ? `Walls taken from the layer${names.length > 1 ? 's' : ''} ${names.join(', ')}, which Reem judged to be the walls.` : '';
+  return { walls, height, heightFrom: read ? 'levels' : 'default', thickness: 0.2, layers: names, note: [size, picked, note].filter(Boolean).join(' ') };
 }
 
-/** Rough 3D walls for a drawing: converted and scanned as readDrawing does, one at a time. */
-export function roughModel(buffer, name) {
+/** What each layer holds, in a few words, for picking the wall layers of a drawing that does not name them. */
+export function layerList(layers, units) {
+  const m = UNIT_M[units] || 1;
+  return [...layers].filter(([, L]) => L.pieces > 0)
+    .sort((a, b) => b[1].length - a[1].length).slice(0, 80)
+    .map(([name, L]) => `${name}: ${L.pieces} lines, ${Math.round(L.length * m)} ${UNIT_M[units] ? 'm' : 'units'} long${L.blocks.size ? `, symbols ${[...L.blocks.keys()].slice(0, 3).join('/')}` : ''}`);
+}
+
+/**
+ * Rough 3D walls for a drawing: converted and scanned as readDrawing does, one at a time.
+ * pickLayers(list): when no layer is named for walls, asked which are; null when none.
+ */
+export function roughModel(buffer, name, { pickLayers = null } = {}) {
   if (buffer.length > MAX_DRAWING_MB * 1024 * 1024) return Promise.resolve({ error: `${name} is too big to open.` });
-  return oneAtATime(() => convertAndRead(buffer, name, roughWalls));
+  return oneAtATime(() => convertAndRead(buffer, name, async (scanned) => {
+    if (!pickLayers || wallLayers([...scanned.layers.keys()]).length) return roughWalls(scanned);
+    const chosen = await pickLayers(layerList(scanned.layers, scanned.units));
+    return roughWalls(scanned, chosen);
+  }));
 }

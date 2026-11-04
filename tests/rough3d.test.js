@@ -79,8 +79,13 @@ test("another person cannot get the rough 3D of someone's drawing", async () => 
       VALUES (?, 'house.dxf', 'house.dxf', 'ready', ?, ?) RETURNING id`).run(owner.id, path, plan.length);
     assert.equal((await roughModelFor(owner, id)).height, 3.6);
     assert.equal(await roughModelFor(other, id), null);
-    const pdf = await db.prepare(`INSERT INTO documents (user_id, name, title, status, path) VALUES (?, 'plan.pdf', 'plan.pdf', 'ready', ?) RETURNING id`).run(owner.id, path);
-    assert.equal(await roughModelFor(owner, pdf.id), null, 'no 3D from a PDF');
+    // A PDF plan Reem has already traced comes from what was kept, and only to its owner.
+    const pdf = await db.prepare(`INSERT INTO documents (user_id, name, title, status, path, hash) VALUES (?, 'plan.pdf', 'plan.pdf', 'ready', ?, 'h1') RETURNING id`).run(owner.id, path);
+    await db.prepare('INSERT INTO plan_models (document_id, hash, model) VALUES (?, ?, ?)').run(pdf.id, 'h1', JSON.stringify({ floors: [], note: 'kept' }));
+    assert.equal((await roughModelFor(owner, pdf.id)).note, 'kept');
+    assert.equal(await roughModelFor(other, pdf.id), null);
+    const doc = await db.prepare(`INSERT INTO documents (user_id, name, title, status, path) VALUES (?, 'notes.docx', 'notes.docx', 'ready', ?) RETURNING id`).run(owner.id, path);
+    assert.equal(await roughModelFor(owner, doc.id), null, 'no 3D from a Word file');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

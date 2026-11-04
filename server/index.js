@@ -405,12 +405,15 @@ app.get('/api/documents/:id/file', wrap(async (req, res) => {
   // under a dot-named folder (a git worktree under .claude) must not turn every file into a 404.
   res.type(inline || 'application/octet-stream').sendFile(doc.path, { dotfiles: 'allow' });
 }));
-// A DWG/DXF plan's walls stood up into a rough 3D view (dwg.js roughWalls). Opens for whoever
-// may open the drawing itself; the walls come back as numbers and the phone draws them.
+// A plan's walls stood up into a 3D view: a DWG/DXF from its own lines (dwg.js roughWalls), a
+// PDF or picture of a plan as Reem traced it (plan3d.js). Opens for whoever may open the file
+// itself; the walls come back as numbers and the phone draws them. A plan still being read
+// answers 202 with how far it has got, and the phone asks again.
 app.get('/api/documents/:id/rough3d', wrap(async (req, res) => {
   const model = await roughModelFor(req.user, req.params.id);
   if (!model) return notFound(res);
   if (model.error) return res.status(422).json({ error: model.error });
+  if (model.pending) return res.status(202).json(model);
   res.json(model);
 }));
 // Word documents rendered as HTML for the in-app viewer

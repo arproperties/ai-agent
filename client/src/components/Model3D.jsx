@@ -3,7 +3,10 @@ import { createPortal } from 'react-dom';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { X, Layers, Ruler, Loader2, AlertTriangle, Box } from 'lucide-react';
+import { X, Layers, Ruler, Loader2, AlertTriangle, Box, UnfoldVertical, RotateCw, Sun, Sparkles } from 'lucide-react';
+
+const LOOK_KEY = 'reem:3d-look'; // the look last chosen, kept on this device only
+const savedLook = () => { try { return localStorage.getItem(LOOK_KEY) === 'reem' ? 'reem' : 'day'; } catch { return 'day'; } };
 
 /**
  * The full-screen 3D view of a building, made for a phone first: one finger turns it, two
@@ -12,14 +15,17 @@ import { X, Layers, Ruler, Loader2, AlertTriangle, Box } from 'lucide-react';
  * Two kinds of model come here:
  * - an IFC file, read in the browser (lib/ifcWorker.js). It is the designer's real model,
  *   so the measure tool and the quantities the file carries are offered;
- * - a "rough" model made by the server from a 2D DWG/DXF plan (walls pushed up to a storey
+ * - a "rough" model made from a 2D plan: a DWG/DXF from its own lines, a PDF or a picture of a
+ *   plan as Reem traced it (server: rough3d.js, plan3d.js), or a floor plan Reem drew in a chat
+ *   (handed in as `plan`, no server). Walls are pushed up to a storey
  *   height). That is only a picture of the plan: the warning at the top cannot be closed,
  *   and nothing can be measured or looked up on it.
  *
  * This file is loaded only when someone opens a model, so three.js and web-ifc never weigh
  * on the rest of the app.
  */
-export default function Model3D({ doc, rough = false, onClose }) {
+export default function Model3D({ doc = null, rough = false, plan = null, title = null, onClose }) {
+  rough = rough || !!plan;
   const host = useRef(null);
   const view = useRef(null); // three.js things that live as long as the sheet
   const [stage, setStage] = useState({ label: 'Downloading the model…', pct: 0 });
@@ -33,6 +39,12 @@ export default function Model3D({ doc, rough = false, onClose }) {
   const [distance, setDistance] = useState(null);
   const [info, setInfo] = useState(null);
   const [note, setNote] = useState(null); // what rough mode was built from (height used, etc.)
+  const [noteOpen, setNoteOpen] = useState(false);
+  // The show: floors lifted apart, one floor alone, the slow turn, and the look.
+  const [apart, setApart] = useState(false);
+  const [focus, setFocus] = useState(null);
+  const [spin, setSpin] = useState(true);
+  const [look, setLook] = useState(savedLook);
   const measureRef = useRef(false);
   measureRef.current = measure;
 
@@ -51,12 +63,15 @@ export default function Model3D({ doc, rough = false, onClose }) {
         if (!alive || !hit) return;
         if (measureRef.current) return addPoint(hit.point);
         if (rough || hit.id == null) return;
-        highlight(hit.id);
+        highlight(hit.id, hit.mesh);
         worker?.postMessage({ cmd: 'info', id: hit.id });
       },
     });
     if (!v) { setError({ tooBig: true, noGl: true }); return; }
     view.current = v;
+    v.look = look;
+    v.spin = spin;
+    v.onSpin = (on) => alive && setSpin(on); // a touch stops the turn
 
     const addPoint = (p) => {
       const m = v.measure;
@@ -77,7 +92,7 @@ export default function Model3D({ doc, rough = false, onClose }) {
       } else setDistance(null);
       v.render();
     };
-    const highlight = (id) => {
+    const highlight = (id, touched) => {
       if (v.picked) { v.scene.remove(v.picked); v.picked.geometry.dispose(); v.picked = null; }
       const parts = [];
       for (const mesh of v.meshes) {
@@ -94,6 +109,7 @@ export default function Model3D({ doc, rough = false, onClose }) {
       geo.computeVertexNormals();
       v.picked = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0.6, depthTest: false }));
       v.picked.renderOrder = 5;
+      v.picked.userData.level = touched.userData.level; // it rides with its floor when the floors open up
       v.scene.add(v.picked);
       v.render();
     };
@@ -102,16 +118,21 @@ export default function Model3D({ doc, rough = false, onClose }) {
     const fail = (e) => alive && setError({ tooBig: !!e?.tooBig, message: e?.message || String(e) });
 
     if (rough) {
-      fetchJson(`/api/documents/${doc.id}/rough3d`, (pct) => alive && setStage({ label: 'Making the rough 3D view…', pct }))
-        .then((r) => {
-          if (!alive) return;
-          if (r.error) return setError({ message: r.error });
-          const groups = roughGroups(r);
-          setCats([{ key: 'walls', label: 'Walls', color: 0xe6e1d3 }]);
-          setNote(r.note);
-          v.load(groups, [{ key: 'walls', label: 'Walls', color: 0xe6e1d3 }]);
-          setStage(null);
-        }).catch(fail);
+      const show = (r) => {
+        if (!alive) return;
+        if (r.error) return setError({ message: r.error });
+        const { groups, floors } = roughGroups(r);
+        if (floors.length > 1) setStoreys(floors);
+        setNote(r.note);
+        v.load(groups, ROUGH_PARTS);
+        setCats(ROUGH_PARTS.filter((c) => groups.some((g) => g.category === c.key)));
+        setStage(null);
+      };
+      if (plan) show(plan);
+      else {
+        fetchModel(`/api/documents/${doc.id}/rough3d`, (label, pct) => alive && setStage({ label, pct }), () => alive)
+          .then(show).catch(fail);
+      }
     } else {
       worker = new Worker(new URL('../lib/ifcWorker.js', import.meta.url), { type: 'module' });
       // web-ifc's own complaints are programmer's words; the person is told what it means.
@@ -143,19 +164,28 @@ export default function Model3D({ doc, rough = false, onClose }) {
       v.dispose();
       view.current = null;
     };
-  }, [doc.id, rough]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [doc?.id, rough, plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Storeys and element types switched on and off.
   useEffect(() => {
     const v = view.current;
     if (!v) return;
-    for (const m of v.meshes) m.visible = !hidden.has(m.userData.storey ?? 'none') && !hiddenCats.has(m.userData.category);
+    v.setOff((m) => hidden.has(m.userData.storey ?? 'none') || hiddenCats.has(m.userData.category));
     v.clearPick?.();
     setInfo(null);
-    v.render();
   }, [hidden, hiddenCats, stage]);
 
+  useEffect(() => { view.current?.setSpin(spin); }, [spin]);
+  useEffect(() => { if (!stage) view.current?.setApart(apart); }, [apart]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!stage) { view.current?.setFocus(focus); view.current?.clearPick?.(); setInfo(null); } }, [focus]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
+    view.current?.setLook(look);
+    try { localStorage.setItem(LOOK_KEY, look); } catch { /* private window: it is only a preference */ }
+  }, [look]);
+
+  useEffect(() => {
+    // A distance is only true with the building whole and standing still.
+    if (measure) { setApart(false); setSpin(false); }
     if (!measure && view.current) { clearMeasure(view.current); view.current.render(); }
     setDistance(null);
     setInfo(null);
@@ -164,14 +194,17 @@ export default function Model3D({ doc, rough = false, onClose }) {
 
   const toggle = (set, setter, k) => setter(new Set(set.has(k) ? [...set].filter((x) => x !== k) : [...set, k]));
   const unplaced = view.current?.meshes.some((m) => m.userData.storey == null) && storeys.length > 0;
+  // The floors that have something drawn on them, lowest first, for the floor buttons.
+  const floors = stage ? [] : storeys.filter((st) => view.current?.levels.some((l) => l.key === st.id));
+  const pill = (on) => `pointer-events-auto flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium shadow-lg backdrop-blur transition-colors ${on ? 'bg-p1 text-white' : 'bg-[#141128]/80 text-white/85 hover:bg-[#141128]'}`;
 
   return createPortal(
     <div className="fixed inset-0 z-[70] flex flex-col bg-[#0b0a1a] text-txt">
       <header className="on-dark flex items-center gap-2 px-3 pb-2 pt-safe md:px-5">
         <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-p1/25 text-p1"><Box size={18} /></span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-white">{doc.title || doc.name}</p>
-          <p className="truncate text-xs text-white/60">{rough ? 'Rough 3D from a 2D drawing' : '3D model'}</p>
+          <p className="truncate text-sm font-medium text-white">{title || doc?.title || doc?.name}</p>
+          <p className="truncate text-xs text-white/60">{rough ? '3D from a 2D drawing' : '3D model'}</p>
         </div>
         {!stage && !error && (
           <>
@@ -188,10 +221,11 @@ export default function Model3D({ doc, rough = false, onClose }) {
 
       {rough && (
         // Always there and cannot be closed: a person must never take a size off this picture.
-        <div className="on-dark mx-3 mb-2 flex items-start gap-2 rounded-xl bg-amber-400/15 px-3 py-2 text-[13px] leading-snug text-amber-200 md:mx-5">
+        // Folded to two lines so the building keeps the screen; a tap shows where the size came from.
+        <button onClick={() => setNoteOpen((o) => !o)} className="on-dark mx-3 mb-2 flex items-start gap-2 rounded-xl bg-amber-400/15 px-3 py-2 text-left text-[13px] leading-snug text-amber-200 md:mx-5">
           <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-          <span>Rough 3D made from a 2D drawing, for viewing only. Heights and details may be wrong; do not measure from it.{note ? ` ${note}` : ''}</span>
-        </div>
+          <span className={noteOpen ? '' : 'line-clamp-2'}>{note ? `${note} ` : ''}3D made from a 2D drawing, for viewing only: details may differ from the drawing.</span>
+        </button>
       )}
 
       <div className="relative min-h-0 flex-1">
@@ -229,6 +263,31 @@ export default function Model3D({ doc, rough = false, onClose }) {
             <span className="rounded-full bg-black/70 px-4 py-2 text-sm text-white">
               {distance != null ? <>Distance: <b>{distance.toFixed(2)} m</b> · tap again to start over</> : 'Tap two points to measure between them'}
             </span>
+          </div>
+        )}
+
+        {!stage && !error && !info && !measure && (
+          <div className="on-dark pointer-events-none absolute inset-x-0 bottom-3 flex flex-col items-center gap-2 px-3">
+            {floors.length > 1 && (
+              <div className="flex max-w-full gap-1.5 overflow-x-auto pb-0.5">
+                <button onClick={() => setFocus(null)} aria-pressed={focus == null} className={pill(focus == null)}>All floors</button>
+                {floors.map((st) => (
+                  <button key={st.id} onClick={() => { setFocus(focus === st.id ? null : st.id); setSpin(false); }} aria-pressed={focus === st.id} className={pill(focus === st.id)}>{st.name}</button>
+                ))}
+              </div>
+            )}
+            <div className="flex max-w-full gap-1.5 overflow-x-auto pb-0.5">
+              {floors.length > 1 && (
+                <button onClick={() => setApart((x) => !x)} aria-pressed={apart} className={pill(apart)}><UnfoldVertical size={15} /> Open up</button>
+              )}
+              <button onClick={() => setSpin((x) => !x)} aria-pressed={spin} className={pill(spin)}><RotateCw size={15} className={spin ? 'animate-[spin_4s_linear_infinite]' : ''} /> Turn</button>
+              <div className="pointer-events-auto flex h-9 shrink-0 items-center rounded-full bg-[#141128]/80 p-1 shadow-lg backdrop-blur" role="group" aria-label="Look">
+                {[['day', Sun, 'Daylight'], ['reem', Sparkles, 'Reem']].map(([k, Icon, label]) => (
+                  <button key={k} onClick={() => setLook(k)} aria-pressed={look === k}
+                    className={`flex h-7 items-center gap-1 rounded-full px-2.5 text-[13px] font-medium ${look === k ? 'bg-white text-[#141128]' : 'text-white/80'}`}><Icon size={14} /> {label}</button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
@@ -323,42 +382,78 @@ async function fetchBuffer(url, onPct) {
   return out.buffer.slice(0, at);
 }
 
-async function fetchJson(url, onPct) {
-  onPct(20);
-  const res = await fetch(url, { credentials: 'same-origin' });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) return { error: body.error || 'The rough 3D view could not be made.' };
-  onPct(90);
-  return body;
+/**
+ * A rough model from the server. A PDF or picture plan takes a while the first time (Reem
+ * reads it): the server says how far it has got, and is asked again until it is done.
+ */
+async function fetchModel(url, onStage, alive) {
+  onStage('Making the 3D view…', 15);
+  for (let tries = 0; tries < 200 && alive(); tries++) {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 202) {
+      onStage(body.step || 'Reading the plan…', Math.min(90, 20 + tries * 2));
+      await new Promise((r) => setTimeout(r, 2500));
+      continue;
+    }
+    if (!res.ok) return { error: body.error || 'The 3D view could not be made.' };
+    onStage('Making the 3D view…', 95);
+    return body;
+  }
+  return { error: 'Reading this drawing is taking too long. Please try again in a minute.' };
 }
 
+const ROUGH_PARTS = [
+  { key: 'walls', label: 'Walls', color: 0xe6e1d3 },
+  { key: 'slabs', label: 'Floors', color: 0x9aa3ad },
+];
+const SLAB_M = 0.15;
+
 /**
- * The server sends rough walls as flat lists of numbers in metres: [x1, y1, x2, y2, …] and a
- * height. Each becomes a thin box standing on the floor, grouped into one mesh.
+ * The server sends rough walls as flat lists of numbers in metres: [x1, y1, x2, y2, …], plan
+ * y running north, either for one storey ({ walls, height }) or floor by floor ({ floors:
+ * [{ name, base, height, walls }] }). Each wall becomes a thin box standing on its floor, and
+ * each floor gets a slab under it the size of its walls, so floors read as floors.
  */
-function roughGroups({ walls, height, thickness = 0.2 }) {
-  const pos = [], nor = [], idx = [];
-  const h = height;
-  const t = thickness / 2;
-  for (let i = 0; i < walls.length; i += 4) {
-    const x1 = walls[i], z1 = -walls[i + 1], x2 = walls[i + 2], z2 = -walls[i + 3]; // plan y runs "north", into the screen
-    const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
-    if (!len) continue;
-    const nx = (-dz / len) * t, nz = (dx / len) * t;
-    const c = [[x1 + nx, z1 + nz], [x2 + nx, z2 + nz], [x2 - nx, z2 - nz], [x1 - nx, z1 - nz]];
+function roughGroups(model) {
+  const list = model.floors || [{ name: null, base: 0, height: model.height, walls: model.walls }];
+  const t = (model.thickness || 0.2) / 2;
+  const groups = [];
+  const prism = (into, c, y0, y1) => { // a box from its four plan corners (x, z), between two heights
     const quad = (a, b, cc, d, n) => {
-      const base = pos.length / 3;
-      for (const p of [a, b, cc, d]) { pos.push(...p); nor.push(...n); }
-      idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      const base = into.pos.length / 3;
+      for (const p of [a, b, cc, d]) { into.pos.push(...p); into.nor.push(...n); }
+      into.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
     };
-    const side = (a, b) => {
-      const ex = b[0] - a[0], ez = b[1] - a[1], l = Math.hypot(ex, ez) || 1;
-      quad([a[0], 0, a[1]], [b[0], 0, b[1]], [b[0], h, b[1]], [a[0], h, a[1]], [ez / l, 0, -ex / l]);
-    };
-    for (let k = 0; k < 4; k++) side(c[k], c[(k + 1) % 4]);
-    quad([c[0][0], h, c[0][1]], [c[1][0], h, c[1][1]], [c[2][0], h, c[2][1]], [c[3][0], h, c[3][1]], [0, 1, 0]);
-  }
-  return [{ category: 'walls', storey: null, position: new Float32Array(pos), normal: new Float32Array(nor), index: new Uint32Array(idx), triIds: new Uint32Array(idx.length / 3) }];
+    for (let k = 0; k < 4; k++) {
+      const a = c[k], b = c[(k + 1) % 4], ex = b[0] - a[0], ez = b[1] - a[1], l = Math.hypot(ex, ez) || 1;
+      quad([a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], y1, b[1]], [a[0], y1, a[1]], [ez / l, 0, -ex / l]);
+    }
+    quad(...c.map((p) => [p[0], y1, p[1]]), [0, 1, 0]);
+    quad(...[...c].reverse().map((p) => [p[0], y0, p[1]]), [0, -1, 0]);
+  };
+  const pack = (into, category, storey) => groups.push({ category, storey, position: new Float32Array(into.pos), normal: new Float32Array(into.nor), index: new Uint32Array(into.idx), triIds: new Uint32Array(into.idx.length / 3) });
+  const floors = [];
+  list.forEach((f, i) => {
+    const storey = list.length > 1 ? `f${i}` : null;
+    const w = { pos: [], nor: [], idx: [] };
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (let k = 0; k < f.walls.length; k += 4) {
+      const x1 = f.walls[k], z1 = -f.walls[k + 1], x2 = f.walls[k + 2], z2 = -f.walls[k + 3]; // plan y runs "north", into the screen
+      const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+      if (!len) continue;
+      const nx = (-dz / len) * t, nz = (dx / len) * t;
+      prism(w, [[x1 + nx, z1 + nz], [x2 + nx, z2 + nz], [x2 - nx, z2 - nz], [x1 - nx, z1 - nz]], f.base, f.base + f.height - (list.length > 1 ? SLAB_M : 0));
+      minX = Math.min(minX, x1, x2); maxX = Math.max(maxX, x1, x2); minZ = Math.min(minZ, z1, z2); maxZ = Math.max(maxZ, z1, z2);
+    }
+    if (!w.idx.length) return;
+    pack(w, 'walls', storey);
+    const slab = { pos: [], nor: [], idx: [] };
+    prism(slab, [[minX - t, maxZ + t], [maxX + t, maxZ + t], [maxX + t, minZ - t], [minX - t, minZ - t]], f.base - SLAB_M, f.base);
+    pack(slab, 'slabs', storey);
+    if (storey) floors.push({ id: storey, name: f.name, elevation: f.base });
+  });
+  return { groups, floors };
 }
 
 // How each kind of part looks: matte walls, concrete slabs, wood doors, clear glass, a little
@@ -397,6 +492,20 @@ function skyDome() {
   return sky;
 }
 
+// The two looks. Daylight: the building outdoors on a bright day. Reem: the app's own night,
+// glassy parts with violet glowing edges, as the building view in Leasing draws its towers.
+const LOOKS = {
+  day: {
+    skyTop: SKY_TOP, skyHorizon: SKY_HORIZON, ground: GROUND, groundOpacity: 0.88, grid: 0xbfc6cc, gridOpacity: 0.45,
+    sun: 3, fill: 0.5, env: 0.45, edge: 0x2b2f38, edgeOpacity: 0.45,
+  },
+  reem: {
+    skyTop: '#241a4d', skyHorizon: '#0b0a1a', ground: 0x110e24, groundOpacity: 0.92, grid: 0x7c6cf0, gridOpacity: 0.3,
+    sun: 1.1, fill: 0.55, env: 0.3, edge: 0xb4a2ff, edgeOpacity: 1, tint: 0x4a3a9e, mix: 0.72, glow: 0.35, glass: 0.74,
+  },
+};
+const GHOST = 0.06; // how much of a floor shows while another one is looked at alone
+
 /** The three.js scene. Null when the device has no WebGL at all. */
 function setup(el, { onLost, onTap }) {
   let renderer;
@@ -419,43 +528,80 @@ function setup(el, { onLost, onTap }) {
   const room = new RoomEnvironment();
   scene.environment = pmrem.fromScene(room, 0.04).texture;
   room.dispose?.();
-  scene.environmentIntensity = 0.45; // fill only: the sun does the modelling, so each face reads apart
-  scene.add(new THREE.HemisphereLight(0xdbe8ff, 0x8a7f6a, 0.5));
+  const fill = new THREE.HemisphereLight(0xdbe8ff, 0x8a7f6a, 0.5);
   const sun = new THREE.DirectionalLight(0xfff1dc, 3);
-  scene.add(sun, sun.target);
+  scene.add(fill, sun, sun.target);
   const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 10000);
   const controls = new OrbitControls(camera, renderer.domElement);
   // Damping lets the model glide to a stop after a swipe instead of halting dead.
   controls.enableDamping = true;
   controls.dampingFactor = 0.12;
   controls.screenSpacePanning = true;
+  controls.autoRotateSpeed = 0.8;
 
-  const v = { scene, camera, renderer, controls, meshes: [], extras: [], size: 10, measure: { points: [], objects: [] }, picked: null };
-  let frame = 0, intro = null;
-  // Drawn only when something changes, so a model left open does not drain the battery. While
-  // the opening glide or a swipe's glide is running, each frame asks for the next.
-  v.render = () => {
-    if (frame) return;
-    frame = requestAnimationFrame((now) => {
-      frame = 0;
-      if (intro) {
-        const k = Math.min(1, (now - (intro.start ??= now)) / intro.ms);
-        const e = 1 - (1 - k) ** 3;
-        camera.position.copy(intro.from).lerp(intro.to, e);
-        if (k >= 1) intro = null;
-      }
-      controls.update(); // with damping, this calls render again until the glide settles
-      renderer.render(scene, camera);
-      if (intro) v.render();
-    });
+  const v = {
+    scene, camera, renderer, controls, meshes: [], extras: [], levels: [], size: 10,
+    measure: { points: [], objects: [] }, picked: null,
+    look: 'day', apart: false, focus: null, spin: false,
   };
-  controls.addEventListener('change', v.render);
-  controls.addEventListener('start', () => { intro = null; }); // a touch takes over from the glide
+  let frame = 0, last = 0, intro = null, fly = null, ground = null, grid = null, home = null;
 
+  // Each frame moves whatever is still moving (the camera's glide in, floors dropping into
+  // place or opening apart, a flight to a floor, the slow turn) and asks for the next one
+  // only while something is; a model standing still costs the phone nothing.
+  const tick = (now) => {
+    frame = 0;
+    const dt = Math.min((now - (last || now)) / 1000, 0.05);
+    last = now;
+    let busy = false;
+    if (intro) {
+      const k = Math.min(1, (now - (intro.start ??= now)) / intro.ms);
+      camera.position.copy(intro.from).lerp(intro.to, 1 - (1 - k) ** 3);
+      if (k >= 1) intro = null;
+      busy = true;
+    }
+    const glide = 1 - Math.exp(-dt * 6); // the same speed whatever the frame rate
+    for (const l of v.levels) {
+      if (!l.shown) {
+        if ((l.wait -= dt) > 0) { busy = true; continue; }
+        l.shown = true;
+        for (const m of l.meshes) m.visible = !m.userData.off;
+      }
+      l.drop += (0 - l.drop) * glide;
+      l.lift += ((v.apart ? l.index * v.gap : 0) - l.lift) * glide;
+      if (Math.abs(l.drop) < v.size * 1e-4) l.drop = 0;
+      if (Math.abs(l.lift - (v.apart ? l.index * v.gap : 0)) < v.size * 1e-4) l.lift = v.apart ? l.index * v.gap : 0;
+      else busy = true;
+      if (l.drop) busy = true;
+      for (const m of l.meshes) m.position.y = l.drop + l.lift;
+    }
+    if (v.picked) v.picked.position.y = v.picked.userData.level.lift;
+    if (fly) {
+      const k = 1 - Math.exp(-dt * 4);
+      camera.position.lerp(fly.at, k);
+      controls.target.lerp(fly.look, k);
+      if (camera.position.distanceTo(fly.at) < v.size * 0.002) fly = null;
+      busy = true;
+    }
+    controls.autoRotate = v.spin && !intro;
+    if (controls.autoRotate) busy = true;
+    if (controls.update(dt)) busy = true;
+    renderer.render(scene, camera);
+    if (busy) v.render();
+  };
+  v.render = () => { if (!frame) frame = requestAnimationFrame(tick); };
+  controls.addEventListener('change', v.render);
+  // A touch takes over from anything moving the camera on its own.
+  controls.addEventListener('start', () => { intro = null; fly = null; if (v.spin) { v.spin = false; v.onSpin?.(false); } });
+
+  // The buttons along the bottom cover part of the picture: the view is drawn as if the
+  // screen ran that much lower, so the building sits in the middle of what is left.
+  const PAD = 90;
   const resize = () => {
     const w = el.clientWidth || 1, h = el.clientHeight || 1;
     renderer.setSize(w, h);
-    camera.aspect = w / h;
+    camera.aspect = w / (h + PAD);
+    camera.setViewOffset(w, h + PAD, 0, PAD, w, h);
     camera.updateProjectionMatrix();
     v.render();
   };
@@ -475,112 +621,16 @@ function setup(el, { onLost, onTap }) {
     if (moved > 8 || !quick) return;
     const r = renderer.domElement.getBoundingClientRect();
     raycaster.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
-    const hit = raycaster.intersectObjects(v.meshes.filter((m) => m.visible), false)[0];
-    onTap(hit ? { point: hit.point, id: hit.object.userData.triIds?.[hit.faceIndex] } : null);
+    // A faded floor is only there to show where the others are: taps go through it.
+    const hit = raycaster.intersectObjects(v.meshes.filter((m) => m.visible && !m.userData.level.ghost), false)[0];
+    onTap(hit ? { point: hit.point, id: hit.object.userData.triIds?.[hit.faceIndex], mesh: hit.object } : null);
   };
   renderer.domElement.addEventListener('pointerdown', onDown);
   renderer.domElement.addEventListener('pointerup', onUp);
 
-  v.load = (groups, categories, fit = null) => {
-    const look = new Map(categories.map((c) => [c.key, c]));
-    const triangles = groups.reduce((n, g) => n + g.index.length / 3, 0);
-    const outlines = triangles <= OUTLINE_UP_TO, shadows = triangles <= SHADOWS_UP_TO;
-    const materials = new Map();
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0x2b2f38, transparent: true, opacity: 0.45 });
-    const box = new THREE.Box3();
-    for (const g of groups) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(g.position, 3));
-      geo.setAttribute('normal', new THREE.BufferAttribute(g.normal, 3));
-      geo.setIndex(new THREE.BufferAttribute(g.index, 1));
-      geo.computeBoundingBox();
-      geo.computeBoundingSphere();
-      if (!materials.has(g.category)) {
-        const c = look.get(g.category) || look.get('other') || { color: 0x8d8aa0 };
-        materials.set(g.category, new THREE.MeshStandardMaterial({
-          color: c.color, side: THREE.DoubleSide, roughness: 0.8, metalness: 0, ...FINISH[g.category],
-          transparent: !!c.opacity, opacity: c.opacity || 1, depthWrite: !c.opacity,
-          polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
-        }));
-      }
-      const mat = materials.get(g.category);
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.userData = { category: g.category, storey: g.storey, triIds: g.triIds };
-      mesh.castShadow = shadows && !mat.transparent;
-      mesh.receiveShadow = shadows;
-      // Thin dark lines on the corners, like an architect's card model. A child of the mesh,
-      // so switching a floor or a part off hides its lines too.
-      if (outlines) mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), edgeMat));
-      scene.add(mesh);
-      v.meshes.push(mesh);
-      box.union(geo.boundingBox);
-    }
-    v.extras.push(edgeMat, sky.geometry, sky.material);
-    if (box.isEmpty()) throw new Error('The model has no shapes to show.');
-    // The worker's frame leaves out far-off markers but is generous (it adds each part's
-    // reach); where the two overlap is the building itself.
-    if (fit && [...fit.min, ...fit.max].every(Number.isFinite)) {
-      const framed = new THREE.Box3(new THREE.Vector3(...fit.min), new THREE.Vector3(...fit.max));
-      const tight = box.clone().intersect(framed);
-      box.copy(tight.isEmpty() ? framed : tight);
-    }
+  /** Where the camera stands to have every corner of `box` on screen, looking along `dir`. */
+  const view = (box, dir) => {
     const centre = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    v.size = Math.max(size.x, size.y, size.z) || 10;
-    const s = v.size;
-    // The ground is at the foot of the walls (or of whatever the model has), so the building
-    // stands on it; anything lower, like a drain or footings, shows faintly through it.
-    const feet = new THREE.Box3();
-    for (const m of v.meshes) if (m.userData.category === 'walls' || m.userData.category === 'doors') feet.union(m.geometry.boundingBox);
-    const groundY = Math.max(feet.isEmpty() ? box.min.y : feet.min.y, box.min.y);
-
-    // The ground the building stands on, fading into the sky far off.
-    const groundGeo = new THREE.CircleGeometry(s * 12, 64).rotateX(-Math.PI / 2);
-    const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ color: GROUND, roughness: 1, transparent: true, opacity: 0.88, depthWrite: false }));
-    ground.position.set(centre.x, groundY - s * 0.001, centre.z);
-    ground.receiveShadow = shadows;
-    ground.raycast = () => {}; // taps go through it: only the building can be picked or measured
-    scene.add(ground);
-    scene.fog = new THREE.Fog(SKY_HORIZON, s * 3, s * 11);
-    sky.scale.setScalar(s * 20);
-    sky.position.set(centre.x, groundY, centre.z);
-    // A faint site grid, a metre or so apart, gives the ground scale and depth.
-    const step = 10 ** Math.floor(Math.log10(s / 4));
-    const lines = Math.round((s * 3) / step);
-    const grid = new THREE.GridHelper(lines * step, lines, 0xb9c0c7, 0xc9cfd5);
-    grid.material.transparent = true;
-    grid.material.opacity = 0.45;
-    grid.position.set(centre.x, groundY, centre.z);
-    grid.raycast = () => {};
-    scene.add(grid);
-    v.extras.push(groundGeo, ground.material, grid.geometry, grid.material);
-
-    // The sun high and over the viewer's left shoulder: the front face lit, the side in shade,
-    // and the shadow falling where it can be seen, with its size fitted to the building.
-    sun.position.set(centre.x - s * 0.5, centre.y + s * 1.5, centre.z + s * 1.1);
-    sun.target.position.copy(centre);
-    if (shadows) {
-      renderer.shadowMap.enabled = true;
-      sun.castShadow = true;
-      const sc = sun.shadow.camera, r = s * 0.95;
-      sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r;
-      sc.near = s * 0.1; sc.far = s * 4;
-      sc.updateProjectionMatrix();
-      sun.shadow.mapSize.set(2048, 2048);
-      sun.shadow.bias = -0.0004;
-      sun.shadow.normalBias = s * 0.0008;
-      sun.shadow.radius = 3;
-    }
-
-    camera.near = s / 1000;
-    camera.far = s * 30;
-    camera.updateProjectionMatrix();
-    controls.target.copy(centre);
-    controls.maxPolarAngle = Math.PI * 0.495; // never under the ground
-    // Far enough back that every corner of the building is on screen (a phone held upright is
-    // narrow), seen from the usual three-quarter view; it glides in from further out and a
-    // little round.
-    const dir = new THREE.Vector3(1, 0.5, 1).normalize();
     const fwd = dir.clone().negate();
     const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
     const up = new THREE.Vector3().crossVectors(right, fwd);
@@ -591,16 +641,208 @@ function setup(el, { onLost, onTap }) {
       const near = c.dot(dir);
       dist = Math.max(dist, near + Math.abs(c.dot(right)) / tanH, near + Math.abs(c.dot(up)) / tanV);
     }
-    dist = (dist || s) * 1.08;
-    const to = dir.clone().multiplyScalar(dist).add(centre);
+    dist = (dist || v.size) * 1.08;
+    return { at: dir.clone().multiplyScalar(dist).add(centre), look: centre, dist };
+  };
+  // The camera's present direction from what it looks at, raised to `rise` at the least.
+  const facing = (rise) => {
+    const d = camera.position.clone().sub(controls.target);
+    d.y = 0;
+    if (d.lengthSq() < 1e-9) d.set(1, 0, 1);
+    d.normalize().multiplyScalar(Math.cos(rise));
+    d.y = Math.sin(rise);
+    return d.normalize();
+  };
+  /** The building as it stands now: lifted apart or not, a picked floor or all of it. */
+  const standing = () => {
+    const b = new THREE.Box3();
+    for (const l of v.levels) {
+      if (v.focus != null && l.key !== v.focus) continue;
+      const lb = l.box.clone();
+      const y = v.apart ? l.index * v.gap : 0;
+      lb.min.y += y; lb.max.y += y;
+      b.union(lb);
+    }
+    return b.isEmpty() ? home.clone() : v.focus == null ? b.intersect(home.clone().expandByVector(new THREE.Vector3(0, v.apart ? v.gap * v.levels.length : 0, 0))) : b;
+  };
+  const flyTo = (rise) => { fly = view(standing(), facing(rise)); v.render(); };
+
+  // How a part looks, from the look chosen and whether its floor is faded out.
+  const dress = (m) => {
+    const L = LOOKS[v.look], b = m.userData.base, mat = m.material, ghost = m.userData.level.ghost;
+    mat.color.copy(b.color);
+    mat.emissive.setRGB(0, 0, 0);
+    let opacity = b.opacity;
+    if (L.tint) {
+      mat.color.lerp(new THREE.Color(L.tint), m.userData.category === 'windows' ? 0.2 : L.mix);
+      mat.emissive.copy(mat.color).multiplyScalar(L.glow);
+      opacity = Math.min(opacity, L.glass);
+    }
+    if (ghost) opacity = GHOST;
+    mat.transparent = opacity < 1;
+    mat.opacity = opacity;
+    mat.depthWrite = opacity > 0.6;
+    mat.needsUpdate = true;
+    const edge = m.children[0]?.material;
+    if (edge) { edge.color.set(L.edge); edge.opacity = ghost ? GHOST * 2 : L.edgeOpacity; }
+    m.castShadow = v.shadows && opacity > 0.6;
+  };
+
+  v.load = (groups, categories, fit = null) => {
+    const look = new Map(categories.map((c) => [c.key, c]));
+    const triangles = groups.reduce((n, g) => n + g.index.length / 3, 0);
+    const outlines = triangles <= OUTLINE_UP_TO;
+    v.shadows = triangles <= SHADOWS_UP_TO;
+    const box = new THREE.Box3();
+    const levels = new Map();
+    for (const g of groups) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(g.position, 3));
+      geo.setAttribute('normal', new THREE.BufferAttribute(g.normal, 3));
+      geo.setIndex(new THREE.BufferAttribute(g.index, 1));
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+      const c = look.get(g.category) || look.get('other') || { color: 0x8d8aa0 };
+      // Each piece has its own material, so one floor can fade while the others stay.
+      const mat = new THREE.MeshStandardMaterial({
+        color: c.color, side: THREE.DoubleSide, roughness: 0.8, metalness: 0, ...FINISH[g.category],
+        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      const key = g.storey ?? 'none';
+      if (!levels.has(key)) levels.set(key, { key, meshes: [], box: new THREE.Box3(), drop: 0, lift: 0, ghost: false, shown: false });
+      const level = levels.get(key);
+      mesh.userData = { category: g.category, storey: g.storey, triIds: g.triIds, level, base: { color: new THREE.Color(c.color), opacity: c.opacity || 1 } };
+      mesh.receiveShadow = v.shadows;
+      mesh.visible = false; // until its floor drops into place
+      // Thin lines on the corners, like an architect's card model. A child of the mesh, so
+      // switching a floor or a part off hides its lines too.
+      if (outlines) mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ transparent: true })));
+      level.meshes.push(mesh);
+      level.box.union(geo.boundingBox);
+      scene.add(mesh);
+      v.meshes.push(mesh);
+      box.union(geo.boundingBox);
+    }
+    v.extras.push(sky.geometry, sky.material);
+    if (box.isEmpty()) throw new Error('The model has no shapes to show.');
+    // The worker's frame leaves out far-off markers but is generous (it adds each part's
+    // reach); where the two overlap is the building itself.
+    if (fit && [...fit.min, ...fit.max].every(Number.isFinite)) {
+      const framed = new THREE.Box3(new THREE.Vector3(...fit.min), new THREE.Vector3(...fit.max));
+      const tight = box.clone().intersect(framed);
+      box.copy(tight.isEmpty() ? framed : tight);
+    }
+    home = box.clone();
+    const centre = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    v.size = Math.max(size.x, size.y, size.z) || 10;
+    const s = v.size;
+    // Floors from the bottom up: each drops into place a moment after the one below, and
+    // "Open up" lifts each a step further than the one below it.
+    v.levels = [...levels.values()].sort((a, b) => a.box.min.y - b.box.min.y);
+    v.levels.forEach((l, i) => { l.index = i; l.wait = 0.25 + i * 0.22; l.drop = s * 0.35; });
+    v.gap = Math.max(s * 0.14, size.y / Math.max(v.levels.length, 1) * 0.9);
+    // The ground is at the foot of the walls (or of whatever the model has), so the building
+    // stands on it; anything lower, like a drain or footings, shows faintly through it.
+    const feet = new THREE.Box3();
+    for (const m of v.meshes) if (m.userData.category === 'walls' || m.userData.category === 'doors') feet.union(m.geometry.boundingBox);
+    const groundY = Math.max(feet.isEmpty() ? box.min.y : feet.min.y, box.min.y);
+
+    const groundGeo = new THREE.CircleGeometry(s * 12, 64).rotateX(-Math.PI / 2);
+    ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ roughness: 1, transparent: true, depthWrite: false }));
+    ground.position.set(centre.x, groundY - s * 0.001, centre.z);
+    ground.receiveShadow = v.shadows;
+    ground.raycast = () => {}; // taps go through it: only the building can be picked or measured
+    scene.add(ground);
+    scene.fog = new THREE.Fog(SKY_HORIZON, s * 3, s * 11);
+    sky.scale.setScalar(s * 20);
+    sky.position.set(centre.x, groundY, centre.z);
+    // A faint site grid gives the ground scale and depth.
+    const step = 10 ** Math.floor(Math.log10(s / 4));
+    const lines = Math.round((s * 3) / step);
+    grid = new THREE.GridHelper(lines * step, lines);
+    grid.material.vertexColors = false;
+    grid.material.transparent = true;
+    grid.position.set(centre.x, groundY, centre.z);
+    grid.raycast = () => {};
+    scene.add(grid);
+    v.extras.push(groundGeo, ground.material, grid.geometry, grid.material);
+
+    // The sun high and over the viewer's left shoulder: the front face lit, the side in shade,
+    // and the shadow falling where it can be seen, with its size fitted to the building.
+    sun.position.set(centre.x - s * 0.5, centre.y + s * 1.5, centre.z + s * 1.1);
+    sun.target.position.copy(centre);
+    if (v.shadows) {
+      renderer.shadowMap.enabled = true;
+      sun.castShadow = true;
+      const sc = sun.shadow.camera, r = s * 1.1;
+      sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r;
+      sc.near = s * 0.1; sc.far = s * 5;
+      sc.updateProjectionMatrix();
+      sun.shadow.mapSize.set(2048, 2048);
+      sun.shadow.bias = -0.0004;
+      sun.shadow.normalBias = s * 0.0008;
+      sun.shadow.radius = 3;
+    }
+    v.setLook(v.look);
+
+    // Far enough back that every corner of the building is on screen (a phone held upright is
+    // narrow), seen from the usual three-quarter view; it glides in from further out and a
+    // little round while the floors drop into place.
+    const { at: to, dist } = view(box, new THREE.Vector3(1, 0.5, 1).normalize());
+    camera.near = s / 1000;
+    camera.far = Math.max(s * 30, dist * 4);
+    camera.updateProjectionMatrix();
+    controls.target.copy(centre);
+    controls.maxPolarAngle = Math.PI * 0.495; // never under the ground
     const from = to.clone().sub(centre).applyAxisAngle(new THREE.Vector3(0, 1, 0), -0.7).multiplyScalar(1.6).add(centre);
     from.y = Math.max(from.y, centre.y + dist * 0.9);
-    camera.far = Math.max(camera.far, dist * 4);
-    camera.updateProjectionMatrix();
-    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    camera.position.copy(still ? to : from);
-    if (!still) intro = { from, to, ms: 1400 };
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      camera.position.copy(to);
+      for (const l of v.levels) { l.wait = 0; l.drop = 0; }
+    } else {
+      camera.position.copy(from);
+      intro = { from, to, ms: 1600 };
+    }
     controls.update();
+    v.render();
+  };
+
+  /** 'day' or 'reem'. */
+  v.setLook = (name) => {
+    v.look = LOOKS[name] ? name : 'day';
+    const L = LOOKS[v.look];
+    sky.material.uniforms.top.value.set(L.skyTop);
+    sky.material.uniforms.horizon.value.set(L.skyHorizon);
+    scene.fog?.color.set(L.skyHorizon);
+    if (ground) { ground.material.color.set(L.ground); ground.material.opacity = L.groundOpacity; }
+    if (grid) { grid.material.color.set(L.grid); grid.material.opacity = L.gridOpacity; grid.material.needsUpdate = true; }
+    sun.intensity = L.sun;
+    fill.intensity = L.fill;
+    scene.environmentIntensity = L.env;
+    for (const m of v.meshes) dress(m);
+    v.render();
+  };
+  /** The floors lifted apart, a step each, or back together. */
+  v.setApart = (on) => {
+    v.apart = !!on;
+    if (home) flyTo(v.focus == null ? 0.42 : 0.85);
+  };
+  /** One floor alone (its key, from the worker's storeys) with the others faded, or null for all. */
+  v.setFocus = (key) => {
+    v.focus = v.levels.some((l) => l.key === key) ? key : null;
+    for (const l of v.levels) l.ghost = v.focus != null && l.key !== v.focus;
+    for (const m of v.meshes) dress(m);
+    if (home) flyTo(v.focus == null ? 0.42 : 0.85);
+  };
+  v.setSpin = (on) => { v.spin = !!on; v.render(); };
+  /** Switched off by the person in the Floors and parts list. */
+  v.setOff = (test) => {
+    for (const m of v.meshes) {
+      m.userData.off = test(m);
+      if (m.userData.level.shown) m.visible = !m.userData.off;
+    }
     v.render();
   };
 
@@ -608,7 +850,7 @@ function setup(el, { onLost, onTap }) {
     ro.disconnect();
     controls.dispose();
     if (frame) cancelAnimationFrame(frame);
-    for (const m of v.meshes) { m.geometry.dispose(); m.material.dispose(); for (const c of m.children) c.geometry.dispose(); }
+    for (const m of v.meshes) { m.geometry.dispose(); m.material.dispose(); for (const c of m.children) { c.geometry.dispose(); c.material.dispose(); } }
     for (const x of v.extras) x.dispose();
     if (v.picked) v.picked.geometry.dispose();
     scene.environment?.dispose();
