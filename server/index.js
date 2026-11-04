@@ -54,6 +54,8 @@ import { startReminders } from './reminders.js';
 import { saifsysRoutes } from './saifsys/index.js';
 import { meetingRoutes, startMeetings } from './meetings.js';
 import { transcriptRoutes, startTranscripts } from './transcripts.js';
+import { attendanceRoutes } from './attendance.js';
+import { startAttendance } from './attendanceRead.js';
 import { translateRoutes } from './translate.js';
 import { errorRoutes, recordError } from './errors.js';
 import { replyPdfRoutes } from './replyPdf.js';
@@ -149,6 +151,7 @@ app.use('/api/address-book', addressRoutes); // company mailboxes the master add
 app.use('/api/lessons', lessonRoutes); // rules the master taught agents from chat, shown as Rules (master only)
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/checklists', needsModule('checklists'), checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
+app.use('/api/attendance', needsModule('attendance'), attendanceRoutes); // who worked which day, read from the teams' lists and checked each pay period
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
 // A building job's stock, deliveries and manpower (module projects); the cards a chat makes stay open to whoever is on the project.
@@ -628,6 +631,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));
+  startAttendance().catch((e) => console.error('[attendance]', e.message)); // marks an import a restart cut off, so it can be sent again
   startServerHealth(); // an hourly reading of disk, memory and database, for the master's Server health screen
   if (sending) startBackupReminder(); // a buzz to the master when nobody has downloaded a backup for a week
   // The 5 pm "today's manpower not sent" push to a project's store keeper. Live only unless asked

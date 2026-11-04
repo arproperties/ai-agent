@@ -58,6 +58,7 @@ export const JOBS = {
   notices: { name: 'Tenant notices', about: 'Writing notices to tenants' },
   setup: { name: 'Setting up', about: 'Making agents and other setup' },
   cases: { name: 'Case deadlines', about: "Reading a case's files and emails for its legal dates" },
+  attendance: { name: 'Attendance', about: 'Reading the teams\' attendance lists and photos, and sorting them into companies and people' },
   project_planner: { name: 'Project planner', about: 'Reading a project file and writing its full plan' },
   other: { name: 'Other', about: 'Anything else' },
 };
@@ -77,6 +78,7 @@ const PATHS = [
   [/^\/pictures\b/, 'pictures'],
   [/^\/(buildings|inventory)\b/, 'buildings'],
   [/^\/checklists\b/, 'checklists'],
+  [/^\/attendance\b/, 'attendance'],
   [/^\/notices\b/, 'notices'],
   [/^\/(agents|admin|modules)\b/, 'setup'],
 ];
