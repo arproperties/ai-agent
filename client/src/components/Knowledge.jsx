@@ -24,6 +24,11 @@ const Model3D = lazy(() => import('./Model3D'));
 export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.dwg,.dxf,.ifc,.rvt,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
 export const isIfc = (d) => /\.ifc$/i.test(d?.name || '');
 export const isCad = (d) => /\.(dwg|dxf)$/i.test(d?.name || '');
+// A PDF or picture whose filing says it is a building drawing: Reem can trace it into 3D
+// (server plan3d.js). Going by what the file was read as keeps the button off invoices and IDs.
+const DRAWING_WORDS = /floor\s?plans?|ground floor|first floor|typical floor|layout|drawing|architect|blueprint|elevation|villa plan|apartment plan|unit plan|مسقط|مخطط/i;
+export const isPlanDrawing = (d) => (/\.pdf$/i.test(d?.name || '') || /^image\//.test(d?.mime || ''))
+  && DRAWING_WORDS.test([d.title, d.name, d.summary, ...(Array.isArray(d.tags) ? d.tags : [])].filter(Boolean).join(' '));
 
 // icon, icon colour, tinted background for each folder
 const FOLDER_STYLE = {
@@ -237,7 +242,8 @@ function TextView({ d }) {
 
 // Full-screen in-app viewer (never a new tab). onInfo shows the details sheet.
 export function FileViewer({ d, onClose, onInfo }) {
-  // An IFC opens as the real model; a DWG/DXF plan can be pushed up into a rough picture.
+  // An IFC opens as the real model; any other plan (DWG/DXF, or a PDF or picture of one) can be
+  // stood up into a 3D picture, for viewing.
   const [three, setThree] = useState(() => !!d.open3d && isIfc(d));
   useEffect(() => {
     if (three) return undefined; // Escape then closes the 3D view only
@@ -247,7 +253,7 @@ export function FileViewer({ d, onClose, onInfo }) {
   }, [onClose, three]);
   const mode = viewMode(d);
   const [FolderIcon, tone, bg] = folderStyle(d.folder);
-  const model = isIfc(d) ? 'ifc' : isCad(d) ? 'rough' : null;
+  const model = isIfc(d) ? 'ifc' : isCad(d) || isPlanDrawing(d) ? 'rough' : null;
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col bg-[#07061a]/95 backdrop-blur-xl" onClick={onClose}>
@@ -258,8 +264,8 @@ export function FileViewer({ d, onClose, onInfo }) {
           <p className="truncate text-xs text-mute">{[d.folder, fmtDate(d.doc_date), fmtSize(d.size)].filter(Boolean).join(' · ')}</p>
         </div>
         {model && (
-          <button onClick={() => setThree(true)} title={model === 'ifc' ? 'View in 3D' : 'Rough 3D view'}
-            className="flex h-10 items-center gap-1.5 rounded-full bg-p1/20 px-3 text-sm text-p1 hover:bg-p1/30"><Box size={17} /> {model === 'ifc' ? '3D' : 'Rough 3D'}</button>
+          <button onClick={() => setThree(true)} title="View in 3D"
+            className="flex h-10 items-center gap-1.5 rounded-full bg-p1/20 px-3 text-sm text-p1 hover:bg-p1/30"><Box size={17} /> 3D</button>
         )}
         {onInfo && (
           <button onClick={() => onInfo(d)} aria-label="File details" title="Details"
@@ -289,9 +295,9 @@ export function FileViewer({ d, onClose, onInfo }) {
               <>
                 <p className="max-w-xs text-sm text-mute">{model === 'ifc'
                   ? `A 3D building model (${fmtSize(d.size)}). It opens here on the phone; a big one may need a computer.`
-                  : 'A 2D CAD drawing. Reem can push its walls up into a rough 3D picture, for viewing only.'}</p>
+                  : 'A 2D CAD drawing. Reem can stand its walls up into a 3D picture, for viewing.'}</p>
                 <button onClick={() => setThree(true)} className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-5 py-2.5 text-sm font-medium text-white">
-                  <Box size={16} /> {model === 'ifc' ? 'View in 3D' : 'Rough 3D view'}
+                  <Box size={16} /> View in 3D
                 </button>
                 <a href={`${fileUrl(d)}?download=1`} className="flex items-center gap-2 text-sm text-mute hover:text-txt"><Download size={15} /> Download</a>
               </>

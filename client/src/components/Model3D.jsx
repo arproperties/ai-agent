@@ -15,14 +15,17 @@ const savedLook = () => { try { return localStorage.getItem(LOOK_KEY) === 'reem'
  * Two kinds of model come here:
  * - an IFC file, read in the browser (lib/ifcWorker.js). It is the designer's real model,
  *   so the measure tool and the quantities the file carries are offered;
- * - a "rough" model made by the server from a 2D DWG/DXF plan (walls pushed up to a storey
+ * - a "rough" model made from a 2D plan: a DWG/DXF from its own lines, a PDF or a picture of a
+ *   plan as Reem traced it (server: rough3d.js, plan3d.js), or a floor plan Reem drew in a chat
+ *   (handed in as `plan`, no server). Walls are pushed up to a storey
  *   height). That is only a picture of the plan: the warning at the top cannot be closed,
  *   and nothing can be measured or looked up on it.
  *
  * This file is loaded only when someone opens a model, so three.js and web-ifc never weigh
  * on the rest of the app.
  */
-export default function Model3D({ doc, rough = false, onClose }) {
+export default function Model3D({ doc = null, rough = false, plan = null, title = null, onClose }) {
+  rough = rough || !!plan;
   const host = useRef(null);
   const view = useRef(null); // three.js things that live as long as the sheet
   const [stage, setStage] = useState({ label: 'Downloading the model…', pct: 0 });
@@ -36,6 +39,7 @@ export default function Model3D({ doc, rough = false, onClose }) {
   const [distance, setDistance] = useState(null);
   const [info, setInfo] = useState(null);
   const [note, setNote] = useState(null); // what rough mode was built from (height used, etc.)
+  const [noteOpen, setNoteOpen] = useState(false);
   // The show: floors lifted apart, one floor alone, the slow turn, and the look.
   const [apart, setApart] = useState(false);
   const [focus, setFocus] = useState(null);
@@ -114,16 +118,21 @@ export default function Model3D({ doc, rough = false, onClose }) {
     const fail = (e) => alive && setError({ tooBig: !!e?.tooBig, message: e?.message || String(e) });
 
     if (rough) {
-      fetchJson(`/api/documents/${doc.id}/rough3d`, (pct) => alive && setStage({ label: 'Making the rough 3D view…', pct }))
-        .then((r) => {
-          if (!alive) return;
-          if (r.error) return setError({ message: r.error });
-          const groups = roughGroups(r);
-          setCats([{ key: 'walls', label: 'Walls', color: 0xe6e1d3 }]);
-          setNote(r.note);
-          v.load(groups, [{ key: 'walls', label: 'Walls', color: 0xe6e1d3 }]);
-          setStage(null);
-        }).catch(fail);
+      const show = (r) => {
+        if (!alive) return;
+        if (r.error) return setError({ message: r.error });
+        const { groups, floors } = roughGroups(r);
+        if (floors.length > 1) setStoreys(floors);
+        setNote(r.note);
+        v.load(groups, ROUGH_PARTS);
+        setCats(ROUGH_PARTS.filter((c) => groups.some((g) => g.category === c.key)));
+        setStage(null);
+      };
+      if (plan) show(plan);
+      else {
+        fetchModel(`/api/documents/${doc.id}/rough3d`, (label, pct) => alive && setStage({ label, pct }), () => alive)
+          .then(show).catch(fail);
+      }
     } else {
       worker = new Worker(new URL('../lib/ifcWorker.js', import.meta.url), { type: 'module' });
       // web-ifc's own complaints are programmer's words; the person is told what it means.
@@ -155,7 +164,7 @@ export default function Model3D({ doc, rough = false, onClose }) {
       v.dispose();
       view.current = null;
     };
-  }, [doc.id, rough]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [doc?.id, rough, plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Storeys and element types switched on and off.
   useEffect(() => {
@@ -194,8 +203,8 @@ export default function Model3D({ doc, rough = false, onClose }) {
       <header className="on-dark flex items-center gap-2 px-3 pb-2 pt-safe md:px-5">
         <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-p1/25 text-p1"><Box size={18} /></span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-white">{doc.title || doc.name}</p>
-          <p className="truncate text-xs text-white/60">{rough ? 'Rough 3D from a 2D drawing' : '3D model'}</p>
+          <p className="truncate text-sm font-medium text-white">{title || doc?.title || doc?.name}</p>
+          <p className="truncate text-xs text-white/60">{rough ? '3D from a 2D drawing' : '3D model'}</p>
         </div>
         {!stage && !error && (
           <>
@@ -212,10 +221,11 @@ export default function Model3D({ doc, rough = false, onClose }) {
 
       {rough && (
         // Always there and cannot be closed: a person must never take a size off this picture.
-        <div className="on-dark mx-3 mb-2 flex items-start gap-2 rounded-xl bg-amber-400/15 px-3 py-2 text-[13px] leading-snug text-amber-200 md:mx-5">
+        // Folded to two lines so the building keeps the screen; a tap shows where the size came from.
+        <button onClick={() => setNoteOpen((o) => !o)} className="on-dark mx-3 mb-2 flex items-start gap-2 rounded-xl bg-amber-400/15 px-3 py-2 text-left text-[13px] leading-snug text-amber-200 md:mx-5">
           <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-          <span>Rough 3D made from a 2D drawing, for viewing only. Heights and details may be wrong; do not measure from it.{note ? ` ${note}` : ''}</span>
-        </div>
+          <span className={noteOpen ? '' : 'line-clamp-2'}>{note ? `${note} ` : ''}3D made from a 2D drawing, for viewing only: details may differ from the drawing.</span>
+        </button>
       )}
 
       <div className="relative min-h-0 flex-1">
@@ -372,42 +382,78 @@ async function fetchBuffer(url, onPct) {
   return out.buffer.slice(0, at);
 }
 
-async function fetchJson(url, onPct) {
-  onPct(20);
-  const res = await fetch(url, { credentials: 'same-origin' });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) return { error: body.error || 'The rough 3D view could not be made.' };
-  onPct(90);
-  return body;
+/**
+ * A rough model from the server. A PDF or picture plan takes a while the first time (Reem
+ * reads it): the server says how far it has got, and is asked again until it is done.
+ */
+async function fetchModel(url, onStage, alive) {
+  onStage('Making the 3D view…', 15);
+  for (let tries = 0; tries < 200 && alive(); tries++) {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 202) {
+      onStage(body.step || 'Reading the plan…', Math.min(90, 20 + tries * 2));
+      await new Promise((r) => setTimeout(r, 2500));
+      continue;
+    }
+    if (!res.ok) return { error: body.error || 'The 3D view could not be made.' };
+    onStage('Making the 3D view…', 95);
+    return body;
+  }
+  return { error: 'Reading this drawing is taking too long. Please try again in a minute.' };
 }
 
+const ROUGH_PARTS = [
+  { key: 'walls', label: 'Walls', color: 0xe6e1d3 },
+  { key: 'slabs', label: 'Floors', color: 0x9aa3ad },
+];
+const SLAB_M = 0.15;
+
 /**
- * The server sends rough walls as flat lists of numbers in metres: [x1, y1, x2, y2, …] and a
- * height. Each becomes a thin box standing on the floor, grouped into one mesh.
+ * The server sends rough walls as flat lists of numbers in metres: [x1, y1, x2, y2, …], plan
+ * y running north, either for one storey ({ walls, height }) or floor by floor ({ floors:
+ * [{ name, base, height, walls }] }). Each wall becomes a thin box standing on its floor, and
+ * each floor gets a slab under it the size of its walls, so floors read as floors.
  */
-function roughGroups({ walls, height, thickness = 0.2 }) {
-  const pos = [], nor = [], idx = [];
-  const h = height;
-  const t = thickness / 2;
-  for (let i = 0; i < walls.length; i += 4) {
-    const x1 = walls[i], z1 = -walls[i + 1], x2 = walls[i + 2], z2 = -walls[i + 3]; // plan y runs "north", into the screen
-    const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
-    if (!len) continue;
-    const nx = (-dz / len) * t, nz = (dx / len) * t;
-    const c = [[x1 + nx, z1 + nz], [x2 + nx, z2 + nz], [x2 - nx, z2 - nz], [x1 - nx, z1 - nz]];
+function roughGroups(model) {
+  const list = model.floors || [{ name: null, base: 0, height: model.height, walls: model.walls }];
+  const t = (model.thickness || 0.2) / 2;
+  const groups = [];
+  const prism = (into, c, y0, y1) => { // a box from its four plan corners (x, z), between two heights
     const quad = (a, b, cc, d, n) => {
-      const base = pos.length / 3;
-      for (const p of [a, b, cc, d]) { pos.push(...p); nor.push(...n); }
-      idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      const base = into.pos.length / 3;
+      for (const p of [a, b, cc, d]) { into.pos.push(...p); into.nor.push(...n); }
+      into.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
     };
-    const side = (a, b) => {
-      const ex = b[0] - a[0], ez = b[1] - a[1], l = Math.hypot(ex, ez) || 1;
-      quad([a[0], 0, a[1]], [b[0], 0, b[1]], [b[0], h, b[1]], [a[0], h, a[1]], [ez / l, 0, -ex / l]);
-    };
-    for (let k = 0; k < 4; k++) side(c[k], c[(k + 1) % 4]);
-    quad([c[0][0], h, c[0][1]], [c[1][0], h, c[1][1]], [c[2][0], h, c[2][1]], [c[3][0], h, c[3][1]], [0, 1, 0]);
-  }
-  return [{ category: 'walls', storey: null, position: new Float32Array(pos), normal: new Float32Array(nor), index: new Uint32Array(idx), triIds: new Uint32Array(idx.length / 3) }];
+    for (let k = 0; k < 4; k++) {
+      const a = c[k], b = c[(k + 1) % 4], ex = b[0] - a[0], ez = b[1] - a[1], l = Math.hypot(ex, ez) || 1;
+      quad([a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], y1, b[1]], [a[0], y1, a[1]], [ez / l, 0, -ex / l]);
+    }
+    quad(...c.map((p) => [p[0], y1, p[1]]), [0, 1, 0]);
+    quad(...[...c].reverse().map((p) => [p[0], y0, p[1]]), [0, -1, 0]);
+  };
+  const pack = (into, category, storey) => groups.push({ category, storey, position: new Float32Array(into.pos), normal: new Float32Array(into.nor), index: new Uint32Array(into.idx), triIds: new Uint32Array(into.idx.length / 3) });
+  const floors = [];
+  list.forEach((f, i) => {
+    const storey = list.length > 1 ? `f${i}` : null;
+    const w = { pos: [], nor: [], idx: [] };
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (let k = 0; k < f.walls.length; k += 4) {
+      const x1 = f.walls[k], z1 = -f.walls[k + 1], x2 = f.walls[k + 2], z2 = -f.walls[k + 3]; // plan y runs "north", into the screen
+      const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+      if (!len) continue;
+      const nx = (-dz / len) * t, nz = (dx / len) * t;
+      prism(w, [[x1 + nx, z1 + nz], [x2 + nx, z2 + nz], [x2 - nx, z2 - nz], [x1 - nx, z1 - nz]], f.base, f.base + f.height - (list.length > 1 ? SLAB_M : 0));
+      minX = Math.min(minX, x1, x2); maxX = Math.max(maxX, x1, x2); minZ = Math.min(minZ, z1, z2); maxZ = Math.max(maxZ, z1, z2);
+    }
+    if (!w.idx.length) return;
+    pack(w, 'walls', storey);
+    const slab = { pos: [], nor: [], idx: [] };
+    prism(slab, [[minX - t, maxZ + t], [maxX + t, maxZ + t], [maxX + t, minZ - t], [minX - t, minZ - t]], f.base - SLAB_M, f.base);
+    pack(slab, 'slabs', storey);
+    if (storey) floors.push({ id: storey, name: f.name, elevation: f.base });
+  });
+  return { groups, floors };
 }
 
 // How each kind of part looks: matte walls, concrete slabs, wood doors, clear glass, a little

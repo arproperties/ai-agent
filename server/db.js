@@ -2690,3 +2690,16 @@ await db.exec(`
     UNIQUE (plan_id, key)
   );
 `);
+
+// 3D views of drawings that are not CAD (a PDF plan, a photo or scan of one): the walls Reem
+// traced, with the size read off the drawing's dimensions. Traced once per file (it costs a
+// Claude reading per plan page) and kept, so it opens at once the next time. `hash` is the
+// file's, so a replaced file is traced again.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS plan_models (
+    document_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    hash TEXT,
+    model JSONB NOT NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+`);
