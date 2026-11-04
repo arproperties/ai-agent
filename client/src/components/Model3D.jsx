@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { X, Layers, Ruler, Loader2, AlertTriangle, Box } from 'lucide-react';
 
 /**
@@ -360,6 +361,42 @@ function roughGroups({ walls, height, thickness = 0.2 }) {
   return [{ category: 'walls', storey: null, position: new Float32Array(pos), normal: new Float32Array(nor), index: new Uint32Array(idx), triIds: new Uint32Array(idx.length / 3) }];
 }
 
+// How each kind of part looks: matte walls, concrete slabs, wood doors, clear glass, a little
+// shine on pipes and steel. The colours themselves come with the categories (the same ones
+// the Floors and parts list shows), so the list and the model always agree.
+const FINISH = {
+  walls: { roughness: 0.92, metalness: 0 },
+  slabs: { roughness: 0.85, metalness: 0 },
+  doors: { roughness: 0.6, metalness: 0 },
+  windows: { roughness: 0.05, metalness: 0.1, envMapIntensity: 1.6 },
+  pipes: { roughness: 0.35, metalness: 0.4 },
+  structure: { roughness: 0.8, metalness: 0.05 },
+  stairs: { roughness: 0.7, metalness: 0.1 },
+};
+// Shadows and outlines are what make the model look real, and also what slows a phone down.
+// Past these sizes (triangles in the whole model) they are left off, so a big model still turns smoothly.
+const OUTLINE_UP_TO = 400_000;
+const SHADOWS_UP_TO = 900_000;
+const SKY_TOP = '#6fa3dc', SKY_HORIZON = '#e8eef4', GROUND = 0xdfe3e6;
+
+/**
+ * A soft sky dome: blue overhead fading to near white at the horizon, where the ground fades
+ * into it. Drawn as a big sphere round the building so the horizon always sits level.
+ */
+function skyDome() {
+  const geo = new THREE.SphereGeometry(1, 32, 16);
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: { top: { value: new THREE.Color(SKY_TOP) }, horizon: { value: new THREE.Color(SKY_HORIZON) } },
+    vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'uniform vec3 top; uniform vec3 horizon; varying vec3 vDir; void main() { gl_FragColor = vec4(mix(horizon, top, pow(clamp(vDir.y, 0.0, 1.0), 0.55)), 1.0);\n#include <colorspace_fragment>\n}',
+  });
+  const sky = new THREE.Mesh(geo, mat);
+  sky.raycast = () => {};
+  sky.renderOrder = -1;
+  return sky;
+}
+
 /** The three.js scene. Null when the device has no WebGL at all. */
 function setup(el, { onLost, onTap }) {
   let renderer;
@@ -367,28 +404,53 @@ function setup(el, { onLost, onTap }) {
     renderer = new THREE.WebGLRenderer({ antialias: window.devicePixelRatio < 2, powerPreference: 'high-performance' });
   } catch { return null; }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setClearColor(0x0b0a1a);
+  renderer.toneMapping = THREE.NeutralToneMapping; // keeps whites white and colours true, as for a product shot
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   el.appendChild(renderer.domElement);
   // A phone that runs out of graphics memory drops the drawing surface rather than crashing.
   renderer.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); onLost(); });
 
   const scene = new THREE.Scene();
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x404060, 1.6));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
-  sun.position.set(1, 2, 1.5);
-  scene.add(sun);
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 10000);
+  const sky = skyDome();
+  scene.add(sky);
+  // Soft light from every side, as if the building stood outdoors on a bright day; it is also
+  // what the glass reflects.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const room = new RoomEnvironment();
+  scene.environment = pmrem.fromScene(room, 0.04).texture;
+  room.dispose?.();
+  scene.environmentIntensity = 0.45; // fill only: the sun does the modelling, so each face reads apart
+  scene.add(new THREE.HemisphereLight(0xdbe8ff, 0x8a7f6a, 0.5));
+  const sun = new THREE.DirectionalLight(0xfff1dc, 3);
+  scene.add(sun, sun.target);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 10000);
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = false;
+  // Damping lets the model glide to a stop after a swipe instead of halting dead.
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.12;
   controls.screenSpacePanning = true;
 
-  const v = { scene, camera, renderer, controls, meshes: [], size: 10, measure: { points: [], objects: [] }, picked: null };
-  let frame = 0;
+  const v = { scene, camera, renderer, controls, meshes: [], extras: [], size: 10, measure: { points: [], objects: [] }, picked: null };
+  let frame = 0, intro = null;
+  // Drawn only when something changes, so a model left open does not drain the battery. While
+  // the opening glide or a swipe's glide is running, each frame asks for the next.
   v.render = () => {
     if (frame) return;
-    frame = requestAnimationFrame(() => { frame = 0; renderer.render(scene, camera); });
+    frame = requestAnimationFrame((now) => {
+      frame = 0;
+      if (intro) {
+        const k = Math.min(1, (now - (intro.start ??= now)) / intro.ms);
+        const e = 1 - (1 - k) ** 3;
+        camera.position.copy(intro.from).lerp(intro.to, e);
+        if (k >= 1) intro = null;
+      }
+      controls.update(); // with damping, this calls render again until the glide settles
+      renderer.render(scene, camera);
+      if (intro) v.render();
+    });
   };
   controls.addEventListener('change', v.render);
+  controls.addEventListener('start', () => { intro = null; }); // a touch takes over from the glide
 
   const resize = () => {
     const w = el.clientWidth || 1, h = el.clientHeight || 1;
@@ -421,7 +483,10 @@ function setup(el, { onLost, onTap }) {
 
   v.load = (groups, categories, fit = null) => {
     const look = new Map(categories.map((c) => [c.key, c]));
+    const triangles = groups.reduce((n, g) => n + g.index.length / 3, 0);
+    const outlines = triangles <= OUTLINE_UP_TO, shadows = triangles <= SHADOWS_UP_TO;
     const materials = new Map();
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x2b2f38, transparent: true, opacity: 0.45 });
     const box = new THREE.Box3();
     for (const g of groups) {
       const geo = new THREE.BufferGeometry();
@@ -432,28 +497,109 @@ function setup(el, { onLost, onTap }) {
       geo.computeBoundingSphere();
       if (!materials.has(g.category)) {
         const c = look.get(g.category) || look.get('other') || { color: 0x8d8aa0 };
-        materials.set(g.category, new THREE.MeshLambertMaterial({
-          color: c.color, side: THREE.DoubleSide,
+        materials.set(g.category, new THREE.MeshStandardMaterial({
+          color: c.color, side: THREE.DoubleSide, roughness: 0.8, metalness: 0, ...FINISH[g.category],
           transparent: !!c.opacity, opacity: c.opacity || 1, depthWrite: !c.opacity,
           polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
         }));
       }
-      const mesh = new THREE.Mesh(geo, materials.get(g.category));
+      const mat = materials.get(g.category);
+      const mesh = new THREE.Mesh(geo, mat);
       mesh.userData = { category: g.category, storey: g.storey, triIds: g.triIds };
+      mesh.castShadow = shadows && !mat.transparent;
+      mesh.receiveShadow = shadows;
+      // Thin dark lines on the corners, like an architect's card model. A child of the mesh,
+      // so switching a floor or a part off hides its lines too.
+      if (outlines) mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), edgeMat));
       scene.add(mesh);
       v.meshes.push(mesh);
       box.union(geo.boundingBox);
     }
+    v.extras.push(edgeMat, sky.geometry, sky.material);
     if (box.isEmpty()) throw new Error('The model has no shapes to show.');
-    if (fit && [...fit.min, ...fit.max].every(Number.isFinite)) box.set(new THREE.Vector3(...fit.min), new THREE.Vector3(...fit.max)); // the building, not a far-off marker
+    // The worker's frame leaves out far-off markers but is generous (it adds each part's
+    // reach); where the two overlap is the building itself.
+    if (fit && [...fit.min, ...fit.max].every(Number.isFinite)) {
+      const framed = new THREE.Box3(new THREE.Vector3(...fit.min), new THREE.Vector3(...fit.max));
+      const tight = box.clone().intersect(framed);
+      box.copy(tight.isEmpty() ? framed : tight);
+    }
     const centre = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     v.size = Math.max(size.x, size.y, size.z) || 10;
-    camera.near = v.size / 1000;
-    camera.far = v.size * 20;
-    camera.position.set(centre.x + v.size * 1.1, centre.y + v.size * 0.8, centre.z + v.size * 1.1);
+    const s = v.size;
+    // The ground is at the foot of the walls (or of whatever the model has), so the building
+    // stands on it; anything lower, like a drain or footings, shows faintly through it.
+    const feet = new THREE.Box3();
+    for (const m of v.meshes) if (m.userData.category === 'walls' || m.userData.category === 'doors') feet.union(m.geometry.boundingBox);
+    const groundY = Math.max(feet.isEmpty() ? box.min.y : feet.min.y, box.min.y);
+
+    // The ground the building stands on, fading into the sky far off.
+    const groundGeo = new THREE.CircleGeometry(s * 12, 64).rotateX(-Math.PI / 2);
+    const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ color: GROUND, roughness: 1, transparent: true, opacity: 0.88, depthWrite: false }));
+    ground.position.set(centre.x, groundY - s * 0.001, centre.z);
+    ground.receiveShadow = shadows;
+    ground.raycast = () => {}; // taps go through it: only the building can be picked or measured
+    scene.add(ground);
+    scene.fog = new THREE.Fog(SKY_HORIZON, s * 3, s * 11);
+    sky.scale.setScalar(s * 20);
+    sky.position.set(centre.x, groundY, centre.z);
+    // A faint site grid, a metre or so apart, gives the ground scale and depth.
+    const step = 10 ** Math.floor(Math.log10(s / 4));
+    const lines = Math.round((s * 3) / step);
+    const grid = new THREE.GridHelper(lines * step, lines, 0xb9c0c7, 0xc9cfd5);
+    grid.material.transparent = true;
+    grid.material.opacity = 0.45;
+    grid.position.set(centre.x, groundY, centre.z);
+    grid.raycast = () => {};
+    scene.add(grid);
+    v.extras.push(groundGeo, ground.material, grid.geometry, grid.material);
+
+    // The sun high and over the viewer's left shoulder: the front face lit, the side in shade,
+    // and the shadow falling where it can be seen, with its size fitted to the building.
+    sun.position.set(centre.x - s * 0.5, centre.y + s * 1.5, centre.z + s * 1.1);
+    sun.target.position.copy(centre);
+    if (shadows) {
+      renderer.shadowMap.enabled = true;
+      sun.castShadow = true;
+      const sc = sun.shadow.camera, r = s * 0.95;
+      sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r;
+      sc.near = s * 0.1; sc.far = s * 4;
+      sc.updateProjectionMatrix();
+      sun.shadow.mapSize.set(2048, 2048);
+      sun.shadow.bias = -0.0004;
+      sun.shadow.normalBias = s * 0.0008;
+      sun.shadow.radius = 3;
+    }
+
+    camera.near = s / 1000;
+    camera.far = s * 30;
     camera.updateProjectionMatrix();
     controls.target.copy(centre);
+    controls.maxPolarAngle = Math.PI * 0.495; // never under the ground
+    // Far enough back that every corner of the building is on screen (a phone held upright is
+    // narrow), seen from the usual three-quarter view; it glides in from further out and a
+    // little round.
+    const dir = new THREE.Vector3(1, 0.5, 1).normalize();
+    const fwd = dir.clone().negate();
+    const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+    const up = new THREE.Vector3().crossVectors(right, fwd);
+    const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), tanH = tanV * camera.aspect;
+    let dist = 0;
+    for (let i = 0; i < 8; i++) {
+      const c = new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).sub(centre);
+      const near = c.dot(dir);
+      dist = Math.max(dist, near + Math.abs(c.dot(right)) / tanH, near + Math.abs(c.dot(up)) / tanV);
+    }
+    dist = (dist || s) * 1.08;
+    const to = dir.clone().multiplyScalar(dist).add(centre);
+    const from = to.clone().sub(centre).applyAxisAngle(new THREE.Vector3(0, 1, 0), -0.7).multiplyScalar(1.6).add(centre);
+    from.y = Math.max(from.y, centre.y + dist * 0.9);
+    camera.far = Math.max(camera.far, dist * 4);
+    camera.updateProjectionMatrix();
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    camera.position.copy(still ? to : from);
+    if (!still) intro = { from, to, ms: 1400 };
     controls.update();
     v.render();
   };
@@ -461,8 +607,12 @@ function setup(el, { onLost, onTap }) {
   v.dispose = () => {
     ro.disconnect();
     controls.dispose();
-    for (const m of v.meshes) { m.geometry.dispose(); m.material.dispose(); }
+    if (frame) cancelAnimationFrame(frame);
+    for (const m of v.meshes) { m.geometry.dispose(); m.material.dispose(); for (const c of m.children) c.geometry.dispose(); }
+    for (const x of v.extras) x.dispose();
     if (v.picked) v.picked.geometry.dispose();
+    scene.environment?.dispose();
+    pmrem.dispose();
     renderer.dispose();
     renderer.forceContextLoss?.();
     renderer.domElement.remove();
