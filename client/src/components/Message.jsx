@@ -164,7 +164,7 @@ function SelectionBar({ rootRef, onListen, onReply, onRemove }) {
 // savedId: the reply's row, which the PDF and AutoCAD files are made from. drawingFrom: the
 // latest drawing up to this reply, for a reply that hands it over as a file.
 // readNow: the reply to a spoken question, to read out as soon as it is shown.
-export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, readNow, onReadStarted, onOpenFile, onShare, onPdf, onDelete, onReplyTo, onRemoveText, savedId, drawingFrom }) {
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, readNow, onReadStarted, onOpenFile, onShare, onPdf, onDelete, onReplyTo, onRemoveText, onContinue, savedId, drawingFrom }) {
   const [copied, setCopied] = useState(false);
   const bodyRef = useRef();
   const reading = voice !== 'idle';
@@ -289,6 +289,13 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
       <Attachments files={(msg.files || []).filter((f) => f.docId)} onOpenFile={onOpenFile} reply />
       {!msg.streaming && exportAsked(msg.content) && drawingFrom && (
         <DrawingFile format={exportAsked(msg.content)} drawing={drawingFrom.drawing} messageId={drawingFrom.messageId} />
+      )}
+      {/* Out of web searches or steps before it finished: one tap carries on in a new message. */}
+      {onContinue && (
+        <button onClick={onContinue}
+          className="mt-3 flex h-9 items-center gap-1.5 rounded-full bg-p1/20 px-4 text-sm font-medium text-txt transition hover:bg-p1/30">
+          Continue <Icon name="chevron" size={14} />
+        </button>
       )}
       {msg.sources?.length > 0 && (
         <div className="mt-3">

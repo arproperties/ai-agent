@@ -213,6 +213,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           else if (event === 'notice') flash(d.message);
           else if (event === 'error') { failed = true; update({ error: d.message }); }
           else if (event === 'sources') update({ sources: d });
+          else if (event === 'cutShort') update({ cut_short: true });
           else if (event === 'picture') { update({ files: d }); toBottom(); } // drawn for /explain, /breakdown or /explore
           else if (event === 'done') {
             savedId = d.messageId;
@@ -481,6 +482,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined}
                 onDelete={savedIdOf(m) && !m.streaming ? () => removeMessage(m) : undefined}
                 onReplyTo={m.role === 'assistant' ? setQuote : undefined}
+                onContinue={m.cut_short && !m.streaming && !busy && i === messages.length - 1 ? () => send('Continue', []) : undefined}
                 onRemoveText={m.role === 'assistant' && savedIdOf(m) && !m.streaming ? (t) => removeText(m, t) : undefined}
                 onPdf={savedIdOf(m) && m.content && !(m.role === 'assistant' && lastDrawing(m.content)) ? () => setPdfOf({ id: savedIdOf(m), content: m.content, own: m.role === 'user' }) : undefined} />
             ))}

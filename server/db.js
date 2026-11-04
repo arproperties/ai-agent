@@ -281,6 +281,10 @@ await db.exec(`
   UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL AND embed_model IS DISTINCT FROM '${EMBED_MODEL}';
 `);
 
+// cut_short: the reply ran out of web searches or steps before it finished, so the app
+// shows a Continue button under it (still there after a reload).
+await db.exec(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS cut_short BOOLEAN NOT NULL DEFAULT false;`);
+
 // A memory that a newer one corrected is kept, not deleted, so "what was the rent before?"
 // still has an answer. replaced_by points at the newer version; chats read only memories
 // with no replaced_at, and the history tool walks the chain.
