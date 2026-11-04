@@ -9,6 +9,7 @@ import Avatar from './Avatar';
 import { hideMarkers } from '../lib/replyDoc';
 import { splitDrawings, withoutDrawings, exportAsked } from '../lib/drawing';
 import { DrawingCard, DrawingPending, DrawingFile } from './Drawing';
+import { ThinkingPlane } from './PaperPlane';
 import { onSpeechProgress } from '../lib/voice';
 import { makeHighlighter, readingPlan, pointAt } from '../lib/highlight';
 
@@ -164,7 +165,7 @@ function SelectionBar({ rootRef, onListen, onReply, onRemove }) {
 // savedId: the reply's row, which the PDF and AutoCAD files are made from. drawingFrom: the
 // latest drawing up to this reply, for a reply that hands it over as a file.
 // readNow: the reply to a spoken question, to read out as soon as it is shown.
-export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, readNow, onReadStarted, onOpenFile, onShare, onPdf, onDelete, onReplyTo, onRemoveText, onContinue, savedId, drawingFrom }) {
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, readNow, onReadStarted, onOpenFile, onShare, onPdf, onDelete, onReplyTo, onRemoveText, onContinue, savedId, drawingFrom, status }) {
   const [copied, setCopied] = useState(false);
   const bodyRef = useRef();
   const reading = voice !== 'idle';
@@ -282,9 +283,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
           )}
         </div>
       ) : (
-        <div className="flex gap-1.5 py-2">{[0, 1, 2].map((i) => (
-          <span key={i} className="size-2 animate-bounce rounded-full bg-p1" style={{ animationDelay: `${i * 0.15}s` }} />
-        ))}</div>
+        <ThinkingPlane status={status} />
       )}
       <Attachments files={(msg.files || []).filter((f) => f.docId)} onOpenFile={onOpenFile} reply />
       {!msg.streaming && exportAsked(msg.content) && drawingFrom && (

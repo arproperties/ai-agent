@@ -475,6 +475,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 md:px-6">
             {messages.map((m, i) => (
               <Message key={m.id} msg={m} agent={byId[m.agent_id]} voiceEnabled={voiceEnabled} onOpenFile={openFile}
+                status={m.streaming ? status : undefined}
                 savedId={shareIdOf(m)} drawingFrom={exportAsked(m.content) ? drawingUpTo(messages, i) : undefined}
                 voice={voice.id === m.id ? voice.state : 'idle'} onStopSpeak={stopSpeaking}
                 onSpeak={(pieces) => say(m.id, m.agent_id, pieces)}

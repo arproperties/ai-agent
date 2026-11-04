@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown, Paperclip, FileText, Download, Pencil } from 'lucide-react';
 import { api } from '../lib/api';
 import { cleanEmail } from '../lib/email';
+import { flyLoopTo } from './PaperPlane';
 
 // An email an agent wrote, waiting for the person whose name it would go out under.
 // The whole body is shown, not a preview: approving something you have only seen the top
@@ -345,7 +346,7 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
 
       {draft.status === 'pending' && !editing && (
         <div className="mt-3 flex gap-2">
-          <button onClick={() => decide('approve')} disabled={!!busy}
+          <button onClick={(e) => { flyLoopTo(e.currentTarget); decide('approve'); }} disabled={!!busy}
             className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 active:scale-[0.98] disabled:opacity-60">
             {busy === 'approve' ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Approve and send
           </button>
