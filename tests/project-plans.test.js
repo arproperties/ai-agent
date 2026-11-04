@@ -36,7 +36,7 @@ let plan = goodPlan;
 let calls = [];
 const fakeAi = async (args) => {
   calls.push(args);
-  const tool = args.tool_choice?.name;
+  const tool = args.tools?.[0]?.name;
   const answer = tool === 'project_facts' ? {
     name: 'School (B+G+3) JVC', summary: 'A private school.', floors: FLOORS.map((name) => ({ name })),
     facts: [{ label: 'Plot', value: 'JVC14SCP100' }], questions: ['Start date?', 'Budget?'],
@@ -182,7 +182,7 @@ test('a ready plan can be changed or cancelled; a started one cannot', async () 
   await changePlan(s.master, { change: 'Ground slab 1 week later' }, { run: noRun });
   assert.equal((await getPlan(s.master, id)).status, 'planning');
   await work(id, { push });
-  assert.match(calls.filter((c) => c.tool_choice?.name === 'project_plan').at(-1).messages[0].content[0].text, /Ground slab 1 week later/);
+  assert.match(calls.filter((c) => c.tools?.[0]?.name === 'project_plan').at(-1).messages[0].content[0].text, /Ground slab 1 week later/);
   await cancelPlan(s.master, id);
   assert.equal((await getPlan(s.master, id)).status, 'cancelled');
   await assert.rejects(startPlan(s.master, id, { push }), { status: 409 });

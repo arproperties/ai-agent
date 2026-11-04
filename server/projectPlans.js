@@ -53,17 +53,20 @@ export const setAi = (fn) => { ai = fn; };
 
 /**
  * One call, counted against the plan's limit. Streamed: a whole plan is a long answer.
- * tool: forces the answer into that tool's shape, so it comes back as checked JSON.
+ * tool: the answer comes back in that tool's shape, as checked JSON.
  */
 async function call(plan, { system, content, tool, maxTokens = 16000 }) {
   const row = await db.prepare('SELECT spent, spend_limit FROM project_plans WHERE id = ?').get(plan.id);
   if (Number(row.spent) >= Number(row.spend_limit)) {
     throw bad(`This plan reached its limit of $${Number(row.spend_limit).toFixed(2)}. To go on, the master says how much more to allow.`, 402);
   }
+  // Sonnet 5.5 takes no forced tool (a 400): it is offered the one tool and told to answer
+  // with it, and an answer without it fails below.
   const msg = await ai({
-    model: MODEL, max_tokens: maxTokens, system,
+    model: MODEL, max_tokens: maxTokens,
+    system: tool ? `${system || ''}\n\nGive your answer by calling the ${tool.name} tool, once.`.trim() : system,
     messages: [{ role: 'user', content }],
-    ...(tool && { tools: [tool], tool_choice: { type: 'tool', name: tool.name } }),
+    ...(tool && { tools: [tool], tool_choice: { type: 'auto' } }),
   });
   const cost = claudeCost(msg.model || MODEL, msg.usage || {});
   await db.prepare('UPDATE project_plans SET spent = spent + ? WHERE id = ?').run(cost, plan.id);
