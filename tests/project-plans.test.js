@@ -134,6 +134,19 @@ test('the card asks one question at a time; answers are kept and go to the plann
   await assert.rejects(saveCardAnswer(s.master, card.id, { index: 0, answer: 'x' }), { status: 409 });
 });
 
+test('a project starts only from a file attached in this chat, never one from the Shelf', async () => {
+  const s = await setup();
+  const { id: chat } = await db.prepare('INSERT INTO conversations (user_id, title) VALUES (?, ?) RETURNING id').run(s.master.id, 'New project');
+  // Arch-TRK.dwg is on the Shelf (not in this chat): it is not picked, by name or by number.
+  await assert.rejects(proposePlan(s.master, { file: 'Arch-TRK.dwg', project: 'new' }, { conversationId: chat, run: noRun }), /attach the project file in this chat/);
+  await assert.rejects(proposePlan(s.master, { file: String(s.doc), project: 'new' }, { conversationId: chat, run: noRun }), /attach the project file in this chat/);
+  await assert.rejects(proposePlan(s.master, { file: 'Hotel', project: 'new' }, { conversationId: chat, run: noRun }), /attach the project file in this chat/);
+  // Attached here, it starts.
+  await db.prepare('UPDATE documents SET conversation_id = ? WHERE id = ?').run(chat, s.doc);
+  const c = await proposePlan(s.master, { file: 'Arch-TRK.dwg', project: 'new' }, { conversationId: chat, run: noRun });
+  assert.equal(c.status, 'reading');
+});
+
 test('the master sets the team in chat: add, change role, remove; only the master', async () => {
   const s = await setup();
   await assert.rejects(setTeam(s.francisca, { people: [] }), { status: 403 });

@@ -863,22 +863,26 @@ export async function decideAlert(user, alertId, { accept } = {}) {
 
 // ---------- Reem in chat (the master only) ----------
 
-/** The file the master means: one attached in this chat, by name, else one of theirs by number or name. */
+/**
+ * The file the master means. A project is only ever started from a file attached in THIS
+ * chat: never one picked from the Shelf by a name that happens to match ("Hotel" could be
+ * any old file). No file here = they are asked to attach it.
+ */
+const ATTACH = 'A project starts from its file: attach the project file in this chat (one file: the drawing set, PDF or DWG), then ask again.';
 async function fileFor(user, conversationId, said) {
   const want = line(said, 200);
-  if (!want) throw bad('Say which file: the name of the one attached in this chat.');
-  const id = Number(want.replace(/^#/, ''));
-  if (id) {
-    const doc = await db.prepare('SELECT * FROM documents WHERE id = ? AND user_id = ? AND path IS NOT NULL').get(id, user.id);
-    if (doc) return doc;
-  }
   const docs = await db.prepare(`SELECT * FROM documents WHERE user_id = ? AND path IS NOT NULL AND kind IS DISTINCT FROM 'image'
-    ORDER BY (conversation_id IS NOT DISTINCT FROM ?) DESC, id DESC LIMIT 400`).all(user.id, conversationId);
+    AND conversation_id IS NOT DISTINCT FROM ? ORDER BY id DESC LIMIT 50`).all(user.id, conversationId);
+  if (!docs.length) throw bad(ATTACH);
+  if (!want) throw bad(`Say which file: ${docs.map((d) => d.name).join(', ')}.`);
+  const id = Number(want.replace(/^#/, ''));
+  const byId = id && docs.find((d) => d.id === id);
+  if (byId) return byId;
   const exact = docs.find((d) => d.name.toLowerCase() === want.toLowerCase() || (d.title || '').toLowerCase() === want.toLowerCase());
   if (exact) return exact;
   const hits = docs.filter((d) => has(d.name, want) || has(d.title || '', want));
   if (hits.length) return hits[0];
-  throw bad(`No file called "${want}". Attach the project file in this chat (one file: the drawing set, PDF or DWG), then ask again.`);
+  throw bad(`No file called "${want}" in this chat. ${ATTACH}`);
 }
 
 async function projectFor(user, said) {
@@ -1018,7 +1022,9 @@ const DEFS = [
       'Reem reads the whole file in the background, then shows the questions it needs answered on a card; after the answers it writes the plan ' +
       '(phases with quality checks, steps per floor with weeks and hold points, materials, manpower, risks), checks it and shows it on the card with Start. ' +
       'project: the name of an existing project it is for (it is merged into that project\'s Progress on Start), or "new". ' +
-      'If they have projects and did not say which, ask before calling. This only starts the reading: tell them in one short line that the card shows how it goes.',
+      'If they have projects and did not say which, ask before calling. This only starts the reading: tell them in one short line that the card shows how it goes. ' +
+      'This is also the only way to start a new project ("new project: Hotel"): it always needs its file. If no file is attached in this chat, do not call this; ' +
+      'ask them in one short line to attach the project file here. Never use a file from the Shelf or an earlier chat.',
     input_schema: {
       type: 'object',
       properties: { file: { type: 'string', description: 'The attached file\'s name, as in the <file name="…"> tag.' }, project: { type: 'string' } },
