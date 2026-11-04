@@ -41,8 +41,8 @@ Rules learnt from the first real period:
 - Tap a day: every list that said it, with the message text or the photo, and team photos
   that day (headcount only). A day can be set by hand; that wins over every list.
 - **Same person as…** merges two people: days, spellings and future lists.
-- **Report**: a zip with `Summary.xlsx` and one file per person under Verified / Skipped /
-  Not verified.
+- **Report**: a zip with `Summary.xlsx` and one file per person under Complete / Incomplete;
+  verified, skipped or not checked is written in each file and in the summary.
 
 ## Not yet
 
