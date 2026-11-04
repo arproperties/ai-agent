@@ -2,8 +2,9 @@ import archiver from 'archiver';
 import ExcelJS from 'exceljs';
 
 // The period's report, as the office asked for it on the first period: one Excel file per
-// person (every date of the period with status, timing, company and who posted it), and a
-// summary of everyone. Skipped and not-yet-verified people are in it too, marked as such.
+// person (every date of the period with status, timing, company and who posted it), in a
+// Complete or an Incomplete folder by the office's rule, and a summary of everyone. Whether
+// each one was verified, skipped or not yet checked is written in their file and the summary.
 
 const LABEL = { P: 'Present', L: 'Late', A: 'Absent', V: 'Vacation / leave', O: 'Day off', S: 'Sick', '?': 'Other' };
 const FILL = { P: 'FFC6EFCE', L: 'FFFFEB9C', A: 'FFFFC7CE', V: 'FFBDD7EE', O: 'FFE7E6E6', S: 'FFF8CBAD' };
@@ -42,19 +43,21 @@ async function personBook(period, p) {
 async function summaryBook(period) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Everyone');
-  const head = ws.addRow(['Name', 'Companies', 'State', 'Complete', 'Present', 'Absent', 'Vacation', 'Off', 'Sick', 'Not in any list', 'Why not complete']);
+  const head = ws.addRow(['Name', 'Complete', 'Companies', 'Checked', 'Present', 'Absent', 'Vacation', 'Off', 'Sick', 'Not in any list', 'Why not complete']);
   head.eachCell((cell) => Object.assign(cell, HEAD));
-  for (const p of period.people) {
+  const people = [...period.people].sort((a, b) => (b.complete - a.complete) || a.name.localeCompare(b.name));
+  for (const p of people) {
     const c = p.counts;
-    ws.addRow([p.name, p.companies.join(', '), state(p), p.complete ? 'yes' : 'no', c.present + c.late, c.absent, c.vacation, c.off, c.sick, c.missing, p.reasons.join(' | ')]);
+    const row = ws.addRow([p.name, p.complete ? 'Yes' : 'No', p.companies.join(', '), state(p), c.present + c.late, c.absent, c.vacation, c.off, c.sick, c.missing, p.reasons.join(' | ')]);
+    row.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: p.complete ? 'FFC6EFCE' : 'FFFFC7CE' } };
   }
-  [30, 34, 24, 10, 9, 8, 9, 7, 7, 14, 50].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  [30, 10, 34, 24, 9, 8, 9, 7, 7, 14, 50].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
   ws.views = [{ state: 'frozen', ySplit: 1 }];
   ws.autoFilter = { from: 'A1', to: 'K1' };
   return wb.xlsx.writeBuffer();
 }
 
-/** The zip, streamed: Summary.xlsx, then Verified/, Skipped/ and Not verified/ with a file each. */
+/** The zip, streamed: Summary.xlsx, then Complete/ and Incomplete/ with a file each. */
 export async function sendReport(res, period) {
   const title = `Attendance ${long(period.start)} - ${long(period.end)}`;
   res.setHeader('Content-Type', 'application/zip');
@@ -68,7 +71,7 @@ export async function sendReport(res, period) {
     let name = safe(p.name);
     while (names.has(name)) name += ` (${p.id})`;
     names.add(name);
-    zip.append(Buffer.from(await personBook(period, p)), { name: `${title}/${STATE[p.state]}/${name}.xlsx` });
+    zip.append(Buffer.from(await personBook(period, p)), { name: `${title}/${p.complete ? 'Complete' : 'Incomplete'}/${name}.xlsx` });
   }
   await zip.finalize();
 }
