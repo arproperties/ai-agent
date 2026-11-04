@@ -154,10 +154,10 @@ app.use('/api/checklists', needsModule('checklists'), checklistRoutes); // the p
 app.use('/api/attendance', needsModule('attendance'), attendanceRoutes); // who worked which day, read from the teams' lists and checked each pay period
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
 app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
-// A building job's stock, deliveries and manpower (module projects); the cards a chat makes stay open to whoever is on the project.
-app.use('/api/projects', needsModuleUnless('projects', (req) => req.path.startsWith('/proposals')), projectRoutes);
-// Project plans: the master's cards in a chat are open like the project cards; a project's Plan tab and its alerts need Projects.
-app.use('/api/plans', needsModuleUnless('projects', (req) => !/^\/(project|alerts)\//.test(req.path)), planRoutes);
+// A building job's stock, deliveries, manpower and plan. There is no Projects screen any more:
+// it is all done in chat and on its cards, and each route checks who is on the project itself.
+app.use('/api/projects', projectRoutes);
+app.use('/api/plans', planRoutes);
 app.use('/api/cases', caseShareRoutes); // a case folder emailed, or its link turned on and off (external only)
 app.use('/api/cases', caseRoutes); // an external person's case folders, got ready from their inbox in chat (external only)
 app.use('/api/case-focus', caseFocusRoutes); // the case a chat is about, its references (module case_focus)

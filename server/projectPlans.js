@@ -594,8 +594,8 @@ export async function startPlan(user, id, { push = sendPush } = {}) {
   if (members.length) {
     await push(members, {
       title: `${was.project.name}: the plan is set`,
-      body: 'The steps and their weeks are in Progress. Keep telling Reem what is done; it says when something runs late.',
-      url: `/?projects=${was.project.id}`, tag: `project-plan-${row.id}`,
+      body: 'The steps and their weeks are set. Keep telling Reem what is done; it says when something runs late.',
+      url: '/', tag: `project-plan-${row.id}`,
     }).catch(() => {});
   }
   return { ...(await getPlan(user, row.id)), merged: was.merged };
@@ -754,7 +754,7 @@ export async function watchPlans(push = sendPush, at = Date.now()) {
     await push(people, {
       title: `${project.name}: ${fresh.length} thing${fresh.length === 1 ? '' : 's'} behind the plan`,
       body: fresh.slice(0, 2).map((a) => a.text).join(' ') + (fresh.length > 2 ? ` …and ${fresh.length - 2} more.` : ''),
-      url: `/?projects=${project.id}`, tag: `project-plan-late-${row.id}`,
+      url: '/', tag: `project-plan-late-${row.id}`,
     }).catch(() => {});
     n++;
   }
@@ -773,7 +773,7 @@ export async function weeklyReports(push = sendPush, at = Date.now()) {
     if (!changes) continue;
     const report = await reportOf(row, at);
     await db.prepare('UPDATE project_plans SET report = ? WHERE id = ?').run(report.text, row.id);
-    await push([row.user_id], { title: `${report.project}: this week`, body: report.short, url: `/?projects=${row.project_id}`, tag: `project-plan-week-${row.id}` }).catch(() => {});
+    await push([row.user_id], { title: `${report.project}: this week`, body: report.short, url: '/', tag: `project-plan-week-${row.id}` }).catch(() => {});
     n++;
   }
   return n;
@@ -794,7 +794,7 @@ export async function reportOf(row, at = Date.now()) {
     `Done this week: ${done.length ? done.map((s) => `${s.floor} - ${s.name}`).join('; ') : 'nothing reported'}.`,
     `Late: ${late.length ? late.map((s) => `${s.floor} - ${s.name} (planned to end week ${s.week_to})`).join('; ') : 'nothing'}.`,
     `Now and next week: ${next.length ? next.slice(0, 12).map((s) => `${s.floor} - ${s.name}`).join('; ') : 'nothing planned'}.`,
-    open ? `${open} change${open === 1 ? '' : 's'} waiting for you on the Plan tab.` : '',
+    open ? `${open} change${open === 1 ? '' : 's'} waiting for you on the plan card in the chat.` : '',
   ].filter(Boolean).join('\n');
   return { project: project.name, text, short: `Done: ${done.length}. Late: ${late.length}. ${open ? `${open} waiting for you.` : ''}`.trim() };
 }
@@ -1002,7 +1002,7 @@ async function planForChat(user, input, conversationId) {
     if (c.problems.length) out.push('  Still to look at:', ...c.problems.map((x) => `  - ${x}`));
     if (r.status === 'started') {
       const open = await db.prepare(`SELECT text FROM plan_alerts WHERE plan_id = ? AND status = 'open' ORDER BY id`).all(r.id);
-      if (open.length) out.push('  Late against the plan (the master accepts or leaves the new weeks on the Plan tab):', ...open.map((a) => `  - ${a.text}`));
+      if (open.length) out.push('  Late against the plan (the master accepts or leaves the new weeks on the plan card in the chat):', ...open.map((a) => `  - ${a.text}`));
       if (r.report) out.push(`  Last weekly report:\n${r.report}`);
     }
   }
@@ -1038,11 +1038,58 @@ const DEFS = [
     input_schema: { type: 'object', properties: { change: { type: 'string' }, plan: PLAN_ID, raise_limit_to: RAISE }, required: ['change'] },
   },
   {
+    name: 'project_team',
+    description: 'The master puts people on a building project, changes their role, or takes them off: "add Francisca as store keeper", ' +
+      '"Tauqeer is the manager", "remove Arzhel from the project". role: store (store keeper: records deliveries, material, manpower, progress), ' +
+      'manager (also decides deliveries sent to them and signs hold points), or remove. Done straight away. With no people, it says who is on it now.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'The project name, or part of it. Leave out when there is only one.' },
+        people: {
+          type: 'array',
+          items: { type: 'object', properties: { name: { type: 'string' }, role: { type: 'string', enum: ['store', 'manager', 'remove'] } }, required: ['name', 'role'] },
+        },
+      },
+    },
+  },
+  {
     name: 'project_plan_status',
     description: 'The master\'s project plans: how far each is, its questions, the plan in short, what is late against it and the last weekly report.',
     input_schema: { type: 'object', properties: { plan: PLAN_ID } },
   },
 ];
+
+const ROLE_NAME = { store: 'store keeper', manager: 'manager' };
+
+/**
+ * The people on a project, set from chat: there is no Projects screen with a form for it.
+ * The master only; nobody from outside the company.
+ */
+export async function setTeam(user, input = {}) {
+  if (!isMaster(user)) throw bad('Only the master sets who is on a project.', 403);
+  const all = await projectsOf(user);
+  const want = line(input.project, 120);
+  const hits = want ? all.filter((p) => has(p.name, want)) : all;
+  if (!all.length) throw bad('There is no project yet. Start a plan (its Start makes the project), then add the people.');
+  if (hits.length !== 1) throw bad(hits.length ? `Which project: ${hits.map((p) => p.name).join(', ')}?` : `No project matches "${want}". Projects: ${all.map((p) => p.name).join(', ')}.`);
+  const project = hits[0];
+  const people = await db.prepare('SELECT id, name FROM users WHERE NOT coalesce(external, false) ORDER BY name').all();
+  for (const p of Array.isArray(input.people) ? input.people : []) {
+    const said = line(p.name, 80);
+    const exact = people.filter((u) => u.name.toLowerCase() === said.toLowerCase());
+    const found = exact.length ? exact : people.filter((u) => has(u.name, said));
+    if (found.length !== 1) throw bad(found.length ? `"${said}" could be ${found.map((u) => u.name).join(', ')}. Ask which.` : `Nobody called "${said}" has an account.`);
+    if (p.role === 'remove') {
+      await db.prepare('DELETE FROM project_members WHERE project_id = ? AND user_id = ?').run(project.id, found[0].id);
+    } else if (ROLE_NAME[p.role]) {
+      await db.prepare(`INSERT INTO project_members (project_id, user_id, role) VALUES (?, ?, ?)
+        ON CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role`).run(project.id, found[0].id, p.role);
+    } else throw bad('The role is store, manager or remove.');
+  }
+  const now = await db.prepare(`SELECT u.name, m.role FROM project_members m JOIN users u ON u.id = m.user_id WHERE m.project_id = ? ORDER BY m.role, u.name`).all(project.id);
+  return `${project.name}: ${now.length ? now.map((m) => `${m.name} (${ROLE_NAME[m.role] || m.role})`).join(', ') : 'nobody on it yet'}.`;
+}
 
 /** The plan tools: the master only. ctx: { conversationId, onCard }. */
 export function planKit(user, ctx = {}) {
@@ -1065,6 +1112,7 @@ export function planKit(user, ctx = {}) {
       return `Plan #${c.id} is being written again with the change, in the background. Tell them in one short line to watch the card.`;
     },
     project_plan_status: (input) => planForChat(user, input, ctx.conversationId),
+    project_team: (input) => setTeam(user, input),
   };
   return {
     definitions: DEFS,

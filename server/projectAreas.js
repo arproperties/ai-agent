@@ -168,7 +168,7 @@ export async function findArea(projectId, floorSaid, areaSaid) {
   if (!want) throw bad('Say which room or area.');
   const floor = line(floorSaid, 40).toLowerCase();
   const all = (await areasOf(projectId)).filter((a) => !floor || a.floor.toLowerCase() === floor);
-  if (!all.length) throw bad(floor ? `No areas on ${floorSaid}. A manager adds them on the Projects screen.` : 'This project has no areas yet.');
+  if (!all.length) throw bad(floor ? `No areas on ${floorSaid}. Say the room as it is written, or leave the room out.` : 'This project has no areas yet.');
   const exact = all.filter((a) => a.name.toLowerCase() === want.toLowerCase());
   const hits = exact.length ? exact : all.filter((a) => has(a.name, want));
   // One room can need two materials (mortar: cement and sand): the same room is one answer.

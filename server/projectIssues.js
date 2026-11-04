@@ -215,7 +215,7 @@ export async function pushFailedCheck(card, failed, by, push = sendPush) {
   await push(ids, {
     title: `${card.project}: wall check failed${where ? ` (${where})` : ''}`,
     body: `${failed.join('; ')}${card.data.note ? ` - ${card.data.note}` : ''}`,
-    url: `/?projects=${card.project_id}`, tag: `project-check-${card.id}`,
+    url: '/', tag: `project-check-${card.id}`,
   }).catch(() => {});
 }
 

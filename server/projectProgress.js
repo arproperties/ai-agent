@@ -380,7 +380,7 @@ export async function pushBlocked(card, by, push = sendPush) {
   if (!ids.length) return;
   await push(ids, {
     title: `${card.project}: ${card.data.floor} blocked`,
-    body: `${card.data.step}: ${card.data.note}`, url: `/?projects=${card.project_id}`, tag: `project-step-${card.data.step_id}`,
+    body: `${card.data.step}: ${card.data.note}`, url: '/', tag: `project-step-${card.data.step_id}`,
   }).catch(() => {});
 }
 

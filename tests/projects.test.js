@@ -88,6 +88,26 @@ test('a failed check goes to the manager; Francisca cannot decide it, Tauqeer ca
   assert.deepEqual(await stockOf(id), []); // a rejected delivery adds nothing
 });
 
+test('with no Projects screen, the manager gets the waiting delivery on a card in chat', async () => {
+  const { francisca, tauqeer, id } = await setup();
+  const c = await proposeDelivery(francisca, blocks({ quantity: 2000 }));
+  await sendToManager(francisca, c.id, { passed: [], note: 'broken' }, push);
+  assert.equal(pushes[0].url, '/');
+  assert.match(pushes[0].body, /what is waiting for me/);
+  // The store keeper does not get the tool; the manager does, and sees the card.
+  assert.ok(!(await projectKit(francisca)).definitions.some((d) => d.name === 'show_waiting_deliveries'));
+  const cards = [];
+  const kit = await projectKit(tauqeer, { onCard: (x) => cards.push(x) });
+  const r = await kit.run({ id: 't1', name: 'show_waiting_deliveries', input: {} });
+  assert.match(r.content, /1 delivery waiting/);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].id, c.id);
+  assert.equal(cards[0].can.decide, true);
+  await decideDelivery(tauqeer, c.id, { verdict: 'accept', note: 'ok' }, push);
+  assert.match((await kit.run({ id: 't2', name: 'show_waiting_deliveries', input: {} })).content, /Nothing is waiting/);
+  assert.ok(id);
+});
+
 test('a manager accepting with a note puts it into stock', async () => {
   const { francisca, tauqeer, id } = await setup();
   const c = await proposeDelivery(francisca, { item: 'Cement OPC', quantity: 100, counted_in: 'bags' });

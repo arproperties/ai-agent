@@ -113,7 +113,62 @@ function MakeButton({ busy, onClick }) {
   );
 }
 
-export default function PlanCard({ plan: p, onChanged, onOpenProject }) {
+// After Start: what is late against the plan, and this week's report. There is no Projects
+// screen; the master accepts or leaves Reem's new weeks here, on the card.
+const KIND = { not_started: 'Not started', not_finished: 'Running over', material: 'Material', unsigned: 'Hold point', blocked: 'Blocked' };
+const wk = ([a, b]) => (a === b ? `wk ${a}` : `wk ${a}-${b}`);
+
+function Late({ projectId }) {
+  const [r, setR] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => { api.get(`/plans/project/${projectId}`).then(setR).catch((e) => setError(e.message)); }, [projectId]);
+  const decide = async (id, what) => {
+    setBusy(`${id}${what}`); setError('');
+    try { setR(await api.post(`/plans/alerts/${id}/${what}`)); } catch (e) { setError(e.message); }
+    setBusy(null);
+  };
+  if (!r) return error ? <p className="mt-2 text-xs text-bad">{error}</p> : null;
+  const open = (r.alerts || []).filter((a) => a.status === 'open');
+  return (
+    <div className="mt-3 space-y-2">
+      <p className={LABEL}>BEHIND THE PLAN</p>
+      {open.length ? open.map((a) => (
+        <div key={a.id} className="rounded-xl border border-warn/40 p-2.5">
+          <p className="text-xs text-mute">{KIND[a.kind] || a.kind}</p>
+          <p className="leading-snug">{a.text}</p>
+          {a.change?.length > 0 && (
+            <ul className="mt-1 space-y-0.5 text-xs">
+              <li className="text-mute">Reem suggests moving:</li>
+              {a.change.map((c) => <li key={c.step_id}>{c.name}: {wk(c.from)} → {wk(c.to)}</li>)}
+            </ul>
+          )}
+          {r.can_decide && (
+            <div className="mt-2 flex gap-2">
+              {a.change?.length > 0 && (
+                <button onClick={() => decide(a.id, 'accept')} disabled={!!busy} className="flex items-center gap-1 rounded-full bg-p1/30 px-3 py-1 text-xs text-txt disabled:opacity-50">
+                  {busy === `${a.id}accept` ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Accept new weeks
+                </button>
+              )}
+              <button onClick={() => decide(a.id, 'decline')} disabled={!!busy} className="flex items-center gap-1 rounded-full border border-stroke px-3 py-1 text-xs text-mute hover:text-txt disabled:opacity-50">
+                {busy === `${a.id}decline` ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />} {a.change?.length ? 'Leave' : 'Seen'}
+              </button>
+            </div>
+          )}
+        </div>
+      )) : <p className="flex items-center gap-1.5 text-xs text-ok"><Check size={13} /> Nothing late.</p>}
+      {r.plan?.report && (
+        <details>
+          <summary className="cursor-pointer text-xs text-mute">This week{r.plan.report_on && ` · ${r.plan.report_on}`}</summary>
+          <p className="mt-1 whitespace-pre-line text-xs">{r.plan.report}</p>
+        </details>
+      )}
+      {error && <p className="text-xs text-bad">{error}</p>}
+    </div>
+  );
+}
+
+export default function PlanCard({ plan: p, onChanged }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
@@ -196,10 +251,11 @@ export default function PlanCard({ plan: p, onChanged, onOpenProject }) {
 
       {p.status === 'started' && (
         <p className="mt-2 text-xs text-ok">
-          The steps are in {p.project?.name}'s Progress. {p.merged && `${p.merged.added} added, ${p.merged.updated} given their weeks. `}
+          The plan is set for {p.project?.name}. {p.merged && `${p.merged.added} steps added. `}
           Reem checks the site against it every morning.
         </p>
       )}
+      {p.status === 'started' && p.project && <Late projectId={p.project.id} />}
       {p.error && p.status !== 'cancelled' && <p className="mt-2.5 text-xs text-bad">{p.error}</p>}
       {error && <p className="mt-2.5 text-xs text-bad">{error}</p>}
 
@@ -220,9 +276,6 @@ export default function PlanCard({ plan: p, onChanged, onOpenProject }) {
           <a href={`/api/plans/${p.id}/pdf`} className="flex items-center justify-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute hover:text-txt">
             <Download size={14} /> PDF
           </a>
-        )}
-        {p.status === 'started' && p.project && onOpenProject && (
-          <button onClick={() => onOpenProject(p.project.id)} className="rounded-full border border-stroke px-4 py-2 text-sm text-mute hover:text-txt">Open project</button>
         )}
         {p.can.cancel && (
           <button onClick={() => act('cancel')} disabled={!!busy}

@@ -5,7 +5,7 @@ import { saveProject } from '../server/projects.js';
 import { progressOf } from '../server/projectProgress.js';
 import {
   setAi, work, proposePlan, answerPlan, changePlan, getPlan, startPlan, cancelPlan, cleanPlan, countedProblems,
-  lateOf, watchPlans, decideAlert, projectPlanView, planKit, dropRepeats, saveCardAnswer, planFromCard,
+  lateOf, watchPlans, decideAlert, projectPlanView, planKit, dropRepeats, saveCardAnswer, planFromCard, setTeam,
 } from '../server/projectPlans.js';
 import { dubaiDate } from '../server/saifsys/client.js';
 
@@ -134,6 +134,19 @@ test('the card asks one question at a time; answers are kept and go to the plann
   await assert.rejects(saveCardAnswer(s.master, card.id, { index: 0, answer: 'x' }), { status: 409 });
 });
 
+test('the master sets the team in chat: add, change role, remove; only the master', async () => {
+  const s = await setup();
+  await assert.rejects(setTeam(s.francisca, { people: [] }), { status: 403 });
+  assert.equal(await setTeam(s.master, {}), 'JVC School: Arzhel (manager), Francisca (store keeper).');
+  await setTeam(s.master, { project: 'JVC', people: [{ name: 'other', role: 'store' }, { name: 'Francisca', role: 'manager' }] });
+  const after = await setTeam(s.master, { people: [{ name: 'Arzhel', role: 'remove' }] });
+  assert.equal(after, 'JVC School: Francisca (manager), Other (store keeper).');
+  await assert.rejects(setTeam(s.master, { people: [{ name: 'Nobody', role: 'store' }] }), /Nobody called/);
+  // Someone from outside the company is never found.
+  await db.prepare('UPDATE users SET external = true WHERE id = ?').run(s.other.id);
+  await assert.rejects(setTeam(s.master, { people: [{ name: 'Other', role: 'store' }] }), /Nobody called/);
+});
+
 test('Make the plan now, with nothing answered on the card, plans without answers', async () => {
   const s = await setup();
   const card = await proposePlan(s.master, { file: 'Arch-TRK.dwg', project: 'JVC' }, { run: noRun });
@@ -156,7 +169,7 @@ test('a plan that keeps failing its checks is never kept; staff get no plan tool
   assert.match(c.error, /Mezzanine/);
   assert.equal(c.plan, null);
   assert.equal(planKit(s.francisca).definitions.length, 0);
-  assert.equal(planKit(s.master).definitions.length, 4);
+  assert.equal(planKit(s.master).definitions.length, 5); // with project_team: the team is set in chat
 });
 
 test('the limit stops the work and the plan waits; raising it lets it go on', async () => {

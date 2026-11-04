@@ -334,8 +334,8 @@ export async function sendToManager(user, id, { passed = [], note = '' } = {}, p
   const d = p.data;
   push(managers, {
     title: `${p.project}: a delivery needs you`,
-    body: `${num(d.quantity)} ${d.counted_in} ${d.item}${d.supplier ? ` from ${d.supplier}` : ''}. ${failed.length ? `Failed: ${failed.join(', ')}.` : ''} ${said}`.trim(),
-    url: `/?projects=${p.project_id}`, tag: `project-delivery-${p.id}`,
+    body: `${num(d.quantity)} ${d.counted_in} ${d.item}${d.supplier ? ` from ${d.supplier}` : ''}. ${failed.length ? `Failed: ${failed.join(', ')}.` : ''} ${said} Ask Reem: what is waiting for me?`.trim(),
+    url: '/', tag: `project-delivery-${p.id}`,
   }).catch(() => {});
   return getProposal(user, id);
 }
@@ -364,7 +364,7 @@ export async function decideDelivery(user, id, { verdict, note = '' } = {}, push
     push([p.user_id], {
       title: `${p.project}: delivery ${verdict === 'accept' ? 'accepted' : 'rejected'}`,
       body: `${num(d.quantity)} ${d.counted_in} ${d.item}${d.supplier ? ` from ${d.supplier}` : ''}${said ? `: ${said}` : ''}`,
-      url: `/?projects=${p.project_id}`, tag: `project-delivery-${p.id}`,
+      url: '/', tag: `project-delivery-${p.id}`,
     }).catch(() => {});
   }
   return getProposal(user, id);
@@ -635,6 +635,25 @@ const DEFS = {
   },
 };
 
+// There is no Projects screen any more: a manager decides a delivery that was sent to them on
+// its card, shown in their own chat when they ask what is waiting.
+const WAITING_DEF = {
+  name: 'show_waiting_deliveries',
+  description: 'Show the deliveries waiting for a manager (sent by the store keeper because a check failed), each on its card with Accept with note / Reject. ' +
+    'Use when a manager or the master asks "what is waiting for me?", "show the delivery", or opens the chat from a "delivery needs you" alert.',
+  input_schema: { type: 'object', properties: { project: PROJECT } },
+};
+
+async function showWaiting(user, input, shown) {
+  const mine = (await projectsOf(user)).filter((p) => canDecide(p.role) && (!input.project || has(p.name, input.project)));
+  if (!mine.length) return 'No project where this person decides deliveries.';
+  const rows = await db.prepare(`SELECT id FROM project_proposals WHERE kind = 'delivery' AND status = 'sent'
+    AND project_id IN (${mine.map(() => '?').join(', ')}) ORDER BY id LIMIT 10`).all(...mine.map((p) => p.id));
+  for (const r of rows) shown(await getProposal(user, r.id));
+  return rows.length ? `${rows.length} deliver${rows.length === 1 ? 'y' : 'ies'} waiting, shown on cards. Tell them in one short line to decide each card.`
+    : 'Nothing is waiting for a manager.';
+}
+
 const READY = ' NOT recorded yet - tell the user in one short line to check the card';
 
 /**
@@ -651,6 +670,7 @@ export async function projectKit(user, ctx = {}) {
   const handlers = mine.length ? {
     project_status: (input) => statusForChat(user, input, ctx.agentId),
     project_records: (input) => recordsForChat(user, input, ctx.agentId),
+    ...(decides && { show_waiting_deliveries: (input) => showWaiting(user, input, shown) }),
     ...(records && {
       log_delivery: async (input) => {
         const c = shown(await proposeDelivery(user, input, opts));
@@ -683,7 +703,7 @@ export async function projectKit(user, ctx = {}) {
     }),
   } : {};
   return {
-    definitions: [...Object.values(DEFS), ...Object.values(PROGRESS_DEFS), AREA_DEF, ...Object.values(ISSUE_DEFS)].filter((d) => handlers[d.name]),
+    definitions: [...Object.values(DEFS), WAITING_DEF, ...Object.values(PROGRESS_DEFS), AREA_DEF, ...Object.values(ISSUE_DEFS)].filter((d) => handlers[d.name]),
     status: (name) => (name.startsWith('log_') || ['sign_off', 'close_issue'].includes(name) ? 'Getting the card ready…' : 'Looking at the project records…'),
     run: async (block) => {
       try {
