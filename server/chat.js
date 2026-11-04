@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { db } from './db.js';
 import { isRevit, REVIT_HELP } from './ifc.js';
 import { billNote } from './billing.js';
@@ -357,6 +358,21 @@ const toClaude = (rows) => rows.map((r) => {
   return { role: r.role, content };
 });
 
+// A file this person has sent before is not read again: a scanned memorandum takes many
+// minutes to read page by page, and sending it a second time (after "Load failed", say)
+// started over from page 1. The text kept when it was filed is used instead, and a file
+// still being read from an earlier message waits for that reading rather than starting its own.
+const reading = new Map();
+async function readOnce(userId, f, read) {
+  const hash = createHash('sha256').update(f.buffer).digest('hex');
+  const kept = await db.prepare(`SELECT t.text FROM documents d JOIN document_texts t ON t.document_id = d.id
+    WHERE d.user_id = ? AND d.hash = ? AND d.status = 'ready' ORDER BY d.id LIMIT 1`).get(userId, hash);
+  if (kept?.text?.trim()) return kept.text;
+  const key = `${userId}:${hash}`;
+  if (!reading.has(key)) reading.set(key, read().finally(() => reading.delete(key)));
+  return reading.get(key);
+}
+
 // Attachments are read in full for this turn, stored in the user's library, and organised in the background
 async function readAttachments(user, convId, files, send, team, said = '') {
   const blocks = [];
@@ -392,7 +408,7 @@ async function readAttachments(user, convId, files, send, team, said = '') {
       } else {
         send('status', { label: `Reading ${name}…` });
         // read first, so unreadable files are never stored
-        const content = await extractText({ ...f, originalname: name }, { onProgress: (label) => send('status', { label }) });
+        const content = await readOnce(user.id, f, () => extractText({ ...f, originalname: name }, { onProgress: (label) => send('status', { label }) }));
         if (!content.trim()) throw new Error(`No readable text found in ${name}`);
         const { doc, duplicate } = await saveUpload(user.id, null, f, convId);
         const cut = content.length > share;
@@ -531,6 +547,11 @@ export async function chat(req, res) {
 
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
   const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  // A scanned PDF is read a few pages per call, and one call can take minutes with nothing
+  // to say. nginx drops a reply silent for 5 minutes and Safari shows "Load failed", so a
+  // comment line (ignored by the app) goes out every 15 seconds to show the turn is alive.
+  const beat = setInterval(() => { if (!res.writableEnded) res.write(': still working\n\n'); }, 15_000);
+  res.on('close', () => clearInterval(beat));
   send('meta', { conversationId: convId });
 
   // /explain, /breakdown, /explore: drawn rather than answered, for those given Pictures.
