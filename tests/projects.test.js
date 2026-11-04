@@ -4,7 +4,7 @@ import { reset, makeUser, makeAgent, closeDb, db } from './helpers/db.js';
 import { projectRole, projectsOf } from '../server/access.js';
 import {
   saveProject, getProject, getProposal, stockOf, manpowerOf, checksFor, projectKit, remindManpower,
-  proposeDelivery, proposeOut, proposeManpower, proposeCount, acceptDelivery, sendToManager, decideDelivery, confirmCard, cancelCard,
+  proposeDelivery, proposeOut, proposeManpower, proposeCount, acceptDelivery, sendToManager, decideDelivery, confirmCard, cancelCard, chatCards,
 } from '../server/projects.js';
 
 test.after(() => closeDb());
@@ -97,13 +97,19 @@ test('with no Projects screen, the manager gets the waiting delivery on a card i
   // The store keeper does not get the tool; the manager does, and sees the card.
   assert.ok(!(await projectKit(francisca)).definitions.some((d) => d.name === 'show_waiting_deliveries'));
   const cards = [];
-  const kit = await projectKit(tauqeer, { onCard: (x) => cards.push(x) });
+  const { id: conv } = await db.prepare('INSERT INTO conversations (user_id, title) VALUES (?, ?) RETURNING id').run(tauqeer.id, 'Site');
+  const kit = await projectKit(tauqeer, { conversationId: conv, onCard: (x) => cards.push(x) });
   const r = await kit.run({ id: 't1', name: 'show_waiting_deliveries', input: {} });
   assert.match(r.content, /1 delivery waiting/);
   assert.equal(cards.length, 1);
   assert.equal(cards[0].id, c.id);
   assert.equal(cards[0].can.decide, true);
+  // After a refresh the card is still in his chat, once, even when he asks twice; not in another chat.
+  await kit.run({ id: 't1b', name: 'show_waiting_deliveries', input: {} });
+  assert.deepEqual((await chatCards(tauqeer, conv)).map((x) => x.id), [c.id]);
+  assert.deepEqual(await chatCards(tauqeer, conv + 999), []);
   await decideDelivery(tauqeer, c.id, { verdict: 'accept', note: 'ok' }, push);
+  assert.equal((await chatCards(tauqeer, conv))[0].status, 'accepted_note'); // and it shows what he decided
   assert.match((await kit.run({ id: 't2', name: 'show_waiting_deliveries', input: {} })).content, /Nothing is waiting/);
   assert.ok(id);
 });

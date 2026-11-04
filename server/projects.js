@@ -644,12 +644,26 @@ const WAITING_DEF = {
   input_schema: { type: 'object', properties: { project: PROJECT } },
 };
 
-async function showWaiting(user, input, shown) {
+/** The cards a chat shows after a refresh: the ones it made, and the ones it was shown. */
+export async function chatCards(user, conversationId) {
+  const rows = await db.prepare(`SELECT id FROM project_proposals WHERE user_id = ? AND conversation_id = ?
+    UNION SELECT proposal_id FROM project_proposal_shown WHERE user_id = ? AND conversation_id = ? ORDER BY id`)
+    .all(user.id, conversationId, user.id, conversationId);
+  return (await Promise.all(rows.map((r) => getProposal(user, r.id)))).filter(Boolean);
+}
+
+async function showWaiting(user, input, shown, conversationId) {
   const mine = (await projectsOf(user)).filter((p) => canDecide(p.role) && (!input.project || has(p.name, input.project)));
   if (!mine.length) return 'No project where this person decides deliveries.';
   const rows = await db.prepare(`SELECT id FROM project_proposals WHERE kind = 'delivery' AND status = 'sent'
     AND project_id IN (${mine.map(() => '?').join(', ')}) ORDER BY id LIMIT 10`).all(...mine.map((p) => p.id));
-  for (const r of rows) shown(await getProposal(user, r.id));
+  for (const r of rows) {
+    if (conversationId) {
+      await db.prepare(`INSERT INTO project_proposal_shown (user_id, conversation_id, proposal_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`)
+        .run(user.id, conversationId, r.id);
+    }
+    shown(await getProposal(user, r.id));
+  }
   return rows.length ? `${rows.length} deliver${rows.length === 1 ? 'y' : 'ies'} waiting, shown on cards. Tell them in one short line to decide each card.`
     : 'Nothing is waiting for a manager.';
 }
@@ -670,7 +684,7 @@ export async function projectKit(user, ctx = {}) {
   const handlers = mine.length ? {
     project_status: (input) => statusForChat(user, input, ctx.agentId),
     project_records: (input) => recordsForChat(user, input, ctx.agentId),
-    ...(decides && { show_waiting_deliveries: (input) => showWaiting(user, input, shown) }),
+    ...(decides && { show_waiting_deliveries: (input) => showWaiting(user, input, shown, ctx.conversationId) }),
     ...(records && {
       log_delivery: async (input) => {
         const c = shown(await proposeDelivery(user, input, opts));
@@ -765,11 +779,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const send = (res, row) => (row ? res.json(row) : res.status(404).json({ error: 'Not found' }));
 
 // Cards from chat. Before the '/:id' routes, so "proposals" is never read as a project.
-projectRoutes.get('/proposals', wrap(async (req, res) => {
-  const rows = await db.prepare('SELECT id FROM project_proposals WHERE user_id = ? AND conversation_id = ? ORDER BY id')
-    .all(req.user.id, Number(req.query.conversation) || 0);
-  res.json(await Promise.all(rows.map((r) => getProposal(req.user, r.id))));
-}));
+projectRoutes.get('/proposals', wrap(async (req, res) => res.json(await chatCards(req.user, Number(req.query.conversation) || 0))));
 // A delivery's photo: for whoever made the card and anyone on the project, so the manager sees it too.
 projectRoutes.get('/proposals/:id/photo/:doc', wrap(async (req, res) => {
   const p = await loaded(req.user, req.params.id);

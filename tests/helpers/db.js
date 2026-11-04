@@ -48,7 +48,7 @@ const TABLES = [
   'legal_case_settings', 'legal_cases', 'legal_case_events', 'legal_case_files', 'legal_case_alerts', 'legal_case_leases', 'legal_case_advice',
   'case_settings', 'case_folders', 'case_emails', 'case_proposals', 'case_time', 'case_deadline_scans', 'case_deadlines',
   'case_briefs', 'case_brief_suggestions', 'server_health', 'app_connectors',
-  'projects', 'project_members', 'project_proposals', 'project_moves', 'project_manpower',
+  'projects', 'project_members', 'project_proposals', 'project_proposal_shown', 'project_moves', 'project_manpower',
   'project_steps', 'project_step_points', 'project_step_updates', 'project_areas',
   'project_issues', 'project_inspections', 'project_plans', 'plan_alerts', 'plan_models',
   'attendance_imports', 'attendance_people', 'attendance_names', 'attendance_teams', 'attendance_entries',

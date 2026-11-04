@@ -2484,6 +2484,14 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_project_proposals_chat ON project_proposals(user_id, conversation_id, id);
   CREATE INDEX IF NOT EXISTS idx_project_proposals_waiting ON project_proposals(project_id, status);
+  -- Someone else's card shown in a chat (a delivery waiting for the manager): kept, so it is
+  -- still in that chat after a refresh, like the cards the chat made itself.
+  CREATE TABLE IF NOT EXISTS project_proposal_shown (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    proposal_id INTEGER NOT NULL REFERENCES project_proposals(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, conversation_id, proposal_id)
+  );
   CREATE TABLE IF NOT EXISTS project_moves (
     id SERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
