@@ -2703,3 +2703,107 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
 `);
+
+// Attendance: who worked which day, read from the lists teams post (a WhatsApp group's
+// export, an Excel, CSV or PDF sheet, a photo of a list) and checked person by person for
+// each pay period (26th to 25th). server/attendance.js and server/attendanceRead.js.
+//   attendance_people  - one row per real person; merged_into when two turned out to be one.
+//   attendance_names   - how a name is written in a company's lists -> the person. Learnt once,
+//                        so next month's lists land on the same person without asking again.
+//   attendance_teams   - who posted + the team label they wrote -> the company and section.
+//   attendance_entries - one person on one day as one list said it. Several lists can say the
+//                        same day; the screen merges them (a manual change wins over all).
+//   attendance_reviews - a person's pay period marked verified or skipped.
+//   attendance_photos  - every photo read, so a new export sends only the new ones. For a team
+//                        photo only the headcount and stamp are kept; a photo of a list is kept
+//                        on disk too, to show where a day came from.
+//   attendance_chat_days - each chat day as last read (its hash and messages), so a new export
+//                        reads again only the days that changed.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS attendance_imports (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('whatsapp', 'sheet', 'pdf', 'photo')),
+    file_name TEXT NOT NULL DEFAULT '',
+    company TEXT,
+    list_date TEXT,
+    status TEXT NOT NULL DEFAULT 'uploading' CHECK (status IN ('uploading', 'queued', 'reading', 'ready', 'failed')),
+    step TEXT NOT NULL DEFAULT '',
+    done INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0,
+    found INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    created_at BIGINT DEFAULT ${NOW},
+    finished_at BIGINT
+  );
+  CREATE TABLE IF NOT EXISTS attendance_people (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    merged_into INTEGER REFERENCES attendance_people(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS attendance_names (
+    company TEXT NOT NULL,
+    written TEXT NOT NULL,
+    person_id INTEGER NOT NULL REFERENCES attendance_people(id) ON DELETE CASCADE,
+    PRIMARY KEY (company, written)
+  );
+  CREATE TABLE IF NOT EXISTS attendance_teams (
+    poster TEXT NOT NULL,
+    team TEXT NOT NULL,
+    company TEXT NOT NULL,
+    section TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (poster, team)
+  );
+  CREATE TABLE IF NOT EXISTS attendance_entries (
+    id SERIAL PRIMARY KEY,
+    import_id INTEGER REFERENCES attendance_imports(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL REFERENCES attendance_people(id) ON DELETE CASCADE,
+    work_date TEXT NOT NULL,
+    company TEXT NOT NULL DEFAULT '',
+    section TEXT NOT NULL DEFAULT '',
+    written_name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK (status IN ('present', 'late', 'absent', 'vacation', 'off', 'sick', 'other')),
+    hours TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    posted_by TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'chat' CHECK (source IN ('chat', 'photo', 'sheet', 'pdf', 'manual')),
+    source_day TEXT,
+    source_time TEXT,
+    photo TEXT,
+    edited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_attendance_entries_person ON attendance_entries(person_id, work_date);
+  CREATE INDEX IF NOT EXISTS idx_attendance_entries_date ON attendance_entries(work_date);
+  CREATE TABLE IF NOT EXISTS attendance_reviews (
+    person_id INTEGER NOT NULL REFERENCES attendance_people(id) ON DELETE CASCADE,
+    period TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('verified', 'skipped')),
+    note TEXT NOT NULL DEFAULT '',
+    by_user INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (person_id, period)
+  );
+  CREATE TABLE IF NOT EXISTS attendance_photos (
+    name TEXT PRIMARY KEY,
+    import_id INTEGER REFERENCES attendance_imports(id) ON DELETE CASCADE,
+    work_date TEXT NOT NULL,
+    sent TEXT NOT NULL DEFAULT '',
+    posted_by TEXT NOT NULL DEFAULT '',
+    company TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'other',
+    headcount INTEGER NOT NULL DEFAULT 0,
+    stamp_time TEXT NOT NULL DEFAULT '',
+    place TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_attendance_photos_date ON attendance_photos(work_date);
+  -- The team label the list gave, so moving a list to another company moves its days too.
+  ALTER TABLE attendance_entries ADD COLUMN IF NOT EXISTS team TEXT NOT NULL DEFAULT '';
+  CREATE TABLE IF NOT EXISTS attendance_chat_days (
+    day TEXT PRIMARY KEY,
+    hash TEXT NOT NULL,
+    messages JSONB NOT NULL DEFAULT '[]'
+  );
+`);

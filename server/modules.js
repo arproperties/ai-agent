@@ -35,6 +35,7 @@ export const MODULES = [
   { key: 'checklists', label: 'Checklists', about: 'The points of a job, ticked each time it is done.', everyone: true, company: true },
   // The screen only: recording a delivery or a day's manpower is done in chat by whoever is on the project.
   { key: 'projects', label: 'Projects', about: 'A building job: stock on site, deliveries waiting for a manager, and daily manpower, recorded from chat.', company: true },
+  { key: 'attendance', label: 'Attendance', about: 'Who worked which day, read from the teams\' WhatsApp group, sheets and photos, and checked person by person each pay period (26th to 25th).', company: true },
   { key: 'memory', label: 'Memory', about: 'See and remove what Reem remembers about them.', everyone: true },
   { key: 'email', label: 'Email', about: 'Connect their own mailbox and see what Reem has sent from it.', everyone: true },
   // Not a screen: what a chat does with /explain, /breakdown and /explore (server/pictures.js).
