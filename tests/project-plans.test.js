@@ -5,7 +5,7 @@ import { saveProject } from '../server/projects.js';
 import { progressOf } from '../server/projectProgress.js';
 import {
   setAi, work, proposePlan, answerPlan, changePlan, getPlan, startPlan, cancelPlan, cleanPlan, countedProblems,
-  lateOf, watchPlans, decideAlert, projectPlanView, planKit, dropRepeats,
+  lateOf, watchPlans, decideAlert, projectPlanView, planKit, dropRepeats, saveCardAnswer, planFromCard,
 } from '../server/projectPlans.js';
 import { dubaiDate } from '../server/saifsys/client.js';
 
@@ -104,6 +104,44 @@ test('one file: read, questions asked, then the plan written and checked; only t
   assert.ok(c.spent > 0);
   assert.equal(await getPlan(s.francisca, card.id), null);
   assert.equal(await getPlan(s.other, card.id), null);
+});
+
+test('the card asks one question at a time; answers are kept and go to the planner once', async () => {
+  const s = await setup();
+  const card = await proposePlan(s.master, { file: 'Arch-TRK.dwg', project: 'JVC' }, { run: noRun });
+  await work(card.id, { push });
+  let c = await getPlan(s.master, card.id);
+  assert.deepEqual(c.card_answers, [null, null]);
+  // Only the master's own plan, and only a real question.
+  assert.equal(await saveCardAnswer(s.francisca, card.id, { index: 0, answer: 'x' }), null);
+  await assert.rejects(saveCardAnswer(s.master, card.id, { index: 5, answer: 'x' }), /no such question/);
+
+  c = await saveCardAnswer(s.master, card.id, { index: 0, answer: '  Start 2 Nov 2026 ' });
+  assert.deepEqual(c.card_answers, ['Start 2 Nov 2026', null]);
+  c = await saveCardAnswer(s.master, card.id, { index: 1, answer: '' }); // "I don't know"
+  assert.deepEqual(c.card_answers, ['Start 2 Nov 2026', '']);
+  c = await saveCardAnswer(s.master, card.id, { index: 0, answer: 'Start 9 Nov 2026' }); // Back, changed
+  assert.deepEqual(c.card_answers, ['Start 9 Nov 2026', '']);
+
+  c = await planFromCard(s.master, card.id, { run: noRun });
+  assert.equal(c.status, 'planning');
+  const row = await db.prepare('SELECT answers, card_answers FROM project_plans WHERE id = ?').get(card.id);
+  assert.equal(row.answers, 'Q: Start date?\nA: Start 9 Nov 2026');
+  assert.equal(row.card_answers, null);
+  await work(card.id, { push });
+  assert.match(calls.find((a) => a.tools?.[0]?.name === 'project_plan').messages[0].content.map((b) => b.text || '').join(' '), /Start 9 Nov 2026/);
+  // No more answers once the plan is being made.
+  await assert.rejects(saveCardAnswer(s.master, card.id, { index: 0, answer: 'x' }), { status: 409 });
+});
+
+test('Make the plan now, with nothing answered on the card, plans without answers', async () => {
+  const s = await setup();
+  const card = await proposePlan(s.master, { file: 'Arch-TRK.dwg', project: 'JVC' }, { run: noRun });
+  await work(card.id, { push });
+  const c = await planFromCard(s.master, card.id, { run: noRun });
+  assert.equal(c.status, 'planning');
+  await work(card.id, { push });
+  assert.equal((await getPlan(s.master, card.id)).status, 'planned');
 });
 
 test('a plan that keeps failing its checks is never kept; staff get no plan tools', async () => {

@@ -2677,6 +2677,9 @@ await db.exec(`
     started_at BIGINT,
     created_at BIGINT DEFAULT ${NOW}
   );
+  -- The card asks one question at a time; each answer is kept here as it is given ('' =
+  -- "I don't know", null = not reached), so the master can close the app and carry on.
+  ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS card_answers JSONB;
   CREATE INDEX IF NOT EXISTS idx_project_plans_chat ON project_plans(user_id, conversation_id, id);
   CREATE INDEX IF NOT EXISTS idx_project_plans_project ON project_plans(project_id, status);
   CREATE TABLE IF NOT EXISTS plan_alerts (

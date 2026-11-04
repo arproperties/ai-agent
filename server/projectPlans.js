@@ -463,7 +463,7 @@ export async function work(planId, { push = sendPush } = {}) {
         await db.prepare(`UPDATE project_plans SET notes = ?, facts = ?::jsonb, status = 'asking', working = NULL, error = NULL WHERE id = ? AND status = 'reading'`)
           .run(row.notes, JSON.stringify(facts), planId);
         await tell(`${line(facts.name, 60) || row.file_name}: Reem read the file`,
-          facts.questions.length ? `${facts.questions.length} question${facts.questions.length === 1 ? '' : 's'} before the plan. Answer in the chat.` : 'Say "make the plan" in the chat.');
+          facts.questions.length ? `${facts.questions.length} question${facts.questions.length === 1 ? '' : 's'} before the plan. Open the chat: they come one at a time.` : 'Open the chat and tap Make the plan.');
         return;
       }
       const { plan, problems } = await writePlan(row, project, working);
@@ -492,6 +492,7 @@ async function cardOf(row) {
     project: project ? { id: project.id, name: project.name } : null, project_said: row.project_said,
     name: row.facts?.name || null, summary: p?.summary || row.facts?.summary || null,
     floors: list(row.facts?.floors), facts: list(row.facts?.facts), questions: list(row.facts?.questions), answers: row.answers,
+    card_answers: list(row.facts?.questions).map((_, i) => list(row.card_answers)[i] ?? null),
     plan: p && {
       start_day: p.start_day, weeks: totalWeeks(p), phases: p.phases,
       counts: { steps: p.steps.length, holds: p.steps.filter((s) => s.hold_point).length, materials: p.materials.length, trades: new Set(p.manpower.map((m) => m.trade)).size, risks: p.risks.length },
@@ -924,16 +925,51 @@ export async function proposePlan(user, input, { conversationId = null, run = wo
   return getPlan(user, id);
 }
 
+/** The answers typed on the card, as lines the planner reads: question, then answer. */
+function cardAnswersText(row) {
+  const qs = list(row.facts?.questions);
+  const given = list(row.card_answers);
+  const out = qs.map((q, i) => (given[i] ? `Q: ${q}\nA: ${given[i]}` : null)).filter(Boolean);
+  return out.join('\n');
+}
+
+/**
+ * One answer from the card (index = which question). An empty answer is "I don't know":
+ * that question is planned the usual way. Saved straight away; no AI.
+ */
+export async function saveCardAnswer(user, id, { index, answer } = {}) {
+  const row = await mine(user, id);
+  if (!row) return null;
+  if (row.status !== 'asking') throw bad('This plan is not asking questions now.', 409);
+  const i = Number(index);
+  const qs = list(row.facts?.questions);
+  if (!Number.isInteger(i) || i < 0 || i >= qs.length) throw bad('There is no such question.');
+  const given = qs.map((_, k) => list(row.card_answers)[k] ?? null);
+  // '' = "I don't know" (asked, skipped); null = not reached yet, so the card can pick up there.
+  given[i] = line(answer, 1000) || '';
+  await db.prepare(`UPDATE project_plans SET card_answers = ?::jsonb WHERE id = ? AND status = 'asking'`).run(JSON.stringify(given), row.id);
+  return getPlan(user, row.id);
+}
+
+/** Make the plan from the card: whatever was answered there; the rest is planned the usual way. */
+export async function planFromCard(user, id, opts = {}) {
+  const row = await mine(user, id);
+  if (!row) return null;
+  return answerPlan(user, { plan: row.id, fromCard: true }, opts);
+}
+
 /** The master's answers to the questions: the plan is written next. */
 export async function answerPlan(user, input, { conversationId = null, run = work } = {}) {
   const row = await openPlan(user, conversationId, input.plan);
   if (WORKING.includes(row.status)) throw bad('Reem is still working on this plan; the card shows how far. Wait for it.');
   await raise(row, input.raise_limit_to);
   const said = line(input.answers, 4000);
-  if (!said && row.status !== 'failed' && !Number(input.raise_limit_to)) throw bad('Give the answers, or "none" to plan without them.');
-  const answers = [row.answers, said].filter(Boolean).join('\n');
-  const { changes } = await db.prepare(`UPDATE project_plans SET answers = ?, status = 'planning', error = NULL, working = 'Waiting to start…'
-    WHERE id = ? AND status IN ('asking', 'planned', 'failed') AND facts IS NOT NULL`).run(answers, row.id);
+  const fromCard = cardAnswersText(row);
+  if (!said && !fromCard && !input.fromCard && row.status !== 'failed' && !Number(input.raise_limit_to)) throw bad('Give the answers, or "none" to plan without them.');
+  const answers = [row.answers, fromCard, said].filter(Boolean).join('\n');
+  // The card's answers move into answers, so a later change or retry does not add them twice.
+  const { changes } = await db.prepare(`UPDATE project_plans SET answers = ?, card_answers = NULL, status = 'planning', error = NULL, working = 'Waiting to start…'
+    WHERE id = ? AND status IN ('asking', 'planned', 'failed') AND facts IS NOT NULL`).run(answers || null, row.id);
   if (!changes) throw bad('The file has not been read yet. Tap Try again on the card.');
   later(() => run(row.id));
   return getPlan(user, row.id);
@@ -1062,7 +1098,9 @@ planRoutes.post('/alerts/:id/decline', wrap(async (req, res) => send(res, await 
 planRoutes.get('/:id', wrap(async (req, res) => send(res, await getPlan(req.user, req.params.id))));
 planRoutes.post('/:id/start', wrap(async (req, res) => send(res, await startPlan(req.user, req.params.id))));
 planRoutes.post('/:id/cancel', wrap(async (req, res) => send(res, await cancelPlan(req.user, req.params.id))));
-planRoutes.post('/:id/retry', wrap(async (req, res) => send(res, await retryPlan(req.user, req.params.id))));
+planRoutes.post('/:id/answer', wrap(async (req, res) => send(res, await saveCardAnswer(req.user, req.params.id, req.body || {}))));
+planRoutes.post('/:id/plan', wrap(async (req, res) => send(res, await planFromCard(req.user, req.params.id))));
+planRoutes.post('/:id/retry',wrap(async (req, res) => send(res, await retryPlan(req.user, req.params.id))));
 // The plan as a PDF: the master, and anyone on the project once it is started.
 planRoutes.get('/:id/pdf', wrap(async (req, res) => {
   const row = await db.prepare('SELECT * FROM project_plans WHERE id = ? AND plan IS NOT NULL').get(Number(req.params.id) || 0);

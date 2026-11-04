@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ClipboardList, Download, Loader2, RotateCcw, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, ClipboardList, Download, Loader2, RotateCcw, X } from 'lucide-react';
 import { api } from '../lib/api';
 
 // A project plan being made from one file (server/projectPlans.js). The reading and the
 // writing run in the background, so the card asks the server how far it is while it works.
-// The questions are answered in the chat, in words; the only taps are Start and Cancel.
+// The questions come one at a time on the card: type an answer and tap Next, or "I don't
+// know" to leave it to Reem. Each answer is saved as it is given (no AI), so the master can
+// close the app and carry on. Answering in the chat still works too.
 
 const STATE = {
   reading: { tone: 'border-p1/40 bg-p1/[0.06]', dot: 'text-p1', label: 'Reading the file' },
@@ -17,6 +19,99 @@ const STATE = {
 };
 const LABEL = 'text-[11px] font-medium tracking-[0.14em] text-mute';
 const working = (s) => s === 'reading' || s === 'planning';
+
+// The questions, one at a time, then a short list of the answers and Make the plan.
+function OneAtATime({ p, onChanged, busy, setBusy, setError }) {
+  const qs = p.questions;
+  const given = p.card_answers || [];
+  // Pick up at the first question not reached yet; all reached = the summary.
+  const firstOpen = () => { const i = given.findIndex((a) => a === null || a === undefined); return i === -1 ? qs.length : i; };
+  const [at, setAt] = useState(firstOpen);
+  const [text, setText] = useState(given[at] || '');
+  const box = useRef(null);
+
+  useEffect(() => { setText(given[at] || ''); }, [at]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (at < qs.length) box.current?.focus({ preventScroll: true }); }, [at, qs.length]);
+
+  const post = async (what, path, body) => {
+    setBusy(what);
+    setError(null);
+    try { const u = await api.post(`/plans/${p.id}/${path}`, body); onChanged(u); return u; } catch (e) { setError(e.message); return null; } finally { setBusy(null); }
+  };
+  const save = async (answer) => { if (await post('next', 'answer', { index: at, answer })) setAt(at + 1); };
+  const makePlan = () => post('plan', 'plan');
+
+  if (!qs.length) {
+    return (
+      <div className="mt-3">
+        <p className="text-mute">Nothing to ask.</p>
+        <MakeButton busy={busy} onClick={makePlan} />
+      </div>
+    );
+  }
+
+  if (at >= qs.length) {
+    return (
+      <div className="mt-3">
+        <p className={LABEL}>YOUR ANSWERS</p>
+        <ol className="mt-1 space-y-1.5">
+          {qs.map((q, i) => (
+            <li key={i}>
+              <button onClick={() => setAt(i)} className="w-full text-left hover:opacity-80">
+                <span className="block text-xs text-mute">{i + 1}. {q}</span>
+                <span className={given[i] ? '' : 'italic text-mute'}>{given[i] || "I don't know: Reem plans it the usual way"}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+        <p className="mt-1.5 text-xs text-mute">Tap an answer to change it.</p>
+        <MakeButton busy={busy} onClick={makePlan} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-center justify-between">
+        <p className={LABEL}>QUESTION {at + 1} OF {qs.length}</p>
+        <button onClick={makePlan} disabled={!!busy} className="text-xs text-p1 hover:underline disabled:opacity-60">Make the plan now</button>
+      </div>
+      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-stroke/60">
+        <div className="h-full rounded-full bg-p1 transition-all" style={{ width: `${(at / qs.length) * 100}%` }} />
+      </div>
+      <p className="mt-2.5 text-[15px] leading-snug">{qs[at]}</p>
+      <textarea ref={box} value={text} onChange={(e) => setText(e.target.value)} rows={2} maxLength={1000}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && text.trim()) { e.preventDefault(); save(text); } }}
+        placeholder="Type your answer…"
+        className="glass mt-2 w-full resize-none rounded-xl px-3 py-2 text-sm outline-none focus:border-p1/60" />
+      <div className="mt-2 flex flex-wrap gap-2">
+        {at > 0 && (
+          <button onClick={() => setAt(at - 1)} disabled={!!busy}
+            className="flex items-center gap-1 rounded-full border border-stroke px-3.5 py-2 text-sm text-mute hover:text-txt disabled:opacity-60">
+            <ChevronLeft size={15} /> Back
+          </button>
+        )}
+        <button onClick={() => save('')} disabled={!!busy}
+          className="rounded-full border border-stroke px-3.5 py-2 text-sm text-mute hover:text-txt disabled:opacity-60">
+          I don't know
+        </button>
+        <button onClick={() => save(text)} disabled={!!busy || !text.trim()}
+          className="flex flex-1 items-center justify-center gap-1 rounded-full bg-gradient-to-br from-p1 to-p2 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 active:scale-[0.98] disabled:opacity-50">
+          {busy === 'next' ? <Loader2 size={15} className="animate-spin" /> : null} Next <ChevronRight size={15} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MakeButton({ busy, onClick }) {
+  return (
+    <button onClick={onClick} disabled={!!busy}
+      className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 active:scale-[0.98] disabled:opacity-60">
+      {busy === 'plan' ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Make the plan
+    </button>
+  );
+}
 
 export default function PlanCard({ plan: p, onChanged, onOpenProject }) {
   const [busy, setBusy] = useState(null);
@@ -63,13 +158,7 @@ export default function PlanCard({ plan: p, onChanged, onOpenProject }) {
               <ul className="mt-1.5 space-y-0.5 text-xs">{p.facts.map((f, i) => <li key={i}><span className="text-mute">{f.label}:</span> {f.value}</li>)}</ul>
             </details>
           )}
-          {p.questions.length > 0 ? (
-            <div className="mt-2.5">
-              <p className={LABEL}>ANSWER IN THE CHAT</p>
-              <ol className="mt-1 list-decimal space-y-0.5 pl-5">{p.questions.map((q, i) => <li key={i}>{q}</li>)}</ol>
-              <p className="mt-1.5 text-xs text-mute">Answer what you know; say "plan without them" for the rest. You can attach the missing drawings too.</p>
-            </div>
-          ) : <p className="mt-2.5 text-mute">Nothing to ask. Say "make the plan" in the chat.</p>}
+          <OneAtATime p={p} onChanged={onChanged} busy={busy} setBusy={setBusy} setError={setError} />
         </>
       )}
 
