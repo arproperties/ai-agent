@@ -251,126 +251,208 @@ function StartSheet({ lease, onClose, onDone }) {
     }
   };
   if (step) return <Compose ask={step} onClose={onClose} onSent={onDone} />;
+  const extrasOn = EXTRAS.filter(([k]) => extras[k]?.on);
+  const missingPrice = extrasOn.some(([k]) => !(Number(extras[k].fee) > 0));
+  const ready = !!rent && rera !== '' && !missingPrice;
+  const pctShown = pct === '' ? '' : Number(pct) > 0 ? `+${pct}%` : Number(pct) < 0 ? `${pct}%` : 'No increase';
+  const write = () => setStep({
+    action: 'start', lease_id: lease.lease_id, rent: Number(rent), cheques: Number(cheques), rera_pct: Number(rera),
+    ...(fees && !fees.failed ? {
+      admin_fees: admin === '' ? null : Number(admin), ...(fees.chiller_shown ? { chiller_charges: chiller === '' ? null : Number(chiller) } : {}),
+      ...Object.fromEntries(EXTRAS.map(([k, , field]) => [field, extras[k]?.on ? Number(extras[k].fee) || 0 : 0])),
+    } : {}),
+  });
+  const writeBtn = (
+    <Btn primary disabled={!ready} onClick={write} className="w-full justify-center py-2.5">
+      <Mail size={14} /> Write the offer
+    </Btn>
+  );
   return (
-    <Sheet title="Start the renewal" onClose={onClose} action={(
+    <Sheet title="Start the renewal" wide="form" onClose={onClose} action={(
       <a href={DLD_RENTAL_INDEX} target="_blank" rel="noopener noreferrer"
         className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-3 py-1.5 text-xs text-mute transition hover:text-txt">
         Rental Index <ExternalLink size={12} />
       </a>
     )}>
-      <div className="space-y-4">
-        <p className="text-sm text-mute">{lease.building} · Unit {lease.unit} · {lease.tenant}<br />Now {aed(lease.annual_rent)} a year, ends {day(lease.end_date)}</p>
+      {/* The lease being renewed. */}
+      <div className="mb-5 rounded-2xl border border-stroke bg-white/[0.03] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+          <div className="min-w-0">
+            <p className="font-medium">{lease.building} · Unit {lease.unit}</p>
+            <p className="truncate text-sm text-mute">{lease.tenant}</p>
+          </div>
+          <div className="text-right">
+            <p className="font-medium">{aed(lease.annual_rent)}<span className="text-sm font-normal text-mute"> a year</span></p>
+            <p className="text-xs text-mute">ends {day(lease.end_date)}</p>
+          </div>
+        </div>
         {(lease.premises_number || lease.ejari) && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="mt-3 flex flex-wrap gap-1.5">
             {lease.premises_number && <CopyChip label="Premises" value={lease.premises_number} />}
             {lease.ejari && <CopyChip label="Ejari" value={lease.ejari} />}
           </div>
         )}
-        <div className="space-y-2 rounded-2xl border border-p1/40 bg-p1/[0.06] p-3">
-          <p className="text-sm">The increase the RERA index allows</p>
-          <p className="text-xs text-mute">Check this unit on the <a href={DLD_RENTAL_INDEX} target="_blank" rel="noopener noreferrer" className="text-p1 underline">Rental Index calculator</a>. If the tenant pushes back, Reem offers this rent by itself.</p>
-          <div className="flex flex-wrap gap-1.5">
-            {[0, 5, 10, 15, 20].map((p) => (
-              <button key={p} onClick={() => pickRera(String(p))}
-                className={`rounded-full px-3.5 py-1.5 text-sm ${rera === String(p) ? 'bg-p1/30 text-txt' : 'bg-white/5 text-mute'}`}>{p}%</button>
-            ))}
-          </div>
-          {indexRent !== null && <p className="text-sm">RERA index rent: <b>{aed(indexRent)}</b> a year</p>}
-        </div>
-        <p className="-mb-2 text-sm text-mute">Our offer</p>
-        <div className="grid grid-cols-[7rem_1fr] gap-2">
-          <label className="block space-y-1.5 text-sm">
-            <span>Increase %</span>
-            <div className="relative">
-              <input inputMode="decimal" value={pct} autoFocus onFocus={(e) => e.target.select()}
-                onChange={(e) => fromPct(e.target.value.replace(/[^\d.-]/g, ''))}
-                className="w-full rounded-2xl border border-stroke bg-black/20 py-2.5 pl-3 pr-7 text-sm outline-none focus:border-p1/60" />
-              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-mute">%</span>
-            </div>
-          </label>
-          <label className="block space-y-1.5 text-sm">
-            <span>New yearly rent</span>
-            <Money value={rent} onChange={fromRent} />
-          </label>
-        </div>
-        <div className="-mt-2 flex flex-wrap gap-1.5">
-          {[0, 5, 10, 15, 20].map((p) => (
-            <button key={p} onClick={() => fromPct(String(p))}
-              className={`rounded-full px-3.5 py-1.5 text-sm ${pct === String(p) ? 'bg-p1/30 text-txt' : 'bg-white/5 text-mute'}`}>{p}%</button>
-          ))}
-        </div>
-        {!fees ? (
-          <p className="flex items-center gap-1.5 text-xs text-mute"><Loader2 size={12} className="animate-spin" /> Getting the fees from saifsys…</p>
-        ) : !fees.failed && (
-          <div className={`grid gap-2 ${fees.chiller_shown ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            <label className="block space-y-1.5 text-sm">
-              <span>Administration Fees</span>
-              <Money value={admin} onChange={setAdmin} placeholder="AED" />
-            </label>
-            {fees.chiller_shown && (
-              <label className="block space-y-1.5 text-sm">
-                <span>Chiller Fees</span>
-                <Money value={chiller} onChange={setChiller} placeholder="AED" />
-              </label>
+      </div>
+
+      <div className="md:grid md:grid-cols-[minmax(0,1fr)_17rem] md:gap-6">
+        <div className="space-y-6">
+          <Step n={1} title="What the RERA index allows"
+            hint={<>Check this unit on the <a href={DLD_RENTAL_INDEX} target="_blank" rel="noopener noreferrer" className="text-p1 underline">Rental Index calculator</a>.</>}>
+            <Pills options={[0, 5, 10, 15, 20]} value={rera} onPick={pickRera} label={(p) => `${p}%`} />
+            {indexRent !== null && (
+              <p className="mt-2 text-xs text-mute">Index rent <span className="font-medium text-txt">{aed(indexRent)}</span> a year. If the tenant pushes back, Reem offers this by itself.</p>
             )}
-          </div>
-        )}
-        {fees && !fees.failed && (
-          <div className="space-y-2">
-            <p className="text-sm">Optional Extra Services</p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {EXTRAS.map(([k, label]) => {
-                const x = extras[k] || { on: false, fee: '' };
-                const set = (v) => setExtras((e) => ({ ...e, [k]: { ...x, ...v } }));
-                return (
-                  <div key={k} className="space-y-1.5 text-sm">
-                    <label className="flex items-center gap-2">
-                      <input type="checkbox" checked={x.on} onChange={(e) => set({ on: e.target.checked })} className="size-4 accent-p1" />
-                      <span className={x.on ? '' : 'text-mute'}>{label}</span>
+          </Step>
+
+          <Step n={2} title="Our offer" hint="The new yearly rent we ask for.">
+            <div className="flex items-stretch gap-2">
+              <div className="relative min-w-0 flex-1">
+                <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-mute">AED</span>
+                <input inputMode="numeric" value={rent} autoFocus onFocus={(e) => e.target.select()}
+                  onChange={(e) => fromRent(e.target.value.replace(/[^\d]/g, ''))}
+                  className="w-full rounded-2xl border border-stroke bg-black/20 py-3 pl-14 pr-20 text-lg font-medium outline-none focus:border-p1/60" />
+                <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-sm text-mute">a year</span>
+              </div>
+              <div className="relative w-24 shrink-0">
+                <input inputMode="decimal" value={pct} aria-label="Increase %" onFocus={(e) => e.target.select()}
+                  onChange={(e) => fromPct(e.target.value.replace(/[^\d.-]/g, ''))}
+                  className="h-full w-full rounded-2xl border border-stroke bg-black/20 pl-3 pr-7 text-sm outline-none focus:border-p1/60" />
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-mute">%</span>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <Pills options={[0, 5, 10, 15, 20]} value={pct} onPick={fromPct} label={(p) => `+${p}%`} />
+              {pctShown && <span className="text-xs text-mute">{pctShown}</span>}
+            </div>
+          </Step>
+
+          <Step n={3} title="Fees and extra services" hint="Taken from the current lease in saifsys. Change them if needed.">
+            {!fees ? (
+              <p className="flex items-center gap-1.5 text-xs text-mute"><Loader2 size={12} className="animate-spin" /> Getting the fees from saifsys…</p>
+            ) : fees.failed ? (
+              <p className="text-xs text-mute">The fees could not be read from saifsys; the offer goes with the rent only.</p>
+            ) : (
+              <div className="space-y-3">
+                <div className={`grid gap-2 ${fees.chiller_shown ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="text-mute">Administration fee</span>
+                    <Money value={admin} onChange={setAdmin} placeholder="AED" />
+                  </label>
+                  {fees.chiller_shown && (
+                    <label className="block space-y-1.5 text-sm">
+                      <span className="text-mute">Chiller fee</span>
+                      <Money value={chiller} onChange={setChiller} placeholder="AED" />
                     </label>
-                    <div className={x.on ? '' : 'opacity-50'}><Money value={x.fee} onChange={(v) => set({ fee: v, on: v !== '' && Number(v) > 0 ? true : x.on })} placeholder="0" /></div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex items-center justify-between rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm">
-              <span>{fees.vat_rate ?? 5}% VAT on Extra Charges</span>
-              <b>{aed(vat)}</b>
-            </div>
-            {Number(rent) > 0 && (
-              <div className="space-y-1 rounded-2xl border border-p1/30 bg-p1/[0.06] px-3 py-2.5 text-sm">
-                {Number(fees.rera) > 0 && <div className="flex justify-between text-mute"><span>Ejari fee</span><span>{aed(fees.rera)}</span></div>}
-                <div className="flex justify-between"><span>Total</span><b>{aed(total)}</b></div>
-                <div className="flex justify-between text-mute"><span>Cheque 1 (with all fees, VAT and Ejari)</span><span className="text-txt">{aed(first)}</span></div>
-                {n > 1 && <div className="flex justify-between text-mute"><span>{n === 2 ? 'Cheque 2' : `Cheques 2–${n}, each`}</span><span className="text-txt">{aed(others)}</span></div>}
+                  )}
+                </div>
+                <div className="divide-y divide-stroke overflow-hidden rounded-2xl border border-stroke">
+                  {EXTRAS.map(([k, label]) => {
+                    const x = extras[k] || { on: false, fee: '' };
+                    const set = (v) => setExtras((e) => ({ ...e, [k]: { ...x, ...v } }));
+                    const noPrice = x.on && !(Number(x.fee) > 0);
+                    return (
+                      <div key={k} className="flex min-h-14 items-center gap-3 px-3.5 py-2">
+                        <span className={`flex-1 text-sm ${x.on ? '' : 'text-mute'}`}>{label}</span>
+                        {x.on && (
+                          <input inputMode="numeric" value={x.fee} placeholder="AED" aria-label={`${label} fee`}
+                            onChange={(e) => set({ fee: e.target.value.replace(/[^\d]/g, '') })}
+                            className={`w-28 rounded-xl border bg-black/20 px-3 py-1.5 text-right text-sm outline-none focus:border-p1/60 ${noPrice ? 'border-bad/60' : 'border-stroke'}`} />
+                        )}
+                        <Toggle on={x.on} label={label} onChange={(on) => set({ on })} />
+                      </div>
+                    );
+                  })}
+                </div>
+                {missingPrice && <p className="text-xs text-bad">Add a price for each service that is on.</p>}
               </div>
             )}
-          </div>
-        )}
-        <label className="block space-y-1.5 text-sm">
-          <span>Cheques</span>
-          <div className="flex flex-wrap gap-1.5">
-            {[1, 2, 3, 4, 6, 12].map((n) => (
-              <button key={n} onClick={() => setCheques(String(n))}
-                className={`rounded-full px-3.5 py-1.5 text-sm ${Number(cheques) === n ? 'bg-p1/30 text-txt' : 'bg-white/5 text-mute'}`}>{n}</button>
-            ))}
-          </div>
-        </label>
-        <div className="flex justify-end">
-          <Btn primary disabled={!rent || rera === '' || EXTRAS.some(([k]) => extras[k]?.on && !(Number(extras[k].fee) > 0))} onClick={() => setStep({
-            action: 'start', lease_id: lease.lease_id, rent: Number(rent), cheques: Number(cheques), rera_pct: Number(rera),
-            ...(fees && !fees.failed ? {
-              admin_fees: admin === '' ? null : Number(admin), ...(fees.chiller_shown ? { chiller_charges: chiller === '' ? null : Number(chiller) } : {}),
-              ...Object.fromEntries(EXTRAS.map(([k, , field]) => [field, extras[k]?.on ? Number(extras[k].fee) || 0 : 0])),
-            } : {}),
-          })}>
-            <Mail size={14} /> Write the offer
-          </Btn>
+          </Step>
+
+          <Step n={4} title="Cheques">
+            <Pills options={[1, 2, 3, 4, 6, 12]} value={cheques} onPick={setCheques} label={(c) => String(c)} />
+          </Step>
         </div>
+
+        {/* The sums, always in view on a computer; on a phone they follow the form. */}
+        <aside className="mt-6 md:mt-0">
+          <div className="space-y-3 md:sticky md:top-0">
+            <div className="rounded-2xl border border-p1/30 bg-p1/[0.06] p-4 text-sm">
+              <p className="mb-3 text-xs font-medium uppercase tracking-wider text-mute">The offer</p>
+              <div className="space-y-1.5">
+                <Line label="Rent" value={aed(Number(rent) || 0)} />
+                {fees && !fees.failed && (
+                  <>
+                    {Number(admin) > 0 && <Line label="Administration" value={aed(admin)} />}
+                    {chillerFee > 0 && <Line label="Chiller" value={aed(chillerFee)} />}
+                    {extrasOn.map(([k, label]) => <Line key={k} label={label} value={aed(Number(extras[k].fee) || 0)} />)}
+                    {vat > 0 && <Line label={`VAT ${fees.vat_rate ?? 5}% on fees`} value={aed(vat)} />}
+                    {Number(fees.rera) > 0 && <Line label="Ejari fee" value={aed(fees.rera)} />}
+                  </>
+                )}
+              </div>
+              <div className="mt-3 flex items-baseline justify-between border-t border-stroke pt-3">
+                <span>Total</span>
+                <span className="text-lg font-semibold">{aed(total)}</span>
+              </div>
+              {Number(rent) > 0 && (
+                <div className="mt-3 space-y-1.5 rounded-xl bg-black/20 p-3 text-xs">
+                  <Line label={n === 1 ? '1 cheque' : 'Cheque 1 · with fees, VAT, Ejari'} value={aed(first)} />
+                  {n > 1 && <Line label={n === 2 ? 'Cheque 2' : `Cheques 2–${n}, each`} value={aed(others)} />}
+                </div>
+              )}
+            </div>
+            <div className="hidden md:block">{writeBtn}</div>
+          </div>
+        </aside>
+      </div>
+
+      {/* On a phone the button stays at the bottom of the screen. */}
+      <div className="sticky bottom-0 -mx-5 mt-4 border-t border-stroke bg-surface px-5 pb-1 pt-3 md:hidden">
+        <div className="mb-2 flex items-baseline justify-between text-sm"><span className="text-mute">Total</span><b>{aed(total)}</b></div>
+        {writeBtn}
       </div>
     </Sheet>
   );
 }
+
+/** One numbered step of the start form. */
+function Step({ n, title, hint, children }) {
+  return (
+    <section>
+      <div className="mb-3 flex items-start gap-3">
+        <span className="grid size-6 shrink-0 place-items-center rounded-full bg-p1/20 text-xs font-medium text-p1">{n}</span>
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{title}</p>
+          {hint && <p className="text-xs text-mute">{hint}</p>}
+        </div>
+      </div>
+      <div className="md:pl-9">{children}</div>
+    </section>
+  );
+}
+
+/** Quick picks in one row, the chosen one filled. */
+function Pills({ options, value, onPick, label }) {
+  return (
+    <div className="inline-flex flex-wrap gap-1 rounded-full bg-white/5 p-1">
+      {options.map((o) => (
+        <button key={o} onClick={() => onPick(String(o))}
+          className={`rounded-full px-3.5 py-1.5 text-sm transition ${String(value) === String(o) ? 'bg-p1 font-medium text-white shadow' : 'text-mute hover:text-txt'}`}>{label(o)}</button>
+      ))}
+    </div>
+  );
+}
+
+const Toggle = ({ on, label, onChange }) => (
+  <button role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)}
+    className={`relative h-6 w-10 shrink-0 rounded-full transition ${on ? 'bg-p1' : 'bg-white/15'}`}>
+    <span className={`absolute top-1 size-4 rounded-full bg-white transition-all ${on ? 'left-5' : 'left-1'}`} />
+  </button>
+);
+
+const Line = ({ label, value }) => (
+  <div className="flex items-baseline justify-between gap-3"><span className="text-mute">{label}</span><span className="shrink-0 tabular-nums">{value}</span></div>
+);
 
 const TITLES = {
   start: 'Renewal offer', counter: 'Counter-offer', index: 'RERA index rent', accept: 'Agree', not_renewing: 'Not renewing',
@@ -396,33 +478,58 @@ function Compose({ ask, onClose, onSent }) {
     setBusy(true); setError('');
     try { onSent(await api.post('/lease-renewals/send', { ...ask, text })); } catch (e) { setError(e.message); setBusy(false); }
   };
+  const offer = d?.rent && ask.action !== 'convert';
   return (
     <Sheet title={TITLES[ask.action]} onClose={onClose} wide="text">
       {!d ? (error ? <Problem text={error} /> : <div className="grid place-items-center py-10 text-mute"><Loader2 className="animate-spin" /></div>) : (
-        <div className="space-y-3">
-          <p className="text-xs text-mute">To <span className="text-txt">{d.to}</span> · {d.subject}</p>
-          {d.rent && ask.action !== 'convert' && (
-            <div className="rounded-2xl border border-stroke bg-black/20 p-3 text-sm">
-              <p><span className="text-mute">Rent:</span> <b>{aed(d.rent)}</b> a year{d.source?.kind === 'rera_index' ? ` · RERA index${d.source.pct !== undefined ? ` (+${d.source.pct}%)` : ''}` : ''}</p>
+        <div className="space-y-4">
+          {offer && (
+            <div className="rounded-2xl border border-p1/30 bg-p1/[0.06] p-4 text-sm">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-mute">Rent{d.source?.kind === 'rera_index' ? ` · RERA index${d.source.pct !== undefined ? ` (+${d.source.pct}%)` : ''}` : ''}</span>
+                <span><b className="text-base">{aed(d.rent)}</b> <span className="text-mute">a year</span></span>
+              </div>
               {d.charges && (d.charges.items.length > 0 || d.charges.vat > 0) && (
-                <>
-                  <p className="mt-1 text-xs text-mute">{d.charges.items.map((c) => `${c.label} ${aed(c.amount)}`).join(' · ')}</p>
-                  {d.charges.vat > 0 && <p className="mt-1 text-xs text-mute">VAT{d.charges.onCharges ? ' (5%) on these charges' : ''}: {aed(d.charges.vat)}</p>}
-                  <p className="mt-1 text-xs">Total with charges, VAT and Ejari: <b>{aed(d.total ?? d.charges.total)}</b></p>
-                </>
+                <div className="mt-2 space-y-1.5 border-t border-stroke pt-2">
+                  {d.charges.items.map((c) => <Line key={c.label} label={c.label} value={aed(c.amount)} />)}
+                  {d.charges.vat > 0 && <Line label={`VAT${d.charges.onCharges ? ' 5% on these charges' : ''}`} value={aed(d.charges.vat)} />}
+                  <div className="flex items-baseline justify-between border-t border-stroke pt-2">
+                    <span>Total with charges, VAT and Ejari</span><b>{aed(d.total ?? d.charges.total)}</b>
+                  </div>
+                </div>
               )}
-              {d.schedule && <p className="mt-1 text-xs text-mute">{d.schedule.length} cheques: {d.schedule.map((c) => `${day(c.date)} ${aed(c.amount)}`).join(' · ')}</p>}
+              {d.schedule?.length > 0 && (
+                <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                  {d.schedule.map((c, i) => (
+                    <div key={i} className="rounded-xl bg-black/20 px-3 py-2 text-xs">
+                      <p className="text-mute">Cheque {i + 1} · {day(c.date)}</p>
+                      <p className="mt-0.5 font-medium tabular-nums">{aed(c.amount)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-          <textarea value={text} onChange={(e) => setText(e.target.value)}
-            className="h-[50dvh] min-h-64 w-full resize-y rounded-2xl border border-stroke bg-black/20 p-3 text-sm leading-relaxed outline-none focus:border-p1/60" />
-          {d.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">{d.attachments.map((a) => <span key={a} className="flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1 text-xs text-mute"><Paperclip size={12} /> {a}</span>)}</div>
-          )}
-          {d.sendOn && <p className="text-xs text-mute">It is too early for the offer: Reem sends it by itself on {day(d.sendOn)}, 120 days before the lease ends.</p>}
+
+          {/* The email itself, laid out like one. */}
+          <div className="overflow-hidden rounded-2xl border border-stroke bg-surface-2">
+            <div className="divide-y divide-stroke text-sm">
+              <div className="flex gap-3 px-4 py-2.5"><span className="w-16 shrink-0 text-mute">To</span><span className="min-w-0 break-all">{d.to}</span></div>
+              <div className="flex gap-3 px-4 py-2.5"><span className="w-16 shrink-0 text-mute">Subject</span><span className="min-w-0 font-medium">{d.subject}</span></div>
+            </div>
+            <textarea value={text} onChange={(e) => setText(e.target.value)} aria-label="Email"
+              className="block h-[45dvh] min-h-60 w-full resize-y border-t border-stroke bg-transparent px-4 py-3.5 text-[15px] leading-relaxed outline-none" />
+            {d.attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 border-t border-stroke px-4 py-2.5">
+                {d.attachments.map((a) => <span key={a} className="flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1 text-xs text-mute"><Paperclip size={12} /> {a}</span>)}
+              </div>
+            )}
+          </div>
+
+          {d.sendOn && <p className="flex items-start gap-1.5 text-xs text-mute"><Clock size={13} className="mt-px shrink-0" /> It is too early for the offer: Reem sends it by itself on {day(d.sendOn)}, 120 days before the lease ends.</p>}
           {ask.action === 'convert' && <p className="text-xs text-mute">saifsys makes the new lease and its cheques now, then this email goes to the tenant.</p>}
           <Problem text={error} />
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="sticky bottom-0 -mx-5 flex flex-wrap justify-end gap-2 border-t border-stroke bg-surface px-5 pb-1 pt-3">
             {ask.action === 'reply' && <Btn busy={rewriting} disabled={!text.trim() || busy} onClick={rewrite}><Sparkles size={14} /> Rewrite with Reem</Btn>}
             <Btn onClick={onClose}>Cancel</Btn>
             <Btn primary busy={busy} disabled={!text.trim() || rewriting} onClick={send}>{d.sendOn ? <><Clock size={14} /> Send on {day(d.sendOn)}</> : <><Send size={14} /> Send</>}</Btn>
