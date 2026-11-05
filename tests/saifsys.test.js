@@ -13,7 +13,7 @@ const fake = createServer((req, res) => {
   const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
   if (down) return send(500, { ok: false, error: { message: 'boom' } });
   if (req.headers['x-jarvis-key'] !== 'test-key') return send(401, { ok: false, error: { message: 'Not authorised.' } });
-  if (!['ars', 'hr'].includes(url.searchParams.get('module'))) return send(404, { ok: false, error: { message: 'Unknown module.' } });
+  if (!['ars', 'hr', 'fleet'].includes(url.searchParams.get('module'))) return send(404, { ok: false, error: { message: 'Unknown module.' } });
   const action = url.searchParams.get('action');
   if (action !== 'checkouts') return send(200, { ok: true, action, params: Object.fromEntries(url.searchParams) });
   const date = url.searchParams.get('date');
@@ -158,7 +158,7 @@ test('a master has every module; anyone else only what is ticked', async () => {
 test('every ARS lookup is a tool, and it asks saifsys for its own action with the agent\'s input', async () => {
   await reset();
   const kit = await kitFor(await master('Boss'));
-  const names = kit.definitions.map((d) => d.name).filter((n) => !n.startsWith('hr_'));
+  const names = kit.definitions.map((d) => d.name).filter((n) => !n.startsWith('hr_') && !n.startsWith('fleet_'));
   assert.equal(names.length, 15);
   assert.ok(names.every((n) => n.startsWith('ars_')));
   assert.equal(new Set(names).size, 15);
@@ -187,6 +187,29 @@ test('HR: only people with the HR module get the two employee lookups, and they 
   const list = await kit.run({ id: 'h2', name: 'hr_employees', input: { department: 'Cleaning', status: 'left' } });
   assert.deepEqual(JSON.parse(list.content).params, { module: 'hr', action: 'employees', department: 'Cleaning', status: 'left' });
   assert.equal(kit.status('hr_employee'), 'Opening the employee profile…');
+});
+
+test('Fleet: only the master and people ticked for it get the three fleet lookups, and they reach module=fleet', async () => {
+  await reset();
+  const boss = await master('Boss');
+  assert.ok((await kitFor(boss)).definitions.some((d) => d.name === 'fleet_usage'));
+
+  const francis = await makeUser('Francis');
+  await setAccess(francis, ['hr']);
+  assert.ok(!(await kitFor(francis)).definitions.some((d) => d.name.startsWith('fleet_')));
+
+  await setAccess(francis, ['fleet']);
+  const kit = await kitFor(francis);
+  assert.deepEqual(kit.definitions.map((d) => d.name), ['fleet_usage', 'fleet_driver', 'fleet_check_problems']);
+
+  const out = await kit.run({ id: 'f1', name: 'fleet_usage', input: { from: '2026-10-01', to: '2026-10-31', company: 'Prime' } });
+  assert.ok(!out.is_error);
+  assert.deepEqual(JSON.parse(out.content).params, { module: 'fleet', action: 'usage', from: '2026-10-01', to: '2026-10-31', company: 'Prime' });
+  const one = await kit.run({ id: 'f2', name: 'fleet_driver', input: { q: 'Arslan' } });
+  assert.deepEqual(JSON.parse(one.content).params, { module: 'fleet', action: 'driver', q: 'Arslan' });
+  const probs = await kit.run({ id: 'f3', name: 'fleet_check_problems', input: {} });
+  assert.deepEqual(JSON.parse(probs.content).params, { module: 'fleet', action: 'problems' });
+  assert.equal(kit.status('fleet_driver'), 'Looking up the driver…');
 });
 
 test('the morning reminder counts every checkout, Airbnb too', async () => {

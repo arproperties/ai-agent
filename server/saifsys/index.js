@@ -4,6 +4,7 @@ import { isMaster, isExternal } from '../access.js';
 import { saifsysConfigured } from './client.js';
 import * as ars from './ars.js';
 import * as hr from './hr.js';
+import * as fleet from './fleet.js';
 import { ACTIONS, actionKeys, setActions, bookingKit, bookingRoutes } from './booking.js';
 
 // saifsys, module by module — the same workspaces as its launcher. Each module that has
@@ -27,6 +28,7 @@ export const MODULES = [
   { key: 'grocery', label: 'Grocery' },
   { key: 'barber', label: 'Barber shop' },
   { key: 'hr', label: 'HR', ...hr },
+  { key: 'fleet', label: 'Fleet (Driver app)', ...fleet },
   { key: 'finance', label: 'Finance' },
 ];
 const KEYS = MODULES.map((m) => m.key);
