@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, Repeat, Loader2, Plus, Pause, Play, Trash2 } from 'lucide-react';
 import Picker from './Picker';
 import { api } from '../lib/api';
-import { toInput, fromInput } from './Todos';
+import { toInput, fromInput, matches, NoMatch } from './Todos';
 import Sheet from './Sheet';
 
 // Routines are the things that come back. Nothing here knows about todos, and nothing in
@@ -241,7 +241,7 @@ function RoutineSheet({ r, onClose, onSaved }) {
 }
 
 // ---------- the panel under the Routines tab ----------
-export default function RoutinePanel({ onChanged, onDue }) {
+export default function RoutinePanel({ onChanged, onDue, q = '' }) {
   const { rows, load } = useRoutines(onChanged);
   const [editing, setEditing] = useState(null);
 
@@ -252,9 +252,13 @@ export default function RoutinePanel({ onChanged, onDue }) {
     await load();
   };
 
-  const due = (rows || []).filter((r) => r.due);
-  const live = (rows || []).filter((r) => !r.due && !r.paused);
-  const paused = (rows || []).filter((r) => r.paused);
+  // The badge above (from the effect) counts every routine due; the search only narrows
+  // what is listed here.
+  const searching = !!q.trim();
+  const shown = (rows || []).filter((r) => matches(q, r.text, r.notes));
+  const due = shown.filter((r) => r.due);
+  const live = shown.filter((r) => !r.due && !r.paused);
+  const paused = shown.filter((r) => r.paused);
   const editingRow = editing && (rows || []).find((r) => r.id === editing);
 
   return (
@@ -264,7 +268,8 @@ export default function RoutinePanel({ onChanged, onDue }) {
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
         <div className="mx-auto w-full pb-6">
-          {rows?.length === 0 ? (
+          {searching && rows?.length > 0 && shown.length === 0 ? <NoMatch q={q} />
+          : rows?.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
               <span className="grid size-20 place-items-center rounded-3xl bg-gradient-to-br from-p1/25 to-p2/10 text-p1"><Repeat size={34} strokeWidth={1.4} /></span>
               <div>

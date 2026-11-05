@@ -64,6 +64,19 @@ const CHIPS = [
   ['Next week', () => roundTo(7, 9)],
 ];
 
+// ---------- search ----------
+/** Every word typed has to appear somewhere in the item's fields, in any order and any case. */
+export function matches(q, ...fields) {
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = fields.filter(Boolean).join(' ').toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+export const NoMatch = ({ q }) => (
+  <p className="py-16 text-center text-sm text-mute">Nothing matches “{q.trim()}”</p>
+);
+
 // ---------- data ----------
 function useTodos(onChanged) {
   const [open, setOpen] = useState(null); // null = not loaded yet, so "empty" never flashes
@@ -293,8 +306,8 @@ function TodoSheet({ t, onClose, onSaved }) {
 // ---------- the panel under the To-do tab ----------
 // Only the list and its add box: the screen around it, and the tab strip that puts
 // Routines next door, live in Lists.jsx. Nothing in this file knows routines exist.
-export default function TodoPanel({ onChanged, onDue }) {
-  const { open, done, load } = useTodos(onChanged);
+export default function TodoPanel({ onChanged, onDue, q = '' }) {
+  const { open, done: allDone, load } = useTodos(onChanged);
   const [editing, setEditing] = useState(null);
   const [showDone, setShowDone] = useState(false);
 
@@ -306,14 +319,22 @@ export default function TodoPanel({ onChanged, onDue }) {
   // The server already sorts by reminder, soonest first with the unreminded last, so
   // these three buckets only have to split that order — never re-sort it.
   // What someone else gave them leads, in its own group: somebody is waiting on those.
-  const fromOthers = (open || []).filter((t) => t.from_name);
-  const mine = (open || []).filter((t) => !t.from_name);
+  // The badge counts everything due, whatever the search is hiding, so it is worked out
+  // before the search narrows the lists.
+  const allOpen = open || [];
+  const dueCount = allOpen.filter((t) => t.from_name || reminder(t)?.due).length;
+  const searching = !!q.trim();
+  const hit = (t) => matches(q, t.text, t.notes, t.from_name, t.doc_title, t.doc_name, t.agent_name);
+  const shown = allOpen.filter(hit);
+  const done = allDone.filter(hit);
+  const fromOthers = shown.filter((t) => t.from_name);
+  const mine = shown.filter((t) => !t.from_name);
   const due = mine.filter((t) => reminder(t)?.due);
   const later = mine.filter((t) => reminder(t) && !reminder(t).due);
   const someday = mine.filter((t) => !t.remind_at);
-  const editingRow = editing && [...(open || []), ...done].find((t) => t.id === editing);
+  const editingRow = editing && [...allOpen, ...allDone].find((t) => t.id === editing);
 
-  useEffect(() => { if (open) onDue?.(due.length + fromOthers.length); }, [open, due.length, fromOthers.length, onDue]);
+  useEffect(() => { if (open) onDue?.(dueCount); }, [open, dueCount, onDue]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -322,7 +343,8 @@ export default function TodoPanel({ onChanged, onDue }) {
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-safe md:px-8">
         <div className="mx-auto w-full pb-6">
-          {open?.length === 0 && done.length === 0 ? (
+          {searching && open && shown.length === 0 && done.length === 0 ? <NoMatch q={q} />
+          : open?.length === 0 && allDone.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
               <span className="grid size-20 place-items-center rounded-3xl bg-gradient-to-br from-p1/25 to-p2/10 text-p1"><ListTodo size={36} strokeWidth={1.4} /></span>
               <div>
@@ -340,9 +362,10 @@ export default function TodoPanel({ onChanged, onDue }) {
                 <section className="pt-4">
                   <button onClick={() => setShowDone((v) => !v)} className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium tracking-[0.14em] text-mute transition hover:text-txt">
                     DONE · {done.length}
-                    <Icon name="chevron" size={13} className={`transition ${showDone ? 'rotate-90' : ''}`} />
+                    <Icon name="chevron" size={13} className={`transition ${showDone || searching ? 'rotate-90' : ''}`} />
                   </button>
-                  {showDone && <ul>{done.map((t) => <Row key={t.id} t={t} onToggle={toggle} onOpen={(x) => setEditing(x.id)} />)}</ul>}
+                  {/* While searching, finished ones that match are shown without a tap. */}
+                  {(showDone || searching) && <ul>{done.map((t) => <Row key={t.id} t={t} onToggle={toggle} onOpen={(x) => setEditing(x.id)} />)}</ul>}
                 </section>
               )}
             </>

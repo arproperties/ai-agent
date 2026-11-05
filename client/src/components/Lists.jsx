@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import { ChevronLeft } from 'lucide-react';
+import { useCallback, useRef, useState } from 'react';
+import { ChevronLeft, Search, X } from 'lucide-react';
 import TodoPanel from './Todos';
 import RoutinePanel from './Routines';
 
@@ -21,6 +21,14 @@ const Tab = ({ active, count, onClick, children }) => (
 export default function ListsPage({ onBack, onChanged, initialTab = 'todos' }) {
   const [tab, setTab] = useState(initialTab);
   const [counts, setCounts] = useState({ todos: 0, routines: 0 });
+  // One search box for both tabs: it filters whichever list is showing, and keeps its
+  // words when the tab changes, so "did I put the licence on a todo or a routine?" is
+  // answered by flicking between the two.
+  const [searching, setSearching] = useState(false);
+  const [q, setQ] = useState('');
+  const box = useRef(null);
+  const openSearch = () => { setSearching(true); setTimeout(() => box.current?.focus(), 0); };
+  const closeSearch = () => { setSearching(false); setQ(''); };
 
   // Stable, and a no-op when the number has not moved: a panel reports its count from an
   // effect, so a fresh function or a pointless setState here would loop the pair of them.
@@ -39,16 +47,32 @@ export default function ListsPage({ onBack, onChanged, initialTab = 'todos' }) {
             <Tab active={tab === 'todos'} count={counts.todos} onClick={() => setTab('todos')}>To-do</Tab>
             <Tab active={tab === 'routines'} count={counts.routines} onClick={() => setTab('routines')}>Routines</Tab>
           </div>
+          <button onClick={searching ? closeSearch : openSearch} aria-label={searching ? 'Close search' : 'Search'}
+            title={searching ? 'Close search' : 'Search'}
+            className={`ml-auto grid size-10 shrink-0 place-items-center rounded-full transition ${searching ? 'bg-white/15 text-txt' : 'text-mute hover:bg-white/10 hover:text-txt'}`}>
+            {searching ? <X size={19} /> : <Search size={19} />}
+          </button>
         </div>
+        {searching && (
+          <div className="mx-auto mt-2.5 flex w-full items-center gap-2 rounded-full border border-stroke bg-white/[0.04] px-3.5 focus-within:border-p1/60">
+            <Search size={15} className="shrink-0 text-mute" />
+            <input ref={box} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && closeSearch()}
+              placeholder={tab === 'todos' ? 'Search to-dos' : 'Search routines'} enterKeyHint="search"
+              className="min-w-0 flex-1 bg-transparent py-2 text-[15px] outline-none placeholder:text-mute/70" />
+            {q && (
+              <button onClick={() => { setQ(''); box.current?.focus(); }} aria-label="Clear" className="text-mute hover:text-txt"><X size={15} /></button>
+            )}
+          </div>
+        )}
       </header>
 
       {/* Both stay mounted: switching tabs should not throw away a half-typed line, and
           each keeps reporting its count so the other tab's badge stays honest. */}
       <div className={`flex min-h-0 flex-1 flex-col ${tab === 'todos' ? '' : 'hidden'}`}>
-        <TodoPanel onChanged={onChanged} onDue={onTodoDue} />
+        <TodoPanel onChanged={onChanged} onDue={onTodoDue} q={q} />
       </div>
       <div className={`flex min-h-0 flex-1 flex-col ${tab === 'routines' ? '' : 'hidden'}`}>
-        <RoutinePanel onChanged={onChanged} onDue={onRoutineDue} />
+        <RoutinePanel onChanged={onChanged} onDue={onRoutineDue} q={q} />
       </div>
     </div>
   );
