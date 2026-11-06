@@ -96,8 +96,19 @@ const pageMark = (n) => `--- Page ${n} ---`;
  */
 export async function readPages(buffer, from, to, total, { extra = '', read = readCall } = {}) {
   const span = to - from === 1 ? `page ${from + 1}` : `pages ${from + 1}-${to}`;
-  const { text, full } = await read(await pdfPages(buffer, from, to),
-    `These are ${span} of a ${total}-page document. Start each page with a line "${pageMark('n')}" using its page number (${from + 1} is the first here). ${extra}${TRANSCRIBE}`);
+  let got;
+  try {
+    got = await read(await pdfPages(buffer, from, to),
+      `These are ${span} of a ${total}-page document. Start each page with a line "${pageMark('n')}" using its page number (${from + 1} is the first here). ${extra}${TRANSCRIBE}`);
+  } catch (e) {
+    // Claude refuses to copy out some pages (graphic injury photos in a medical record did
+    // this) and the whole 4-page reading comes back refused. One page at a time keeps the
+    // rest; a page refused on its own is marked and passed over, not the whole file lost.
+    if (!/content filtering/i.test(e.message)) throw e;
+    if (to - from === 1) return `${pageMark(from + 1)}\n[This page could not be read.]`;
+    got = { full: false };
+  }
+  const { text, full } = got;
   if (full) return text.trim();
   if (to - from > 1) {
     const one = [];

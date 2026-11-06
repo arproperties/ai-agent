@@ -28,7 +28,9 @@ export const isVideo = (f) => VIDEO_TYPES.includes(f.mimetype)
  * agentId null = shared library.
  */
 export async function saveUpload(userId, agentId, f, conversationId = null, kind = null) {
-  const hash = createHash('sha256').update(f.buffer).digest('hex');
+  // A file already fingerprinted and waiting on disk (a Dropbox folder, dropbox.js) brings its
+  // hash along, so it is moved into place without ever being read into memory.
+  const hash = f.hash || createHash('sha256').update(f.buffer).digest('hex');
   // Keyed on the bytes alone, not the shelf: the shelf is usually chosen by the
   // classifier after this point, so including it would let the same file land twice
   // whenever the classifier changed its mind. One copy per person, wherever it is filed.

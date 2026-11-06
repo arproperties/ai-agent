@@ -609,7 +609,7 @@ app.listen(PORT, '0.0.0.0', () => {
   startOutbox().catch((e) => console.error('[outbox]', e.message));
   // files from a folder or ZIP import that were still waiting when the server stopped
   startImportQueue().catch((e) => console.error('[imports]', e.message));
-  clearDropboxWork(); // Dropbox links looked at before a restart cannot be saved any more
+  clearDropboxWork().catch((e) => console.error('[dropbox]', e.message)); // downloads cut short by a restart say so in their chat
   // The timers below email tenants, forward mail, buzz phones and write to saifsys. On a laptop
   // they only start with LOCAL_SENDING=on: a local copy of the live database holds the live
   // mailboxes and real people's phones, and would answer tenants the live server already answered.
