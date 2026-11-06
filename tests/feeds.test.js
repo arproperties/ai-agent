@@ -82,3 +82,15 @@ test('a YouTube link is pinned once, with any link form; anything else is refuse
   await fetch(`${base}/videos/${a.id}`, { method: 'DELETE' });
   assert.equal((await (await fetch(base)).json()).videos.length, 1);
 });
+
+test('YouTube: lengths read plainly; no search before a key, and a key that is not one is refused before asking Google', async () => {
+  const { duration } = await import('../server/youtube.js');
+  assert.equal(duration('PT4M5S'), '4:05');
+  assert.equal(duration('PT1H2M3S'), '1:02:03');
+  assert.equal(duration('P0D'), '');
+  await reset();
+  assert.equal((await fetch(`${base}/youtube/search?q=dubai`)).status, 400);
+  assert.equal((await put('/youtube/key', { key: 'hello' })).status, 400);
+  assert.equal((await put('/youtube/key', { key: '' })).status, 200);
+  assert.equal((await (await fetch(base)).json()).youtube, false);
+});

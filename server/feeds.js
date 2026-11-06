@@ -5,6 +5,7 @@ import { billAs, billNote } from './billing.js';
 import { sendPush } from './push.js';
 import { dubaiDate } from './saifsys/client.js';
 import { MASTER_MODEL } from './config.js';
+import { youtubeRoutes, hasYouTubeKey } from './youtube.js';
 
 // Feeds: the master's morning page. Each morning Reem looks up gold, petrol, currency
 // rates, oil, EIBOR, property shares, the weather and the property news with its own web
@@ -303,6 +304,7 @@ export async function askFeed(user, messages) {
 // ---------- routes (master only, guarded in index.js) ----------
 
 export const feedRoutes = Router();
+feedRoutes.use('/youtube', youtubeRoutes); // YouTube inside the page (youtube.js)
 
 // The page: today's feed (or why there is none), the days before it for the arrows and the
 // charts, and the buzz setting.
@@ -312,7 +314,7 @@ feedRoutes.get('/', wrap(async (req, res) => {
   const history = await db.prepare('SELECT day, data FROM feed_days WHERE data IS NOT NULL ORDER BY day DESC LIMIT 60').all();
   const s = await settings();
   const videos = await db.prepare('SELECT id, video_id, url, title FROM feed_videos ORDER BY id DESC').all();
-  res.json({ day, today: today || null, history, videos, running: !!running, settings: { push_at: s.push_at } });
+  res.json({ day, today: today || null, history, videos, running: !!running, settings: { push_at: s.push_at }, youtube: await hasYouTubeKey() });
 }));
 
 // Search again now: the first morning, a failed one, or prices that have moved since.

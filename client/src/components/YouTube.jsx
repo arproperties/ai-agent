@@ -1,9 +1,6 @@
-import { useState } from 'react';
-import { Play, X } from 'lucide-react';
-
-// A YouTube video, shown the light way: its picture and a play button, and YouTube's own
-// player only once someone taps. Until then nothing is loaded from YouTube but the picture,
-// so a chat with ten links stays quick on a phone. The player is the no-cookie one.
+// YouTube's own player, the whole of it: quality, captions, speed, full screen, live chat
+// replay. Used in chats (under a message with a YouTube link) and on the Feeds page.
+// The no-cookie player, so YouTube does not set its tracking cookies until a video plays.
 
 const ID = /^[\w-]{11}$/;
 
@@ -24,7 +21,8 @@ export function youTubeId(url) {
 // Where a link asks to start ("?t=90", "t=1m30s"), in seconds.
 function startAt(url) {
   try {
-    const t = new URL(url).searchParams.get('t') || new URL(url).searchParams.get('start');
+    const p = new URL(url).searchParams;
+    const t = p.get('t') || p.get('start');
     if (!t) return 0;
     if (/^\d+$/.test(t)) return Number(t);
     const m = t.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
@@ -44,40 +42,19 @@ export function youTubeLinks(text, max = 3) {
   return out;
 }
 
-export default function YouTube({ id, start = 0, title, onRemove, className = '' }) {
-  const [playing, setPlaying] = useState(false);
-  // maxres is missing for some videos; hq is always there.
-  const [thumb, setThumb] = useState(`https://i.ytimg.com/vi/${id}/maxresdefault.jpg`);
+export default function YouTube({ id, start = 0, title, autoplay = false, className = '' }) {
+  const params = new URLSearchParams({ rel: '0', playsinline: '1', modestbranding: '1', ...(autoplay ? { autoplay: '1' } : {}), ...(start ? { start: String(start) } : {}) });
   return (
-    <div className={`group relative aspect-video w-full overflow-hidden rounded-2xl border border-stroke bg-black shadow-lg shadow-black/20 ${className}`}>
-      {playing ? (
-        <iframe
-          src={`https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&playsinline=1${start ? `&start=${start}` : ''}`}
-          title={title || 'YouTube video'} className="absolute inset-0 size-full" loading="lazy"
-          allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" />
-      ) : (
-        <button onClick={() => setPlaying(true)} aria-label={title ? `Play ${title}` : 'Play video'} className="absolute inset-0 size-full">
-          <img src={thumb} alt="" loading="lazy" className="size-full object-cover transition duration-300 group-hover:scale-[1.03]"
-            onLoad={(e) => { if (e.currentTarget.naturalWidth <= 120) setThumb(`https://i.ytimg.com/vi/${id}/hqdefault.jpg`); }}
-            onError={() => setThumb(`https://i.ytimg.com/vi/${id}/hqdefault.jpg`)} />
-          <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-          <span className="absolute left-1/2 top-1/2 grid size-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white/20 text-white ring-1 ring-white/40 backdrop-blur-md transition group-hover:scale-110 group-hover:bg-red-600 group-hover:ring-red-500">
-            <Play size={26} fill="currentColor" className="ml-1" />
-          </span>
-          {title && <span className="absolute inset-x-0 bottom-0 line-clamp-2 px-4 pb-3 text-left text-sm font-medium text-white drop-shadow">{title}</span>}
-        </button>
-      )}
-      {onRemove && (
-        <button onClick={onRemove} aria-label="Remove video" title="Remove"
-          className="absolute right-2 top-2 grid size-8 place-items-center rounded-full bg-black/50 text-white opacity-0 backdrop-blur transition hover:bg-black/70 group-hover:opacity-100 max-md:opacity-100">
-          <X size={16} />
-        </button>
-      )}
+    <div className={`relative aspect-video w-full overflow-hidden rounded-2xl border border-stroke bg-black shadow-lg shadow-black/20 ${className}`}>
+      <iframe src={`https://www.youtube-nocookie.com/embed/${id}?${params}`} title={title || 'YouTube video'}
+        className="absolute inset-0 size-full" loading="lazy"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+        allowFullScreen referrerPolicy="strict-origin-when-cross-origin" />
     </div>
   );
 }
 
-/** The cards for the YouTube links in a message, under its text. */
+/** The players for the YouTube links in a message, under its text. */
 export function YouTubeCards({ text, className = 'mt-2' }) {
   const links = youTubeLinks(text);
   if (!links.length) return null;

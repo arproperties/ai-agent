@@ -2849,4 +2849,7 @@ await db.exec(`
     push_at TEXT NOT NULL DEFAULT '07:00',
     pushed_on TEXT NOT NULL DEFAULT ''
   );
+  -- The master's YouTube key (Google's YouTube Data API), encrypted like a mailbox password,
+  -- for searching and browsing YouTube on the Feeds page. '' = not set.
+  ALTER TABLE feed_settings ADD COLUMN IF NOT EXISTS youtube_key TEXT NOT NULL DEFAULT '';
 `);
