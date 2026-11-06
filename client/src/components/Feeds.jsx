@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Loader2, RefreshCw, Coins, Fuel, ArrowLeftRight, Droplet, Landmark, TrendingUp, CloudSun, Newspaper, Sparkles, Send, Bell, ExternalLink, TriangleAlert } from 'lucide-react';
+import { Loader2, RefreshCw, Coins, Fuel, ArrowLeftRight, Droplet, Landmark, TrendingUp, CloudSun, Newspaper, Sparkles, Send, Bell, ExternalLink, TriangleAlert, MonitorPlay } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 import YouTubeBrowser from './YouTubeBrowser';
@@ -155,6 +155,9 @@ export default function Feeds({ onBack }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  // Which tab, remembered on this device; opens on Feeds when the browser keeps nothing.
+  const [view, setView] = useState(() => { try { return localStorage.getItem('jarvis:feedsTab') === 'youtube' ? 'youtube' : 'feeds'; } catch { return 'feeds'; } });
+  const pickView = (k) => { setView(k); try { localStorage.setItem('jarvis:feedsTab', k); } catch { /* private window */ } };
   const load = useCallback(() => api.get('/feeds').then((d) => { setData(d); setError(''); return d; }).catch((e) => setError(e.message)), []);
   useEffect(() => { load(); }, [load]);
 
@@ -198,8 +201,21 @@ export default function Feeds({ onBack }) {
   const stale = latest && latest.day !== data.day;
 
   return (
-    <Page title="Feeds" onBack={onBack} action={action}>
+    <Page title="Feeds" onBack={onBack} action={view === 'feeds' ? action : null}>
       <div className="space-y-4">
+        <div role="tablist" aria-label="Feeds or YouTube" className="mx-auto flex w-full max-w-sm gap-1 rounded-full bg-white/5 p-1 text-sm">
+          {[['feeds', 'Feeds', Newspaper], ['youtube', 'YouTube', MonitorPlay]].map(([k, label, I]) => (
+            <button key={k} role="tab" aria-selected={view === k} onClick={() => pickView(k)}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-full py-2 transition ${view === k ? 'bg-white/15 font-medium text-txt shadow' : 'text-mute hover:text-txt'}`}>
+              <I size={16} className={view === k && k === 'youtube' ? 'text-red-500' : ''} />{label}
+            </button>
+          ))}
+        </div>
+
+        {view === 'youtube' ? (
+          <YouTubeBrowser connected={!!data.youtube} videos={data.videos || []} onVideos={(videos) => setData((d) => ({ ...d, videos }))} onConnected={() => setData((d) => ({ ...d, youtube: true }))} />
+        ) : (
+        <>
         <BuzzSetting value={data.settings.push_at} onSaved={(push_at) => setData((d) => ({ ...d, settings: { push_at } }))} />
 
         {(refreshing || data.running) && (
@@ -209,9 +225,6 @@ export default function Feeds({ onBack }) {
         {!refreshing && !data.running && data.today?.error && !data.today?.data && (
           <p className="flex items-start gap-2 rounded-2xl bg-warn/10 px-4 py-3 text-sm text-warn"><TriangleAlert size={16} className="mt-0.5 shrink-0" /> Today's feed could not be gathered ({data.today.error}). Reem tries again within the hour, or tap ↻.</p>
         )}
-
-        {/* YouTube first, above the prices: the master's choice. */}
-        <YouTubeBrowser connected={!!data.youtube} videos={data.videos || []} onVideos={(videos) => setData((d) => ({ ...d, videos }))} onConnected={() => setData((d) => ({ ...d, youtube: true }))} />
 
         {!f ? (
           !(refreshing || data.running) && (
@@ -336,6 +349,8 @@ export default function Feeds({ onBack }) {
               <FeedChat />
             </div>
           </>
+        )}
+        </>
         )}
       </div>
     </Page>
