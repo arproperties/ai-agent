@@ -83,12 +83,15 @@ test('a YouTube link is pinned once, with any link form; anything else is refuse
   assert.equal((await (await fetch(base)).json()).videos.length, 1);
 });
 
-test('YouTube: lengths read plainly; no search before a key, and a key that is not one is refused before asking Google', async () => {
+test('YouTube: lengths read plainly; no search before a key, and a key that is not one is refused before asking Google', async (t) => {
   const { duration } = await import('../server/youtube.js');
   assert.equal(duration('PT4M5S'), '4:05');
   assert.equal(duration('PT1H2M3S'), '1:02:03');
   assert.equal(duration('P0D'), '');
   await reset();
+  const envKey = process.env.YOUTUBE_API_KEY;
+  delete process.env.YOUTUBE_API_KEY; // a key in the project's .env must not send the test to Google
+  t.after(() => { if (envKey) process.env.YOUTUBE_API_KEY = envKey; });
   assert.equal((await fetch(`${base}/youtube/search?q=dubai`)).status, 400);
   assert.equal((await put('/youtube/key', { key: 'hello' })).status, 400);
   assert.equal((await put('/youtube/key', { key: '' })).status, 200);

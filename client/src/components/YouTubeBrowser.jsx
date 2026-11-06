@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Search, Loader2, Pin, PinOff, X, ExternalLink, Radio, KeyRound, MonitorPlay, Flame, ChevronDown } from 'lucide-react';
+import { Search, Loader2, Pin, PinOff, X, ExternalLink, Radio, KeyRound, MonitorPlay, Flame, ChevronDown, History } from 'lucide-react';
 import { api } from '../lib/api';
 import YouTube, { youTubeId } from './YouTube';
+import { noteWatched } from './YouTubeRow';
 
 // YouTube inside the Feeds page (server/youtube.js): search, trending in the UAE, a channel's
 // latest, and the videos the master pinned. Tapping a video plays it at the top in YouTube's
@@ -31,8 +32,9 @@ function Tile({ v, onPlay, active }) {
         )}
       </span>
       <span className="line-clamp-2 text-sm font-medium leading-snug">{v.title || 'Video'}</span>
-      {(v.channel || v.views != null) && (
-        <span className="-mt-1 text-xs text-mute">{[v.channel, views(v.views), ago(v.published)].filter(Boolean).join(' · ')}</span>
+      {(v.channel || v.views != null || v.watched_at) && (
+        <span className="-mt-1 text-xs text-mute">{[v.channel, views(v.views), ago(v.published),
+          v.watched_at && `watched ${new Date(v.watched_at * 1000).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}`].filter(Boolean).join(' · ')}</span>
       )}
     </button>
   );
@@ -86,6 +88,7 @@ export default function YouTubeBrowser({ connected, videos, onVideos, onConnecte
   }, []);
 
   useEffect(() => {
+    if (tab === 'history') load(async () => { const r = await api.get('/feeds/youtube/history'); setList({ items: r.items.map((v) => ({ ...v, thumb: `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg` })), next: null, label: '' }); });
     if (tab === 'trending' && connected) load(async () => { const r = await api.get('/feeds/youtube/trending'); setList({ items: r.items, next: null, label: '' }); });
   }, [tab, connected, load]);
 
@@ -112,6 +115,7 @@ export default function YouTubeBrowser({ connected, videos, onVideos, onConnecte
 
   const play = (v) => {
     setPlaying(v);
+    noteWatched(v); // the watch history: what was played, and when
     requestAnimationFrame(() => top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   };
 
@@ -177,6 +181,7 @@ export default function YouTubeBrowser({ connected, videos, onVideos, onConnecte
       <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
         {connected && <Pill k="trending" icon={Flame}>Trending in UAE</Pill>}
         <Pill k="pinned" icon={Pin}>Pinned{videos.length ? ` · ${videos.length}` : ''}</Pill>
+        <Pill k="history" icon={History}>History</Pill>
         {list.label && tab === 'search' && <Pill k="search" icon={Search}>{list.label}</Pill>}
         {list.label && tab === 'channel' && <Pill k="channel">{list.label}</Pill>}
         {!connected && !setup && (
@@ -194,7 +199,8 @@ export default function YouTubeBrowser({ connected, videos, onVideos, onConnecte
           {shown.map((v) => <Tile key={v.id} v={v} active={playing?.id === v.id} onPlay={play} />)}
         </div>
       ) : (
-        tab === 'pinned' && <p className="text-sm text-mute">Nothing pinned yet. Play any video and tap Pin to keep it here, like a news channel's live stream.</p>
+        tab === 'history' ? <p className="text-sm text-mute">Nothing watched yet. Every video you play in Reem is listed here with the time.</p>
+        : tab === 'pinned' && <p className="text-sm text-mute">Nothing pinned yet. Play any video and tap Pin to keep it here, like a news channel's live stream.</p>
       )}
       {tab === 'search' && list.next && (
         <button onClick={() => search(null, true)} disabled={loading} className="mx-auto flex items-center gap-1.5 rounded-full bg-white/5 px-4 py-2 text-sm hover:bg-white/10">

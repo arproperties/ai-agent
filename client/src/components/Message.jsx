@@ -5,6 +5,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { rehypeMarkRows, markdownComponents } from '../lib/markRows';
 import { YouTubeCards } from './YouTube';
+import YouTubeRow, { splitYouTube, withoutYouTube } from './YouTubeRow';
 import Icon from './Icon';
 import Avatar from './Avatar';
 import { hideMarkers } from '../lib/replyDoc';
@@ -110,10 +111,11 @@ const VOICE = {
 // A reply as it reads: its words, with any drawing shown as a picture where it was written.
 // A YouTube video it links to plays under it.
 function Reply({ content, savedId }) {
-  const parts = splitDrawings(content);
+  // A row of YouTube videos (youtubeChat.js) is drawn as one; the words around it as usual.
+  const parts = splitYouTube(content).flatMap((y) => (y.youtube ? [y] : splitDrawings(y.text)));
   return (
     <>
-      {parts.map((p, i) => (p.text !== undefined ? (
+      {parts.map((p, i) => (p.youtube ? <YouTubeRow key={i} data={p.youtube} /> : p.text !== undefined ? (
         <div key={i} className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypeMarkRows} components={markdownComponents}>{hideMarkers(p.text)}</Markdown></div>
       ) : p.pending ? <DrawingPending key={i} /> : <DrawingCard key={i} drawing={p.drawing} messageId={savedId} />))}
       <YouTubeCards text={content} className="mt-3 max-w-xl" />
@@ -265,7 +267,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
   }
 
   const copy = async () => {
-    await navigator.clipboard?.writeText(hideMarkers(withoutDrawings(msg.content)).trim());
+    await navigator.clipboard?.writeText(hideMarkers(withoutDrawings(withoutYouTube(msg.content))).trim());
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };

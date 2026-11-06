@@ -53,7 +53,7 @@ const TABLES = [
   'project_issues', 'project_inspections', 'project_plans', 'plan_alerts', 'plan_models',
   'attendance_imports', 'attendance_people', 'attendance_names', 'attendance_teams', 'attendance_entries',
   'attendance_reviews', 'attendance_photos', 'attendance_chat_days',
-  'feed_days', 'feed_settings', 'feed_videos',
+  'feed_days', 'feed_settings', 'feed_videos', 'yt_search_cache', 'yt_history',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

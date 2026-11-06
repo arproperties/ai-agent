@@ -35,6 +35,7 @@ import { pictureTag, makePicture, pictureKit } from './pictures.js';
 import { AUTO_MODEL, ADVISOR_MODEL, MASTER_MODEL } from './config.js';
 import { addressPrompt, addressKit, loadAddresses } from './addressBook.js';
 import { lessonKit, lessonsFor, lessonsBlock } from './lessons.js';
+import { youtubeAsk, youtubeTurn } from './youtubeChat.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
 // files. The agent's model costs several times the filing model, and the whole turn is re-sent
@@ -349,8 +350,16 @@ async function recentMessages(conversationId) {
   const rows = (await db.prepare(`SELECT m.role, m.content, m.files, m.agent_id, a.name agent_name FROM messages m
     LEFT JOIN agents a ON a.id = m.agent_id WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 20`).all(conversationId)).reverse();
   while (rows[0]?.role === 'assistant') rows.shift(); // must start with a user turn
+  // A YouTube row in a reply is a list of titles and links to the agent, not JSON.
+  for (const r of rows) if (r.content?.includes('```youtube')) r.content = youtubeAsText(r.content);
   return rows;
 }
+
+const youtubeAsText = (content) => content.replace(/```youtube\n([\s\S]*?)\n```/g, (all, json) => {
+  try {
+    return JSON.parse(json).items.map((v, i) => `${i + 1}. ${v.title} (${v.channel || 'YouTube'}) https://youtu.be/${v.id}`).join('\n');
+  } catch { return ''; }
+});
 
 // A voice note has no file in the library to look back at, so its words travel with the
 // message: later turns can still answer "what did he say about Friday?".
@@ -566,6 +575,10 @@ export async function chat(req, res) {
   const canPicture = modules.includes('pictures');
   const asked = canPicture && !files.length && pictureTag(text);
   if (asked) return pictureTurn({ user, team: [...team, ...byName], convId, text, asked, send, res });
+
+  // "open … videos on youtube", "what did I watch …": the master's, answered without AI (youtubeChat.js).
+  const yt = isMaster(user) && !files.length && youtubeAsk(text);
+  if (yt) return youtubeTurn({ user, team: [...team, ...byName], convId, text, ask: yt, send, res });
 
   // 1. Read attachments, then pick the agent (the router sees what the files are about)
   const prior = await recentMessages(convId);

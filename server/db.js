@@ -2852,4 +2852,23 @@ await db.exec(`
   -- The master's YouTube key (Google's YouTube Data API), encrypted like a mailbox password,
   -- for searching and browsing YouTube on the Feeds page. '' = not set.
   ALTER TABLE feed_settings ADD COLUMN IF NOT EXISTS youtube_key TEXT NOT NULL DEFAULT '';
+  -- YouTube searches kept for 24 hours, so asking the same thing again costs none of the
+  -- key's daily allowance (a search is 100 of its 10,000 units).
+  CREATE TABLE IF NOT EXISTS yt_search_cache (
+    query TEXT PRIMARY KEY,
+    items JSONB NOT NULL,
+    next TEXT,
+    at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+  -- Every video the master played in Reem (chat or the YouTube tab), and when: "what did I watch".
+  CREATE TABLE IF NOT EXISTS yt_history (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    video_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    channel TEXT NOT NULL DEFAULT '',
+    duration TEXT NOT NULL DEFAULT '',
+    watched_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_yt_history_user ON yt_history(user_id, watched_at DESC);
 `);
