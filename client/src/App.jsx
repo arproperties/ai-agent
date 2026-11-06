@@ -32,6 +32,7 @@ import ChecklistsPage from './components/Checklists';
 import AttendancePage from './components/Attendance';
 import BuildingsPage from './components/Buildings';
 import InventoryPage from './components/Inventory';
+import Buildings3DPage from './components/Buildings3D';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { NotifyPrompt } from './components/Notifications';
@@ -63,7 +64,7 @@ if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || noti
 
 // The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
 const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
-  duties: 'duties', checklists: 'checklists', attendance: 'attendance', memory: 'memory', email: 'email', renewals: 'renewals', docrenewals: 'document_renewals', legal: 'legal', case: 'case_focus' };
+  duties: 'duties', checklists: 'checklists', attendance: 'attendance', memory: 'memory', email: 'email', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', legal: 'legal', case: 'case_focus' };
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -271,6 +272,7 @@ export default function App() {
           attendanceOpen={panel === 'attendance'} onAttendance={() => { setPanel('attendance'); setDrawer(false); }}
           hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
           inventoryOpen={panel === 'inventory'} onInventory={() => { setPanel('inventory'); setDrawer(false); }}
+          buildings3dOpen={panel === 'buildings3d'} onBuildings3d={() => { setPanel('buildings3d'); setDrawer(false); }}
          
           renewalsOpen={panel === 'renewals'} onRenewals={() => { setJumpToRenewal(null); setPanel('renewals'); setDrawer(false); }}
           docRenewalsOpen={panel === 'docrenewals'} onDocRenewals={() => { setJumpToDocRenewal(null); setPanel('docrenewals'); setDrawer(false); }}
@@ -335,6 +337,7 @@ export default function App() {
         {panel === 'attendance' && <AttendancePage onBack={() => setPanel(null)} />}
         {panel === 'buildings' && <BuildingsPage me={me} start={jumpToBuilding} onBack={() => setPanel(null)} />}
         {panel === 'inventory' && <InventoryPage me={me} onBack={() => setPanel(null)} />}
+        {panel === 'buildings3d' && <Buildings3DPage onBack={() => setPanel(null)} />}
         {panel === 'docrenewals' && <DocumentRenewalsPage key={jumpToDocRenewal || 'list'} start={jumpToDocRenewal} onBack={() => { setJumpToDocRenewal(null); setPanel(null); }} />}
         {panel === 'renewals' && <LeaseRenewalsPage key={jumpToRenewal || 'list'} open={jumpToRenewal} onBack={() => setPanel(null)} />}
         {panel === 'legal' && <LegalCasesPage key={jumpToLegal || 'list'} open={jumpToLegal} onBack={() => setPanel(null)} />}

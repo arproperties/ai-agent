@@ -29,6 +29,7 @@ export const MODULES = [
   { key: 'transcribe', label: 'Transcribe', about: 'Turn a recording or an audio file into text.', everyone: true },
   // company: the company's own work, never given to an external person (access.js).
   { key: 'renewals', label: 'Lease renewals', about: 'See the leases ending in the next 120 days, live from saifsys, with a link to the DLD Rental Index.', company: true },
+  { key: 'buildings_3d', label: '3D Buildings', about: 'Every saifsys building in 3D, floor by floor, each unit coloured by occupied, ending soon, vacant or under maintenance, with its tenant and rent on a tap.', company: true },
   { key: 'notices', label: 'Tenant notices', about: 'Report something at a unit in a chat with Reem, with a photo. Reem writes the notice; it is emailed to the tenant when they tap Send.', company: true },
   { key: 'document_renewals', label: 'Document Renewals', about: 'Employee and company documents (visas, contracts, trade licences, insurance): see them, get their expiry alerts, and renew or end employee contracts with approvals and the PRO.', company: true },
   { key: 'duties', label: 'My responsibilities', about: 'See what they look after, as you have written it.', everyone: true, company: true },

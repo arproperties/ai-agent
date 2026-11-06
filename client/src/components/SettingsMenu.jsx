@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, Activity, FileClock, Gavel, ChevronRight, Search, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, Activity, FileClock, Gavel, ChevronRight, Search, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box } from 'lucide-react';
 import Icon from './Icon';
 import { CaseTimeSheet } from './CaseRails';
 import { Row, Count } from './NavRow';
@@ -43,7 +43,7 @@ function Group({ title, open, onToggle, count = 0, q = '', children }) {
   );
 }
 
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, inventoryOpen, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -111,6 +111,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
           </Group>
           <Group title="Property" {...fold('Property')} count={tenantCare?.waiting || 0}>
             {has('renewals') && <Row role="menuitem" icon={<FileSignature size={17} strokeWidth={1.75} />} label="Lease renewals" active={renewalsOpen} onClick={go(onRenewals)} />}
+            {has('buildings_3d') && <Row role="menuitem" icon={<Box size={17} strokeWidth={1.75} />} label="3D Buildings" active={buildings3dOpen} onClick={go(onBuildings3d)} />}
             {/* Only for the people who look after the tenant inbox (and the master). */}
             {tenantCare?.member && (
               <Row role="menuitem" icon={<Building2 size={17} strokeWidth={1.75} />} label="Tenant care" active={tenantCareOpen} onClick={go(onTenantCare)}

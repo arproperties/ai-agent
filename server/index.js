@@ -68,6 +68,7 @@ import { moduleRoutes, needsModule, needsModuleUnless, userModules, giveToEveryo
 import { noticeRoutes } from './notices.js';
 import { pictureRoutes } from './pictures.js';
 import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
+import { buildings3dRoutes } from './buildings3d.js';
 import { billingContext, billingRoutes, billAs } from './billing.js';
 import { legalCaseRoutes, startLegalCases } from './legalCases.js';
 import { legalLeaseRoutes } from './legalLease.js';
@@ -143,6 +144,7 @@ app.use('/api/mail-routing', requireMaster, mailRoutingRoutes); // the shared ma
 app.use('/api/shared-inbox', sharedInboxRoutes); // the emails Mail routing passed on to someone, read and answered from the shared address
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
+app.use('/api/buildings-3d', buildings3dRoutes); // every saifsys building in 3D, read live, nothing kept (module buildings_3d)
 app.use('/api/lease-renewals', leaseRenewalRoutes); // leases ending within 120 days, renewed with the tenant by email step by step (module renewals)
 app.use('/api/legal-cases', legalLeaseRoutes); // each case's lease from saifsys, its checks and Reem's advice (module legal)
 app.use('/api/legal-cases', legalCaseRoutes); // legal cases step by step, cooling periods to closure (module legal)
