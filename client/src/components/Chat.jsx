@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ListTodo, Lightbulb, X, Bell, Scale } from 'lucide-react';
+import { ListTodo, Lightbulb, X, Bell, Scale, Newspaper, MonitorPlay } from 'lucide-react';
 import { api, streamChat } from '../lib/api';
 import { speakPieces, stopSpeaking, togglePause } from '../lib/voice';
 import { cutSelection } from '../lib/cut';
@@ -52,7 +52,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '', onOpenCase }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '', onOpenCase, onOpenFeeds }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -346,7 +346,21 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             </button>
           )}
         </div>
-        {voiceEnabled && (
+        {/* The master has Feeds and YouTube here instead of live voice and new chat (New chat
+            is still at the top of the sidebar). Feeds is the master's alone, so everyone else
+            keeps the two they had. */}
+        {user.role === 'master' && onOpenFeeds ? (
+          <>
+            <button onClick={() => onOpenFeeds('feeds')} aria-label="Feeds" title="Feeds"
+              className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
+              <Newspaper size={20} strokeWidth={1.75} />
+            </button>
+            <button onClick={() => onOpenFeeds('youtube')} aria-label="YouTube" title="YouTube"
+              className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-red-500">
+              <MonitorPlay size={20} strokeWidth={1.75} />
+            </button>
+          </>
+        ) : voiceEnabled && (
           <IconBtn icon="live" label="Live voice — hands free" onClick={() => { stopSpeaking(); setLive(true); }} />
         )}
         {docIds.length > 0 && (
@@ -356,7 +370,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             <span className="absolute right-1 top-1 grid min-w-4 place-items-center rounded-full bg-p1 px-1 text-[10px] font-semibold leading-4 text-white">{docIds.length}</span>
           </button>
         )}
-        <IconBtn icon="edit" label="New Reem chat" onClick={onNewChat} />
+        {!(user.role === 'master' && onOpenFeeds) && <IconBtn icon="edit" label="New Reem chat" onClick={onNewChat} />}
       </header>
 
       {/* A chat about a case has its files on the left and its timer on the right, where the

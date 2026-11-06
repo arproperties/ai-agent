@@ -151,12 +151,13 @@ function FeedChat() {
   );
 }
 
-export default function Feeds({ onBack }) {
+export default function Feeds({ onBack, start }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   // Which tab, remembered on this device; opens on Feeds when the browser keeps nothing.
-  const [view, setView] = useState(() => { try { return localStorage.getItem('jarvis:feedsTab') === 'youtube' ? 'youtube' : 'feeds'; } catch { return 'feeds'; } });
+  // The tab asked for (the chat header's Feeds or YouTube icon, the morning buzz), else the last one used.
+  const [view, setView] = useState(() => { if (start === 'feeds' || start === 'youtube') return start; try { return localStorage.getItem('jarvis:feedsTab') === 'youtube' ? 'youtube' : 'feeds'; } catch { return 'feeds'; } });
   const pickView = (k) => { setView(k); try { localStorage.setItem('jarvis:feedsTab', k); } catch { /* private window */ } };
   const load = useCallback(() => api.get('/feeds').then((d) => { setData(d); setError(''); return d; }).catch((e) => setError(e.message)), []);
   useEffect(() => { load(); }, [load]);

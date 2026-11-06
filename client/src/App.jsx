@@ -88,6 +88,7 @@ export default function App() {
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
   const [caseKey, setCaseKey] = useState(null); // the case Case Home shows
   const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewals ? 'renewals' : notifiedDocRenewal ? 'docrenewals' : notifiedLegal ? 'legal' : notifiedBuilding ? 'buildings' : notifiedFeeds ? 'feeds' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
+  const [feedsView, setFeedsView] = useState(notifiedFeeds ? 'feeds' : null); // which Feeds tab the chat header's icon (or the morning buzz) asked for
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const [jumpToRenewal, setJumpToRenewal] = useState(notifiedRenewal); // a lease renewal a notification asked for
   const [jumpToDocRenewal, setJumpToDocRenewal] = useState(notifiedDocRenewal); // a document a notification asked for
@@ -146,7 +147,7 @@ export default function App() {
       if (where.get('todos') === '1') { setPanel('todos'); loadDue(); return; }
       if (where.get('tenantcare') === '1') { setPanel('tenantcare'); loadTenantCare(); return; }
       if (where.get('mailrouting') === '1') { setPanel('mailrouting'); return; }
-      if (where.get('feeds') === '1') { setPanel('feeds'); return; }
+      if (where.get('feeds') === '1') { setFeedsView('feeds'); setPanel('feeds'); return; }
       if (where.get('sharedinbox') === '1') { setPanel('sharedinbox'); return; }
       if (where.get('responsibilities') === '1') { setPanel('duties'); return; }
       if (where.has('renewals')) { setJumpToRenewal(Number(where.get('renewals')) || null); setPanel('renewals'); return; }
@@ -252,7 +253,7 @@ export default function App() {
           tenantCare={tenantCare} tenantCareOpen={panel === 'tenantcare'} onTenantCare={() => { setPanel('tenantcare'); setDrawer(false); }}
           mailRoutingOpen={panel === 'mailrouting'} onMailRouting={() => { setPanel('mailrouting'); setDrawer(false); }}
           addressBookOpen={panel === 'addressbook'} onAddressBook={() => { setPanel('addressbook'); setDrawer(false); }}
-          feedsOpen={panel === 'feeds'} onFeeds={() => { setPanel('feeds'); setDrawer(false); }}
+          feedsOpen={panel === 'feeds'} onFeeds={() => { setFeedsView(null); setPanel('feeds'); setDrawer(false); }}
           billingOpen={panel === 'billing'} onBilling={() => { setPanel('billing'); setDrawer(false); }}
           healthOpen={panel === 'health'} onHealth={() => { setPanel('health'); setDrawer(false); }}
           backupsOpen={panel === 'backups'} onBackups={() => { setPanel('backups'); setDrawer(false); }}
@@ -280,7 +281,7 @@ export default function App() {
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice}
             firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
             due={due} onDueChanged={loadDue} onOpenLists={() => setPanel('todos')}
-            onConversation={onConversation} onMenu={openMenu} onNewChat={() => openChat(null)} menuBadge={dm.unread} railHidden={railHidden} draft={chat.draft || ''} onOpenCase={openCase} />
+            onConversation={onConversation} onMenu={openMenu} onNewChat={() => openChat(null)} onOpenFeeds={(view) => { setFeedsView(view); setPanel('feeds'); setDrawer(false); }} menuBadge={dm.unread} railHidden={railHidden} draft={chat.draft || ''} onOpenCase={openCase} />
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —
           // otherwise there is no way back to the sidebar (or to sign out) on mobile.
@@ -316,7 +317,7 @@ export default function App() {
         {panel === 'tenantcare' && <TenantCarePage me={me} onBack={() => setPanel(null)} onChanged={loadTenantCare} />}
         {panel === 'mailrouting' && me.role === 'master' && <MailRoutingPage onBack={() => setPanel(null)} />}
         {panel === 'addressbook' && me.role === 'master' && <AddressBookPage onBack={() => setPanel(null)} />}
-        {panel === 'feeds' && me.role === 'master' && <FeedsPage onBack={() => setPanel(null)} />}
+        {panel === 'feeds' && me.role === 'master' && <FeedsPage key={feedsView || 'menu'} start={feedsView} onBack={() => { setFeedsView(null); setPanel(null); }} />}
         {panel === 'billing' && me.role === 'master' && <BillingPage onBack={() => setPanel(null)} />}
         {panel === 'health' && me.role === 'master' && <ServerHealthPage onBack={() => setPanel(null)} />}
         {panel === 'aikeys' && me.role === 'master' && <AiKeysPage onBack={() => setPanel(null)} />}
