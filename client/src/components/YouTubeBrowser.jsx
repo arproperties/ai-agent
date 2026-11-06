@@ -77,6 +77,9 @@ export default function YouTubeBrowser({ connected, videos, onVideos, onConnecte
   const [error, setError] = useState('');
   const [playing, setPlaying] = useState(null);
   const [setup, setSetup] = useState(false);
+  // At the top of Feeds: two rows until asked for more, so the prices are not pushed far down.
+  const [all, setAll] = useState(false);
+  useEffect(() => { setAll(false); }, [tab, list.label]);
   const top = useRef(null);
 
   const load = useCallback(async (fn) => {
@@ -191,12 +194,17 @@ export default function YouTubeBrowser({ connected, videos, onVideos, onConnecte
         <p className="flex items-center gap-2 text-sm text-mute"><Loader2 size={16} className="animate-spin" /> Loading…</p>
       ) : shown.length ? (
         <div className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {shown.map((v) => <Tile key={v.id} v={v} active={playing?.id === v.id} onPlay={play} />)}
+          {(all ? shown : shown.slice(0, 8)).map((v) => <Tile key={v.id} v={v} active={playing?.id === v.id} onPlay={play} />)}
         </div>
       ) : (
         tab === 'pinned' && <p className="text-sm text-mute">Nothing pinned yet. Play any video and tap Pin to keep it here, like a news channel's live stream.</p>
       )}
-      {tab === 'search' && list.next && (
+      {!all && shown.length > 8 && (
+        <button onClick={() => setAll(true)} className="mx-auto flex items-center gap-1.5 rounded-full bg-white/5 px-4 py-2 text-sm hover:bg-white/10">
+          <ChevronDown size={14} /> Show more
+        </button>
+      )}
+      {all && tab === 'search' && list.next && (
         <button onClick={() => search(null, true)} disabled={loading} className="mx-auto flex items-center gap-1.5 rounded-full bg-white/5 px-4 py-2 text-sm hover:bg-white/10">
           {loading ? <Loader2 size={14} className="animate-spin" /> : <ChevronDown size={14} />} More
         </button>

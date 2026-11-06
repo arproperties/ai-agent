@@ -210,6 +210,9 @@ export default function Feeds({ onBack }) {
           <p className="flex items-start gap-2 rounded-2xl bg-warn/10 px-4 py-3 text-sm text-warn"><TriangleAlert size={16} className="mt-0.5 shrink-0" /> Today's feed could not be gathered ({data.today.error}). Reem tries again within the hour, or tap ↻.</p>
         )}
 
+        {/* YouTube first, above the prices: the master's choice. */}
+        <YouTubeBrowser connected={!!data.youtube} videos={data.videos || []} onVideos={(videos) => setData((d) => ({ ...d, videos }))} onConnected={() => setData((d) => ({ ...d, youtube: true }))} />
+
         {!f ? (
           !(refreshing || data.running) && (
             <div className="flex flex-col items-center gap-3 rounded-3xl border border-stroke px-6 py-12 text-center">
@@ -330,13 +333,10 @@ export default function Feeds({ onBack }) {
                 </Card>
               )}
 
-              <YouTubeBrowser connected={!!data.youtube} videos={data.videos || []} onVideos={(videos) => setData((d) => ({ ...d, videos }))} onConnected={() => setData((d) => ({ ...d, youtube: true }))} />
               <FeedChat />
             </div>
           </>
         )}
-        {/* Before the first feed there is no grid yet: the videos still have their place. */}
-        {!f && <YouTubeBrowser connected={!!data.youtube} videos={data.videos || []} onVideos={(videos) => setData((d) => ({ ...d, videos }))} onConnected={() => setData((d) => ({ ...d, youtube: true }))} />}
       </div>
     </Page>
   );
