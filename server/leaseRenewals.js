@@ -220,6 +220,13 @@ async function dueLeases() {
   return leases;
 }
 
+/** saifsys's leases that ended and were not renewed, all of them or those ending between from and to. */
+async function expiredLeases(from, to) {
+  const ok = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? d : undefined);
+  const { leases = [] } = await D.ask('realestate', 'renewals_expired', { from: ok(from), to: ok(to) });
+  return leases;
+}
+
 // ---------- the emails ----------
 
 const subjectOf = (r) => `Lease renewal: ${r.lease.building}, Unit ${r.lease.unit}`;
@@ -1237,6 +1244,13 @@ export const leaseRenewalRoutes = Router();
 leaseRenewalRoutes.use(needsModule('renewals'));
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const masterOnly = (req, res, next) => (isMaster(req.user) ? next() : res.status(403).json({ error: 'Only the master can change this' }));
+
+// The Expired tab: leases whose end passed with no renewal, newest first. View only.
+leaseRenewalRoutes.get('/expired', wrap(async (req, res) => {
+  if (!saifsysConfigured()) return res.json({ leases: [] });
+  const leases = await expiredLeases(req.query.from, req.query.to);
+  res.json({ leases: leases.map((l) => ({ ...card(l, null), move_out_date: l.move_out_date || null, saifsys_last: l.saifsys_last || null })) });
+}));
 
 leaseRenewalRoutes.get('/', wrap(async (req, res) => {
   const leases = saifsysConfigured() ? await dueLeases() : [];

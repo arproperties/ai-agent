@@ -40,7 +40,8 @@ function chipOf(l) {
   if (r?.waiting) return WAITING[r.waiting];
   if (r?.status === 'scheduled') return [`Sends ${day(r.sendOn)}`, 'p1'];
   if (r) return STATUS[r.status];
-  if (l.saifsys_renewal) return ['Staff in saifsys', 'mute'];
+  if (l.expired) return [l.move_out_date ? `Moved out ${day(l.move_out_date)}` : `Ended ${-l.days_left} day${l.days_left === -1 ? '' : 's'} ago`, 'bad'];
+  if (l.saifsys_renewal) return [`saifsys: ${l.saifsys_renewal.replace(/_/g, ' ')}`, 'mute'];
   if (l.saifsys_rejected) return ['Rejected in saifsys', 'mute'];
   return [l.days_left < 0 ? 'Ended' : l.days_left === 0 ? 'Ends today' : `${l.days_left} days`, l.days_left <= 30 ? 'bad' : l.days_left <= 90 ? 'warn' : 'mute'];
 }
@@ -90,9 +91,21 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(openFirst || null); // a renewal's id
   const [starting, setStarting] = useState(null); // a lease to start
+  // The Expired tab: every lease that ended unrenewed, or only those ending between two dates.
+  const [expired, setExpired] = useState(null);
+  const [expiredError, setExpiredError] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
 
   const load = useCallback(() => api.get('/lease-renewals').then(setData).catch((e) => setError(e.message)), []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const qs = new URLSearchParams({ ...(from && { from }), ...(to && { to }) }).toString();
+    setExpiredError('');
+    api.get(`/lease-renewals/expired${qs ? `?${qs}` : ''}`)
+      .then((r) => setExpired(r.leases.map((l) => ({ ...l, expired: true }))))
+      .catch((e) => { setExpired([]); setExpiredError(e.message); });
+  }, [from, to]);
 
   if (open) return <Renewal id={open} onBack={() => { setOpen(null); load(); }} />;
 
@@ -101,8 +114,9 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
   const buildings = [...new Set(all.map((l) => l.building).filter(Boolean))].sort().map((b) => ({ value: b, label: b }));
   const want = q.trim().toLowerCase();
   // The building and the search narrow the list first, so the tab counts follow them.
-  const leases = all.filter((l) => (!building || l.building === building)
-    && (!want || [l.building, l.unit, l.tenant, l.premises_number, l.ejari].join(' ').toLowerCase().includes(want)));
+  const narrow = (l) => (!building || l.building === building)
+    && (!want || [l.building, l.unit, l.tenant, l.premises_number, l.ejari].join(' ').toLowerCase().includes(want));
+  const leases = all.filter(narrow);
   const tabs = [
     ['all', 'All', leases],
     ['you', 'Needs you', leases.filter(needsYou)],
@@ -110,6 +124,9 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
     ['new', 'Not started', leases.filter((l) => !l.renewal && !l.saifsys_renewal && !l.saifsys_rejected)],
     ['done', 'Done', leases.filter((l) => l.renewal && DONE.includes(l.renewal.status) && !rejected(l))],
     ['rejected', 'Rejected', leases.filter(rejected)],
+    // Staff started these in saifsys themselves; Reem only shows where they are.
+    ['saifsys', 'Initiated in saifsys', leases.filter((l) => !l.renewal && l.saifsys_renewal)],
+    ['expired', 'Expired', (expired || []).filter(narrow)],
   ];
   const shown = (tabs.find((t) => t[0] === tab) || tabs[0])[2];
   const dld = (
@@ -145,9 +162,20 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
               </button>
             ))}
           </div>
+          {tab === 'expired' && (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-mute">
+              <span>Ended between</span>
+              <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="rounded-xl border border-stroke bg-black/20 px-3 py-1.5 text-txt outline-none focus:border-p1/60" />
+              <span>and</span>
+              <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="rounded-xl border border-stroke bg-black/20 px-3 py-1.5 text-txt outline-none focus:border-p1/60" />
+              {(from || to) && <button onClick={() => { setFrom(''); setTo(''); }} className="flex items-center gap-1 hover:text-txt"><X size={14} /> All dates</button>}
+              {expired === null && <Loader2 size={14} className="animate-spin" />}
+            </div>
+          )}
+          {tab === 'expired' && <Problem text={expiredError} />}
           {shown.length === 0 ? <p className="pt-12 text-center text-sm text-mute">Nothing here.</p> : (
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.saifsys_renewal || l.saifsys_rejected ? null : setStarting(l))} />)}
+              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.expired || l.saifsys_renewal || l.saifsys_rejected ? null : setStarting(l))} />)}
             </ul>
           )}
           {data.master && <Settings s={data.settings} agents={data.agents} inbox={data.inbox} onSaved={load} />}
@@ -163,7 +191,7 @@ function LeaseCard({ l, onOpen }) {
   const live = r && !DONE.includes(r.status);
   return (
     <li>
-      <button onClick={onOpen} disabled={!r && !!(l.saifsys_renewal || l.saifsys_rejected)}
+      <button onClick={onOpen} disabled={!r && !!(l.expired || l.saifsys_renewal || l.saifsys_rejected)}
         className={`flex h-full w-full flex-col gap-2 rounded-2xl border bg-white/[0.04] p-4 text-left transition hover:bg-white/[0.07] disabled:cursor-default ${needsYou(l) ? 'border-warn/50' : 'border-stroke'}`}>
         <div className="flex w-full items-start gap-2">
           <div className="min-w-0 flex-1">
@@ -177,13 +205,13 @@ function LeaseCard({ l, onOpen }) {
           {live ? (
             <span className="text-sm"><span className="text-mute line-through">{aed(l.annual_rent)}</span> <span className="text-base font-medium">{aed(r.agreed ?? r.offer)}</span></span>
           ) : <span className="text-base font-medium">{aed(l.annual_rent)}</span>}
-          <span className="text-xs text-mute">ends {day(l.end_date)}</span>
+          <span className="text-xs text-mute">{l.days_left < 0 ? 'ended' : 'ends'} {day(l.end_date)}</span>
         </div>
         {r?.dispute && live && <p className="flex items-start gap-1.5 text-xs text-bad"><Scale size={13} className="mt-0.5 shrink-0" /> {r.dispute}</p>}
         {!r && (l.premises_number || l.ejari) && (
           <p className="truncate text-xs text-mute">{[l.premises_number && `Premises ${l.premises_number}`, l.ejari && `Ejari ${l.ejari}`].filter(Boolean).join(' · ')}</p>
         )}
-        {!r && !l.saifsys_renewal && !l.saifsys_rejected && <p className="text-xs text-p1">{l.days_left <= 120 ? 'Check the RERA index to start' : 'Tap to start the renewal'}</p>}
+        {!r && !l.expired && !l.saifsys_renewal && !l.saifsys_rejected && <p className="text-xs text-p1">{l.days_left <= 120 ? 'Check the RERA index to start' : 'Tap to start the renewal'}</p>}
       </button>
     </li>
   );
