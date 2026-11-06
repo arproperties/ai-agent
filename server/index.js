@@ -71,6 +71,7 @@ import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
 import { billingContext, billingRoutes, billAs } from './billing.js';
 import { legalCaseRoutes, startLegalCases } from './legalCases.js';
 import { legalLeaseRoutes } from './legalLease.js';
+import { feedRoutes, startFeeds } from './feeds.js';
 import { uploadLimitMB, MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB, MAX_IFC_MB } from './dwg.js';
 import { isRevit, REVIT_HELP } from './ifc.js';
 import { roughModelFor } from './rough3d.js';
@@ -169,6 +170,7 @@ app.use('/api/apps', appRoutes); // mailboxes connected to Claude.ai as custom c
 app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
 app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
+app.use('/api/feeds', requireMaster, feedRoutes); // the master's morning page: gold, petrol, rates, shares, weather, news
 app.use('/api/billing', requireMaster, billingRoutes); // what the AI cost: by person, job and model (master only)
 app.use('/api/server-health', requireMaster, serverHealthRoutes); // disk, memory, database, backups and their growth (master only)
 app.use('/api/backups', requireMaster, backupRoutes); // download the database and every uploaded file, password asked again (master only)
@@ -633,6 +635,9 @@ app.listen(PORT, '0.0.0.0', () => {
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));
   startAttendance().catch((e) => console.error('[attendance]', e.message)); // marks an import a restart cut off, so it can be sent again
   startServerHealth(); // an hourly reading of disk, memory and database, for the master's Server health screen
+  // The morning feed: searched at 6, the master's phone buzzed at the time they chose. Same rule: a
+  // local copy of the live database would buzz the master's real phone and pay for a search every morning.
+  if (sending) startFeeds();
   if (sending) startBackupReminder(); // a buzz to the master when nobody has downloaded a backup for a week
   // The 5 pm "today's manpower not sent" push to a project's store keeper. Live only unless asked
   // for, like the document alerts: a local copy of the live database holds real people's phones.

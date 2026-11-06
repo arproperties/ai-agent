@@ -2822,3 +2822,23 @@ await db.exec(`
     messages JSONB NOT NULL DEFAULT '[]'
   );
 `);
+
+// Feeds (2026-11-06): the master's morning page of prices and news - see server/feeds.js.
+//   feed_days:     one row per Dubai day: what Reem found that morning (JSON), and when.
+//                  A failed morning keeps its error so the page can say why, and is tried again later.
+//   feed_settings: one row: the time the master wants the morning buzz (HH:MM Dubai, '' = no buzz)
+//                  and the Dubai day it last went out, so a restart never buzzes twice.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS feed_days (
+    day TEXT PRIMARY KEY,
+    data JSONB,
+    error TEXT NOT NULL DEFAULT '',
+    tries INTEGER NOT NULL DEFAULT 0,
+    made_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS feed_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    push_at TEXT NOT NULL DEFAULT '07:00',
+    pushed_on TEXT NOT NULL DEFAULT ''
+  );
+`);

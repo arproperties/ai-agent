@@ -59,6 +59,7 @@ export const JOBS = {
   setup: { name: 'Setting up', about: 'Making agents and other setup' },
   cases: { name: 'Case deadlines', about: "Reading a case's files and emails for its legal dates" },
   attendance: { name: 'Attendance', about: 'Reading the teams\' attendance lists and photos, and sorting them into companies and people' },
+  feeds: { name: 'Feeds', about: 'The morning feed: prices, rates and news looked up, and questions about them' },
   project_planner: { name: 'Project planner', about: 'Reading a project file and writing its full plan' },
   other: { name: 'Other', about: 'Anything else' },
 };
@@ -80,6 +81,7 @@ const PATHS = [
   [/^\/checklists\b/, 'checklists'],
   [/^\/attendance\b/, 'attendance'],
   [/^\/notices\b/, 'notices'],
+  [/^\/feeds\b/, 'feeds'],
   [/^\/(agents|admin|modules)\b/, 'setup'],
 ];
 export const jobOfPath = (path) => PATHS.find(([re]) => re.test(path))?.[1] || 'other';
