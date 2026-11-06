@@ -17,7 +17,9 @@ const topic = (s) => words(s).filter((w) => !STOP.has(w)).join(' ').trim();
 // Periods people say, as a start time (unix seconds, Dubai days).
 const HISTORY_STOP = new Set(['what', 'which', 'did', 'have', 'watch', 'watched', 'watching', 'history', 'my', 'saw', 'seen', 'today', 'yesterday',
   'last', 'this', 'week', 'month', 'ago', 'days', 'day', 'was', 'were', 'that', 'those', 'videos', 'video', 'show', 'me', 'all', 'i', 'the',
-  'about', 'on', 'in', 'youtube', 'list', 'give', 'tell', 'when', 'it', 'is', 'are', 'from', 'of', 'a']);
+  'about', 'on', 'in', 'youtube', 'list', 'give', 'tell', 'when', 'it', 'is', 'are', 'from', 'of', 'a',
+  'app', 'reem', 'yt', 'you', 'tube', 'open', 'see', 'can', 'please', 'pls', 'recent', 'recently', 'everything', 'so', 'far', 'till', 'now',
+  'any', 'some', 'for', 'to', 'related', 'viewed', 'view', 'viewing', 'played', 'opened']);
 function sinceOf(text) {
   const t = text.toLowerCase();
   const day = 86400;
@@ -37,8 +39,11 @@ export function youtubeAsk(text) {
   const t = String(text || '').trim();
   if (!t || t.length > 200 || t.includes('\n')) return null;
   const low = t.toLowerCase();
-  // "what did I watch…", "videos I watched…", "my watch history"
-  if (/\b(what|which)\b.*\b(did i|have i|i)\b.*\bwatch(ed)?\b|\bvideos? i (watched|saw)\b|\bwatch(ing)? history\b|\bi watched\b/.test(low)) {
+  // "what did I watch…", "videos I watched…", "my watch history", "show me youtube history". Not
+  // "history videos on youtube": there history is what to search for, so it must sit right
+  // after youtube, watch, viewing or my, or come before "of my videos".
+  if (/\b(what|which)\b.*\b(did i|have i|i)\b.*\bwatch(ed)?\b|\bvideos? i (watched|saw|played|opened)\b|\bi watched\b/.test(low)
+    || /\b(you ?tube|yt|watch(ing)?|viewing|my|video)\s+history\b|\bhistory of (my )?(you ?tube|videos?|watch)/.test(low)) {
     return { kind: 'history', words: words(t).filter((w) => !HISTORY_STOP.has(w)).slice(0, 4), since: sinceOf(t) };
   }
   if (!/\b(you ?tube|yt)\b/.test(low)) return null;

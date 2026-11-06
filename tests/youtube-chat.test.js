@@ -15,6 +15,12 @@ test('which messages are YouTube asks, read without AI', () => {
   assert.equal(h.kind, 'history');
   assert.deepEqual(h.words, ['phishing']);
   assert.ok(h.since > 0);
+  for (const said of ['show me youtube history', 'my app youtube history', 'my watch history', 'open my history of youtube']) {
+    const a = youtubeAsk(said);
+    assert.equal(a?.kind, 'history', said);
+    assert.deepEqual(a.words, [], `${said}: no words left to filter by`);
+  }
+  assert.deepEqual(youtubeAsk('open history videos on youtube'), { kind: 'search', q: 'history', live: false }, 'history as the topic is still a search');
   assert.equal(youtubeAsk('what is the rent for unit 101?'), null, 'an ordinary question goes to Reem as usual');
   assert.equal(youtubeAsk('I uploaded the youtube contract'), null, 'youtube with no ask for videos is ordinary');
   assert.equal(youtubeAsk('search youtube for this\nand that'), null, 'a long message is ordinary');
