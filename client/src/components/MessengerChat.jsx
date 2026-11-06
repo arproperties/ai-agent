@@ -9,6 +9,7 @@ import { api } from '../lib/api';
 import { onLive } from '../lib/live';
 import { listenUntilSilence, finishListening, stopListening, TAP_TO_STOP } from '../lib/voice';
 import Sheet from './Sheet';
+import { YouTubeCards } from './YouTube';
 
 // ---------- small shared helpers (also used by Messenger.jsx) ----------
 const SHADES = ['from-emerald-400 to-teal-600', 'from-sky-400 to-indigo-500', 'from-amber-300 to-orange-500',
@@ -193,6 +194,7 @@ export function Bubble({ m, mine, showName, sender, nameColor, others, first, ta
             {m.body && m.kind !== 'file' && (big
               ? <span className="text-5xl leading-tight">{m.body}</span>
               : <span className="whitespace-pre-wrap break-words text-[15px] leading-snug"><Linked text={m.body} /></span>)}
+            {m.body && m.kind !== 'file' && !big && <YouTubeCards text={m.body} className="my-1.5 w-[min(22rem,70vw)]" />}
             {m.kind === 'file' && m.body && m.body !== m.file?.name && (
               <span className="whitespace-pre-wrap break-words text-[15px] leading-snug"><Linked text={m.body} /></span>
             )}

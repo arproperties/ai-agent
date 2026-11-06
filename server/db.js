@@ -2836,6 +2836,14 @@ await db.exec(`
     tries INTEGER NOT NULL DEFAULT 0,
     made_at BIGINT NOT NULL DEFAULT ${NOW}
   );
+  -- The Watch card: YouTube videos and live streams the master pinned to the page.
+  CREATE TABLE IF NOT EXISTS feed_videos (
+    id SERIAL PRIMARY KEY,
+    video_id TEXT NOT NULL UNIQUE,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    added_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
   CREATE TABLE IF NOT EXISTS feed_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     push_at TEXT NOT NULL DEFAULT '07:00',

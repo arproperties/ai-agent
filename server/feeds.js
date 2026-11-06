@@ -311,7 +311,8 @@ feedRoutes.get('/', wrap(async (req, res) => {
   const today = await db.prepare('SELECT day, data, error, made_at FROM feed_days WHERE day = ?').get(day);
   const history = await db.prepare('SELECT day, data FROM feed_days WHERE data IS NOT NULL ORDER BY day DESC LIMIT 60').all();
   const s = await settings();
-  res.json({ day, today: today || null, history, running: !!running, settings: { push_at: s.push_at } });
+  const videos = await db.prepare('SELECT id, video_id, url, title FROM feed_videos ORDER BY id DESC').all();
+  res.json({ day, today: today || null, history, videos, running: !!running, settings: { push_at: s.push_at } });
 }));
 
 // Search again now: the first morning, a failed one, or prices that have moved since.
@@ -330,6 +331,47 @@ feedRoutes.put('/settings', wrap(async (req, res) => {
   // A time already past today, with today's buzz not yet sent, goes on the next check.
   await db.prepare('UPDATE feed_settings SET push_at = ? WHERE id = 1').run(pushAt);
   res.json({ ok: true, push_at: pushAt });
+}));
+
+// ---------- the Watch card ----------
+
+/** The video id in a YouTube link (watch, youtu.be, shorts, live, embed), or null. */
+export function youTubeId(url) {
+  let u;
+  try { u = new URL(String(url).trim()); } catch { return null; }
+  const host = u.hostname.replace(/^(www\.|m\.|music\.)/, '');
+  let id = null;
+  if (host === 'youtu.be') id = u.pathname.slice(1).split('/')[0];
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    if (u.pathname === '/watch') id = u.searchParams.get('v');
+    else id = u.pathname.match(/^\/(?:shorts|live|embed|v)\/([\w-]{11})/)?.[1] || null;
+  }
+  return id && /^[\w-]{11}$/.test(id) ? id : null;
+}
+
+// The video's name, from YouTube's public oEmbed page (no key). Without it the card just has no title.
+async function videoTitle(videoId) {
+  try {
+    const r = await fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return '';
+    return String((await r.json()).title || '').slice(0, 200);
+  } catch { return ''; }
+}
+
+feedRoutes.post('/videos', wrap(async (req, res) => {
+  const url = String(req.body?.url || '').trim().slice(0, 500);
+  const videoId = youTubeId(url);
+  if (!videoId) throw bad('That is not a YouTube video link', 400);
+  const title = await videoTitle(videoId);
+  const row = await db.prepare(`INSERT INTO feed_videos (video_id, url, title) VALUES (?, ?, ?)
+    ON CONFLICT (video_id) DO UPDATE SET title = COALESCE(NULLIF(EXCLUDED.title, ''), feed_videos.title)
+    RETURNING id, video_id, url, title`).get(videoId, url, title);
+  res.json(row);
+}));
+
+feedRoutes.delete('/videos/:id', wrap(async (req, res) => {
+  await db.prepare('DELETE FROM feed_videos WHERE id = ?').run(Number(req.params.id) || 0);
+  res.json({ ok: true });
 }));
 
 feedRoutes.post('/ask', wrap(async (req, res) => {

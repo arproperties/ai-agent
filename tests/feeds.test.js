@@ -67,3 +67,18 @@ test('a question needs a question', async () => {
   const r = await fetch(`${base}/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [] }) });
   assert.equal(r.status, 400);
 });
+
+test('a YouTube link is pinned once, with any link form; anything else is refused', async () => {
+  await reset();
+  const post = (url) => fetch(`${base}/videos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+  assert.equal((await post('https://example.com/watch?v=dQw4w9WgXcQ')).status, 400);
+  assert.equal((await post('not a link')).status, 400);
+  const a = await (await post('https://youtu.be/dQw4w9WgXcQ?t=30')).json();
+  assert.equal(a.video_id, 'dQw4w9WgXcQ');
+  await post('https://www.youtube.com/watch?v=dQw4w9WgXcQ'); // the same video again
+  await post('https://www.youtube.com/live/abcdefghijk');
+  const { videos } = await (await fetch(base)).json();
+  assert.deepEqual(videos.map((v) => v.video_id), ['abcdefghijk', 'dQw4w9WgXcQ'], 'newest first, no repeats');
+  await fetch(`${base}/videos/${a.id}`, { method: 'DELETE' });
+  assert.equal((await (await fetch(base)).json()).videos.length, 1);
+});

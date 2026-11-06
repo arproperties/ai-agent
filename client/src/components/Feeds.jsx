@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Loader2, RefreshCw, Coins, Fuel, ArrowLeftRight, Droplet, Landmark, TrendingUp, CloudSun, Newspaper, Sparkles, Send, Bell, ExternalLink, TriangleAlert } from 'lucide-react';
+import { Loader2, RefreshCw, Coins, Fuel, ArrowLeftRight, Droplet, Landmark, TrendingUp, CloudSun, Newspaper, Sparkles, Send, Bell, ExternalLink, TriangleAlert, MonitorPlay, Plus } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
+import YouTube from './YouTube';
 
 // Feeds, the master's morning page (server/feeds.js): what Reem looked up at 6 - gold,
 // petrol, currency, oil, EIBOR, property shares, weather and the property news - each
@@ -92,6 +93,49 @@ function BuzzSetting({ value, onSaved }) {
         <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
       </button>
     </div>
+  );
+}
+
+// Videos and live streams the master pinned: the newest big, the rest in a row under it.
+// Any YouTube link is pasted in; the server finds its name.
+function Watch({ videos, onChange }) {
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const add = async (e) => {
+    e.preventDefault();
+    if (!url.trim() || busy) return;
+    setBusy(true);
+    try { const v = await api.post('/feeds/videos', { url }); onChange([v, ...videos.filter((x) => x.id !== v.id)]); setUrl(''); } catch (err) { alert(err.message); }
+    setBusy(false);
+  };
+  const remove = async (v) => {
+    if (!confirm('Remove this video from Feeds?')) return;
+    try { await api.del(`/feeds/videos/${v.id}`); onChange(videos.filter((x) => x.id !== v.id)); } catch (err) { alert(err.message); }
+  };
+  const [first, ...rest] = videos;
+  return (
+    <Card icon={MonitorPlay} title="Watch" tint="text-red-500 bg-red-500/15" className="md:col-span-2 xl:col-span-3">
+      {first ? (
+        <div className="space-y-3">
+          <YouTube key={first.video_id} id={first.video_id} title={first.title} onRemove={() => remove(first)} className="mx-auto max-w-4xl" />
+          {rest.length > 0 && (
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+              {rest.map((v) => <YouTube key={v.video_id} id={v.video_id} title={v.title} onRemove={() => remove(v)} />)}
+            </div>
+          )}
+        </div>
+      ) : (
+        <p className="text-sm text-mute">Pin a news channel's live stream or any video here: copy its YouTube link and paste it below.</p>
+      )}
+      <form onSubmit={add} className="flex items-center gap-2 rounded-full border border-stroke bg-white/5 py-1 pl-4 pr-1">
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a YouTube link…" inputMode="url"
+          className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] outline-none placeholder:text-mute/70" />
+        <button type="submit" disabled={busy || !url.trim()} aria-label="Add video"
+          className="grid size-9 shrink-0 place-items-center rounded-full bg-red-600 text-white transition disabled:opacity-40">
+          {busy ? <Loader2 size={16} className="animate-spin" /> : <Plus size={18} />}
+        </button>
+      </form>
+    </Card>
   );
 }
 
@@ -329,10 +373,13 @@ export default function Feeds({ onBack }) {
                 </Card>
               )}
 
+              <Watch videos={data.videos || []} onChange={(videos) => setData((d) => ({ ...d, videos }))} />
               <FeedChat />
             </div>
           </>
         )}
+        {/* Before the first feed there is no grid yet: the videos still have their place. */}
+        {!f && <Watch videos={data.videos || []} onChange={(videos) => setData((d) => ({ ...d, videos }))} />}
       </div>
     </Page>
   );
