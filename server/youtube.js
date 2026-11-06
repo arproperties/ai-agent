@@ -12,12 +12,14 @@ const API = 'https://www.googleapis.com/youtube/v3';
 const bad = (message, status) => Object.assign(new Error(message), { status });
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
+// The key typed on the page first, else YOUTUBE_API_KEY from .env.
+const envKey = () => String(process.env.YOUTUBE_API_KEY || '').trim();
 async function storedKey() {
   const row = await db.prepare('SELECT youtube_key FROM feed_settings WHERE id = 1').get();
-  return row?.youtube_key ? decrypt(row.youtube_key) : '';
+  return row?.youtube_key ? decrypt(row.youtube_key) : envKey();
 }
 
-export const hasYouTubeKey = async () => !!(await db.prepare("SELECT 1 FROM feed_settings WHERE id = 1 AND youtube_key <> ''").get());
+export const hasYouTubeKey = async () => !!envKey() || !!(await db.prepare("SELECT 1 FROM feed_settings WHERE id = 1 AND youtube_key <> ''").get());
 
 // Google's own words for what went wrong, in plain terms where we know them.
 function googleError(status, body) {
