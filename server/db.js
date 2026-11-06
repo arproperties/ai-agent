@@ -405,6 +405,10 @@ await db.exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS handles_cases BOOLEAN
 // nothing else. case_key is case_number in the form that matches across spellings (caseMatch.js).
 await db.exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS case_number TEXT;
   ALTER TABLE agents ADD COLUMN IF NOT EXISTS case_key TEXT;`);
+// The talking face (client TalkingFace.jsx) the master picked for an agent: its headwear or hair,
+// and a skin tone 0 (light) to 3 (dark). NULL leaves the face Reem picks from the agent's id.
+await db.exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS face_style TEXT;
+  ALTER TABLE agents ADD COLUMN IF NOT EXISTS face_skin INTEGER;`);
 
 // Sending. The mailbox row gains its SMTP side and one switch: can_write. It defaults to
 // false so every connection made before this feature existed stays read-only — write

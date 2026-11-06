@@ -6,6 +6,7 @@ import { CaseBrief, CaseHomeBody } from './CaseHome';
 import Picker from './Picker';
 import { FilesPanel } from './Knowledge';
 import Avatar, { AGENT_ICONS, AGENT_COLORS } from './Avatar';
+import TalkingFace, { STYLES as FACE_STYLES, SKINS as FACE_SKINS } from './TalkingFace';
 
 const field = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const label = 'mb-1.5 block text-xs font-medium tracking-wide text-mute';
@@ -217,6 +218,43 @@ function RulesTab({ agent }) {
   );
 }
 
+const FACE_NAMES = { ghutra: 'Ghutra', shayla: 'Shayla', short: 'Short hair', long: 'Long hair' };
+
+// The face that talks while this agent's replies are read aloud. Nothing picked = Auto, the
+// face Reem chose from the agent's number, which everyone has been seeing so far.
+function FaceField({ f, agentId, onPick }) {
+  const base = { id: agentId, name: f.name, color: f.color };
+  const btn = (on) => `rounded-2xl p-1 transition ${on ? 'ring-2 ring-p1 bg-p1/10' : 'opacity-75 hover:opacity-100'}`;
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-xs font-medium tracking-wide text-mute">FACE · when it reads aloud</span>
+        <button type="button" onClick={() => onPick({ face_style: null, face_skin: null })}
+          className={`rounded-full px-2.5 py-0.5 text-xs transition ${f.face_style == null && f.face_skin == null ? 'bg-p1/20 text-p1' : 'text-mute hover:text-txt'}`}>
+          Auto
+        </button>
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        {FACE_STYLES.map((style) => (
+          <button type="button" key={style} onClick={() => onPick({ face_style: style })} aria-pressed={f.face_style === style}
+            className={`${btn(f.face_style === style)} flex flex-col items-center gap-1`}>
+            <TalkingFace agent={{ ...base, face_style: style, face_skin: f.face_skin }} state="paused" size={64} className="h-auto w-full max-w-16" />
+            <span className="text-[11px] text-mute">{FACE_NAMES[style]}</span>
+          </button>
+        ))}
+      </div>
+      <div className="mt-2.5 flex items-center gap-2.5">
+        <span className="text-xs text-mute">Skin</span>
+        {FACE_SKINS.map(([tone], i) => (
+          <button type="button" key={tone} onClick={() => onPick({ face_skin: i })} aria-label={`Skin tone ${i + 1}`} aria-pressed={f.face_skin === i}
+            style={{ background: tone }}
+            className={`size-6 rounded-full transition ${f.face_skin === i ? 'ring-2 ring-white ring-offset-2 ring-offset-surface' : 'opacity-75 hover:opacity-100'}`} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PersonaTab({ agent, config, onSaved }) {
   const [f, setF] = useState({
     name: agent.name || '', icon: agent.icon || 'sparkles', color: agent.color || 'violet', persona: agent.persona || '',
@@ -225,6 +263,8 @@ function PersonaTab({ agent, config, onSaved }) {
     private: !!agent.private,
     handles_cases: !!agent.handles_cases,
     case_number: agent.case_number || '',
+    face_style: agent.face_style || null,
+    face_skin: agent.face_skin ?? null,
   });
   const [picker, setPicker] = useState(false);
   const [more, setMore] = useState(false);
@@ -316,6 +356,8 @@ function PersonaTab({ agent, config, onSaved }) {
         Every chat about a case goes to {f.name || 'this agent'} and stays with it. Only one agent can have this;
         ticking it here takes it off any other.
       </Toggle>
+
+      <FaceField f={f} agentId={agent.id} onPick={(k) => setF({ ...f, ...k })} />
 
       <button type="button" onClick={() => setMore(!more)} className="flex items-center gap-1 text-xs text-mute hover:text-txt">
         <ChevronDown size={14} className={`transition ${more ? 'rotate-180' : ''}`} /> More options

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, Activity, FileClock, Gavel, ChevronRight, Search, PawPrint, Timer, Plug, DatabaseBackup, Newspaper } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, Activity, FileClock, Gavel, ChevronRight, Search, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper } from 'lucide-react';
 import Icon from './Icon';
 import { CaseTimeSheet } from './CaseRails';
 import { Row, Count } from './NavRow';
@@ -43,7 +43,7 @@ function Group({ title, open, onToggle, count = 0, q = '', children }) {
   );
 }
 
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, inventoryOpen, modules = [], petOn, onPet, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, inventoryOpen, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -156,6 +156,16 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
                 badge={(
                   <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${petOn ? 'bg-p1' : 'bg-white/15'}`}>
                     <span className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-all ${petOn ? 'left-[18px]' : 'left-0.5'}`} />
+                  </span>
+                )} />
+            )}
+            {/* The agent's face talking while a reply is read aloud. Everyone but external users;
+                on until switched off, on this device. */}
+            {onFace && (
+              <Row role="menuitemcheckbox" aria-checked={!!faceOn} icon={<Smile size={17} strokeWidth={1.75} />} label="Talking face" onClick={onFace}
+                badge={(
+                  <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${faceOn ? 'bg-p1' : 'bg-white/15'}`}>
+                    <span className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-all ${faceOn ? 'left-[18px]' : 'left-0.5'}`} />
                   </span>
                 )} />
             )}

@@ -102,6 +102,12 @@ export default function App() {
     try { if (on) localStorage.removeItem('jarvis:pet-on'); else localStorage.setItem('jarvis:pet-on', '1'); } catch { /* private mode */ }
     return !on;
   });
+  // The talking face while a reply is read aloud: on unless switched off (Tools menu), on this device.
+  const [faceOn, setFaceOn] = useState(() => { try { return localStorage.getItem('jarvis:face-off') !== '1'; } catch { return true; } });
+  const toggleFace = () => setFaceOn((on) => {
+    try { if (on) localStorage.setItem('jarvis:face-off', '1'); else localStorage.removeItem('jarvis:face-off'); } catch { /* private mode */ }
+    return !on;
+  });
   const [adding, setAdding] = useState(false); // signing in to another account beside this one
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
@@ -245,7 +251,7 @@ export default function App() {
         <div className="h-full md:w-72">
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
-          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} onRenameConv={renameConv} petOn={petOn} onPet={togglePet}
+          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} onRenameConv={renameConv} petOn={petOn} onPet={togglePet} faceOn={faceOn} onFace={me.external ? undefined : toggleFace}
           expiring={expiring.length} dueTodos={due.todos.length + due.routines.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
           meetingsOpen={panel === 'meetings'} onMeetings={() => { setPanel('meetings'); setDrawer(false); }}
           translateOpen={panel === 'translate'} onTranslate={() => { setPanel('translate'); setDrawer(false); }}
@@ -281,7 +287,7 @@ export default function App() {
           <Chat key={chat.key} user={me} agents={agents} folders={config.folders} dm={dm} conversationId={chat.id} voiceEnabled={config.voice}
             firstRun={convsLoaded && convs.length === 0} expiring={expiring} onOpenFiles={() => setPanel('files')}
             due={due} onDueChanged={loadDue} onOpenLists={() => setPanel('todos')}
-            onConversation={onConversation} onMenu={openMenu} onNewChat={() => openChat(null)} onOpenFeeds={(view) => { setFeedsView(view); setPanel('feeds'); setDrawer(false); }} menuBadge={dm.unread} railHidden={railHidden} draft={chat.draft || ''} onOpenCase={openCase} />
+            onConversation={onConversation} onMenu={openMenu} onNewChat={() => openChat(null)} onOpenFeeds={(view) => { setFeedsView(view); setPanel('feeds'); setDrawer(false); }} menuBadge={dm.unread} railHidden={railHidden} draft={chat.draft || ''} onOpenCase={openCase} faceOn={faceOn && !me.external} />
         ) : (
           // No chat here means no chat header, so carry the menu button ourselves —
           // otherwise there is no way back to the sidebar (or to sign out) on mobile.

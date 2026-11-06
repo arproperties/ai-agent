@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
 import Orb from './Orb';
+import TalkingFace from './TalkingFace';
 import { listenUntilSilence, stopListening, stopSpeaking, speakAndWait, speakAsItArrives, unlockAudio } from '../lib/voice';
 
 // Hands-free mode: listen → answer out loud → listen again, until it is ended.
@@ -18,13 +19,14 @@ const LABEL = {
   idle: 'Starting…',
 };
 
-export default function LiveVoice({ onAsk, onClose, onError }) {
+export default function LiveVoice({ agents = [], faceOn = false, onAsk, onClose, onError }) {
   const [state, setState] = useState('idle');   // listening | thinking | speaking
   const [heard, setHeard] = useState('');       // what it understood, so he can check it
   const [reply, setReply] = useState('');
   const [turns, setTurns] = useState(0);
   const [ending, setEnding] = useState('');     // why the loop stopped
   const [level, setLevel] = useState(0);        // mic loudness, drives the ring
+  const [agentId, setAgentId] = useState(null); // who is answering, for the talking face
   const alive = useRef(true);
   const startedAt = useRef(Date.now());
   // The loop runs once, so it must not capture the first render's onAsk — that
@@ -70,6 +72,7 @@ export default function LiveVoice({ onAsk, onClose, onError }) {
         try {
           answer = await ask.current(said, (soFar, agentId) => {
             setReply(soFar);
+            if (agentId) setAgentId(agentId);
             speech ??= speakAsItArrives(agentId, (s) => {
               if (s === 'speaking') setState('speaking');
             });
@@ -84,6 +87,7 @@ export default function LiveVoice({ onAsk, onClose, onError }) {
         if (!answer?.reply) { if (++silent >= MAX_SILENT) return finish('Ended — no reply.'); continue; }
 
         setReply(answer.reply);
+        if (answer.agentId) setAgentId(answer.agentId);
         setTurns(++count);
         setState('speaking');
         if (speech) {
@@ -125,7 +129,12 @@ export default function LiveVoice({ onAsk, onClose, onError }) {
           {/* the ring grows with his voice, so he can see it is hearing him */}
           <span className="absolute rounded-full border border-p1/40 transition-all duration-75"
             style={{ width: 190 + ring * 70, height: 190 + ring * 70, opacity: 0.25 + ring * 0.75 }} />
-          <Orb state={state === 'thinking' ? 'thinking' : state === 'speaking' ? 'speaking' : 'listening'} className="w-[min(46vw,190px)]" />
+          {/* With the face on, the agent answering looks at you and talks; before the first answer, Reem */}
+          {faceOn ? (
+            <TalkingFace agent={agents.find((a) => a.id === agentId) || agents[0]} state={state === 'idle' ? 'paused' : state} size={190} className="w-[min(46vw,190px)] h-auto" />
+          ) : (
+            <Orb state={state === 'thinking' ? 'thinking' : state === 'speaking' ? 'speaking' : 'listening'} className="w-[min(46vw,190px)]" />
+          )}
         </div>
 
         <p className="text-lg font-medium">{ending || LABEL[state]}</p>

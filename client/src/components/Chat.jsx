@@ -29,6 +29,7 @@ import PdfSheet from './PdfSheet';
 import { lastDrawing, exportAsked } from '../lib/drawing';
 import { Welcome, InstallHint } from './FirstRun';
 import { FileCard, FileViewer, FileDetail, expiry } from './Knowledge';
+import TalkingFace from './TalkingFace';
 import { useCaseTimer, useCaseFiles, useCaseDeadlines, CaseFiles, CaseTimer, CaseDeadlines, shortClock } from './CaseRails';
 
 // Which reply can be shared: one the server has written down. A reply still streaming
@@ -52,7 +53,7 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '', onOpenCase, onOpenFeeds }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '', onOpenCase, onOpenFeeds, faceOn = false }) {
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -575,8 +576,27 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       )}
       </div>
 
+      {/* The agent's face, talking, while one of its replies is read aloud. Tap to pause. */}
+      {faceOn && voice.id && !live && (() => {
+        const agent = byId[messages.find((m) => m.id === voice.id)?.agent_id] || lastAgent;
+        return (
+          <div className="glass absolute right-3 top-[calc(env(safe-area-inset-top)+64px)] z-30 flex flex-col items-center gap-1.5 rounded-3xl p-2.5 pb-2 shadow-xl">
+            <button type="button" onClick={() => say(voice.id)} aria-label={voice.state === 'speaking' ? 'Pause' : 'Carry on'}
+              className="rounded-full transition active:scale-95">
+              <TalkingFace agent={agent} state={voice.state} size={112} />
+            </button>
+            <span className="flex items-center gap-1.5 text-xs text-mute">
+              <span className="max-w-24 truncate">{voice.state === 'loading' ? 'Getting ready…' : voice.state === 'paused' ? 'Paused' : agent?.name || 'Reem'}</span>
+              <button type="button" onClick={stopSpeaking} aria-label="Stop reading" className="grid size-6 place-items-center rounded-full hover:bg-white/10">
+                <Icon name="stop" size={11} />
+              </button>
+            </span>
+          </div>
+        );
+      })()}
+
       {live && (
-        <LiveVoice onAsk={(text, onDelta) => send(text, [], { onDelta })} onClose={() => setLive(false)} onError={flash} />
+        <LiveVoice agents={agents} faceOn={faceOn} onAsk={(text, onDelta) => send(text, [], { onDelta })} onClose={() => setLive(false)} onError={flash} />
       )}
 
       {chatFiles && (

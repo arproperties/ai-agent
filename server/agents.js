@@ -42,7 +42,13 @@ export const agentIn = (b) => ({
   private: b.private === true,
   handles_cases: b.handles_cases === true,
   ...boundCase(b.case_number),
+  // Not picked = null, so the client keeps the face it would have chosen anyway.
+  face_style: FACE_STYLES.includes(b.face_style) ? b.face_style : null,
+  face_skin: [0, 1, 2, 3].includes(b.face_skin) ? b.face_skin : null,
 });
+
+// The looks TalkingFace.jsx can draw.
+const FACE_STYLES = ['ghutra', 'shayla', 'short', 'long'];
 
 /**
  * Sets the one case an agent works on. Its owner (the master) may always; anyone else only

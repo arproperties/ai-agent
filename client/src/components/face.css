@@ -1,0 +1,15 @@
+/* TalkingFace: blinking, a gentle nod while it talks, eyes up while it thinks. */
+.face .face-lids { transform-box: fill-box; transform-origin: top; transform: scaleY(0); animation: face-blink 4.6s infinite; }
+.face .face-head { transform-box: view-box; transform-origin: 100px 170px; }
+.face-speaking .face-head { animation: face-nod 2.4s ease-in-out infinite; }
+.face-thinking .face-look, .face-loading .face-look { transform: translate(2px, -2px); transition: transform .3s; }
+.face-paused .face-head { animation: none; }
+.face-listening .face-head { animation: face-tilt 3s ease-in-out infinite; }
+
+@keyframes face-blink { 0%, 93%, 100% { transform: scaleY(0); } 96% { transform: scaleY(1); } }
+@keyframes face-nod { 0%, 100% { transform: rotate(0) translateY(0); } 30% { transform: rotate(-1.6deg) translateY(-1px); } 65% { transform: rotate(1.4deg) translateY(.5px); } }
+@keyframes face-tilt { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-3deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .face .face-head, .face .face-lids { animation: none; }
+}
