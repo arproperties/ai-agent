@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles, Trash2,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles, Trash2, Settings as Gear,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -91,6 +91,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(openFirst || null); // a renewal's id
   const [starting, setStarting] = useState(null); // a lease to start
+  const [settingsOpen, setSettingsOpen] = useState(false); // the master's settings, in a sheet so they don't sit under the list
   // The Expired tab: every lease that ended unrenewed, or only those ending between two dates.
   const [expired, setExpired] = useState(null);
   const [expiredError, setExpiredError] = useState('');
@@ -135,16 +136,27 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
       Rental Index <ExternalLink size={14} />
     </a>
   );
+  const head = (
+    <div className="flex items-center gap-2">
+      {dld}
+      {data?.master && (
+        <button onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings"
+          className="grid size-9 shrink-0 place-items-center rounded-full border border-stroke text-mute transition hover:text-txt">
+          <Gear size={16} />
+        </button>
+      )}
+    </div>
+  );
 
   return (
-    <Page title="Lease renewals" onBack={onBack} action={dld}>
+    <Page title="Lease renewals" onBack={onBack} action={head}>
       {error ? <div className="pt-6"><Problem text={error} /></div> : !data ? (
         <div className="grid place-items-center pt-16 text-mute"><Loader2 className="animate-spin" /></div>
       ) : (
         <div className="space-y-4 pb-8">
           {!data.inbox && <Problem text="The Tenant care inbox is not connected, so no email can go to a tenant. Connect it under Tenant care." />}
           {!data.saifsys && <Problem text="saifsys is not connected for actions, so renewals cannot be priced or saved." />}
-          {data.settings?.paused && <Problem text="Reem is paused on every lease: staff do each step by hand. The master can turn it back on in Settings below." />}
+          {data.settings?.paused && <Problem text="Reem is paused on every lease: staff do each step by hand. The master can turn it back on in Settings (the gear at the top)." />}
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="glass flex flex-1 items-center gap-2 rounded-xl px-3.5 py-2">
               <Search size={15} className="shrink-0 text-mute" />
@@ -178,8 +190,12 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst }) {
               {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.expired || l.saifsys_renewal || l.saifsys_rejected ? null : setStarting(l))} />)}
             </ul>
           )}
-          {data.master && <Settings s={data.settings} agents={data.agents} inbox={data.inbox} onSaved={load} />}
         </div>
+      )}
+      {settingsOpen && data?.master && (
+        <Sheet title="Settings" icon={<Gear size={18} className="text-mute" />} wide="text" onClose={() => setSettingsOpen(false)}>
+          <Settings s={data.settings} agents={data.agents} inbox={data.inbox} onSaved={() => { load(); setSettingsOpen(false); }} />
+        </Sheet>
       )}
       {starting && <StartSheet lease={starting} onClose={() => setStarting(null)} onDone={(r) => { setStarting(null); load(); if (r?.id) setOpen(r.id); }} />}
     </Page>
@@ -1098,8 +1114,7 @@ function Settings({ s, agents, inbox, onSaved }) {
     setBusy(false);
   };
   return (
-    <div className="mt-6 space-y-3 rounded-3xl border border-stroke bg-white/[0.04] p-4">
-      <p className="font-medium">Settings</p>
+    <div className="space-y-3 pb-2">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <p className="text-sm">Reem runs renewals by itself</p>
