@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles, Trash2, Settings as Gear,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, Users, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles, Trash2, Eye, EyeOff, Settings as Gear,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -984,21 +984,40 @@ function AskAdvisors({ id, agents, busy, onAsk }) {
   );
 }
 
+// Advice someone hid stays hidden on this phone/computer after a reload, so a long
+// timeline doesn't fill up again with views already read.
+const HIDDEN_KEY = 'jarvis:renewal-advice-hidden';
+const hiddenAdvice = () => { try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]')); } catch { return new Set(); } };
+const saveHidden = (id, hide) => {
+  try {
+    const s = hiddenAdvice();
+    if (hide) s.add(id); else s.delete(id);
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify([...s].slice(-500)));
+  } catch { /* storage blocked: hiding still works until reload */ }
+};
+
 /** One advisor's view, and the reply it suggests: opened in Compose to change and send. */
 function Advice({ e, newest, onReply, onRemove }) {
   const a = e.data?.agent || {};
   const reply = e.data?.reply;
   const [openReply, setOpenReply] = useState(false);
+  const [hidden, setHidden] = useState(() => hiddenAdvice().has(e.id));
+  const toggle = () => { saveHidden(e.id, !hidden); setHidden(!hidden); };
   return (
     <li className="relative">
       <span className="absolute -left-11 top-1 rounded-full ring-4 ring-[var(--color-surface)]"><Avatar icon={a.icon} color={a.color} size={36} /></span>
       <div className={`rounded-2xl border p-3.5 ${TINT[a.color] || TINT.violet} ${newest ? 'shadow-lg shadow-black/20' : ''}`}>
         <div className="flex items-start gap-2">
           <p className="min-w-0 flex-1 font-medium leading-snug">{e.title}</p>
+          <button onClick={toggle} title={hidden ? 'Show this advice' : 'Hide this advice'} aria-label={hidden ? 'Show this advice' : 'Hide this advice'}
+            className="-m-1 flex shrink-0 items-center gap-1 rounded-full px-2 py-1.5 text-xs text-mute transition hover:bg-white/10 hover:text-ink">
+            {hidden ? <Eye size={14} /> : <EyeOff size={14} />} {hidden ? 'Show' : 'Hide'}
+          </button>
           {onRemove && <button onClick={() => onRemove(e)} title="Delete this advice" aria-label="Delete this advice"
             className="-m-1 shrink-0 rounded-full p-1.5 text-mute transition hover:bg-white/10 hover:text-bad"><Trash2 size={14} /></button>}
         </div>
         <p className="text-xs text-mute">{e.data?.asked ? `Asked by ${e.by || 'someone'}` : 'On the dispute, by itself'} · {when(e.at)}{newest ? ' · latest' : ''}</p>
+        {!hidden && <>
         {e.data?.ask && <p className="mt-1.5 border-l-2 border-p1/40 pl-2 text-xs italic text-mute">“{e.data.ask}”</p>}
         <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{e.body}</p>
         {reply && (
@@ -1012,6 +1031,7 @@ function Advice({ e, newest, onReply, onRemove }) {
             </div>
           </>
         )}
+        </>}
       </div>
     </li>
   );
