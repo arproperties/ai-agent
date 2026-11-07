@@ -37,7 +37,8 @@
     "pg": "^8.23.0",
     "unpdf": "^1.8.1",
     "web-ifc": "0.0.78",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

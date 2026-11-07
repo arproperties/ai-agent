@@ -5,6 +5,7 @@ import { db } from './db.js';
 import { billAs } from './billing.js';
 import { saveUpload, processDocument } from './files.js';
 import { chatAgents } from './access.js';
+import { sendPush } from './push.js';
 
 // Importing a whole folder or ZIP (a WhatsApp export, say: thousands of files). The browser
 // unpacks it, leaves out what Reem does not read, and sends the rest ten at a time. Each
@@ -82,10 +83,57 @@ async function fileOne(doc) {
 async function worker() {
   while (Date.now() >= pausedUntil) {
     const doc = await claim();
-    if (!doc) return;
+    if (!doc) break;
     // billed to the file's owner, whoever's upload woke the queue
     await billAs({ userId: doc.user_id, job: 'files', note: doc.name }, () => fileOne(doc)).catch((e) => console.error('[imports]', doc.name, e.message));
   }
+  await announceFinished().catch((e) => console.error('[imports] announce', e.message));
+}
+
+// ---------- telling the chat it came from ----------
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** What the chat is told when a Dropbox folder (or any import started from a chat) is done. Plain words: clients read it. */
+export function finishedText({ name, error, total, failed, failedNames = [], skippedNames = [], duplicates, caseName }) {
+  const folder = String(name || '').replace(/^Dropbox:?\s*/, '') || 'your Dropbox folder';
+  if (error) return `I couldn't open that Dropbox link: ${error}. Please check the link and send it again.`;
+  if (!total) return duplicates ? `Everything in "${folder}" was already on your Shelf, so there was nothing new to read.` : `I found nothing I can read in "${folder}".`;
+  const read = total - failed;
+  const lines = [`Your Dropbox files are ready: I've read ${plural(read, 'file')} from "${folder}" and saved them ${caseName ? `in your case folder "${caseName}"` : 'on your Shelf'}. Ask me anything about them.`];
+  if (failed) lines.push(`${plural(failed, 'file')} could not be read: ${failedNames.slice(0, 5).join(', ')}${failed > 5 ? ', …' : ''}.`);
+  // skippedNames come summed up by kind (dropbox.js, skippedSummary): "8,030 .dcm files".
+  if (skippedNames.length) lines.push(`Some files are a kind I can't open, so I left them out: ${skippedNames.slice(0, 5).join(', ')}.`);
+  return lines.join('\n\n');
+}
+
+/**
+ * Imports started from a chat whose last file is done: the chat gets a message and the
+ * person a notification, once. Called whenever the queue runs dry.
+ */
+export async function announceFinished(deps = {}) {
+  const done = await db.prepare(`SELECT i.id, i.user_id, i.name, i.error, i.duplicates, i.skipped_names, i.conversation_id, i.agent_id, c.name AS case_name,
+      COUNT(d.id)::int AS total,
+      COUNT(d.id) FILTER (WHERE d.status = 'error')::int AS failed,
+      COALESCE(json_agg(d.name) FILTER (WHERE d.status = 'error'), '[]') AS failed_names
+    FROM imports i LEFT JOIN documents d ON d.import_id = i.id LEFT JOIN case_folders c ON c.id = i.case_folder_id
+    WHERE i.conversation_id IS NOT NULL AND i.uploaded AND NOT i.notified
+    GROUP BY i.id, c.name
+    HAVING COUNT(d.id) FILTER (WHERE d.status IN ('queued', 'processing')) = 0`).all();
+  for (const imp of done) {
+    // the claim: two workers running dry together tell the chat once
+    const { changes } = await db.prepare('UPDATE imports SET notified = true WHERE id = ? AND NOT notified').run(imp.id);
+    if (!changes) continue;
+    const failedNames = typeof imp.failed_names === 'string' ? JSON.parse(imp.failed_names) : imp.failed_names;
+    const text = finishedText({ ...imp, failedNames, skippedNames: JSON.parse(imp.skipped_names || '[]'), caseName: imp.case_name });
+    await db.prepare(`INSERT INTO messages (conversation_id, agent_id, role, content, files) VALUES (?, ?, 'assistant', ?, '[]')`).run(imp.conversation_id, imp.agent_id, text);
+    await db.prepare('UPDATE conversations SET updated_at = extract(epoch from now()) WHERE id = ?').run(imp.conversation_id);
+    await Promise.resolve((deps.push || sendPush)([imp.user_id], {
+      title: imp.error ? 'Dropbox link' : 'Your Dropbox files are ready',
+      body: text.split('\n')[0], url: `/?chat=${imp.conversation_id}`, tag: `dropbox-${imp.id}`,
+    })).catch(() => {});
+  }
+  return done.length;
 }
 
 /** Start workers up to the limit. Cheap to call often: idle workers find nothing and stop. */

@@ -39,6 +39,9 @@ export const MODULES = [
   { key: 'email', label: 'Email', about: 'Connect their own mailbox and see what Reem has sent from it.', everyone: true },
   // Not a screen: what a chat does with /explain, /breakdown and /explore (server/pictures.js).
   { key: 'pictures', label: 'Pictures', about: 'Start a chat message with /explain, /breakdown or /explore and Reem draws it as a picture. Each picture is paid for.' },
+  // Not a screen: a Dropbox link pasted in a chat is priced, then saved to the Shelf (server/dropbox.js).
+  // Given per person: reading a big folder of scans is paid for.
+  { key: 'dropbox', label: 'Dropbox links', about: 'Paste a Dropbox link in a chat: Reem says what is in it and what reading it costs, then saves every file to their Shelf (into the right case) once they say yes.' },
   // Not a screen either: what a chat does once a case is named in it (server/caseFocus.js).
   { key: 'case_focus', label: 'Primary case', about: 'The first case named in a chat becomes its main case; other cases mentioned later are kept apart as references.', everyone: true },
 ];
