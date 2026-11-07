@@ -188,9 +188,18 @@ export async function nextAsk({ facts, thread, earlier }) {
 }
 
 const STORY = `You write the "what happened" part of a case pack a Dubai landlord will upload to the Rental Dispute Settlement Centre themselves.
+The reader is an RDC officer who knows nothing about this lease: they must understand the dispute in under a minute.
 Answer by filling in the answer tool: {"summary": string}
-- summary: one to three short paragraphs in plain English, in the order things happened, with the dates and figures given.
-- Facts only: who wrote what and when. No opinions, no legal argument, and never whether the rent increase is legal.`;
+- summary: plain English, short sentences, in this shape:
+  1. One sentence: what the two sides disagree about, with both figures (e.g. "The tenant accepts the rent of AED 46,200 but
+     disputes the chiller fee: the landlord asks AED 6,500 a year, the tenant says it should stay at AED 3,500.").
+  2. A blank line, then one short paragraph per email, oldest first, starting with its date: who wrote and what they said or
+     offered, with the figures. Say what each side's position was, not only that an email was sent.
+  3. A blank line, then one sentence on where it stands now.
+- Write amounts as "AED 7,000 + VAT AED 350". Call the sides "the landlord" and "the tenant" (name the tenant once).
+- Facts only, from the emails given. No opinions, no legal argument, never whether the rent or a fee is legal.
+- Never mention Reem, software, systems, drafts, advisors or anything the landlord's team did internally: only what the two
+  sides wrote to each other. An email with no text: say only that it was received on that date.`;
 
 /** The renewal's story in a few neutral paragraphs, for the RDC case pack. */
 export async function caseSummary({ facts, story }) {

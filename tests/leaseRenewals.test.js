@@ -450,6 +450,8 @@ test('the RDC case pack: a PDF of the story and its papers, without the advisors
   assert.match(story, /Email to the tenant: Offer sent · AED 42,000/);
   assert.match(story, /Email from the tenant: Says it is illegal/);
   assert.doesNotMatch(story, /view/, 'the advisors\' views stay ours');
+  assert.match(story, /This is illegal/, 'the tenant\'s own words, not just a title');
+  assert.doesNotMatch(story, /Reem/, 'Reem\'s own workings stay out of a paper for RDC');
 
   // A summary that cannot be written still leaves the timeline and the list of papers.
   R.useForTests({ caseSummary: async () => { throw new Error('down'); } });

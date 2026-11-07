@@ -1093,6 +1093,7 @@ export async function askAdvisors(r, { user = null, ask = '', agentIds = null } 
 
 // ---------- the RDC case pack ----------
 
+const INTERNAL_STEP = /Reem|Taken over|Read, no reply needed/i;
 const KIND = { out: 'Email to the tenant', in: 'Email from the tenant', step: 'Step', papers: 'Papers checked' };
 
 /**
@@ -1102,11 +1103,20 @@ const KIND = { out: 'Email to the tenant', in: 'Email from the tenant', step: 'S
  */
 export async function casePack(r) {
   const s = await settings();
-  const events = await db.prepare(`SELECT id, kind, title, subject, status, at FROM lease_renewal_events WHERE renewal_id = ? AND kind <> 'advice' ORDER BY at, id`).all(r.id);
+  const all = await db.prepare(`SELECT id, kind, title, subject, body, status, at FROM lease_renewal_events WHERE renewal_id = ? AND kind <> 'advice' ORDER BY at, id`).all(r.id);
+  // Reem's own workings ("Reem stopped: it could not read the tenant's email", "Taken over")
+  // mean nothing to RDC and read like a fault on our side, so the pack leaves them out.
+  const events = all.filter((e) => !(e.kind === 'step' && INTERNAL_STEP.test(e.title || '')));
   const files = await db.prepare('SELECT event_id, name FROM lease_renewal_files WHERE renewal_id = ? ORDER BY id').all(r.id);
   const on = (e) => dubaiDate(Number(e.at) * 1000);
-  const facts = factsOf(r, s);
-  const story = events.map((e) => `${on(e)}: ${KIND[e.kind] || e.kind}: ${e.title}`).join('\n');
+  const facts = `${factsOf(r, s)}${r.dispute ? `\nWhat the tenant disputes: ${r.dispute}` : ''}`;
+  // The emails themselves, not just their titles: from "Reply sent" alone the summary could
+  // not say what was offered or argued, and guessed (2026-11-07, PARK PLACE 203).
+  const story = events.map((e) => {
+    const head = `${on(e)}: ${KIND[e.kind] || e.kind}: ${e.title}`;
+    const email = e.kind === 'in' || (e.kind === 'out' && e.status === 'sent');
+    return email && e.body ? `${head}\n${String(e.body).slice(0, 3000)}` : head;
+  }).join('\n\n');
   const summary = await D.caseSummary({ facts, story }).catch((err) => { console.warn('[lease renewals] case summary:', err.message); return ''; });
 
   const papers = [];
