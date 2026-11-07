@@ -189,22 +189,29 @@ export async function nextAsk({ facts, thread, earlier }) {
 
 const STORY = `You write the "what happened" part of a case pack a Dubai landlord will upload to the Rental Dispute Settlement Centre themselves.
 The reader is an RDC officer who knows nothing about this lease: they must understand the dispute in under a minute.
-Answer by filling in the answer tool: {"summary": string}
-- summary: plain English, short sentences, in this shape:
-  1. One sentence: what the two sides disagree about, with both figures (e.g. "The tenant accepts the rent of AED 46,200 but
-     disputes the chiller fee: the landlord asks AED 6,500 a year, the tenant says it should stay at AED 3,500.").
-  2. A blank line, then one short paragraph per email, oldest first, starting with its date: who wrote and what they said or
-     offered, with the figures. Say what each side's position was, not only that an email was sent.
-  3. A blank line, then one sentence on where it stands now.
-- Write amounts as "AED 7,000 + VAT AED 350". Call the sides "the landlord" and "the tenant" (name the tenant once).
+Paragraphs were still too hard to follow (2026-11-07), so you give short labelled parts that are laid out as a list and a table.
+Answer by filling in the answer tool: {"issue": string, "landlord": string, "tenant": string, "now": string, "steps": [{"date": string, "from": string, "said": string}]}
+- issue: one short sentence, what they disagree about, e.g. "The chiller fee. The tenant accepts the rent of AED 46,200."
+- landlord: the landlord's latest offer on that point, a few words, e.g. "AED 5,000 a year + VAT".
+- tenant: the tenant's position on it, a few words, e.g. "AED 3,500 a year + VAT, as now".
+- now: one short sentence on where it stands, e.g. "No agreement yet."
+- steps: one per email, oldest first. date as given (YYYY-MM-DD); from "Landlord" or "Tenant"; said: what they offered or
+  argued, at most 15 words, figures first, e.g. "Chiller fee lowered to AED 6,500 + VAT. Rent unchanged." Leave out what
+  every offer repeats (the period, the cheques, the Ejari fee) unless it changed.
+- Plain words a person reads in one go. Write "+ VAT", not the VAT amount. Call the sides "the landlord" and "the tenant".
 - Facts only, from the emails given. No opinions, no legal argument, never whether the rent or a fee is legal.
 - Never mention Reem, software, systems, drafts, advisors or anything the landlord's team did internally: only what the two
-  sides wrote to each other. An email with no text: say only that it was received on that date.`;
+  sides wrote to each other. An email with no text: said "Email received."`;
 
-/** The renewal's story in a few neutral paragraphs, for the RDC case pack. */
+/** The renewal's story as short labelled parts and one line per email, for the RDC case pack. */
 export async function caseSummary({ facts, story }) {
-  const out = await askJson(STORY, [{ type: 'text', text: `Facts of this renewal:\n${facts}\n\nWhat happened, oldest first:\n${story}` }], S({ summary: str }));
-  return String(out.summary || '').trim().slice(0, 4000);
+  const out = await askJson(STORY, [{ type: 'text', text: `Facts of this renewal:\n${facts}\n\nWhat happened, oldest first:\n${story}` }],
+    S({ issue: str, landlord: str, tenant: str, now: str, steps: { type: 'array', items: S({ date: str, from: str, said: str }) } }));
+  const t = (x, n = 300) => String(x || '').replace(/\s+/g, ' ').trim().slice(0, n);
+  return {
+    issue: t(out.issue), landlord: t(out.landlord), tenant: t(out.tenant), now: t(out.now),
+    steps: (Array.isArray(out.steps) ? out.steps : []).slice(0, 40).map((s) => ({ date: t(s.date, 20), from: t(s.from, 20), said: t(s.said, 200) })).filter((s) => s.said),
+  };
 }
 
 const REWRITE = `You are the building management team of a Dubai landlord, writing to a tenant about the renewal of their lease.

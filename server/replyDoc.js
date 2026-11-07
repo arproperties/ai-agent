@@ -281,6 +281,13 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     boldItalic: await pdf.embedFont(StandardFonts.HelveticaBoldOblique),
     mono: await pdf.embedFont(StandardFonts.Courier),
   };
+  // pdf-lib measures a word with kerning (AT, RK… pulled together) but draws it without, so
+  // "VAT" came out wider than measured and swallowed the space after it: "VATAED 350",
+  // "PARKPLACE" in the RDC case pack (2026-11-07). Measure letter by letter, as it is drawn.
+  for (const f of Object.values(F)) {
+    const kerned = f.widthOfTextAtSize.bind(f);
+    f.widthOfTextAtSize = (text, size) => [...String(text)].reduce((w, c) => w + kerned(c, size), 0);
+  }
   const fontOf = (r) => (r.code ? F.mono : r.bold && r.italic ? F.boldItalic : r.bold ? F.bold : r.italic ? F.italic : F.regular);
   // Arabic is only embedded when there is some; the name is fixed so the same reply still makes the same bytes.
   let A = null;

@@ -438,7 +438,7 @@ test('the RDC case pack: a PDF of the story and its papers, without the advisors
   let story = null;
   R.useForTests({
     advise: async () => ({ view: 'SECRET ADVICE', reply: null }),
-    caseSummary: async (x) => { story = x.story; return 'On 15 July 2026 we offered a renewal.'; },
+    caseSummary: async (x) => { story = x.story; return { issue: 'The rent increase.', landlord: 'AED 42,000', tenant: 'Says it is illegal', now: 'No agreement yet.', steps: [{ date: '2026-07-15', from: 'Landlord', said: 'Offered AED 42,000.' }] }; },
   });
   const r = await start(boss, 42000);
   await arrives({ text: 'This is illegal' });

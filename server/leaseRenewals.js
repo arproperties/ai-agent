@@ -1117,7 +1117,17 @@ export async function casePack(r) {
     const email = e.kind === 'in' || (e.kind === 'out' && e.status === 'sent');
     return email && e.body ? `${head}\n${String(e.body).slice(0, 3000)}` : head;
   }).join('\n\n');
-  const summary = await D.caseSummary({ facts, story }).catch((err) => { console.warn('[lease renewals] case summary:', err.message); return ''; });
+  const summary = await D.caseSummary({ facts, story }).catch((err) => { console.warn('[lease renewals] case summary:', err.message); return null; });
+  // Short labelled lines and one table row per email: paragraphs, even true ones, were too
+  // hard to follow (the user, 2026-11-07).
+  const cell = (x) => String(x || '').replace(/\|/g, '/');
+  const dated = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d) ? longDate(d) : d);
+  const inShort = summary ? [
+    ['The dispute', summary.issue], ['Landlord\'s latest offer', summary.landlord], ['Tenant\'s position', summary.tenant], ['Where it stands', summary.now],
+  ].filter(([, v]) => v).map(([k, v]) => `- **${k}:** ${v}`) : [];
+  const steps = summary?.steps?.length
+    ? ['| Date | From | What they said |', '| --- | --- | --- |', ...summary.steps.map((x) => `| ${cell(dated(x.date))} | ${cell(x.from)} | ${cell(x.said)} |`)]
+    : [];
 
   const papers = [];
   for (const e of events) {
@@ -1130,11 +1140,13 @@ export async function casePack(r) {
     ...(r.lease.ejari ? [`**Ejari:** ${r.lease.ejari}  `] : []),
     `**Current contract:** ${longDate(r.lease.start_date)} to ${longDate(r.lease.end_date)}, ${aed(r.lease.annual_rent)} a year  `,
     ...(r.offer ? [`**Renewal rent offered:** ${aed(r.offer)} a year${r.rent_source?.kind === 'rera_index' || r.rent_source?.kind === 'dld_api' ? ' (RERA Rental Index)' : ''}  `] : []),
-    ...(r.tenant_offer ? [`**Rent the tenant asked for:** ${aed(r.tenant_offer)} a year  `] : []),
+    ...(r.tenant_offer && r.tenant_offer !== r.offer ? [`**Rent the tenant asked for:** ${aed(r.tenant_offer)} a year  `] : []),
     ...(r.agreed ? [`**Rent agreed:** ${aed(r.agreed)} a year  `] : []),
     ...(r.dispute ? [`**What the tenant disputes:** ${r.dispute}`] : []), '',
-    ...(summary ? ['## What happened', '', summary, ''] : []),
-    '## Timeline', '', ...events.map((e) => `- **${on(e)}** ${KIND[e.kind] || e.kind}: ${e.title}`), '',
+    ...(inShort.length ? ['## In short', '', ...inShort, ''] : []),
+    // The table says it all; the bare timeline only stands in when there is no table.
+    ...(steps.length ? ['## What each side wrote', '', ...steps, '']
+      : ['## Timeline', '', ...events.map((e) => `- **${on(e)}** ${KIND[e.kind] || e.kind}: ${e.title}`), '']),
     '## Emails and papers', '', ...(papers.length ? papers.map((p, i) => `${i + 1}. ${p}`) : ['None yet.']),
   ].join('\n');
   return renderPdf({ title: `RDC case pack: ${r.lease.building}, Unit ${r.lease.unit}`, markdown, date: new Date(D.now()) });
