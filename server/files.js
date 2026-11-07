@@ -16,6 +16,24 @@ import { keepText } from './copies.js';
 
 const UPLOAD_DIR = `${DATA_DIR}/uploads`;
 
+/**
+ * The JSON object in a model's reply. A name written with quotes in it (Javied "Jeff" Akhtar)
+ * came back copied into the summary unescaped, and the file failed to file every time it was
+ * tried. Such a value is mended line by line: each "key": "value" line keeps its outer quotes
+ * and has the ones inside escaped.
+ */
+export function looseJson(out) {
+  const raw = String(out ?? '').match(/\{[\s\S]*\}/)?.[0];
+  if (!raw) throw new Error('The reply had no JSON in it');
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    const mended = raw.split('\n').map((line) => line.replace(/^(\s*\{?\s*"[\w-]+"\s*:\s*")(.*)("\s*,?\s*\}?\s*)$/,
+      (all, head, body, tail) => head + body.replace(/\\?"/g, '\\"') + tail)).join('\n');
+    try { return JSON.parse(mended); } catch { throw e; }
+  }
+}
+
 export const fileName = (f) => Buffer.from(f.originalname, 'latin1').toString('utf8'); // multer gives latin1
 export const isImage = (f) => IMAGE_TYPES.includes(f.mimetype);
 // Browsers are inconsistent about video types (a .mov can arrive as video/quicktime, as
@@ -129,7 +147,7 @@ export async function findCompany(name, text, companies = []) {
     maxTokens: 100,
     system: `Reply with ONLY JSON: {"company": "<${COMPANY_RULE}>"}${knownCompanies(companies)}`,
   });
-  return pickCompany(JSON.parse(out.match(/\{[\s\S]*\}/)[0]).company, companies);
+  return pickCompany(looseJson(out).company, companies);
 }
 
 /** Just the expiry, for files filed before expiries were recorded. */
@@ -139,7 +157,7 @@ export async function findExpiry(name, text) {
     system: `Reply with ONLY JSON: {"expires": "<${EXPIRY_RULE}>"}
 ${EXPIRY_GUIDE} UAE documents write dates as DD/MM/YYYY.`,
   });
-  const d = JSON.parse(out.match(/\{[\s\S]*\}/)[0]);
+  const d = looseJson(out);
   return /^\d{4}-\d{2}-\d{2}$/.test(d.expires) ? d.expires : null;
 }
 
@@ -315,7 +333,7 @@ Photos and videos of people, places or things with no document content go in "Ph
 A first line "Sent with the words: ..." is what the user said as they sent it. When it says what the file is for (a project, a building, a person), put that in the summary and the tags. It is not part of the document.
 ${EXPIRY_GUIDE}${knownCompanies(companies)}${team}${kindsPrompt(kinds || {})}`,
   });
-  const d = JSON.parse(out.match(/\{[\s\S]*\}/)[0]);
+  const d = looseJson(out);
   // The category comes from the type, never from the model; and only the link its
   // category asks for is kept.
   const type = (kinds?.types || []).find((t) => typeof d.type_id !== 'boolean' && String(t.id) === String(d.type_id ?? '').trim()) || null;
