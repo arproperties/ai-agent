@@ -2350,6 +2350,15 @@ await db.exec(`
     created_at BIGINT DEFAULT ${NOW}
   );
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS case_folder_id INTEGER REFERENCES case_folders(id) ON DELETE SET NULL;
+  -- An import started from a chat (a Dropbox link, dropbox.js): that chat is told when the last
+  -- file is read (imports.js, announceFinished). error is a link that could not be fetched;
+  -- skipped_names the files Reem cannot read, named in that message.
+  ALTER TABLE imports ADD COLUMN IF NOT EXISTS conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL;
+  ALTER TABLE imports ADD COLUMN IF NOT EXISTS agent_id INTEGER REFERENCES agents(id) ON DELETE SET NULL;
+  ALTER TABLE imports ADD COLUMN IF NOT EXISTS case_folder_id INTEGER REFERENCES case_folders(id) ON DELETE SET NULL;
+  ALTER TABLE imports ADD COLUMN IF NOT EXISTS notified BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE imports ADD COLUMN IF NOT EXISTS error TEXT;
+  ALTER TABLE imports ADD COLUMN IF NOT EXISTS skipped_names TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS case_made BOOLEAN NOT NULL DEFAULT false;
   -- The emails the user unticked on Save, as [{ mail_key, message_id }] only (no content),
   -- so a later update never brings them back.

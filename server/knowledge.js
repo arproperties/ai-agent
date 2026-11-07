@@ -11,6 +11,9 @@ import { isMaster } from './access.js';
 import { EMBED_MODEL } from './config.js';
 import { isDrawing, readDrawing } from './dwg.js';
 import { isIfc, isRevit, ifcHeader, readIfc, REVIT_HELP } from './ifc.js';
+import { pdfTextLayer, scrambledArabic } from './pdfText.js';
+
+export { pdfTextLayer, scrambledArabic };
 
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 export const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v', 'video/3gpp'];
@@ -37,39 +40,16 @@ export async function extractText({ buffer, mimetype, originalname }, { onProgre
   throw new Error(`Unsupported file type: ${originalname}`);
 }
 
-/**
- * A PDF's own text and page count, and whether Claude has to read its pages instead: a scan
- * is page images with little or no text layer, and a court PDF carries one that reads out
- * jumbled. Local and free - nothing is sent anywhere to decide.
- */
-export async function pdfTextLayer(buffer) {
-  const { extractText: pdfText, getDocumentProxy } = await import('unpdf');
-  const pdf = await getDocumentProxy(new Uint8Array(buffer));
-  const { text } = await pdfText(pdf, { mergePages: true });
-  const scanned = text.replace(/\s+/g, '').length < 40 * pdf.numPages;
-  const scrambled = !scanned && scrambledArabic(text);
-  return { text, pages: pdf.numPages, readPages: scanned || scrambled, why: scanned ? 'scanned' : scrambled ? 'court Arabic' : null };
-}
 
-/**
- * Arabic stored as display shapes in visual order, the way Dubai Courts and other court
- * systems write their PDFs. The text layer is there, but read out it comes back with the
- * letters reversed and split apart, and an agent working from it misreads names, figures
- * and orders. Ordinary Arabic text uses the base letters; these use the presentation forms.
- */
-export function scrambledArabic(text) {
-  const forms = (text.match(/[\uFB50-\uFDFF\uFE70-\uFEFF]/g) || []).length;
-  const arabic = (text.match(/[\u0600-\u06FF]/g) || []).length;
-  return forms >= 100 && forms >= 0.3 * (forms + arabic);
-}
 
 // Every page read is sent to Claude as a picture, so pages are what cost. They go a few at a
 // time: a dense Arabic court page is a couple of thousand words of transcription, and one call
 // for the whole document ran out of room and dropped its last pages without a word. The
 // first few are read first: a drawing set is recognised there and the rest is never sent.
+// No cap on pages: a scanned court bundle runs past 100 pages and is wanted whole. A Dropbox
+// link says its price before anything is read (dropbox.js).
 export const FIRST_LOOK = 4;
 const PAGES_PER_READ = 4;
-const MAX_PAGES = 100;
 const DRAWING_SET = 'DRAWING SET';
 const TRANSCRIBE = 'Transcribe all text in these pages exactly and completely, keeping Arabic and English as written, in reading order. ' +
   'Leave nothing out: every line, number, date, name, amount and table cell. Use Markdown for headings and tables. ' +
@@ -116,8 +96,19 @@ const pageMark = (n) => `--- Page ${n} ---`;
  */
 export async function readPages(buffer, from, to, total, { extra = '', read = readCall } = {}) {
   const span = to - from === 1 ? `page ${from + 1}` : `pages ${from + 1}-${to}`;
-  const { text, full } = await read(await pdfPages(buffer, from, to),
-    `These are ${span} of a ${total}-page document. Start each page with a line "${pageMark('n')}" using its page number (${from + 1} is the first here). ${extra}${TRANSCRIBE}`);
+  let got;
+  try {
+    got = await read(await pdfPages(buffer, from, to),
+      `These are ${span} of a ${total}-page document. Start each page with a line "${pageMark('n')}" using its page number (${from + 1} is the first here). ${extra}${TRANSCRIBE}`);
+  } catch (e) {
+    // Claude refuses to copy out some pages (graphic injury photos in a medical record did
+    // this) and the whole 4-page reading comes back refused. One page at a time keeps the
+    // rest; a page refused on its own is marked and passed over, not the whole file lost.
+    if (!/content filtering/i.test(e.message)) throw e;
+    if (to - from === 1) return `${pageMark(from + 1)}\n[This page could not be read.]`;
+    got = { full: false };
+  }
+  const { text, full } = got;
   if (full) return text.trim();
   if (to - from > 1) {
     const one = [];
@@ -142,7 +133,6 @@ async function readCall(pdf, prompt) {
 }
 
 export async function readPdfPages(buffer, pages, { name = 'the PDF', onProgress, read } = {}) {
-  if (pages > MAX_PAGES) throw new Error(`This PDF has ${pages} pages to read page by page; the limit is ${MAX_PAGES}`);
   const step = (from) => onProgress?.(pages > PAGES_PER_READ
     ? `Reading ${name}, page ${from + 1}-${Math.min(from + PAGES_PER_READ, pages)} of ${pages}…`
     : `Reading ${name}…`);
