@@ -2876,3 +2876,45 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_yt_history_user ON yt_history(user_id, watched_at DESC);
 `);
+
+// Reem's browser (server/browser/): the master's switches, each person's saved logins and
+// their signed-in cookies (both encrypted), the jobs, and what Reem learned about each site.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS browser_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    data JSONB NOT NULL DEFAULT '{}'
+  );
+  CREATE TABLE IF NOT EXISTS browser_logins (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    host TEXT NOT NULL,
+    username TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    created_at BIGINT NOT NULL DEFAULT ${NOW},
+    UNIQUE (user_id, host, username)
+  );
+  CREATE TABLE IF NOT EXISTS browser_sessions (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    state TEXT NOT NULL,
+    updated_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS browser_tasks (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER,
+    status TEXT NOT NULL,
+    goal TEXT,
+    url TEXT,
+    steps INTEGER NOT NULL DEFAULT 0,
+    note TEXT,
+    created_at BIGINT NOT NULL DEFAULT ${NOW},
+    updated_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_browser_tasks_user ON browser_tasks(user_id, status);
+  CREATE TABLE IF NOT EXISTS browser_site_notes (
+    host TEXT PRIMARY KEY,
+    notes TEXT NOT NULL,
+    updated_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+`);

@@ -324,6 +324,41 @@ body::after, .sky::after {
 @keyframes rise { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
 .rise { animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 
+/* ---------- Reem's browser card (BrowserCard.jsx) ---------- */
+/* While Reem works: a light runs round the card's edge. */
+@property --rb-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+@keyframes rb-turn { to { --rb-angle: 360deg; } }
+.rb-glow { position: relative; isolation: isolate; }
+.rb-glow::before {
+  content: ''; position: absolute; inset: -1px; z-index: -1; border-radius: inherit; padding: 1.5px;
+  background: conic-gradient(from var(--rb-angle), transparent 0deg, var(--color-p1) 70deg, var(--color-p2) 140deg, var(--color-p3) 210deg, transparent 280deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: rb-turn 3.2s linear infinite;
+}
+.rb-glow.rb-wait::before { background: conic-gradient(from var(--rb-angle), transparent, var(--color-warn), transparent 60%, var(--color-warn), transparent); animation-duration: 2.2s; }
+/* The status words shimmer while something is happening. */
+@keyframes rb-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.rb-shimmer {
+  background: linear-gradient(90deg, var(--color-mute) 35%, var(--color-txt) 50%, var(--color-mute) 65%) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: rb-shimmer 2.4s linear infinite;
+}
+/* A soft light passes down the page while Reem reads it. */
+@keyframes rb-scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(400%); } }
+.rb-scan { background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--color-p1) 18%, transparent), transparent); animation: rb-scan 2.6s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+/* A step arriving in the list, a question arriving, the tick of a finished job. */
+@keyframes rb-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.rb-in { animation: rb-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes rb-drop { from { opacity: 0; transform: translateY(-8px) scale(0.98); max-height: 0; } to { opacity: 1; transform: none; max-height: 240px; } }
+.rb-drop { animation: rb-drop 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; overflow: hidden; }
+@keyframes rb-pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.15); opacity: 1; } 100% { transform: scale(1); } }
+.rb-pop { animation: rb-pop 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes rb-breathe { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-warn) 35%, transparent); } 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-warn) 0%, transparent); } }
+.rb-breathe { animation: rb-breathe 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .rb-glow::before, .rb-shimmer, .rb-scan, .rb-breathe { animation: none; }
+  .rb-shimmer { color: var(--color-mute); background: none; }
+}
+
 /* ---------- Markdown in replies ---------- */
 .md > * + * { margin-top: 0.7em; }
 .md h1, .md h2, .md h3 { font-weight: 600; line-height: 1.3; }

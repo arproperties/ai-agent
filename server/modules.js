@@ -37,6 +37,8 @@ export const MODULES = [
   { key: 'attendance', label: 'Attendance', about: 'Who worked which day, read from the teams\' WhatsApp group, sheets and photos, and checked person by person each pay period (26th to 25th).', company: true },
   { key: 'memory', label: 'Memory', about: 'See and remove what Reem remembers about them.', everyone: true },
   { key: 'email', label: 'Email', about: 'Connect their own mailbox and see what Reem has sent from it.', everyone: true },
+  // Not a screen: what a chat does on websites (server/browser/), plus their logins in Settings → Browser.
+  { key: 'browser', label: 'Browser', about: 'Reem opens websites and does the job for them (logs in with their saved login, fills forms, downloads) while they watch, and asks before anything is submitted, paid, sent or deleted.', company: true },
   // Not a screen: what a chat does with /explain, /breakdown and /explore (server/pictures.js).
   { key: 'pictures', label: 'Pictures', about: 'Start a chat message with /explain, /breakdown or /explore and Reem draws it as a picture. Each picture is paid for.' },
   // Not a screen either: what a chat does once a case is named in it (server/caseFocus.js).

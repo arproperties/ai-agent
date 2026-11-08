@@ -36,6 +36,7 @@ import { AUTO_MODEL, ADVISOR_MODEL, MASTER_MODEL } from './config.js';
 import { addressPrompt, addressKit, loadAddresses } from './addressBook.js';
 import { lessonKit, lessonsFor, lessonsBlock } from './lessons.js';
 import { youtubeAsk, youtubeTurn } from './youtubeChat.js';
+import { browserKit } from './browser/kit.js';
 
 // Chars of attached documents sent to the agent on the turn they arrive, shared between the
 // files. The agent's model costs several times the filing model, and the whole turn is re-sent
@@ -46,6 +47,7 @@ const MIN_INLINE = 4000;
 // Rounds of tool use one message may take. Searching the Shelf a few ways and opening a
 // dozen files for a case history takes ten or so; eight was not enough.
 const MAX_ROUNDS = 16;
+const BROWSER_ROUNDS = 40; // a website job: each round is one look or one batch of clicks
 export const inlineShare = (files) => Math.max(MIN_INLINE, Math.floor(INLINE_BUDGET / Math.max(1, files)));
 
 // Server-side web search, run by Anthropic. Haiku 4.5 takes the basic tool version; newer models the newer one.
@@ -641,6 +643,8 @@ export async function chat(req, res) {
   const saifsysAct = await saifsysActionKit(user, { conversationId: convId, onCard: (b) => send('arsBooking', b) });
   // Legal cases with their saifsys leases, read only: for whoever has the Legal cases module.
   const legal = await legalKit(user);
+  // Websites, worked in Reem's browser while the person watches: with the Browser module, while the master has it on.
+  const browser = await browserKit(user, { conversationId: convId, onCard: (t) => send('browser', t) });
   // What the reply carries: pictures drawn for it, and saved files the agent showed.
   // Both go out on the 'picture' event, which sets the reply's files on screen.
   const pictures = [];
@@ -671,7 +675,7 @@ export async function chat(req, res) {
     // Their own case folders, from their own inbox: for someone from outside the company only.
     ...(external ? [await caseKit(user, { conversationId: convId, onCard: (c) => send('caseFolder', c) })] : []),
     await noticeKit(user, { conversationId: convId, onCard: (c) => send('tenantNotice', c) }), // only with Tenant notices
-    ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(legal ? [legal] : []), ...(email ? [email] : [])];
+    ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(legal ? [legal] : []), ...(email ? [email] : []), ...(browser ? [browser] : [])];
   // A picture asked for in their own words. It is hung on this reply; its own words are
   // what the reply says if the agent adds none.
   let caption = '';
@@ -719,7 +723,9 @@ export async function chat(req, res) {
     const { model, auto } = chatModel(user, agent);
     if (mailbox) await loadAddresses(); // the master may have added one since the last message
     const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto, focus, await lessonsFor(agent), pinned);
-    for (let turn = 0; turn < MAX_ROUNDS; turn++) {
+    // A job on a website is many small steps: once the browser is used, the turn gets more rounds.
+    let rounds = MAX_ROUNDS;
+    for (let turn = 0; turn < rounds; turn++) {
       stream = claude.beta.messages.stream({
         model,
         max_tokens: 16000,
@@ -728,8 +734,8 @@ export async function chat(req, res) {
         tools: [webSearch(model), webFetch(model), ...(auto ? [advisor] : []), ...kits.flatMap((k) => k.definitions)],
         // The last round has to be the answer: a case history once spent every round
         // searching and reading, and the person got nothing back at all.
-        ...(turn === MAX_ROUNDS - 1 ? { tool_choice: { type: 'none' } } : {}),
-        messages: turn === MAX_ROUNDS - 1 ? lastRound(withCacheMark(convo)) : turn ? withCacheMark(convo) : convo,
+        ...(turn === rounds - 1 ? { tool_choice: { type: 'none' } } : {}),
+        messages: turn === rounds - 1 ? lastRound(withCacheMark(convo)) : turn ? withCacheMark(convo) : convo,
       });
       stream.on('streamEvent', (ev) => {
         if (ev.type !== 'content_block_start') return;
@@ -774,16 +780,17 @@ export async function chat(req, res) {
       if (msg.stop_reason === 'tool_use') {
         convo.push({ role: 'assistant', content: msg.content });
         const calls = msg.content.filter((b) => b.type === 'tool_use');
+        if (calls.some((b) => b.name.startsWith('browser_'))) rounds = Math.max(rounds, BROWSER_ROUNDS);
         // An unknown name cannot happen — the model only sees tools we listed — but if it
         // did, the first kit answers with "Unknown tool" rather than the turn dying here.
         const results = await Promise.all(calls.map((b) => (kitFor(b.name) ?? kits[0]).run(b)));
         calls.forEach((b, i) => { if (!results[i]?.is_error) ran.add(b.name); });
         convo.push({ role: 'user', content: results });
-        if (turn === MAX_ROUNDS - 2) cutShort = true; // the next round is the last one (OUT_OF_ROUNDS)
+        if (turn === rounds - 2) cutShort = true; // the next round is the last one (OUT_OF_ROUNDS)
         continue;
       }
       // "Draft is ready" with no draft made (claims.js): asked once to do it or say so.
-      const missing = !checked && msg.stop_reason === 'end_turn' && turn < MAX_ROUNDS - 1 ? unbacked(reply, ran) : [];
+      const missing = !checked && msg.stop_reason === 'end_turn' && turn < rounds - 1 ? unbacked(reply, ran) : [];
       if (missing.length) {
         checked = true;
         convo.push({ role: 'assistant', content: msg.content });
