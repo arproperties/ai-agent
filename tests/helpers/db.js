@@ -31,6 +31,7 @@ const { db, tx, closeDb } = await import('../../server/db.js');
 export { db, tx, closeDb };
 
 const TABLES = [
+  'browser_settings', 'browser_logins', 'browser_sessions', 'browser_tasks', 'browser_site_notes',
   'users', 'sessions', 'password_resets', 'agents', 'agent_assignments', 'conversations', 'messages',
   'imports', 'documents', 'chunks', 'memories', 'memory_reviews', 'outlook_accounts', 'imap_accounts', 'email_drafts', 'email_action_log',
   'dm_groups', 'dm_chats', 'dm_members', 'dm_messages', 'dm_shared_replies', 'error_log', 'todos', 'routines', 'routine_completions',
