@@ -9,8 +9,6 @@ import Message from './Message';
 import DraftCard from './DraftCard';
 import TeamReminderCard, { ReminderPhotos } from './TeamReminderCard';
 import ResponsibilityCard from './ResponsibilityCard';
-import InventoryCard from './InventoryCard';
-import BookingCard from './BookingCard';
 import { usePush } from './Notifications';
 import { permission } from '../lib/push';
 import Composer from './Composer';
@@ -60,8 +58,6 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [mailbox, setMailbox] = useState(null); // the address a draft would be sent from
   const [reminders, setReminders] = useState([]); // reminders for other people got ready in this chat
   const [duties, setDuties] = useState([]); // responsibility changes got ready in this chat (master only)
-  const [stock, setStock] = useState([]); // inventory items got ready in this chat, waiting for Add
-  const [bookings, setBookings] = useState([]); // ARS bookings got ready in this chat, waiting for Create
   const [suggested, setSuggested] = useState([]); // reminders Riley spotted, waiting for a yes or no
   const push = usePush();
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
@@ -88,8 +84,6 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       api.get(`/email/drafts?conversation=${conversationId}`).then((r) => setDrafts(r.drafts.slice().reverse())).catch(() => {});
       api.get(`/team-reminders?conversation=${conversationId}`).then(setReminders).catch(() => {});
       if (user.role === 'master') api.get(`/responsibilities/proposals?conversation=${conversationId}`).then(setDuties).catch(() => {});
-      api.get(`/saifsys/ars/bookings?conversation=${conversationId}`).then(setBookings).catch(() => {});
-      api.get(`/inventory/proposals?conversation=${conversationId}`).then(setStock).catch(() => {});
     }
     api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
     // Only on the first screen, where they are shown. The server decides whether it is
@@ -180,8 +174,6 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           }
           else if (event === 'teamReminder') { acted = true; setReminders((rs) => [...rs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'responsibility') { acted = true; setDuties((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
-          else if (event === 'inventoryAdd') { acted = true; setStock((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
-          else if (event === 'arsBooking') { acted = true; setBookings((bs) => [...bs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'draft') { acted = true; setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'delta') {
             if (!reply) setOrb('speaking');
@@ -418,14 +410,6 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             {duties.map((p) => (
               <ResponsibilityCard key={p.id} proposal={p}
                 onChanged={(u) => setDuties((ps) => ps.map((x) => (x.id === u.id ? u : x)))} />
-            ))}
-            {stock.map((p) => (
-              <InventoryCard key={p.id} proposal={p}
-                onChanged={(u) => setStock((ps) => ps.map((x) => (x.id === u.id ? u : x)))} />
-            ))}
-            {bookings.map((b) => (
-              <BookingCard key={b.id} booking={b}
-                onChanged={(u) => setBookings((bs) => bs.map((x) => (x.id === u.id ? u : x)))} />
             ))}
           </div>
         )}

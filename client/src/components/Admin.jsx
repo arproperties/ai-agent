@@ -4,7 +4,6 @@ import { api } from '../lib/api';
 import Avatar from './Avatar';
 import Sheet from './Sheet';
 import { ResponsibilitiesEditor } from './Responsibilities';
-import HrLink from './HrLink';
 
 /**
  * One agent, as a card in a grid. The same shape whether it is being picked as the
@@ -216,7 +215,7 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
   // "AI chats" and "Team chat" sit next to each other, so neither may be called just
   // "Chats": the whole point of the pair is which side of the app a message came from.
   const TABS = [['agents', 'Agents'], ['modules', 'Modules'], ['actions', 'Actions'], ['duties', 'Responsibilities'], ['documents', 'Shelf'], ['conversations', 'AI chats'],
-    ['messages', 'Team chat'], ['memory', 'Memory'], ['saifsys', 'saifsys']];
+    ['messages', 'Team chat'], ['memory', 'Memory']];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -274,7 +273,6 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
         {tab === 'memory' && <Memories person={person} />}
         {tab === 'modules' && <AppModules key={person.id} person={person} />}
         {tab === 'actions' && <AppModules key={`a${person.id}`} person={person} kind="actions" />}
-        {tab === 'saifsys' && <><HrLink person={person} /><SaifsysModules person={person} /></>}
         {(tab === 'documents' || tab === 'conversations' || tab === 'messages') && <Browse person={person} kind={tab} />}
 
         {tab === 'agents' && (!loaded ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
@@ -353,8 +351,8 @@ function PersonDetail({ person, agents, me, onBack, onChanged }) {
 }
 
 /**
- * Which places in the left menu this person has. A tap saves straight away, as the
- * saifsys modules do: it is one switch per place, with nothing to review first. Chats is
+ * Which places in the left menu this person has. A tap saves straight away: it is
+ * one switch per place, with nothing to review first. Chats is
  * everyone's, so it is shown ticked and cannot be tapped. With kind "actions" the same
  * cards are what they may change in those places: Add, Edit, Delete (server/actions.js).
  */
@@ -412,98 +410,6 @@ function AppModules({ person, kind = 'modules' }) {
                 {m.on && <Check size={11} strokeWidth={3.5} />}
               </span>
             </button>
-          );
-        })}
-      </div>
-      {error && <p className="text-sm text-bad">{error}</p>}
-    </>
-  );
-}
-
-/**
- * The saifsys workspaces this person's agents can look into, in the launcher's order.
- * A tap saves straight away - it is one switch per module, with nothing to review first.
- * Modules with nothing connected yet can still be ticked, so access is ready the day
- * they are. What Riley can do in a module (create a booking…) sits inside that module's
- * card once it is ticked, so it reads as part of the module and not a list of its own.
- */
-function SaifsysModules({ person }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    api.get(`/admin/users/${person.id}/saifsys`).then(setData).catch((e) => { setError(e.message); setData({ modules: [] }); });
-  }, [person.id]);
-
-  const toggle = async (key) => {
-    const modules = data.modules.map((m) => (m.key === key ? { ...m, on: !m.on } : m));
-    setData({ ...data, modules });
-    setError('');
-    try {
-      await api.put(`/admin/users/${person.id}/saifsys`, { modules: modules.filter((m) => m.on).map((m) => m.key) });
-    } catch (e) {
-      setError(e.message);
-      setData(data); // put the switch back
-    }
-  };
-
-  const toggleAction = async (key) => {
-    const actions = data.actions.map((a) => (a.key === key ? { ...a, on: !a.on } : a));
-    setData({ ...data, actions });
-    setError('');
-    try {
-      await api.put(`/admin/users/${person.id}/saifsys-actions`, { actions: actions.filter((a) => a.on).map((a) => a.key) });
-    } catch (e) {
-      setError(e.message);
-      setData(data);
-    }
-  };
-
-  if (!data) return <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" />;
-  return (
-    <>
-      <p className="text-sm leading-relaxed text-mute">
-        {data.master
-          ? 'The master sees every saifsys module.'
-          : `Tick the saifsys modules ${person.name} can ask Riley about. Anything not ticked, their agents cannot look up. A ticked module shows what Riley can also do there - that needs their company email connected in Riley.`}
-      </p>
-      <div className="grid items-start gap-2 @md:grid-cols-2">
-        {data.modules.map((m) => {
-          // What Riley can do in a module lives inside that module's card, and only once it is ticked.
-          const actions = m.on || data.master ? (data.actions || []).filter((a) => a.module === m.key) : [];
-          return (
-            <div key={m.key}
-              className={`rounded-[1.25rem] border transition ${
-                m.on ? 'border-p1/50 bg-gradient-to-r from-p1/20 via-p1/[0.07] to-transparent' : 'border-stroke bg-white/[0.035] hover:bg-white/[0.07]'}`}>
-              <button onClick={() => !data.master && toggle(m.key)} disabled={data.master} aria-pressed={m.on}
-                className="flex w-full items-center gap-3 p-3 text-left">
-                <span className="min-w-0 flex-1">
-                  <span className={`block truncate text-sm font-medium ${m.on ? 'text-txt' : 'text-mute'}`}>{m.label}</span>
-                  <span className="block truncate text-xs text-mute">{m.connected ? 'Connected' : 'Nothing connected yet'}</span>
-                </span>
-                <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
-                  m.on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
-                  {m.on && <Check size={11} strokeWidth={3.5} />}
-                </span>
-              </button>
-              {actions.length > 0 && (
-                <div className="border-t border-white/10 px-3 pb-2 pt-2.5">
-                  <span className="block text-[11px] uppercase tracking-wider text-mute">Can also do</span>
-                  {actions.map((a) => (
-                    <button key={a.key} onClick={() => !data.master && toggleAction(a.key)} disabled={data.master} aria-pressed={a.on}
-                      className="flex w-full items-center gap-3 py-1.5 text-left">
-                      <span className="min-w-0 flex-1">
-                        <span className={`block truncate text-sm ${a.on ? 'text-txt' : 'text-mute'}`}>{a.label}</span>
-                        <span className="block truncate text-xs text-mute">Asks for approval before every booking</span>
-                      </span>
-                      <span className={`grid size-[18px] shrink-0 place-items-center rounded-full ${
-                        a.on ? 'bg-gradient-to-br from-p1 to-p2 text-white' : 'border border-white/15 bg-white/[0.04]'}`}>
-                        {a.on && <Check size={11} strokeWidth={3.5} />}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
           );
         })}
       </div>

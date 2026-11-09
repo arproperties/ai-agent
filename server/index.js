@@ -24,7 +24,6 @@ import { routineRoutes } from './routines.js';
 import { teamReminderRoutes } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
 import { checklistRoutes } from './checklists.js';
-import { hrLinkRoutes } from './hrLinks.js';
 import { propertyRoutes } from './properties.js';
 import { planRoutes } from './floorPlans.js';
 import { leasingRoutes } from './leasing.js';
@@ -40,14 +39,9 @@ import { alertRoutes, startLeasingAlerts } from './leasingAlerts.js';
 import { renewalRoutes, startRenewals } from './renewals.js';
 import { receiptRoutes } from './leasingReceipt.js';
 import { regionRoutes } from './leasingRegion.js';
-import { buildingRoutes, startBuildings } from './buildings.js';
-import { inventoryRoutes } from './inventory.js';
-import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
-import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
 import { startReminders } from './reminders.js';
-import { saifsysRoutes } from './saifsys/index.js';
 import { meetingRoutes, startMeetings } from './meetings.js';
 import { transcriptRoutes, startTranscripts } from './transcripts.js';
 import { errorRoutes, recordError } from './errors.js';
@@ -73,8 +67,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; checked by its one-time state
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
 app.use('/api/qbwc', qbwcRoutes); // QuickBooks' Web Connector; signs in with its own user name and password (server/quickbooks.js)
-app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
-app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api', requireUser); // everything below needs a signed-in user
 app.use('/api', actorContext); // every change from here on is this person's, in the activity log
 app.use('/api', moduleGate); // the leasing and property screens are modules, ticked per person (server/modules.js)
@@ -89,7 +81,6 @@ app.use('/api/team-reminders', teamReminderRoutes); // reminders sent to other p
 app.use('/api/suggestions', suggestionRoutes); // reminders Riley spots in new email and chat, one tap to keep
 app.use('/api/routines', routineRoutes); // things that come back, kept apart from the one-off todos
 app.use('/api/push', pushRoutes); // the phone buzzing while the app is shut
-app.use('/api/saifsys', saifsysRoutes); // live reads from the property system
 app.use('/api/meetings', meetingShareRoutes); // a meeting as a PDF, on the Shelf, or emailed
 app.use('/api/meetings', meetingRoutes); // recorded meetings: who said what, and a summary
 app.use('/api/transcripts', transcriptRoutes); // any audio file or recording, as plain text
@@ -97,10 +88,6 @@ app.use('/api/replies', replyPdfRoutes); // a reply's document part as a PDF, to
 app.use('/api/replies', drawingRoutes); // a reply's drawing as a PDF or an AutoCAD file
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/checklists', checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
-app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
-app.use('/api/inventory', inventoryRoutes); // the things kept in each unit and area of a building
-app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
-app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/properties/renewals', renewalRoutes); // getting a document renewed: suppliers, quote requests, offers (master only)
 app.use('/api/properties', planRoutes); // where each unit is on its floor, from the floor plans; the 3D View draws from it
 app.use('/api/properties', propertyRoutes); // companies, buildings and units; the base for leasing (master writes)
@@ -443,14 +430,10 @@ app.listen(PORT, '0.0.0.0', () => {
   startRenewals();
   // Maintenance once typed into a tenant's history is a work order now; this moves what is left of it.
   moveMaintenanceNotes().then((n) => n && console.log(`[work-orders] moved ${n} maintenance note${n === 1 ? '' : 's'} from the tenants' histories`)).catch((e) => console.error('[work-orders]', e.message));
-  startBuildings(); // buzzes a building's administrator when a staff job needs them
-  startRecurringPayments(); // creates each recurring payment's line on its day of the month
   startRepeats(); // makes each monthly bill (Accounts) into an expense on its day
   startZegoMail(); // reads Zego's report from its Gmail once a week, when one is connected
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));
   startTranscripts().catch((e) => console.error('[transcripts]', e.message));
-  // The saifsys morning checkout reminder (startArs in server/saifsys/ars.js) is on hold
-  // by the user's choice, 2026-09-25: they ask Riley instead. The tool still works.
   console.log(`Riley server → http://localhost:${PORT}`);
 });

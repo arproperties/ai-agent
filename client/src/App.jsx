@@ -21,8 +21,6 @@ import SourcesPage from './components/SourcesPage';
 import ActivityLogPage from './components/ActivityLogPage';
 import AccountsPage from './components/AccountsPage';
 import ChecklistsPage from './components/Checklists';
-import BuildingsPage from './components/Buildings';
-import InventoryPage from './components/Inventory';
 import { useMessenger } from './lib/useMessenger';
 import { claimPush, releasePush } from './lib/push';
 import { loadRegion, onRegion } from './lib/region';
@@ -50,9 +48,7 @@ const notifiedTodos = params.get('todos') === '1';
 const notifiedDuties = params.get('responsibilities') === '1'; // the master gave them a new responsibility
 const notifiedLeasing = ['alerts', 'workorders'].includes(params.get('leasing')) ? params.get('leasing') : null; // a leasing alert (rent due, overdue, a lease ending), or an urgent work order
 const notifiedReminders = params.get('reminders') === '1'; // a reminder from someone else: it waits on the first screen of a new chat
-// a staff job in one of their buildings needs them: /?building=2&job=41
-const notifiedBuilding = Number(params.get('building')) ? { building: Number(params.get('building')), job: Number(params.get('job')) || null } : null;
-if (outlookReturn || notifiedChat || notifiedTodos || notifiedDuties || notifiedLeasing || notifiedBuilding) window.history.replaceState(null, '', '/');
+if (outlookReturn || notifiedChat || notifiedTodos || notifiedDuties || notifiedLeasing) window.history.replaceState(null, '', '/');
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -66,7 +62,7 @@ export default function App() {
   const [drawer, setDrawer] = useState(false);
   const [history, setHistory] = useState(false); // on a phone: the list of chats is showing in place of the chat
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedDuties ? 'duties' : notifiedBuilding ? 'buildings' : notifiedReminders ? null : 'leasing'); // home is Leasing's Overview; null is the chat. 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'duties' | 'checklists' | 'buildings' | 'inventory' | 'chat' (the chat, in a window over the Tour)
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedDuties ? 'duties' : notifiedReminders ? null : 'leasing'); // home is Leasing's Overview; null is the chat. 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'duties' | 'checklists' | 'chat' (the chat, in a window over the Tour)
   const [tour, setTour] = useState(false); // the Tour is open: it stays, and whatever else is opened is a window over it
   const [ask, setAsk] = useState(null); // a stop the sidebar asked for while the Tour is open, for the Tour to fly to: { stop, sub, n }
   const [leasingTab, setLeasingTab] = useState(notifiedLeasing || 'overview'); // which section of Leasing is open; the sidebar shortcuts set it too
@@ -75,8 +71,6 @@ export default function App() {
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const [helper, setHelper] = useState({ open: false, key: 0, id: null }); // Riley floating over whatever screen is open: its own chat, kept while the screens change
   const [dataKey, setDataKey] = useState(0); // goes up when Riley adds something from a chat, so the screen behind is read again
-  const [hasBuildings, setHasBuildings] = useState(false); // the master, or someone who runs a building
-  const [jumpToBuilding, setJumpToBuilding] = useState(notifiedBuilding); // a building (and job) a notification asked for
   const signedInBefore = useRef(false); // somebody has been signed in on this page already
   const dm = useMessenger(me); // people-to-people chat: live connection, chat list, unread count
 
@@ -130,11 +124,6 @@ export default function App() {
       if (where.get('todos') === '1') { setPanel('todos'); loadDue(); return; }
       if (where.get('responsibilities') === '1') { setPanel('duties'); return; }
       if (['alerts', 'workorders'].includes(where.get('leasing'))) { setLeasingTab(where.get('leasing')); setPanel('leasing'); return; }
-      if (Number(where.get('building'))) {
-        setJumpToBuilding({ building: Number(where.get('building')), job: Number(where.get('job')) || null });
-        setPanel('buildings');
-        return;
-      }
       // A reminder from someone else waits on the first screen of a new chat.
       if (where.get('reminders') === '1') { setChat({ key: Date.now(), id: null }); setPanel(null); loadDue(); return; }
       const id = Number(where.get('chat')) || null;
@@ -153,7 +142,6 @@ export default function App() {
     loadConvs();
     loadExpiring();
     loadDue();
-    api.get('/buildings').then((b) => setHasBuildings(me.role === 'master' || b.length > 0)).catch(() => {});
   }, [me, loadAgents, loadConvs, loadExpiring, loadDue]);
 
   const openChat = (id) => { setChat({ key: Date.now(), id }); setDrawer(false); setHistory(false); setPanel(tour ? 'chat' : null); };
@@ -219,8 +207,6 @@ export default function App() {
           onLeasing={openLeasing}
           tourOpen={tour} onTour={() => { setTour(true); setAsk(null); setPanel(null); setDrawer(false); }}
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
-          hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
-          inventoryOpen={panel === 'inventory'} onInventory={() => { setPanel('inventory'); setDrawer(false); }}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} sourcesOpen={panel === 'sources'} onSources={place('sources')} activityLogOpen={panel === 'activitylog'} onActivityLog={() => { setPanel('activitylog'); setDrawer(false); }} accountsOpen={panel === 'accounts'} onAccounts={() => { setPanel('accounts'); setDrawer(false); }} regionOpen={panel === 'region'} onRegion={place('region')} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onClose={() => setDrawer(false)} />
@@ -298,8 +284,6 @@ export default function App() {
               {panel === 'region' && <RegionSettings onBack={() => setPanel(null)} />}
               {panel === 'leasing' && <LeasingPage key={`l${dataKey}`} tab={leasingTab} onTab={setLeasingTab} report={leasingReport} onReport={setLeasingReport} alert={leasingAlert} onAlert={setLeasingAlert} onBack={() => setPanel(null)} />}
               {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}
-              {panel === 'buildings' && <BuildingsPage me={me} start={jumpToBuilding} onBack={() => setPanel(null)} />}
-              {panel === 'inventory' && <InventoryPage me={me} onBack={() => setPanel(null)} />}
               {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
               {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
               {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}

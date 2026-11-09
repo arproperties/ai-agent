@@ -15,8 +15,6 @@ import { propertyRoutes } from '../server/properties.js';
 import { planRoutes } from '../server/floorPlans.js';
 import { renewalRoutes } from '../server/renewals.js';
 import { expenseRoutes } from '../server/expenses.js';
-import { recurringPaymentRoutes } from '../server/recurringPayments.js';
-import { inventoryRoutes } from '../server/inventory.js';
 import { tenantImportRoutes } from '../server/tenantImport.js';
 import { leaseImportRoutes } from '../server/leaseImport.js';
 import { alertRoutes } from '../server/leasingAlerts.js';
@@ -110,7 +108,7 @@ test('a POST that changes something already there is an edit, and a read by Rile
 const MOUNTS = [['/properties/renewals', renewalRoutes], ['/properties', planRoutes], ['/properties', propertyRoutes],
   ['/leasing/alerts', alertRoutes], ['/leasing/region', regionRoutes], ['/leasing', inspectionRoutes], ['/leasing', historyRoutes],
   ['/leasing', workOrderRoutes], ['/leasing', archiveRoutes], ['/leasing/tenants/import', tenantImportRoutes], ['/leasing/bookings/import', leaseImportRoutes],
-  ['/leasing', leasingRoutes], ['/accounts', expenseRoutes], ['/recurring-payments', recurringPaymentRoutes], ['/inventory', inventoryRoutes]];
+  ['/leasing', leasingRoutes], ['/accounts', expenseRoutes]];
 // The POSTs that make something new. Any other POST must be in OVERRIDES (server/actions.js).
 const CREATES = ['/leasing/tenants', '/leasing/services', '/leasing/sources', '/leasing/bookings', '/leasing/bookings/1/docs', '/leasing/bookings/1/renew',
   '/leasing/bookings/1/payments', '/leasing/bookings/1/charges', '/leasing/installments/1/payments', '/leasing/tenants/1/log', '/leasing/log/1/files',
@@ -118,8 +116,7 @@ const CREATES = ['/leasing/tenants', '/leasing/services', '/leasing/sources', '/
   '/leasing/archive', '/leasing/archive/1/payments', '/leasing/archive/1/work-orders', '/leasing/archive/1/files',
   '/properties/companies/1/docs', '/properties/documents', '/properties/units/1/photos', '/properties/companies', '/properties/companies/1/buildings',
   '/properties/buildings/1/units', '/properties/renewals', '/properties/renewals/1/suppliers', '/properties/renewals/1/requests', '/properties/renewals/1/quotes',
-  '/accounts/expenses', '/accounts/repeats', '/recurring-payments/entries', '/recurring-payments/entries/1/dues', '/recurring-payments/buildings',
-  '/recurring-payments/accounts', '/recurring-payments/transfers', '/inventory/1/areas', '/inventory/1/items', '/leasing/tenants/import', '/leasing/bookings/import'];
+  '/accounts/expenses', '/accounts/repeats', '/leasing/tenants/import', '/leasing/bookings/import'];
 
 test('every POST behind a covered path is classified on purpose', () => {
   const posts = MOUNTS.flatMap(([at, router]) => router.stack.filter((l) => l.route?.methods?.post)

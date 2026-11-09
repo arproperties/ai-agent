@@ -7,15 +7,12 @@ import { connectedMailbox, senderName } from './email.js';
 import { todoKit } from './todos.js';
 import { teamReminderKit } from './teamReminders.js';
 import { responsibilityKit } from './responsibilities.js';
-import { buildingKit } from './buildings.js';
-import { inventoryKit } from './inventory.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
 import { leasingKit } from './leasingKit.js';
 import { userModules } from './modules.js';
 import { userActions } from './actions.js';
 import { isAudio, readAudio } from './transcripts.js';
-import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
 import { chatAgents } from './access.js';
 import { carry, noteCarried, pickedIds } from './chatRecap.js';
 import { activityKit } from './activityKit.js';
@@ -317,17 +314,11 @@ export async function chat(req, res) {
   const ctx = { agentId: agent.id, conversationId: convId };
   // Reminders for other people: proposed here, sent only from the card the user taps.
   const sendKit = await teamReminderKit(user.id, { conversationId: convId, onCard: (r) => send('teamReminder', r) });
-  // saifsys: only the tools of the modules this user has been given.
-  const saifsys = await saifsysKit(user);
-  // Doing things in saifsys (today: creating an ARS booking) — proposed here, done only from the card.
-  const saifsysAct = await saifsysActionKit(user, { conversationId: convId, onCard: (b) => send('arsBooking', b) });
   const modules = await userModules(user); // Riley looks up only what this person's menu shows
   const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), sendKit, meetingKit(user.id), leasingKit(user, { modules, actions: await userActions(user), onChanged: () => send('changed', { what: 'leasing' }) }),
     responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
-    await buildingKit(user),
-    await inventoryKit(user, { conversationId: convId, onCard: (p) => send('inventoryAdd', p) }),
     ...(modules.includes('activity') ? [activityKit()] : []), // the activity log: the master's, and whoever holds Activity
-    ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(email ? [email] : [])];
+    ...(email ? [email] : [])];
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   const { memories, knowledge } = await recall(user, text || meta.map((f) => f.name).join(' '));
   const library = await libraryCatalog(user); // same every turn, so read it once

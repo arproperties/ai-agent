@@ -6,7 +6,6 @@ import { recentErrors, errorCount } from './errors.js';
 import { MSG_SELECT, messageOut } from './messenger.js';
 import { listModuleAccess, setModuleAccess } from './modules.js';
 import { listAppActions, setAppActions } from './actions.js';
-import { listAccess, setAccess, setActionAccess } from './saifsys/index.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
 // as an "OR is_master" widening of the ordinary queries. Every cross-user guard in the
@@ -341,19 +340,6 @@ adminRoutes.get('/users/:id/agents', wrap(async (req, res) => {
 adminRoutes.put('/users/:id/agents', wrap(async (req, res) => {
   const n = await setAssignments(req.user, req.params.id, req.body.agents);
   res.json({ ok: true, assigned: n });
-}));
-
-// Which saifsys modules a person may use. Masters have them all, so their list is read-only.
-adminRoutes.get('/users/:id/saifsys', wrap(async (req, res) => {
-  res.json(await listAccess(req.params.id));
-}));
-
-adminRoutes.put('/users/:id/saifsys', wrap(async (req, res) => {
-  res.json({ ok: true, modules: await setAccess(req.params.id, req.body.modules) });
-}));
-
-adminRoutes.put('/users/:id/saifsys-actions', wrap(async (req, res) => {
-  res.json({ ok: true, actions: await setActionAccess(req.params.id, req.body.actions) });
 }));
 
 // Which of the app's own modules (the left menu) a person has. Chats is everyone's; the master has them all.
