@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, Activity, FileClock, Gavel, ChevronRight, Search, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box, Globe } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, Activity, FileClock, Gavel, ChevronRight, Search, NotebookPen, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box, Globe } from 'lucide-react';
 import Icon from './Icon';
 import { CaseTimeSheet } from './CaseRails';
 import { Row, Count } from './NavRow';
@@ -43,7 +43,7 @@ function Group({ title, open, onToggle, count = 0, q = '', children }) {
   );
 }
 
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, legalOpen, onLegal, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, diaryOpen, onDiary, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -103,6 +103,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
                 aria-label={dueTodos ? `To-do (${dueTodos} due)` : 'To-do'} badge={<Count n={dueTodos} />} />
             )}
             {has('duties') && <Row role="menuitem" icon={<ClipboardList size={17} strokeWidth={1.75} />} label="My responsibilities" active={dutiesOpen} onClick={go(onDuties)} />}
+            {has('diary') && <Row role="menuitem" icon={<NotebookPen size={17} strokeWidth={1.75} />} label="Diary" active={diaryOpen} onClick={go(onDiary)} />}
             {has('checklists') && <Row role="menuitem" icon={<ListChecks size={17} strokeWidth={1.75} />} label="Checklists" active={checklistsOpen} onClick={go(onChecklists)} />}
             {has('attendance') && <Row role="menuitem" icon={<CalendarCheck size={17} strokeWidth={1.75} />} label="Attendance" active={attendanceOpen} onClick={go(onAttendance)} />}
             {has('legal') && <Row role="menuitem" icon={<Gavel size={17} strokeWidth={1.75} />} label="Legal cases" active={legalOpen} onClick={go(onLegal)} />}

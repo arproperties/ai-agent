@@ -2927,3 +2927,26 @@ await db.exec(`
     updated_at BIGINT NOT NULL DEFAULT ${NOW}
   );
 `);
+
+// Diary: a person's own notes, written or drawn with a pen - see server/diary.js.
+// Its own table rather than todos or the Shelf: a page is kept to read back later,
+// not something to do or a file to file. Private to the one who wrote it.
+//   drawing: the pen strokes as JSON (not a picture), so a page opens again with every
+//     stroke still undoable and sharp on any screen. NULL when nothing was drawn.
+//   thumb: a small picture of the drawing made by the phone, so the list of pages shows
+//     each sketch without loading every stroke of every page.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS diary_entries (
+    id SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title      TEXT NOT NULL DEFAULT '',
+    body       TEXT NOT NULL DEFAULT '',
+    drawing    TEXT,
+    thumb      TEXT,
+    color      TEXT NOT NULL DEFAULT 'plain',
+    pinned     BOOLEAN NOT NULL DEFAULT false,
+    created_at BIGINT NOT NULL DEFAULT ${NOW},
+    updated_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_diary_user ON diary_entries(user_id, updated_at DESC);
+`);

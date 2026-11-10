@@ -30,6 +30,7 @@ import FeedsPage from './components/Feeds';
 import SharedInboxPage from './components/SharedInbox';
 import ResponsibilitiesPage from './components/Responsibilities';
 import ChecklistsPage from './components/Checklists';
+import DiaryPage from './components/Diary';
 import AttendancePage from './components/Attendance';
 import BuildingsPage from './components/Buildings';
 import InventoryPage from './components/Inventory';
@@ -65,7 +66,7 @@ if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || noti
 
 // The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
 const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
-  duties: 'duties', checklists: 'checklists', attendance: 'attendance', memory: 'memory', email: 'email', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', legal: 'legal', case: 'case_focus' };
+  duties: 'duties', diary: 'diary', checklists: 'checklists', attendance: 'attendance', memory: 'memory', email: 'email', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', legal: 'legal', case: 'case_focus' };
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -271,6 +272,7 @@ export default function App() {
           sharedInbox={sharedInbox} sharedInboxOpen={panel === 'sharedinbox'} onSharedInbox={() => { setPanel('sharedinbox'); setDrawer(false); }}
           dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
+          diaryOpen={panel === 'diary'} onDiary={() => { setPanel('diary'); setDrawer(false); }}
           attendanceOpen={panel === 'attendance'} onAttendance={() => { setPanel('attendance'); setDrawer(false); }}
           hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
           inventoryOpen={panel === 'inventory'} onInventory={() => { setPanel('inventory'); setDrawer(false); }}
@@ -337,6 +339,7 @@ export default function App() {
         {panel === 'sharedinbox' && <SharedInboxPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'duties' && <ResponsibilitiesPage onBack={() => setPanel(null)} />}
         {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}
+        {panel === 'diary' && <DiaryPage onBack={() => setPanel(null)} />}
         {panel === 'attendance' && <AttendancePage onBack={() => setPanel(null)} />}
         {panel === 'buildings' && <BuildingsPage me={me} start={jumpToBuilding} onBack={() => setPanel(null)} />}
         {panel === 'inventory' && <InventoryPage me={me} onBack={() => setPanel(null)} />}

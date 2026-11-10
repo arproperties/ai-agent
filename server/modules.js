@@ -33,6 +33,8 @@ export const MODULES = [
   { key: 'notices', label: 'Tenant notices', about: 'Report something at a unit in a chat with Reem, with a photo. Reem writes the notice; it is emailed to the tenant when they tap Send.', company: true },
   { key: 'document_renewals', label: 'Document Renewals', about: 'Employee and company documents (visas, contracts, trade licences, insurance): see them, get their expiry alerts, and renew or end employee contracts with approvals and the PRO.', company: true },
   { key: 'duties', label: 'My responsibilities', about: 'See what they look after, as you have written it.', everyone: true, company: true },
+  // company: for the master and the people they tick, never an external person (for now).
+  { key: 'diary', label: 'Diary', about: 'Their own notebook: write notes and draw with a pen to explain, kept to read back later. Private to them.', company: true },
   { key: 'checklists', label: 'Checklists', about: 'The points of a job, ticked each time it is done.', everyone: true, company: true },
   { key: 'attendance', label: 'Attendance', about: 'Who worked which day, read from the teams\' WhatsApp group, sheets and photos, and checked person by person each pay period (26th to 25th).', company: true },
   { key: 'memory', label: 'Memory', about: 'See and remove what Reem remembers about them.', everyone: true },
