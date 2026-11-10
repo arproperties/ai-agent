@@ -705,6 +705,22 @@ test('take over: staff run it by hand, and can hand it back', async () => {
   assert.deepEqual((await timeline(r.id)).filter((t) => t.startsWith('step')), ['step: Taken over: staff run it by hand', 'step: Handed back to Reem']);
 });
 
+test('handled outside Reem: a reply on the old thread is kept, but not read, answered or copied to saifsys', async () => {
+  const boss = await setup();
+  stub({ replies: [{ intent: 'accept', summary: 'Accepts', dispute: false }] });
+  let r = await autoStart(boss);
+  await R.mark(boss, r.id, 'close');
+  const [sent, acts, mirrored] = [world.sent.length, world.acts.length, world.mirrored.length];
+  const offerId = (await db.prepare(`SELECT message_id FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'out'`).get(r.id)).message_id;
+  assert.equal(await arrives({ text: 'I accept', inReplyTo: offerId }), true, 'kept here, so Tenant care does not answer it either');
+  await R.readInbound();
+  r = await R.getRenewal(r.id);
+  assert.deepEqual([r.status, world.sent.length, world.acts.length, world.mirrored.length], ['closed', sent, acts, mirrored]);
+  assert.equal(world.replies.length, 1, 'the AI never read it');
+  assert.equal((await timeline(r.id)).at(-1), 'in: Tenant emailed (handled outside Reem)');
+  assert.match(world.pushes.at(-1), /handled outside Reem/);
+});
+
 test('when something breaks Reem stops on that lease and tells staff', async () => {
   const boss = await setup();
   stub({ replies: [{ intent: 'accept', summary: 'Accepts', dispute: false }] });

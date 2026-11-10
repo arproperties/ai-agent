@@ -914,6 +914,13 @@ async function handle(r, e) {
     if (e.body) await db.prepare('UPDATE lease_renewal_events SET body = ? WHERE id = ?').run(e.body, e.id);
   }
   const set = (title, reading) => db.prepare(`UPDATE lease_renewal_events SET status = 'read', title = ?, reading = ? WHERE id = ?`).run(title, JSON.stringify(reading), e.id);
+  // Handled outside Reem: staff answer from their own mailbox (an offer changed by hand, a
+  // final term after a Legal Notice). A reply on Reem's old thread is kept here and staff are
+  // told, but Reem does not read it, copy it to saifsys or act on it (the user, 2026-11-10).
+  if (r.status === 'closed') {
+    await set('Tenant emailed (handled outside Reem)', { note: 'Not read by Reem: staff handle this renewal themselves.' });
+    return tell(r, 'The tenant emailed about this renewal. It is handled outside Reem: answer from your mailbox.');
+  }
   await update(r.id, { last_in_at: Number(e.at) || secs() });
 
   // Papers for an agreed renewal: read and checked against saifsys's cheque schedule.
