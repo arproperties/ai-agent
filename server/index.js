@@ -31,6 +31,8 @@ import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
 import { aiKeyRoutes, hasKey } from './aiKeys.js';
 import { appRoutes, connectorRoutes } from './apps.js';
+import { browserRoutes } from './browser/routes.js';
+import { recoverAtBoot as recoverBrowser } from './browser/engine.js';
 import { docCategoryRoutes, seedCategories } from './docCategories.js';
 import { documentRenewalRoutes, proTaskRoutes } from './documentRenewals.js';
 import { startSaifsysDocSync } from './saifsysDocSync.js';
@@ -170,6 +172,7 @@ app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by 
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
 app.use('/api/ai-keys', aiKeyRoutes); // the company's AI keys and anyone's own (master only)
 app.use('/api/apps', appRoutes); // mailboxes connected to Claude.ai as custom connectors (master only)
+app.use('/api/browser', browserRoutes); // Reem using websites from the chat: live window, saved logins, switches (module browser)
 app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
 app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
@@ -598,6 +601,8 @@ await bringOldRemindersIntoTodos()
   .catch((e) => console.error('[team-reminders] could not bring old reminders into to-dos:', e.message));
 
 app.listen(PORT, '0.0.0.0', () => {
+  // browser windows don't survive a restart: their jobs are marked stopped, and the cards say so
+  recoverBrowser().catch((e) => console.error('[browser]', e.message));
   // saifsys's employee documents onto the Shelf, for Document Renewals: nightly, and once now
   startSaifsysDocSync();
   // Expiry alerts (pushes and to-dos) on the live server only, unless asked for: a local copy of

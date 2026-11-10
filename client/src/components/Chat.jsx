@@ -18,6 +18,7 @@ import ProjectCard from './ProjectCard';
 import CaseCard from './CaseCard';
 import BookingCard from './BookingCard';
 import NoticeCard from './NoticeCard';
+import BrowserCard from './BrowserCard';
 import { usePush } from './Notifications';
 import { permission } from '../lib/push';
 import Composer from './Composer';
@@ -78,6 +79,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [cases, setCases] = useState([]); // case folders got ready from the inbox, waiting for Save (external only)
   const [bookings, setBookings] = useState([]); // ARS bookings got ready in this chat, waiting for Create
   const [notices, setNotices] = useState([]); // tenant notices got ready in this chat, waiting for Send
+  const [browsing, setBrowsing] = useState([]); // websites Reem used in this chat, live while it works
   const [suggested, setSuggested] = useState([]); // reminders Reem spotted, waiting for a yes or no
   const push = usePush();
   const [sharing, setSharing] = useState(null); // id of the reply waiting on a chat to be picked
@@ -126,6 +128,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       if (!user.external) api.get(`/projects/proposals?conversation=${conversationId}`).then(setSite).catch(() => {});
       if (user.external) api.get(`/cases/proposals?conversation=${conversationId}`).then(setCases).catch(() => {});
       api.get(`/notices/chat?conversation=${conversationId}`).then(setNotices).catch(() => {});
+      api.get(`/browser/tasks?conversation=${conversationId}`).then(setBrowsing).catch(() => {}); // refused without the Browser module
       api.get(`/case-focus/${conversationId}`).then(setFocus).catch(() => {}); // refused without the Primary case module
     }
     api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
@@ -230,6 +233,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           else if (event === 'projectPlan') { acted = true; setPlans((ps) => [...ps.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'caseFolder') { acted = true; setCases((cs) => [...cs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'tenantNotice') { acted = true; setNotices((ns) => [...ns.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'browser') { acted = true; setBrowsing((bs) => (bs.some((x) => x.id === d.id) ? bs.map((x) => (x.id === d.id ? { ...x, ...d } : x)) : [...bs, d])); toBottom(); }
           else if (event === 'arsBooking') { acted = true; setBookings((bs) => [...bs.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'draft') { acted = true; setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'delta') {
@@ -487,7 +491,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             <InstallHint />
           </div>
         ) : (
-          <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 md:px-6">
+          <div className="w-full space-y-6 px-4 py-6 md:px-8">
             {messages.map((m, i) => (
               <Message key={m.id} msg={m} agent={byId[m.agent_id]} voiceEnabled={voiceEnabled} onOpenFile={openFile}
                 status={m.streaming ? status : undefined}
@@ -542,6 +546,9 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
               <NoticeCard key={n.id} notice={n}
                 onChanged={(u) => setNotices((ns) => ns.map((x) => (x.id === u.id ? u : x)))} />
             ))}
+            {browsing.map((b) => (
+              <BrowserCard key={b.id} task={b} onChanged={(u) => setBrowsing((bs) => bs.map((x) => (x.id === u.id ? { ...x, ...u } : x)))} />
+            ))}
             {bookings.map((b) => (
               <BookingCard key={b.id} booking={b}
                 onChanged={(u) => setBookings((bs) => bs.map((x) => (x.id === u.id ? u : x)))} />
@@ -550,7 +557,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         )}
       </div>
 
-      <div className="mx-auto w-full max-w-6xl">
+      <div className="w-full md:px-2">
         {/* What this conversation is working from, once something has been brought in: the
             answer to "does this chat have both of those chats in it". */}
         {carrying.length > 0 && (
