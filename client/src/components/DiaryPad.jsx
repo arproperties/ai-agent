@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
-import { PenLine, Highlighter, Eraser, Undo2, Redo2, Trash2, Plus } from 'lucide-react';
+import { PenLine, Highlighter, Eraser, Undo2, Redo2, Trash2, Plus, Shapes, Minus, MoveUpRight, Square, Circle } from 'lucide-react';
 
 // The Diary's pen. A sheet of paper (always paper-coloured, in either theme, so ink looks
 // like ink) that a finger, a mouse or a stylus draws on.
@@ -21,6 +21,46 @@ export const PAPER = '#fbf8f1';
 export const INKS = ['#1f2937', '#2563eb', '#dc2626', '#16a34a', '#ea580c', '#7c3aed'];
 const MARKS = ['#fde047', '#86efac', '#f9a8d4', '#7dd3fc'];
 const SIZES = [{ px: 2.2, label: 'Fine' }, { px: 4.5, label: 'Medium' }, { px: 9, label: 'Bold' }];
+const SHAPES = [['line', 'Line', Minus], ['arrow', 'Arrow', MoveUpRight], ['rect', 'Box', Square], ['ellipse', 'Circle', Circle]];
+
+/** A shape dragged from (x0, y0) to (x1, y1), kept as the corners of its outline so it is
+ *  saved, erased, undone and thumbnailed exactly like a pen line. With Shift held a line
+ *  snaps to 45 degrees and a box or circle comes out even. */
+export function makeShape(kind, x0, y0, x1, y1, even) {
+  let dx = x1 - x0;
+  let dy = y1 - y0;
+  if (even) {
+    if (kind === 'line' || kind === 'arrow') {
+      const a = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+      const len = Math.hypot(dx, dy);
+      dx = Math.cos(a) * len; dy = Math.sin(a) * len;
+    } else {
+      const m = Math.max(Math.abs(dx), Math.abs(dy));
+      dx = Math.sign(dx || 1) * m; dy = Math.sign(dy || 1) * m;
+    }
+  }
+  const pts = [];
+  const add = (x, y) => pts.push(Math.round(x), Math.round(y), 50);
+  const ex = x0 + dx;
+  const ey = y0 + dy;
+  if (kind === 'rect') {
+    add(x0, y0); add(ex, y0); add(ex, ey); add(x0, ey); add(x0, y0);
+  } else if (kind === 'ellipse') {
+    const [cx, cy, rx, ry] = [x0 + dx / 2, y0 + dy / 2, Math.abs(dx / 2), Math.abs(dy / 2)];
+    for (let i = 0; i <= 64; i++) { const a = (i / 64) * Math.PI * 2; add(cx + rx * Math.cos(a), cy + ry * Math.sin(a)); }
+  } else {
+    add(x0, y0); add(ex, ey);
+    if (kind === 'arrow') {
+      // Two short wings back from the tip: tip -> wing -> tip -> wing.
+      const a = Math.atan2(dy, dx);
+      const head = Math.min(36, Math.max(14, Math.hypot(dx, dy) * 0.3));
+      add(ex - head * Math.cos(a - 0.45), ey - head * Math.sin(a - 0.45));
+      add(ex, ey);
+      add(ex - head * Math.cos(a + 0.45), ey - head * Math.sin(a + 0.45));
+    }
+  }
+  return pts;
+}
 
 /** Draws one stroke. Shared with the thumbnail, so the list shows exactly what was drawn. */
 export function drawStroke(ctx, s, scale = 1) {
@@ -33,6 +73,18 @@ export function drawStroke(ctx, s, scale = 1) {
   ctx.strokeStyle = s.c;
   ctx.fillStyle = s.c;
   const at = (i) => [p[i * 3] * scale, p[i * 3 + 1] * scale, (p[i * 3 + 2] || 50) / 100];
+  if (s.t === 'shape') {
+    // Straight edges at one even weight, corner to corner.
+    ctx.lineWidth = Math.max(0.6, s.s * scale);
+    ctx.beginPath();
+    const [x0, y0] = at(0);
+    ctx.moveTo(x0, y0);
+    for (let i = 1; i < n; i++) { const [x, y] = at(i); ctx.lineTo(x, y); }
+    if (n === 1) ctx.lineTo(x0 + 0.1, y0);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   if (s.t === 'mark') {
     // A highlighter is one even, see-through band, so it does not darken where it overlaps itself.
     ctx.globalAlpha = 0.38;
@@ -109,6 +161,16 @@ export function makeThumb(drawing) {
 
 const near = (s, x, y, r) => {
   const rr = (r + (s.t === 'mark' ? s.s / 2 : s.s)) ** 2;
+  if (s.t === 'shape') {
+    // A shape keeps only its corners, so rub along its edges, not just at the corners.
+    for (let i = 3; i < s.p.length; i += 3) {
+      const [ax, ay, bx, by] = [s.p[i - 3], s.p[i - 2], s.p[i], s.p[i + 1]];
+      const l2 = (bx - ax) ** 2 + (by - ay) ** 2;
+      const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / l2)) : 0;
+      if ((ax + t * (bx - ax) - x) ** 2 + (ay + t * (by - ay) - y) ** 2 <= rr) return true;
+    }
+    return false;
+  }
   for (let i = 0; i < s.p.length; i += 3) if ((s.p[i] - x) ** 2 + (s.p[i + 1] - y) ** 2 <= rr) return true;
   return false;
 };
@@ -133,7 +195,8 @@ const DiaryPad = forwardRef(function DiaryPad({ initial, onChange }, ref) {
   const [, bump] = useState(0);
   const refresh = () => bump((n) => n + 1);
 
-  const [tool, setTool] = useState('pen'); // pen | mark | erase
+  const [tool, setTool] = useState('pen'); // pen | mark | shape | erase
+  const [shape, setShape] = useState('rect');
   const [ink, setInk] = useState(INKS[0]);
   const [mark, setMark] = useState(MARKS[0]);
   const [size, setSize] = useState(1);
@@ -212,6 +275,11 @@ const DiaryPad = forwardRef(function DiaryPad({ initial, onChange }, ref) {
       erasing.current = { removed: eraseAt(x, y) };
       return;
     }
+    if (tool === 'shape') {
+      live.current = { t: 'shape', c: ink, s: SIZES[size].px * 1.1, p: [x, y, 50], from: [x, y], k: shape };
+      paint();
+      return;
+    }
     live.current = tool === 'mark'
       ? { t: 'mark', c: mark, s: SIZES[size].px * 5, p: [x, y, pr] }
       : { c: ink, s: SIZES[size].px, p: [x, y, pr] };
@@ -227,6 +295,13 @@ const DiaryPad = forwardRef(function DiaryPad({ initial, onChange }, ref) {
     const s = live.current;
     if (!s) return;
     e.preventDefault();
+    if (s.t === 'shape') {
+      const [x, y] = point(e);
+      s.p = makeShape(s.k, s.from[0], s.from[1], x, y, e.shiftKey);
+      if (y > height - 120 && height < MAX_H) setHeight((h) => Math.min(MAX_H, h + MORE_H));
+      paint();
+      return;
+    }
     const evs = e.getCoalescedEvents?.() || [e];
     for (const ev of evs) {
       const [x, y, pr] = point(ev);
@@ -251,6 +326,10 @@ const DiaryPad = forwardRef(function DiaryPad({ initial, onChange }, ref) {
     const s = live.current;
     if (!s) return;
     live.current = null;
+    if (s.t === 'shape') {
+      delete s.from; delete s.k; // only the outline is kept
+      if (s.p.length < 6) { paint(); return; } // a tap, not a drag: no shape
+    }
     undoStack.current.push(strokes.current);
     strokes.current = [...strokes.current, s];
     paint();
@@ -303,8 +382,22 @@ const DiaryPad = forwardRef(function DiaryPad({ initial, onChange }, ref) {
       <div className="glass sticky top-0 z-10 flex flex-wrap items-center gap-1 rounded-2xl border border-stroke p-1.5 backdrop-blur-xl">
         <ToolButton on={tool === 'pen'} label="Pen" onClick={() => setTool('pen')}><PenLine size={18} /></ToolButton>
         <ToolButton on={tool === 'mark'} label="Highlighter" onClick={() => setTool('mark')}><Highlighter size={18} /></ToolButton>
+        <ToolButton on={tool === 'shape'} label="Shapes: drag to draw a line, arrow, box or circle" onClick={() => setTool('shape')}><Shapes size={18} /></ToolButton>
         <ToolButton on={tool === 'erase'} label="Eraser: rub over a line to remove it" onClick={() => setTool('erase')}><Eraser size={18} /></ToolButton>
         <span className="mx-1 h-6 w-px bg-stroke" />
+        {tool === 'shape' && (
+          <>
+            <div className="flex items-center gap-0.5">
+              {SHAPES.map(([k, label, I]) => (
+                <button key={k} type="button" onClick={() => setShape(k)} aria-label={label} title={`${label} (hold Shift to keep it straight or even)`} aria-pressed={shape === k}
+                  className={`grid size-9 place-items-center rounded-full transition ${shape === k ? 'bg-white/10 text-txt' : 'text-mute hover:bg-white/[0.06] hover:text-txt'}`}>
+                  <I size={17} />
+                </button>
+              ))}
+            </div>
+            <span className="mx-1 h-6 w-px bg-stroke" />
+          </>
+        )}
         {tool !== 'erase' && (
           <>
             <div className="flex items-center gap-1">

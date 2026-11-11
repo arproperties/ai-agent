@@ -194,7 +194,7 @@ function Editor({ start, onClose }) {
           </button>
         </div>
       )}>
-      <div className="mx-auto max-w-3xl space-y-4">
+      <div className="w-full space-y-4">
         <input value={entry.title || ''} onChange={(e) => edit({ title: e.target.value })} placeholder="Title" dir="auto" maxLength={200}
           className="w-full bg-transparent text-2xl font-semibold tracking-tight outline-none placeholder:text-mute/50 md:text-3xl" />
 
