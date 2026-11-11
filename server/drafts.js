@@ -140,6 +140,8 @@ export const draftOut = (d) => d && {
   error: d.error,
   messageId: d.message_id,
   isReply: !!d.in_reply_to,
+  // Whether the email it answers goes underneath when it is sent (outbox.js).
+  quotes: !!d.reply_to_id,
   createdAt: d.created_at,
   sentAt: d.sent_at,
   hidden: !!d.hidden,

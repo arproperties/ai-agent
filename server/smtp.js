@@ -41,14 +41,24 @@ export function transportFor(acc, password) {
 // threads against it. A second compile would generate a second Message-ID and break that.
 const composer = nodemailer.createTransport({ streamTransport: true, buffer: true });
 
-export async function compose({ from, to, cc = [], bcc = [], subject = '', text = '', html, inReplyTo, references, attachments = [], replyTo }) {
+export async function compose({ from, to, cc = [], bcc = [], subject = '', text = '', html, inReplyTo, references, attachments = [], replyTo, quote = null }) {
   // A body with a table in it also goes out as HTML, so the table arrives as a table.
   if (!html && hasTable(text)) html = bodyHtml(text);
+  // A reply carries the email it answers underneath (emailQuote.js), in both parts, the
+  // way Outlook and Gmail do, so the history arrives with it.
+  if (quote) {
+    html = (html || bodyHtml(text)) + quote.html;
+    text = text + quote.text;
+  }
+  const files = [
+    ...attachments.map((a) => ({ ...a, encoding: 'base64' })),
+    ...(quote?.inline || []),
+  ];
   const info = await composer.sendMail({
     from, to, subject, text,
     ...(html ? { html } : {}),
     ...(replyTo ? { replyTo } : {}),
-    ...(attachments.length ? { attachments: attachments.map((a) => ({ ...a, encoding: 'base64' })) } : {}),
+    ...(files.length ? { attachments: files } : {}),
     ...(cc.length ? { cc } : {}),
     ...(inReplyTo ? { inReplyTo } : {}),
     ...(references ? { references } : {}),

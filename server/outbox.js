@@ -4,6 +4,7 @@ import { imapAccount, imapActions } from './imap.js';
 import { compose, sendRaw, friendlySmtp } from './smtp.js';
 import { logAction, sendQuota } from './drafts.js';
 import { withContent, discard } from './draftFiles.js';
+import { quoteOf } from './emailQuote.js';
 
 // The only code in the app that sends mail on the user's behalf, and the only caller of
 // SMTP. It is reached from exactly one place: a draft whose status is 'approved', which
@@ -22,7 +23,7 @@ const unclaim = (id) => db.prepare(`UPDATE email_drafts SET status = 'approved' 
  * Sent. `send` and `append` are injectable so the tests can run without a mail server;
  * nothing in production passes them.
  */
-export async function deliver(draft, { send = sendRaw, append = imapActions.appendToSent } = {}) {
+export async function deliver(draft, { send = sendRaw, append = imapActions.appendToSent, original = imapActions.parsedOriginal } = {}) {
   const acc = await imapAccount(draft.user_id);
   const log = (fields) => logAction(draft.user_id, { agentId: draft.agent_id, draftId: draft.id, ...fields });
 
@@ -50,9 +51,22 @@ export async function deliver(draft, { send = sendRaw, append = imapActions.appe
     throw Object.assign(new Error(why), { cause: e });
   }
 
+  // The email being answered goes underneath. It is read at send time, from the mailbox, so
+  // it is exactly what the person wrote. One that has been moved or deleted since costs
+  // the history, never the reply: the reply still goes, threaded, with only its own lines.
+  let quote = null;
+  if (draft.reply_to_id) {
+    try {
+      quote = quoteOf(await original(draft.user_id, draft.reply_to_id));
+    } catch (e) {
+      console.error('[outbox] could not quote the email being answered:', e.message);
+    }
+  }
+
   let built;
   try {
     built = await compose({
+      quote,
       from: acc.email,
       to: JSON.parse(draft.to_addrs),
       cc: JSON.parse(draft.cc_addrs),

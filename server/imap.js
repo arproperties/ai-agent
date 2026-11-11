@@ -301,7 +301,7 @@ async function searchEmail(userId, { query = '', folder, unread_only, since, lim
 }
 
 // One whole message, parsed. `path` rides along because read_email reports the folder.
-async function fetchParsed(userId, id) {
+async function fetchParsed(userId, id, parse = {}) {
   const i = String(id || '').lastIndexOf(':');
   const path = String(id).slice(0, i);
   const uid = Number(String(id).slice(i + 1));
@@ -311,7 +311,7 @@ async function fetchParsed(userId, id) {
     try {
       const m = await c.fetchOne(String(uid), { source: true }, { uid: true });
       if (!m?.source) throw new Error('That email no longer exists');
-      return simpleParser(m.source);
+      return simpleParser(m.source, parse);
     } finally { lock.release(); }
   });
   return { p, path };
@@ -551,4 +551,11 @@ async function appendToSent(userId, raw) {
   });
 }
 
-export const imapActions = { markSeen, moveMessage, original, findThread, appendToSent };
+/** The email a reply answers, parsed whole, for quoting under the reply. Read-only. */
+async function parsedOriginal(userId, id) {
+  // Pictures stay as cid: links to their parts, so they go out as real inline images —
+  // Outlook and Gmail block the data: links the parser makes of them otherwise.
+  return (await fetchParsed(userId, id, { keepCidLinks: true })).p;
+}
+
+export const imapActions = { markSeen, moveMessage, original, findThread, appendToSent, parsedOriginal };
