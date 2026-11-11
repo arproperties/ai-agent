@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
-import { connectedMailbox, EMAIL_READ_TOOLS, EMAIL_WRITE_TOOLS, statusFor, replyRecipients } from '../server/email.js';
+import { connectedMailbox, EMAIL_READ_TOOLS, EMAIL_WRITE_TOOLS, statusFor, replyRecipients, replyCc } from '../server/email.js';
 import { getDraft, listDrafts, decideDraft } from '../server/drafts.js';
 
 test.after(() => closeDb());
@@ -183,6 +183,29 @@ test('a corrected draft withdraws the one it replaces, so only one is left to ap
   assert.equal(seen.at(-1).status, 'rejected');
 });
 
+test('a corrected reply written as a new draft stays in the same thread', async () => {
+  await reset();
+  const userId = await mailbox(true);
+  const { createDraft } = await import('../server/drafts.js');
+  // The first reply, threaded onto Alex's email.
+  const first = await createDraft(userId, {
+    to: ['alex@snp.ae'], subject: 'Re: Software Related Additional Requirements', body: 'first',
+    inReplyTo: '<orig@snp.ae>', refs: '<orig@snp.ae>', replyToId: 'INBOX:7',
+  });
+  const m = await connectedMailbox(userId);
+  // The agent fixes the Cc with create_draft and forgets the "Re:" and the thread.
+  await m.run({ id: 'b', name: 'create_draft', input: {
+    to: ['alex@snp.ae'], cc: ['peesto@snp.ae'], subject: 'Software Related Additional Requirements', body: 'second', replaces: first.id,
+  } });
+
+  const [now] = await listDrafts(userId, { status: 'pending' });
+  assert.equal(now.body, 'second');
+  assert.equal(now.in_reply_to, '<orig@snp.ae>');
+  assert.equal(now.refs, '<orig@snp.ae>');
+  assert.equal(now.reply_to_id, 'INBOX:7');
+  assert.equal(now.subject, 'Re: Software Related Additional Requirements');
+});
+
 test('a draft the user already decided on is not taken back', async () => {
   await reset();
   const userId = await mailbox(true);
@@ -242,6 +265,27 @@ test('a recipient listed twice is written to once', () => {
     replyRecipients({ from: ['bob@example.com', 'BOB@example.com'], to: [] }, 'sara@acme.ae'),
     ['bob@example.com'],
   );
+});
+
+test('a reply keeps everyone who was copied in, like Reply All', () => {
+  // Alex wrote to Francis, Cc Peesto and Taqueer: the reply must not drop the two of them.
+  const o = { from: ['alex@snp.ae'], to: ['francis@reem.ae'], cc: ['Peesto@snp.ae', 'taqueer@madar.com'] };
+  const to = replyRecipients(o, 'francis@reem.ae');
+  assert.deepEqual(to, ['alex@snp.ae']);
+  assert.deepEqual(replyCc(o, 'francis@reem.ae', to), ['peesto@snp.ae', 'taqueer@madar.com']);
+});
+
+test('reply Cc never repeats yourself or the To, and adds extra people once', () => {
+  const o = { from: ['alex@snp.ae'], to: ['francis@reem.ae', 'jo@snp.ae'], cc: ['ALEX@snp.ae', 'jo@snp.ae'] };
+  assert.deepEqual(
+    replyCc(o, 'Francis@reem.ae', ['alex@snp.ae'], ['rona@reem.ae', 'JO@snp.ae']),
+    ['jo@snp.ae', 'rona@reem.ae'],
+  );
+});
+
+test('a sender-only reply copies in nobody but the extra people', () => {
+  const o = { from: ['alex@snp.ae'], to: ['francis@reem.ae'], cc: ['peesto@snp.ae'] };
+  assert.deepEqual(replyCc(o, 'francis@reem.ae', ['alex@snp.ae'], ['rona@reem.ae'], { all: false }), ['rona@reem.ae']);
 });
 
 test('an Outlook mailbox is never given the write tools', async () => {
