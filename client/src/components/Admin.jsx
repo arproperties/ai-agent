@@ -8,6 +8,10 @@ import { ResponsibilitiesEditor } from './Responsibilities';
 import HrLink from './HrLink';
 import FileAccess from './FileAccess';
 import { PersonAiKeys } from './AiKeys';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { rehypeMarkRows, markdownComponents } from '../lib/markRows';
+import { hideMarkers } from '../lib/replyDoc';
 
 /**
  * One agent, as a card in a grid. The same shape whether it is being picked as the
@@ -672,12 +676,22 @@ function Browse({ person, kind }) {
 
                 {kind === 'conversations' && open.messages && (
                   open.messages.length
-                    ? open.messages.map((m) => (
-                      <p key={m.id} className="leading-relaxed">
-                        <span className="text-[11px] uppercase tracking-wide text-mute">{m.role === 'user' ? person.name : m.agent_name || 'Assistant'}</span>
-                        <span className="mt-0.5 block whitespace-pre-wrap text-txt/85">{m.content}</span>
-                      </p>
-                    ))
+                    // Drawn as the chat itself draws it: the person's words as a bubble on
+                    // the right, the agent's reply formatted (headings, tables) on the left,
+                    // so a voucher or a table reads as one rather than as raw # and | marks.
+                    ? <div className="space-y-4 py-1">{open.messages.map((m) => (m.role === 'user' ? (
+                      <div key={m.id} className="flex flex-col items-end">
+                        <span className="mb-1 text-[11px] text-mute">{person.name}</span>
+                        <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-3xl rounded-br-lg border border-p1/30 bg-gradient-to-br from-p1/30 to-p2/20 px-4 py-2.5">{m.content}</div>
+                      </div>
+                    ) : (
+                      <div key={m.id}>
+                        <span className="mb-1 block text-[11px] text-mute">{m.agent_name || 'Assistant'}</span>
+                        <div className="md break-words text-[15px]">
+                          <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypeMarkRows} components={markdownComponents}>{hideMarkers(m.content || '')}</Markdown>
+                        </div>
+                      </div>
+                    )))}</div>
                     : <p className="text-mute">No messages.</p>
                 )}
 
