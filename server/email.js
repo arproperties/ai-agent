@@ -84,6 +84,23 @@ export function replyRecipients(original, myAddress) {
   return norm(original.to).filter((a) => a !== mine);
 }
 
+/**
+ * Who a reply copies in. A reply keeps everyone who was on the email — the other people it
+ * went to and its Cc — so nobody silently drops off the conversation; only the sender-only
+ * reply the user asks for leaves them out. Yourself and anyone already in To are never
+ * repeated, and extra people the agent adds come after.
+ */
+export function replyCc(original, myAddress, to = [], extra = [], { all = true } = {}) {
+  const skip = new Set([myAddress, ...to].map((a) => String(a || '').trim().toLowerCase()));
+  const kept = all ? [...(original.to || []), ...(original.cc || [])] : [];
+  const out = [];
+  for (const a of [...kept, ...(extra || [])]) {
+    const v = String(a || '').trim().toLowerCase();
+    if (v && !skip.has(v)) { skip.add(v); out.push(v); }
+  }
+  return out;
+}
+
 // A changed draft is a new draft: the old one is taken back so only one is left waiting.
 const REPLACES = {
   type: 'integer',
@@ -113,13 +130,15 @@ export const EMAIL_WRITE_TOOLS = [
   {
     name: 'reply_email',
     description: 'Write a reply to an existing email, correctly threaded onto it, and show it to the user for approval. ' +
-      'This does NOT send it — the user must tap Approve. Recipients and subject are taken from the original; ' +
-      'use cc to copy anyone else into the conversation.',
+      'This does NOT send it — the user must tap Approve. Recipients and subject are taken from the original, and ' +
+      'everyone who was on it (its To and Cc) stays copied in, like Reply All; use cc to add anyone else, and set ' +
+      'reply_all to false only when the user wants to answer the sender alone.',
     input_schema: {
       type: 'object',
       properties: {
         message_id: MESSAGE_ID, body: { type: 'string', description: 'Plain text. ' + TABLE_HINT },
-        cc: { type: 'array', items: { type: 'string' }, description: 'Extra people to copy in.' },
+        cc: { type: 'array', items: { type: 'string' }, description: 'Extra people to copy in, beyond those already on the email.' },
+        reply_all: { type: 'boolean', description: 'Default true: keep everyone already on the email. False answers the sender alone.' },
         attachments: ATTACHMENTS, replaces: REPLACES,
       },
       required: ['message_id', 'body'],
@@ -235,6 +254,15 @@ function writeTools(ctx) {
       // history keeps only words). Without the headers it would open a new thread on the
       // other side, so the email it answers is found by subject and recipient instead.
       let replyToId = in_reply_to ?? null;
+      // A correction of a reply ("add the Cc", "change a line") is often written as a fresh
+      // draft. It must stay a reply: without the old draft's headers it lands on the other
+      // side as a separate email, so the thread and subject are taken from the draft it replaces.
+      const prev = !thread && replaces ? await getDraft(userId, Number(replaces)) : null;
+      if (prev?.in_reply_to) {
+        thread = { messageId: prev.in_reply_to, refs: prev.refs };
+        replyToId = prev.reply_to_id;
+        if (!/^\s*re\s*:/i.test(subject || '')) subject = prev.subject;
+      }
       if (!thread && /^\s*re\s*:/i.test(subject || '')) {
         const found = await imapActions.findThread(userId, { to, subject }).catch(() => null);
         if (found) { thread = found; replyToId = found.id; }
@@ -248,14 +276,17 @@ function writeTools(ctx) {
       return waiting(d) + await replace(userId, replaces);
     },
 
-    reply_email: async (userId, { message_id, body, cc, attachments, replaces }) => {
+    reply_email: async (userId, { message_id, body, cc, reply_all, attachments, replaces }) => {
       if (!await externalId(userId)) await checkAddresses(cc, { canAdd: ctx.canAddAddress });
       const o = await imapActions.original(userId, message_id);
       const acc = await imapAccount(userId);
       const to = replyRecipients(o, acc.email);
+      // Only the extra people are checked against the address book (above): those already on
+      // the email are whoever wrote to us, not addresses the agent made up.
+      const allCc = replyCc(o, acc.email, to, cc, { all: reply_all !== false });
       const d = show(await draftWith(userId, attachments, {
         agentId: ctx.agentId, conversationId: ctx.conversationId,
-        to, cc,
+        to, cc: allCc,
         subject: replySubject(o.subject),
         body, from: acc.email,
         inReplyTo: o.messageId, refs: o.refs, replyToId: message_id,

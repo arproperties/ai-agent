@@ -332,6 +332,9 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
       </dl>
 
       <DraftBody body={draft.body} />
+      {draft.quotes && draft.status !== 'sent' && (
+        <p className="mt-2 text-xs text-mute">The earlier emails in this conversation go underneath, as in Outlook.</p>
+      )}
       </>)}
 
       {draft.files?.length > 0 && (
