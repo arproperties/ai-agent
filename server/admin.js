@@ -5,7 +5,7 @@ import { inlineType } from './files.js';
 import { recentErrors, errorCount } from './errors.js';
 import { MSG_SELECT, messageOut } from './messenger.js';
 import { listAccess, setAccess, setActionAccess } from './saifsys/index.js';
-import { listModuleAccess, setModuleAccess, COMPANY_MODULES } from './modules.js';
+import { listModuleAccess, setModuleAccess, COMPANY_MODULES, moduleOverview, setModuleForAll, setModuleForNewPeople, giveNewPersonModules } from './modules.js';
 import { isMaster, isExternal, externalId } from './access.js';
 
 // Master's oversight lives here, in its own router behind requireMaster, rather than
@@ -32,6 +32,7 @@ export async function createUser(master, { name, email, password }) {
   const { id } = await db.prepare(
     'INSERT INTO users (email, name, password_hash, role, created_by) VALUES (?, ?, ?, ?, ?) RETURNING id'
   ).run(clean.email, clean.name, hash, 'user', master.id);
+  await giveNewPersonModules(id);
   return { id, name: clean.name, email: clean.email, role: 'user' };
 }
 
@@ -394,6 +395,19 @@ adminRoutes.put('/users/:id/saifsys', wrap(async (req, res) => {
 
 adminRoutes.put('/users/:id/saifsys-actions', wrap(async (req, res) => {
   res.json({ ok: true, actions: await setActionAccess(req.params.id, req.body.actions) });
+}));
+
+// One module for everybody at once: give it to all the staff, take it from all of them,
+// or have every new person start with it (People → Modules).
+adminRoutes.get('/modules', wrap(async (req, res) => {
+  res.json(await moduleOverview());
+}));
+
+adminRoutes.put('/modules/:key', wrap(async (req, res) => {
+  const out = { ok: true };
+  if (typeof req.body.everyone === 'boolean') out.have = await setModuleForAll(req.params.key, req.body.everyone);
+  if (typeof req.body.newPeople === 'boolean') out.newPeople = await setModuleForNewPeople(req.params.key, req.body.newPeople);
+  res.json(out);
 }));
 
 // Which of Reem's own modules a person has (server/modules.js). Masters have them all.

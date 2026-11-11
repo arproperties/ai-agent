@@ -1594,6 +1594,11 @@ await db.exec(`
     module TEXT PRIMARY KEY,
     done_at BIGINT DEFAULT ${NOW}
   );
+  -- A module the master has said every new person starts with (People → Modules).
+  CREATE TABLE IF NOT EXISTS module_defaults (
+    module TEXT PRIMARY KEY,
+    set_at BIGINT DEFAULT ${NOW}
+  );
 `);
 
 // Tenant notices (server/notices.js): what a watchman saw at a unit, with photos, emailed

@@ -41,7 +41,7 @@ const TABLES = [
   'checklists', 'checklist_items', 'checklist_runs', 'checklist_run_items', 'diary_entries',
   'buildings', 'building_jobs_seen',
   'inventory_areas', 'inventory_items', 'inventory_log', 'inventory_proposals',
-  'module_access', 'module_rollouts', 'tenant_notices', 'tenant_notice_photos', 'pictures',
+  'module_access', 'module_rollouts', 'module_defaults', 'tenant_notices', 'tenant_notice_photos', 'pictures',
   'recurring_buildings', 'recurring_payments', 'recurring_payment_dues', 'recurring_payment_receipts', 'recurring_accounts', 'recurring_transfers', 'recurring_heads',
   'mail_front', 'mail_route_rules', 'mail_people', 'mail_log', 'backup_state',
   'lease_renewal_settings', 'lease_renewals', 'lease_renewal_events', 'lease_renewal_files', 'lease_renewal_nudges',

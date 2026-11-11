@@ -98,6 +98,55 @@ export async function setModuleAccess(userId, wanted) {
   return keys.length;
 }
 
+// ---------- one module, everybody at once (People → Modules) ----------
+//
+// "Everybody" is the staff: never the master (who has every module anyway) and never an
+// external person, so a tap here cannot hand a company screen to someone outside it, and
+// "Take from all" leaves an external person's private modules alone.
+
+const STAFF = "role <> 'master' AND NOT external";
+
+/** Every module, how many of the staff have it, and whether new people start with it. */
+export async function moduleOverview() {
+  const { n } = await db.prepare(`SELECT COUNT(*)::int AS n FROM users WHERE ${STAFF}`).get();
+  const counts = await db.prepare(
+    `SELECT a.module, COUNT(*)::int AS n FROM module_access a JOIN users u ON u.id = a.user_id WHERE ${STAFF.replace(/role|external/g, (w) => `u.${w}`)} GROUP BY a.module`
+  ).all();
+  const have = new Map(counts.map((r) => [r.module, r.n]));
+  const defaults = new Set((await db.prepare('SELECT module FROM module_defaults').all()).map((r) => r.module));
+  return {
+    staff: n,
+    modules: MODULES.map((m) => ({ key: m.key, label: m.label, about: m.about, have: have.get(m.key) || 0, newPeople: defaults.has(m.key) })),
+  };
+}
+
+/** Gives the module to all the staff, or takes it from all of them. Returns how many have it now. */
+export async function setModuleForAll(key, on) {
+  if (!KEYS.includes(key)) throw bad(`Unknown module: ${key}`, 400);
+  if (on) {
+    await db.prepare(`INSERT INTO module_access (user_id, module) SELECT id, ? FROM users WHERE ${STAFF} ON CONFLICT DO NOTHING`).run(key);
+  } else {
+    await db.prepare(`DELETE FROM module_access WHERE module = ? AND user_id IN (SELECT id FROM users WHERE ${STAFF})`).run(key);
+  }
+  return (await moduleOverview()).modules.find((m) => m.key === key).have;
+}
+
+/** Whether a person added from now on starts with this module. Nobody who is already here changes. */
+export async function setModuleForNewPeople(key, on) {
+  if (!KEYS.includes(key)) throw bad(`Unknown module: ${key}`, 400);
+  if (on) await db.prepare('INSERT INTO module_defaults (module) VALUES (?) ON CONFLICT DO NOTHING').run(key);
+  else await db.prepare('DELETE FROM module_defaults WHERE module = ?').run(key);
+  return !!on;
+}
+
+/** A new account gets the modules the master marked for new people. Accounts start as staff, never external. */
+export async function giveNewPersonModules(userId) {
+  const keys = (await db.prepare('SELECT module FROM module_defaults').all()).map((r) => r.module).filter((k) => KEYS.includes(k));
+  const ins = db.prepare('INSERT INTO module_access (user_id, module) VALUES (?, ?) ON CONFLICT DO NOTHING');
+  for (const k of keys) await ins.run(userId, k);
+  return keys;
+}
+
 /** Refuses anyone who does not hold this module. Put it in front of the module's routes. */
 export const needsModule = (key) => (req, res, next) => {
   userModules(req.user).then((have) => (have.includes(key) ? next() : res.status(403).json({ error: 'You do not have this module' })), next);

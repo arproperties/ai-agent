@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, EyeOff, Check, Pencil, AlertTriangle, Star, Search, X } from 'lucide-react';
+import { Loader2, UserPlus, Ban, ChevronLeft, ExternalLink, Eye, EyeOff, Check, Pencil, AlertTriangle, Star, Search, X, LayoutGrid } from 'lucide-react';
 import { api } from '../lib/api';
 import { cleanEmail } from '../lib/email';
 import Avatar from './Avatar';
@@ -821,6 +821,83 @@ function ProblemsSheet({ onClose }) {
 }
 
 /**
+ * One module for everybody at once. "Everybody" is the staff: the master has every module
+ * already and an external person is never included, so nothing here can hand a company
+ * screen to someone outside the company. Each person's own Modules tab still works after.
+ */
+function EveryoneModulesSheet({ onClose, onChanged }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const load = () => api.get('/admin/modules').then(setData).catch((e) => { setError(e.message); setData({ staff: 0, modules: [] }); });
+  useEffect(() => { load(); }, []);
+
+  const put = async (m, body, label) => {
+    if (body.everyone === false && !confirm(`Take ${m.label} from all ${data.staff} people? Their own things in it are kept, and you can give it back.`)) return;
+    setBusy(`${m.key}:${label}`);
+    setError('');
+    try {
+      await api.put(`/admin/modules/${m.key}`, body);
+      await load();
+      onChanged?.();
+    } catch (e) { setError(e.message); }
+    setBusy('');
+  };
+
+  return (
+    <Sheet title="Modules for everyone" onClose={onClose}
+      icon={<span className="grid size-8 place-items-center rounded-full bg-p1/20 text-p1"><LayoutGrid size={16} /></span>}>
+      {data === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
+        <div className="space-y-3">
+          <p className="text-sm leading-relaxed text-mute">
+            Give a module to all {data.staff} staff in one tap, or take it from all of them. External people are never included.
+            Switch on "New people" and everyone you add from now on starts with it.
+          </p>
+          <div className="divide-y divide-stroke overflow-hidden rounded-2xl border border-stroke bg-white/[0.02]">
+            {data.modules.map((m) => {
+              const all = data.staff > 0 && m.have >= data.staff;
+              return (
+                <div key={m.key} className="space-y-2.5 px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium">{m.label}</span>
+                      <span className="block text-xs text-mute">{m.about}</span>
+                    </span>
+                    <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs ${all ? 'bg-ok/15 text-ok' : m.have ? 'bg-white/10 text-txt' : 'bg-white/[0.06] text-mute'}`}>
+                      {all ? 'Everyone' : `${m.have} of ${data.staff}`}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={() => put(m, { everyone: true }, 'give')} disabled={!!busy || all}
+                      className="flex items-center gap-1.5 rounded-full bg-p1 px-3.5 py-1.5 text-xs font-medium text-white transition active:scale-95 disabled:opacity-40">
+                      {busy === `${m.key}:give` ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Give to all
+                    </button>
+                    <button onClick={() => put(m, { everyone: false }, 'take')} disabled={!!busy || !m.have}
+                      className="flex items-center gap-1.5 rounded-full border border-stroke px-3.5 py-1.5 text-xs text-mute transition hover:text-bad active:scale-95 disabled:opacity-40">
+                      {busy === `${m.key}:take` ? <Loader2 size={13} className="animate-spin" /> : <Ban size={13} />} Take from all
+                    </button>
+                    <span className="flex-1" />
+                    <button onClick={() => put(m, { newPeople: !m.newPeople }, 'new')} disabled={!!busy}
+                      role="switch" aria-checked={m.newPeople} title="Everyone you add from now on starts with this module"
+                      className="flex items-center gap-2 text-xs text-mute disabled:opacity-60">
+                      New people
+                      <span className={`relative h-6 w-10 shrink-0 rounded-full transition ${m.newPeople ? 'bg-p1' : 'bg-white/15'}`}>
+                        <span className={`absolute top-1 size-4 rounded-full bg-white transition-all ${m.newPeople ? 'left-5' : 'left-1'}`} />
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {error && <p className="text-sm text-bad">{error}</p>}
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+/**
  * Master's people screen. A full-screen panel like the Shelf rather than a dialog: it
  * holds somebody's whole workspace - their files, chats, memory and the record of what
  * has been read - and that is more than a modal should carry. On a wide screen the
@@ -832,6 +909,8 @@ export default function AdminPage({ agents, me, onBack }) {
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState(null);
   const [problems, setProblems] = useState(false);
+  const [everyone, setEveryone] = useState(false);
+  const [modulesSeen, setModulesSeen] = useState(0); // remounts an open person so their Modules tab shows the change
   const [broken, setBroken] = useState(0); // faults in the last week
   const [q, setQ] = useState('');
   const load = () => api.get('/admin/users').then(setPeople);
@@ -865,6 +944,10 @@ export default function AdminPage({ agents, me, onBack }) {
             <AlertTriangle size={16} /> {broken}
           </button>
         )}
+        <button onClick={() => setEveryone(true)} title="Give a module to everyone at once"
+          className="flex items-center gap-2 rounded-full border border-stroke px-3.5 py-2 text-sm text-mute transition hover:text-txt active:scale-95">
+          <LayoutGrid size={16} /> <span className="hidden sm:inline">Modules</span>
+        </button>
         <button onClick={() => { setAdding(true); setOpen(null); }}
           className="flex items-center gap-2 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25 transition active:scale-95">
           <UserPlus size={16} /> Add
@@ -923,7 +1006,7 @@ export default function AdminPage({ agents, me, onBack }) {
               </div>
             </div>
           ) : person ? (
-            <PersonDetail key={person.id} person={person} agents={agents} me={me} onBack={() => setOpen(null)} onChanged={load} />
+            <PersonDetail key={`${person.id}:${modulesSeen}`} person={person} agents={agents} me={me} onBack={() => setOpen(null)} onChanged={load} />
           ) : (
             <div className="hidden flex-1 flex-col items-center justify-center gap-2 px-8 text-center md:flex">
               <span className="grid size-16 place-items-center rounded-3xl bg-gradient-to-br from-emerald-400/25 to-p1/10 text-emerald-300"><UserPlus size={28} strokeWidth={1.4} /></span>
@@ -933,6 +1016,7 @@ export default function AdminPage({ agents, me, onBack }) {
         </section>
       </div>
       {problems && <ProblemsSheet onClose={() => setProblems(false)} />}
+      {everyone && <EveryoneModulesSheet onClose={() => setEveryone(false)} onChanged={() => setModulesSeen((n) => n + 1)} />}
     </div>
   );
 }
