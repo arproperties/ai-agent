@@ -3,11 +3,31 @@ import { createPortal } from 'react-dom';
 import { Loader2, Check, X, Send, AlertCircle, EyeOff, Trash2, ChevronDown, Paperclip, FileText, Download, Pencil } from 'lucide-react';
 import { api } from '../lib/api';
 import { cleanEmail } from '../lib/email';
+import { splitTables, numeric } from '../lib/emailTable';
 import { flyLoopTo } from './PaperPlane';
 
 // An email an agent wrote, waiting for the person whose name it would go out under.
 // The whole body is shown, not a preview: approving something you have only seen the top
 // of is not approving it.
+
+// The body as it will arrive: rows with "|" between cells are drawn as the table the
+// recipient will see, not as a line of pipes.
+function DraftBody({ body }) {
+  return (
+    <div className="mt-2.5 border-t border-stroke/60 pt-2.5 text-[13px] leading-relaxed">
+      {splitTables(body).map((b, i) => b.rows ? (
+        <div key={i} className="my-2 overflow-x-auto">
+          <table className="border-collapse text-[13px]">
+            <thead><tr>{b.rows[0].map((c, k) => <th key={k} className="border border-stroke bg-white/[0.06] px-3 py-1.5 text-left font-semibold">{c}</th>)}</tr></thead>
+            <tbody>{b.rows.slice(1).map((r, j) => (
+              <tr key={j}>{r.map((c, k) => <td key={k} className={`border border-stroke px-3 py-1.5 ${k > 0 && numeric(c) ? 'text-right tabular-nums' : ''}`}>{c}</td>)}</tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ) : <p key={i} className="whitespace-pre-wrap">{b.text}</p>)}
+    </div>
+  );
+}
 
 const STATE = {
   pending: { label: 'Waiting for your approval', tone: 'border-warn/40 bg-warn/[0.06]', dot: 'text-warn' },
@@ -311,7 +331,7 @@ export default function DraftCard({ draft, from, onChanged, onRemoved }) {
         <div className="flex gap-2"><dt className="w-10 shrink-0 text-mute">Subject</dt><dd className="min-w-0 break-words font-medium">{draft.subject || '(no subject)'}</dd></div>
       </dl>
 
-      <p className="mt-2.5 whitespace-pre-wrap border-t border-stroke/60 pt-2.5 text-[13px] leading-relaxed">{draft.body}</p>
+      <DraftBody body={draft.body} />
       </>)}
 
       {draft.files?.length > 0 && (

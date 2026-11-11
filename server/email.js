@@ -66,6 +66,9 @@ const ATTACHMENTS = {
   },
 };
 
+// Drafts are plain text, but rows with "|" between cells go out as a real table (emailTable.js).
+const TABLE_HINT = 'For a table, write one row per line with " | " between the cells, header row first, ' +
+  'every row the same number of cells, no "---" lines and no other Markdown; it is sent as a proper table.';
 const MESSAGE_ID = { type: 'string', description: 'The id of an email, exactly as search_email gave it (for example "INBOX:1423").' };
 
 /**
@@ -99,7 +102,7 @@ export const EMAIL_WRITE_TOOLS = [
         to: { type: 'array', items: { type: 'string' }, description: 'Recipient email addresses.' },
         cc: { type: 'array', items: { type: 'string' } },
         subject: { type: 'string' },
-        body: { type: 'string', description: 'Plain text. No Markdown — this goes out as an email, not a chat message.' },
+        body: { type: 'string', description: 'Plain text. No Markdown — this goes out as an email, not a chat message. ' + TABLE_HINT },
         in_reply_to: { ...MESSAGE_ID, description: 'Optional: an email this is a reply to, so it threads. Prefer reply_email.' },
         attachments: ATTACHMENTS,
         replaces: REPLACES,
@@ -115,7 +118,7 @@ export const EMAIL_WRITE_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        message_id: MESSAGE_ID, body: { type: 'string', description: 'Plain text.' },
+        message_id: MESSAGE_ID, body: { type: 'string', description: 'Plain text. ' + TABLE_HINT },
         cc: { type: 'array', items: { type: 'string' }, description: 'Extra people to copy in.' },
         attachments: ATTACHMENTS, replaces: REPLACES,
       },

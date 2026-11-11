@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { hasTable, bodyHtml } from './emailTable.js';
 
 // Sending, for a mailbox that is already connected over IMAP. The address and the
 // password are the ones already stored — connecting a mailbox never asks twice.
@@ -40,9 +41,12 @@ export function transportFor(acc, password) {
 // threads against it. A second compile would generate a second Message-ID and break that.
 const composer = nodemailer.createTransport({ streamTransport: true, buffer: true });
 
-export async function compose({ from, to, cc = [], bcc = [], subject = '', text = '', inReplyTo, references, attachments = [], replyTo }) {
+export async function compose({ from, to, cc = [], bcc = [], subject = '', text = '', html, inReplyTo, references, attachments = [], replyTo }) {
+  // A body with a table in it also goes out as HTML, so the table arrives as a table.
+  if (!html && hasTable(text)) html = bodyHtml(text);
   const info = await composer.sendMail({
     from, to, subject, text,
+    ...(html ? { html } : {}),
     ...(replyTo ? { replyTo } : {}),
     ...(attachments.length ? { attachments: attachments.map((a) => ({ ...a, encoding: 'base64' })) } : {}),
     ...(cc.length ? { cc } : {}),
