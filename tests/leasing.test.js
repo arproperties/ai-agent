@@ -5,7 +5,7 @@ import { create, update } from '../server/properties.js';
 import { report } from '../server/leasingReports.js';
 import { listAlerts } from '../server/leasingAlerts.js';
 import { addTenant, updateTenant, removeTenant, listTenants, createBooking, createBookingWithDocs, updateBooking, confirmBooking, cancelBooking, removeBooking,
-  listBookings, availability, suggestType, bookingStage, bookingDocs, addBookingDoc, removeBookingDoc, overview, schedule, bookingPayments, recordPayment, removePayment } from '../server/leasing.js';
+  listBookings, availability, suggestType, bookingStage, bookingDocs, addBookingDoc, removeBookingDoc, overview, schedule, bookingPayments, recordPayment, removePayment, renewBooking } from '../server/leasing.js';
 
 test.after(() => closeDb());
 
@@ -130,6 +130,32 @@ test('booking documents: named freely, counted on the booking, gone with a delet
 
   await removeBooking(bk.id); // its documents go with it
   assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_documents').get()).n, 0);
+});
+
+test('a renewal carries the documents of every lease before it, and adds its own', async () => {
+  const { u1 } = await units();
+  const a = await createBooking(stay(u1.id, '2026-11-01', '2027-10-31', { status: 'confirmed' }));
+  await addBookingDoc(a.id, { title: 'Driver License' });
+  await addBookingDoc(a.id, { title: 'Application' });
+
+  const b = await renewBooking(a.id);
+  assert.equal(b.docs, 2, 'counted on the renewal too');
+  assert.deepEqual((await bookingDocs(b.id)).map((d) => [d.title, d.from_ref]), [['Driver License', a.ref], ['Application', a.ref]]);
+  const notice = await addBookingDoc(b.id, { title: 'Notice' });
+  assert.deepEqual((await bookingDocs(a.id)).map((d) => d.title), ['Driver License', 'Application'], 'the first lease shows only its own');
+
+  const c = await renewBooking((await confirmBooking(b.id)).id);
+  await addBookingDoc(c.id, { title: 'Pet form' });
+  assert.deepEqual((await bookingDocs(c.id)).map((d) => [d.title, d.from_ref]),
+    [['Driver License', a.ref], ['Application', a.ref], ['Notice', b.ref], ['Pet form', null]]);
+  assert.equal((await listBookings()).find((x) => x.id === c.id).docs, 4);
+
+  // One file, shown on many leases: taken off the lease it was added to, it is gone from those after it.
+  await removeBookingDoc(notice.id);
+  assert.deepEqual((await bookingDocs(c.id)).map((d) => d.title), ['Driver License', 'Application', 'Pet form']);
+  // A deleted draft takes only its own with it.
+  await removeBooking(c.id);
+  assert.deepEqual((await bookingDocs(b.id)).map((d) => d.title), ['Driver License', 'Application']);
 });
 
 test('the payment schedule follows the frequency', () => {

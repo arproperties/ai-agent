@@ -8,7 +8,8 @@ import Select from './Select';
 // What is kept with one booking: the signed contract, the tenant's ID and passport, payment
 // slips, and notes with no file. Named freely; the usual names are offered as you type. Each can
 // have a category, as Rent Manager files them on its History / Notes tab, and the list can be
-// narrowed to one. The server is the booking documents part of server/leasing.js.
+// narrowed to one. A renewal also shows the documents of the leases before it, marked "From LS-…";
+// those are deleted on the lease they were added to. The server is the booking documents part of server/leasing.js.
 
 // The same list as DOC_CATEGORIES in server/leasing.js.
 const CATEGORIES = [['lease', 'Lease'], ['application', 'Application'], ['notice', 'Notice'], ['move_in', 'Move-in form'], ['other', 'Other']];
@@ -71,7 +72,7 @@ export default function BookingDocs({ booking }) {
 
   return (
     <div className="space-y-4">
-      {docs && !docs.some((d) => d.generated) && booking.status !== 'cancelled' && (
+      {docs && !docs.some((d) => d.generated && !d.from_ref) && booking.status !== 'cancelled' && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-stroke px-4 py-3 text-sm">
           <span className="text-mute">No lease contract has been made for this lease yet.</span>
           <button type="button" onClick={makeContract} disabled={busy} className="flex items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-1.5 text-xs font-medium text-white disabled:opacity-60">
@@ -105,6 +106,7 @@ export default function BookingDocs({ booking }) {
                   <div className="min-w-0 flex-1">
                     <p className="font-medium">{d.title}
                       {d.category && <span className="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-normal text-txt/80">{categoryName(d.category)}</span>}
+                      {d.from_ref && <span className="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-normal text-txt/80">From {d.from_ref}</span>}
                       {d.generated && <span className="ml-2 rounded-full bg-p1/15 px-2 py-0.5 text-[11px] font-normal text-p1">Made by the system · unsigned</span>}
                       <span className="ml-2 text-xs font-normal text-mute">{when(d.created_at)}</span></p>
                     {d.notes && <p className="mt-0.5 whitespace-pre-wrap text-sm text-txt/80">{d.notes}</p>}
@@ -112,7 +114,7 @@ export default function BookingDocs({ booking }) {
                       ? <a href={`/api/leasing/docs/${d.id}/file`} target="_blank" rel="noreferrer" className="mt-1 flex items-center gap-1.5 text-sm text-p3 hover:underline"><Paperclip size={14} /> <span className="truncate">{d.file_name}</span></a>
                       : <p className="mt-1 text-xs text-mute">No file attached</p>}
                   </div>
-                  {canDo('delete') && <button onClick={() => remove(d)} aria-label={`Delete ${d.title}`} className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
+                  {canDo('delete') && !d.from_ref && <button onClick={() => remove(d)} aria-label={`Delete ${d.title}`} className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={15} /></button>}
                 </div>
               ))}
             </div>

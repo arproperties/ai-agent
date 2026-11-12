@@ -106,11 +106,19 @@ export async function removeTenant(id) {
 
 // ---------- bookings ----------
 
+/**
+ * A lease and every lease it renews, back to the first (`back` 0 is the lease itself). A tenant's
+ * papers belong to the whole stay, so a renewal shows those of the leases before it as its own.
+ */
+const LEASE_CHAIN = (id) => `WITH RECURSIVE chain(lease_id, parent, back) AS (
+    SELECT l.id, l.renewed_from, 0 FROM lease_bookings l WHERE l.id = ${id}
+    UNION ALL SELECT l.id, l.renewed_from, c.back + 1 FROM lease_bookings l JOIN chain c ON l.id = c.parent WHERE c.back < 100)`;
+
 const BOOKING_SELECT = `SELECT b.id, b.unit_id, b.tenant_id, b.type, b.rent_amount, b.rent_amount_2, b.rent_lines, b.rent_period, b.payment_frequency,
     b.security_deposit, b.status, b.contract_no, b.source, b.referred_by, rt.full_name AS referred_by_name, b.tenant_energy_account, b.cancel_reason, b.notes, b.created_at,
     b.fees, b.discounts, b.discount_type, b.discount_value, b.discount_note, b.tax_percent, b.renewed_from, b.deposit_refunded, b.deposit_note, to_char(b.deposit_settled_on, 'YYYY-MM-DD') AS deposit_settled_on,
     b.deposit_passed_to, to_char(b.deposit_passed_on, 'YYYY-MM-DD') AS deposit_passed_on,
-    (SELECT count(*)::int FROM lease_documents d WHERE d.booking_id = b.id) AS docs,
+    (${LEASE_CHAIN('b.id')} SELECT count(*)::int FROM lease_documents d JOIN chain c ON c.lease_id = d.booking_id) AS docs,
     (b.import_batch IS NOT NULL OR EXISTS (SELECT 1 FROM prop_inspections i WHERE i.booking_id = b.id AND i.kind = 'move_in' AND i.complete)) AS moved_in,
     b.import_batch, to_char(b.billed_from, 'YYYY-MM-DD') AS billed_from, b.prorate, b.part_month_amount, b.shown_rent, b.leasing_agent,
     to_char(b.lease_sign_date, 'YYYY-MM-DD') AS lease_sign_date, to_char(b.move_in_date, 'YYYY-MM-DD') AS move_in_date,
@@ -638,10 +646,17 @@ const getDoc = async (id) => {
   return d;
 };
 
-/** What is kept with a booking (contract, ID, payment slips…), in the order it was added. */
+/**
+ * What is kept with a booking (contract, ID, payment slips…), in the order it was added. A renewal
+ * also shows what was kept with every lease before it, oldest lease first, each with the lease it
+ * came from as `from_ref`; its own have none. They are the same documents, not copies.
+ */
 export async function bookingDocs(bookingId) {
   const b = await getBooking(bookingId);
-  return db.prepare(`SELECT ${DOC_COLS} FROM lease_documents WHERE booking_id = ? ORDER BY id`).all(b.id);
+  const docs = await db.prepare(`${LEASE_CHAIN('?')} SELECT d.*, c.back, to_char(l.start_date, 'YYYY-MM-DD') AS lease_start
+    FROM (SELECT ${DOC_COLS} FROM lease_documents) d JOIN chain c ON c.lease_id = d.booking_id JOIN lease_bookings l ON l.id = d.booking_id
+    ORDER BY c.back DESC, d.id`).all(b.id);
+  return docs.map(({ back, lease_start, ...d }) => ({ ...d, from_ref: back ? bookingRef({ id: d.booking_id, start_date: lease_start }) : null }));
 }
 
 /** A cancelled booking can still take documents (the cancellation letter, the refund slip). */
