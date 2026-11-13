@@ -242,7 +242,8 @@ export async function teamEmail({ facts, thread, reason, note, to, sender }) {
     `Facts of this renewal:\n${facts}`,
     `The emails with the tenant, oldest first:\n${thread || '(none yet)'}`,
     `Reason for this email: ${reason}`,
-    note ? `What the sender wants to say or ask:\n"""\n${String(note).slice(0, 2000)}\n"""` : '',
+    note ? `What the sender wrote in the email box: either a few words of what they want, or an earlier draft with their own changes. ` +
+      `Write the email from it, keeping every change, name, figure and wording they put in:\n"""\n${String(note).slice(0, 8000)}\n"""` : '',
     `To: ${to.join(', ') || '(not chosen yet)'}`,
     `Sender: ${sender}`,
   ].filter(Boolean).join('\n\n') }], S({ subject: str, body: str }), 2000);

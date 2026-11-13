@@ -596,20 +596,21 @@ function TeamMail({ id, onClose, onSent }) {
   const [reason, setReason] = useState('');
   const [to, setTo] = useState([]);
   const [cc, setCc] = useState([]);
-  const [note, setNote] = useState('');
   const [subject, setSubject] = useState('');
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(''); // 'write' | 'send'
   const [error, setError] = useState('');
-  const changed = useRef(false); // the person changed the words: a new draft asks first
+  const [drafted, setDrafted] = useState(false); // Reem has written it once: the button says Write again
   useEffect(() => { api.get(`/lease-renewals/${id}/team-mail`).then(setSetup).catch((e) => setError(e.message)); }, [id]);
 
-  const write = async (why = reason, list = to) => {
-    if (changed.current && text.trim() && !confirm('Write the email again? Your changes to it are replaced.')) return;
+  // What is in the email box goes with it: a few words ("ask them to confirm by Thursday"),
+  // or the draft with the person's changes, and Reem writes it again from that. There is no
+  // separate box for a note (the user, 2026-11-13).
+  const write = async (why = reason, list = to, note = text) => {
     setBusy('write'); setError('');
     try {
       const d = await api.post(`/lease-renewals/${id}/team-mail/draft`, { reason: why, note, to: list });
-      setSubject(d.subject); setText(d.body); changed.current = false;
+      setSubject(d.subject); setText(d.body); setDrafted(true);
     } catch (e) { setError(e.message); }
     setBusy('');
   };
@@ -619,7 +620,7 @@ function TeamMail({ id, onClose, onSent }) {
     setReason(r.key);
     const list = r.to.length ? r.to : to;
     setTo(list);
-    if (r.key !== 'other') write(r.key, list);
+    if (r.key !== 'other') write(r.key, list, ''); // a new reason: a fresh draft
   };
   const send = async () => {
     setBusy('send'); setError('');
@@ -658,22 +659,11 @@ function TeamMail({ id, onClose, onSent }) {
                 </div>
                 {busy === 'write'
                   ? <div className="grid h-[34dvh] min-h-52 place-items-center border-t border-stroke text-sm text-mute"><span className="flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> Reem is writing it from this lease…</span></div>
-                  : <textarea value={text} onChange={(e) => { changed.current = true; setText(e.target.value); }} aria-label="Email"
-                      placeholder={reason === 'other' ? 'Say below what it is about, then tap Write with Reem. Or write it yourself here.' : ''}
+                  : <textarea value={text} onChange={(e) => setText(e.target.value)} aria-label="Email"
+                      placeholder={reason === 'other' ? 'Say in a few words what it is about, then tap Write with Reem. Or write the whole email yourself.' : ''}
                       className="block h-[34dvh] min-h-52 w-full resize-y border-t border-stroke bg-transparent px-4 py-3.5 text-[15px] leading-relaxed outline-none placeholder:text-mute/70" />}
               </div>
 
-              <div className="space-y-1.5">
-                <p className="text-sm">{reason === 'other' ? 'What is it about?' : 'Anything to add? (optional)'}</p>
-                <div className="flex flex-wrap items-start gap-2">
-                  <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
-                    placeholder={reason === 'other' ? 'e.g. Ask Rona to call the tenant about the chiller fee' : 'e.g. Please confirm by Thursday'}
-                    className="min-w-0 flex-1 basis-60 resize-y rounded-xl border border-stroke bg-black/20 p-2.5 text-sm outline-none placeholder:text-mute/70 focus:border-p1/50" />
-                  <Btn busy={busy === 'write'} disabled={busy === 'send' || (reason === 'other' && !note.trim())} onClick={() => write()}>
-                    <Sparkles size={14} /> {text.trim() ? 'Write again' : 'Write with Reem'}
-                  </Btn>
-                </div>
-              </div>
             </>
           )}
 
@@ -681,7 +671,14 @@ function TeamMail({ id, onClose, onSent }) {
         </div>
       )}
     </div>
-    <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-stroke px-5 pb-safe pt-3">
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-stroke px-5 pb-safe pt-3">
+      {reason && (
+        <Btn busy={busy === 'write'} disabled={busy === 'send' || (reason === 'other' && !text.trim())} onClick={() => write()}
+          title="Reem writes it again from what is in the email box: your changes, or a few words of what you want">
+          <Sparkles size={14} /> {drafted ? 'Write again' : 'Write with Reem'}
+        </Btn>
+      )}
+      <span className="flex-1" />
       <Btn onClick={onClose}>Cancel</Btn>
       <Btn primary busy={busy === 'send'} disabled={!setup?.from || !to.length || !subject.trim() || !text.trim() || busy === 'write'} onClick={send}><Send size={14} /> Send</Btn>
     </div>
