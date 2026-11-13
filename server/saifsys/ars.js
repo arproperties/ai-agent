@@ -5,7 +5,7 @@ import { askSaifsys, saifsysConfigured, dubaiDate, dubaiHour, bad } from './clie
 // saifsys → ARS Home Rentals. Matches api/jarvis/v1/modules/ars.php on the saifsys side.
 //
 // Two things use it:
-//   - the ars_* tools (15 lookups, view only), carried by the agents of anyone who has
+//   - the ars_* tools (16 lookups, view only), carried by the agents of anyone who has
 //     the ARS module;
 //   - the morning job (on hold — startArs is not called): once a day it reads today's
 //     checkouts and puts ONE todo on each master's list, reminding at 11am.
@@ -91,6 +91,15 @@ const LOOKUPS = [
   { action: 'availability', status: 'Checking free units…', tool: tool('ars_availability',
     'Which ARS units are free for a stay, with rate and max guests. to is the checkout day.',
     { from: { ...DATE, description: 'Check-in day.' }, to: { ...DATE, description: 'Checkout day, after from.' } }, ['from', 'to']) },
+  { action: 'unit_rents', status: 'Checking unit sizes and rent…', tool: tool('ars_unit_rents',
+    'Every ARS unit with premise number, type (Studio / 1 Bedroom…), size in sq ft, whether it is rented or vacant today, and the monthly rent ' +
+    '(the current booking\'s nightly rate x 30), with totals. The same list as the ARS "Unit Sizes & Rent" report. ' +
+    'Use for "unit sizes", "Ayla units with rent", "which units are vacant", "premise number of 409".',
+    {
+      building: { type: 'string', description: 'Building name or part of it, e.g. "ayla". Omit for every building.' },
+      status: { type: 'string', enum: ['rented', 'vacant'], description: 'Only rented or only vacant units. Omit for all.' },
+      q: { type: 'string', description: 'One unit number or premise number. Omit for the list.' },
+    }) },
   { action: 'housekeeping', status: 'Checking housekeeping…', tool: tool('ars_housekeeping',
     'ARS cleaning jobs for a day and their status (confirmed, scheduled, in_progress, completed), with unit and booking.',
     { date: { ...DATE, description: 'The day. Omit for today.' }, status: { type: 'string', enum: ['confirmed', 'scheduled', 'in_progress', 'completed'] } }) },

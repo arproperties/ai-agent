@@ -159,9 +159,9 @@ test('every ARS lookup is a tool, and it asks saifsys for its own action with th
   await reset();
   const kit = await kitFor(await master('Boss'));
   const names = kit.definitions.map((d) => d.name).filter((n) => !n.startsWith('hr_') && !n.startsWith('fleet_'));
-  assert.equal(names.length, 15);
+  assert.equal(names.length, 16);
   assert.ok(names.every((n) => n.startsWith('ars_')));
-  assert.equal(new Set(names).size, 15);
+  assert.equal(new Set(names).size, 16);
 
   const out = await kit.run({ id: 't3', name: 'ars_bookings', input: { from: '2026-10-01', to: '2026-10-07', status: 'cancelled' } });
   assert.ok(!out.is_error);
