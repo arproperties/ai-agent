@@ -627,7 +627,9 @@ function TeamMail({ id, onClose, onSent }) {
   };
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pt-4">
+    <div className="flex min-h-0 flex-1 flex-col">
+    {/* The form scrolls; Cancel and Send stay at the bottom of the panel. */}
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
       {!setup ? (error ? <Problem text={error} /> : <div className="grid place-items-center py-10 text-mute"><Loader2 className="animate-spin" /></div>) : (
         <div className="space-y-4">
           {setup.problem && <Problem text={setup.problem} />}
@@ -676,12 +678,13 @@ function TeamMail({ id, onClose, onSent }) {
           )}
 
           <Problem text={error} />
-          <div className="sticky bottom-0 -mx-5 flex flex-wrap justify-end gap-2 border-t border-stroke bg-[var(--color-bg)] px-5 pb-4 pt-3">
-            <Btn onClick={onClose}>Cancel</Btn>
-            <Btn primary busy={busy === 'send'} disabled={!setup.from || !to.length || !subject.trim() || !text.trim() || busy === 'write'} onClick={send}><Send size={14} /> Send</Btn>
-          </div>
         </div>
       )}
+    </div>
+    <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-stroke px-5 pb-safe pt-3">
+      <Btn onClick={onClose}>Cancel</Btn>
+      <Btn primary busy={busy === 'send'} disabled={!setup?.from || !to.length || !subject.trim() || !text.trim() || busy === 'write'} onClick={send}><Send size={14} /> Send</Btn>
+    </div>
     </div>
   );
 }
