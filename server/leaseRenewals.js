@@ -12,10 +12,15 @@ import { withMailbox, replySubject } from './imap.js';
 import { sendPush } from './push.js';
 import { createTodo } from './todos.js';
 import { renderPdf } from './replyDoc.js';
-import { needsModule } from './modules.js';
+import { needsModule, userModules } from './modules.js';
 import { inbox, fileInSent, ownWords, claimTenantMail, checkTenantMail } from './tenantCare.js';
 import { askSaifsys, actSaifsys, saifsysConfigured, saifsysActionsConfigured, dubaiDate } from './saifsys/client.js';
-import { readReply, readDocs, advise, nextAsk, caseSummary, rewriteReply } from './leaseRenewalAi.js';
+import { readReply, readDocs, advise, nextAsk, caseSummary, rewriteReply, teamEmail } from './leaseRenewalAi.js';
+import { caseMailbox } from './caseMail.js';
+import { leaseFile, leaseText } from './leases.js';
+import { cleanAddresses, createDraft, decideDraft, logAction, MAX_RECIPIENTS } from './drafts.js';
+import { kick as outboxKick } from './outbox.js';
+import { loadAddresses, isKnown, PEOPLE, SHARED, listAddresses } from './addressBook.js';
 
 // Lease renewals: whoever has the module renews each lease with its tenant by email, from
 // Reem, instead of the staff in saifsys. The list is saifsys's leases ending within 150 days.
@@ -94,6 +99,7 @@ const D = {
   ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, nextAsk, caseSummary, rewriteReply, checkMail: checkTenantMail,
   send: sendRaw, file: fileInSent, fetch: fetchMessage, push: sendPush, todo: createTodo, actor: async () => (await inbox())?.email,
   mirror: (action, body) => saifsys(action, body),
+  teamEmail, mailbox: caseMailbox, kick: outboxKick,
   now: () => Date.now(),
 };
 export const useForTests = (over) => Object.assign(D, over);
@@ -835,27 +841,11 @@ function offerCharges(q) {
  * against the lease instead of telling the team to go and pull it (the user, 2026-11-03).
  */
 async function contractOf(r) {
-  let f;
-  try { f = await D.ask('legal', 'lease', { id: r.lease.lease_id }); f = f?.lease; } catch (err) {
+  // The same lease file chat and the lease panel read (server/leases.js), through this file's saifsys so the tests can stub it.
+  try { return leaseText(await leaseFile(r.lease.lease_id, { ask: D.ask })); } catch (err) {
     console.warn('[lease renewals] lease file:', err.message);
+    return 'The lease file could not be read from saifsys just now: say so if it matters, once.';
   }
-  if (!f?.lease) return 'The lease file could not be read from saifsys just now: say so if it matters, once.';
-  const l = f.lease;
-  const money = (label, v) => (Number(v) > 0 ? `${label} ${aed(v)}` : null);
-  const charges = [money('chiller fee', l.chiller_fee), money('admin fee', l.admin_fee), money('parking', l.parking_fee),
-    money('storeroom', l.store_fee), money('service charge a month', l.service_charge_monthly), money('security deposit', l.security_deposit)].filter(Boolean);
-  const legal = f.saifsys_legal || {};
-  return [
-    `The current contract in saifsys (lease ${l.number || l.id}, ${l.status}): ${longDate(l.start_date)} to ${longDate(l.end_date)}, ${aed(l.annual_rent)} a year, ${l.installments} cheques.`,
-    'chiller_fee' in l ? `Charges on it: ${charges.join('; ') || 'none recorded'}.` : (charges.length ? `On it: ${charges.join('; ')}.` : ''),
-    f.ejari?.number ? `Ejari ${f.ejari.number}${f.ejari.registration_date ? `, registered ${longDate(f.ejari.registration_date)}` : ''}${f.ejari.expiry_date ? `, expires ${longDate(f.ejari.expiry_date)}` : ''}.` : 'No Ejari number in saifsys.',
-    l.renewal_terms ? `Renewal terms on the lease: ${l.renewal_terms}` : '',
-    l.notes ? `Staff notes on the lease: ${l.notes}` : '',
-    f.money ? `Money: ${JSON.stringify(f.money)}` : '',
-    (legal.cases || []).length ? `saifsys legal cases on this lease: ${legal.cases.map((c) => `${c.number} "${c.title}" (${c.type}, ${c.status}${c.opened ? `, opened ${c.opened}` : ''}${c.closed ? `, closed ${c.closed}` : ''})`).join('; ')}.` : 'saifsys has no legal case on this lease.',
-    (legal.hearings || []).length ? `Hearings: ${legal.hearings.map((h) => `${h.date} ${h.title} ${h.status}${h.outcome ? `: ${h.outcome}` : ''}`).join('; ')}.` : '',
-    (f.other_leases || []).length ? `The tenant's other leases: ${f.other_leases.map((o) => `${o.lease_number} ${o.building} ${o.unit} (${o.status}, ends ${o.end_date})`).join('; ')}.` : '',
-  ].filter(Boolean).join('\n');
 }
 
 async function history(renewalId, before) {
@@ -1110,7 +1100,7 @@ const KIND = { out: 'Email to the tenant', in: 'Email from the tenant', step: 'S
  */
 export async function casePack(r) {
   const s = await settings();
-  const all = await db.prepare(`SELECT id, kind, title, subject, body, status, at FROM lease_renewal_events WHERE renewal_id = ? AND kind <> 'advice' ORDER BY at, id`).all(r.id);
+  const all = await db.prepare(`SELECT id, kind, title, subject, body, status, at FROM lease_renewal_events WHERE renewal_id = ? AND kind NOT IN ('advice', 'team') ORDER BY at, id`).all(r.id);
   // Reem's own workings ("Reem stopped: it could not read the tenant's email", "Taken over")
   // mean nothing to RDC and read like a fault on our side, so the pack leaves them out.
   const events = all.filter((e) => !(e.kind === 'step' && INTERNAL_STEP.test(e.title || '')));
@@ -1269,6 +1259,173 @@ const card = (l, r) => ({
   renewal: out(r),
 });
 
+// ---------- emailing the team ----------
+//
+// "Email someone" on a renewal: accounts to review the figures, legal to look at a dispute, or
+// any colleague. It goes from the person's own mailbox, never the Tenant care inbox: replies
+// to that inbox are read as the tenant's, so accounts answering there could have Reem answer
+// the tenant. Only addresses in the company address book, as in chat. The email is kept on
+// the timeline (kind 'team') but is never part of the thread with the tenant or the RDC pack.
+
+export const TEAM_REASONS = {
+  accounts: { label: 'Accounts review', to: ['accounts@ainalreempro.com'],
+    ask: 'Ask accounts to review and confirm the renewal figures before we go ahead: current rent and the new rent, the charges, VAT and Ejari, the cheque schedule and who the cheques are payable to, and whether the tenant has anything outstanding.' },
+  legal: { label: 'Legal check', to: ['legal@ainalreempro.com'],
+    ask: 'Ask legal to look at this renewal: where it stands, our offer, what the tenant says (in short, and the dispute if there is one), and what we would like their view on.' },
+  cheques: { label: 'Cheques / payment', to: ['accounts@ainalreempro.com'],
+    ask: 'About the cheques for the renewal: the schedule (dates and amounts), who they are payable to, and what has been received or is still needed.' },
+  other: { label: 'Other', to: [], ask: 'Whatever the sender asks for in their note, with the renewal figures the reader would need.' },
+};
+
+const STANDING = {
+  scheduled: 'The offer is ready but not sent to the tenant yet.', offer_sent: 'The offer was sent; waiting for the tenant.',
+  negotiating: 'Negotiating with the tenant.', agreed: 'The rent is agreed; waiting for the signed agreement and the cheques.',
+  papers_ok: 'The signed agreement and cheques match; ready to renew in saifsys.', converted: 'Renewed in saifsys.',
+  not_renewing: 'The tenant is not renewing.', closed: 'Handled outside Reem.',
+};
+
+/** Where the renewal stands, for an email to the team: the facts, then the status in plain words. */
+const teamFacts = async (r) => [
+  factsOf(r, await settings()),
+  STANDING[r.status] ? `Where it stands: ${STANDING[r.status]}` : '',
+  r.tenant_offer && !r.agreed ? `The tenant asks for ${aed(r.tenant_offer)} a year.` : '',
+  r.dispute ? `The tenant disputes it: ${r.dispute}` : '',
+  r.papers && !r.papers.complete ? `Papers still to fix: ${[...(r.papers.missing || []), ...(r.papers.wrong || [])].join('; ')}` : '',
+  r.workflow_id ? `saifsys renewal #${r.workflow_id}.` : '',
+].filter(Boolean).join('\n');
+
+/** What the sheet opens with: who it would go from, and the addresses it may go to. */
+export async function teamMailSetup(user) {
+  const box = await D.mailbox(user.id);
+  const { added } = await listAddresses();
+  return {
+    from: box?.canSend ? box.address : null,
+    // Why it cannot send, said once on the sheet rather than after the person wrote it all.
+    problem: box?.canSend ? null : box
+      ? `Your mailbox (${box.address}) is connected for reading only. Turn on sending for it in Settings → Email, then email from here.`
+      : 'Connect your mailbox in Settings → Email first: the email goes from your own address, so the reply comes back to you.',
+    reasons: Object.entries(TEAM_REASONS).map(([key, x]) => ({ key, label: x.label, to: x.to })),
+    addresses: [
+      ...SHARED.map((a) => ({ value: a, label: a, group: 'Departments' })),
+      ...PEOPLE.map((a) => ({ value: a, label: a, group: 'People' })),
+      ...added.map((a) => ({ value: a.email, label: a.email, group: 'Added' })),
+    ],
+  };
+}
+
+/** Reem's draft of the email, for the person to read and change. Nothing is sent. */
+export async function teamMailDraft(user, id, { reason, note, to } = {}) {
+  const r = await getRenewal(id);
+  if (!r) throw bad('Not found', 404);
+  const why = TEAM_REASONS[reason] || TEAM_REASONS.other;
+  const list = Array.isArray(to) ? to.map(String) : [];
+  if (reason === 'other' && !String(note || '').trim()) throw bad('Say in a few words what the email is about, then Reem writes it.');
+  return D.teamEmail({
+    facts: await teamFacts(r), thread: await thread(r.id), reason: `${why.label}. ${why.ask}`,
+    note, to: list, sender: user.name || 'The leasing team',
+  });
+}
+
+/** The person's email, sent from their own mailbox through the outbox, and kept on the timeline. */
+export async function teamMailSend(user, id, body = {}) {
+  const r = await getRenewal(id);
+  if (!r) throw bad('Not found', 404);
+  const to = cleanAddresses(body.to, 'To');
+  const cc = cleanAddresses(body.cc, 'Cc');
+  if (!to.length) throw bad('Who should it go to?');
+  if (to.length + cc.length > MAX_RECIPIENTS) throw bad(`Too many recipients (at most ${MAX_RECIPIENTS})`);
+  await loadAddresses();
+  const unknown = [...to, ...cc].filter((a) => !isKnown(a));
+  if (unknown.length) throw bad(`${unknown.join(', ')} ${unknown.length > 1 ? 'are' : 'is'} not in the company address book. Only the master can add an address (Settings → Address book).`);
+  const subject = String(body.subject || '').trim();
+  const text = String(body.text || '').trim();
+  if (!subject || !text) throw bad('Write the subject and the email first.');
+  const box = await D.mailbox(user.id);
+  if (!box?.canSend) throw bad('Your mailbox cannot send yet: connect it with sending on in Settings → Email.', 409);
+
+  const d = await createDraft(user.id, { to, cc, from: box.address, subject, body: text });
+  await logAction(user.id, { action: 'draft', draftId: d.id, recipients: d.to_addrs });
+  await decideDraft(user.id, d.id, true);
+  await logAction(user.id, { action: 'approve', draftId: d.id, recipients: d.to_addrs });
+  D.kick();
+
+  const label = (TEAM_REASONS[body.reason] || TEAM_REASONS.other).label;
+  await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, subject, data, user_id, at) VALUES (?, 'team', ?, ?, ?, ?, ?, ?)`)
+    .run(r.id, `Emailed ${to.join(', ')} · ${label}`, text, subject, JSON.stringify({ to, cc, from: box.address, reason: body.reason || 'other', draftId: d.id }), user.id, secs());
+  return { ok: true };
+}
+
+// ---------- the chat beside a renewal ----------
+
+/** This person's chat about this renewal, made the first time they open it. */
+export async function renewalChat(user, id) {
+  const r = await getRenewal(id);
+  if (!r) throw bad('Not found', 404);
+  const had = await db.prepare(`SELECT c.conversation_id FROM lease_renewal_chats c JOIN conversations v ON v.id = c.conversation_id
+    WHERE c.user_id = ? AND c.renewal_id = ? AND v.user_id = ?`).get(user.id, r.id, user.id);
+  if (had) return { conversationId: had.conversation_id };
+  const { id: conversationId } = await db.prepare('INSERT INTO conversations (user_id, title) VALUES (?, ?) RETURNING id')
+    .run(user.id, `${r.lease.building} ${r.lease.unit} · lease renewal`.slice(0, 60));
+  await db.prepare(`INSERT INTO lease_renewal_chats (user_id, renewal_id, conversation_id) VALUES (?, ?, ?)
+    ON CONFLICT (user_id, renewal_id) DO UPDATE SET conversation_id = EXCLUDED.conversation_id`).run(user.id, r.id, conversationId);
+  return { conversationId };
+}
+
+const STORY_MAX = 120_000; // characters of history a renewal chat is given: a very long one keeps its newest part
+
+/**
+ * The renewal's whole story for its chat, oldest first: every email both ways with its
+ * attachments, each step, the papers checks, emails to the team and the advisors' views.
+ * The person asks "what did he say about the chiller fee in August?", so nothing is cut but
+ * the oldest part of a very long story.
+ */
+async function story(renewalId) {
+  const rows = await db.prepare(`SELECT e.id, e.kind, e.title, e.body, e.subject, e.status, e.data, e.at, u.name AS by
+    FROM lease_renewal_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.renewal_id = ? ORDER BY e.at, e.id`).all(renewalId);
+  const files = await db.prepare('SELECT event_id, name FROM lease_renewal_files WHERE renewal_id = ? ORDER BY id').all(renewalId);
+  const on = (x) => dubaiDate(Number(x.at) * 1000);
+  const att = (x) => { const f = files.filter((y) => y.event_id === x.id).map((y) => y.name); return f.length ? `\nAttached: ${f.join(', ')}` : ''; };
+  const parts = rows.map((x) => {
+    if (x.kind === 'out') return `${on(x)} · We wrote to the tenant${x.by ? ` (${x.by})` : ''}: ${x.title}${x.status === 'failed' ? ' (NOT SENT yet)' : ''}\n${String(x.body || '').slice(0, 6000)}${att(x)}`;
+    if (x.kind === 'in') return `${on(x)} · The tenant wrote${x.subject ? `, "${x.subject}"` : ''}:\n${String(x.body || '').slice(0, 6000)}${att(x)}`;
+    if (x.kind === 'team') return `${on(x)} · ${x.by || 'Someone'} emailed ${(x.data?.to || []).join(', ')} (our team, not the tenant), "${x.subject}":\n${String(x.body || '').slice(0, 3000)}`;
+    if (x.kind === 'papers') {
+      const c = x.data?.check || {};
+      return `${on(x)} · Papers checked: ${c.complete ? 'the signed agreement and every cheque match' : [...(c.wrong || []), ...(c.missing || []).map((m) => `missing ${m}`)].join('; ') || x.title}`;
+    }
+    if (x.kind === 'advice') return `${on(x)} · ${x.data?.agent?.name || 'An advisor'} advised: ${String(x.body || '').slice(0, 1500)}${x.data?.reply ? `\n(Suggested reply, a draft only, NOT sent: ${String(x.data.reply).slice(0, 1000)})` : ''}`;
+    return `${on(x)} · ${x.title}${x.by ? ` (${x.by})` : ''}`;
+  });
+  let out = parts.join('\n\n');
+  if (out.length > STORY_MAX) out = `(the oldest part of the story is left out)\n…${out.slice(-STORY_MAX)}`;
+  return out;
+}
+
+/**
+ * What a renewal chat knows before anything is asked: the renewal, the lease file from
+ * saifsys, the emails with the tenant and the advisors' views. Null for any other chat, or
+ * for someone who no longer has Lease renewals.
+ */
+export async function renewalChatBrief(user, conversationId) {
+  const row = await db.prepare(`SELECT c.renewal_id FROM lease_renewal_chats c JOIN conversations v ON v.id = c.conversation_id
+    WHERE c.conversation_id = ? AND c.user_id = ? AND v.user_id = ?`).get(Number(conversationId) || 0, user.id, user.id);
+  if (!row) return null;
+  if (!isMaster(user) && !(await userModules(user)).includes('renewals')) return null;
+  const r = await getRenewal(row.renewal_id);
+  if (!r) return null;
+  const all = await story(r.id);
+  return [
+    `<lease_renewal>\nThis chat is about the renewal of one lease, opened from its page in Lease renewals. ${user.name} may ask anything about it: ` +
+      'the tenant, the old lease and its charges, what was offered and said, what to reply. Answer from these facts; for another lease, or an earlier one ' +
+      'on this unit, use lease_search and lease_file. When they want a reply to the tenant, write it in full so they can copy it into Reply on ' +
+      'the renewal page: the tenant is only emailed from there (from the Tenant care inbox), never from this chat.',
+    `# The renewal\n${await teamFacts(r)}`,
+    `# The lease that is ending, from saifsys\n${await contractOf(r)}`,
+    `# Everything that happened on this renewal, oldest first: every email with the tenant, each step, the papers, emails to our team\n${all || '(nothing yet)'}`,
+    '</lease_renewal>',
+  ].filter(Boolean).join('\n\n');
+}
+
 export const leaseRenewalRoutes = Router();
 leaseRenewalRoutes.use(needsModule('renewals'));
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -1309,6 +1466,15 @@ leaseRenewalRoutes.get('/:id', wrap(async (req, res) => {
   const events = await db.prepare(`SELECT e.id, e.kind, e.title, e.body, e.subject, e.status, e.error, e.reading, e.data, e.at, u.name AS by
     FROM lease_renewal_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.renewal_id = ? ORDER BY e.at DESC, e.id DESC`).all(r.id);
   const files = await db.prepare('SELECT id, event_id, name, mime FROM lease_renewal_files WHERE renewal_id = ? ORDER BY id').all(r.id);
+  // An email to the team goes through the outbox, so whether it went is on its draft.
+  const draftIds = events.filter((e) => e.kind === 'team' && e.data?.draftId).map((e) => Number(e.data.draftId));
+  const drafts = draftIds.length ? await db.prepare('SELECT id, status, error FROM email_drafts WHERE id = ANY(?::int[])').all(draftIds) : [];
+  for (const e of events) {
+    if (e.kind !== 'team') continue;
+    const d = drafts.find((x) => x.id === Number(e.data?.draftId));
+    e.status = d?.status || 'sent';
+    e.error = d?.status === 'failed' ? d.error || 'It could not be sent.' : null;
+  }
   res.json({
     ...card(r.lease, r), advisors: (await advisors(await settings())).length, paused: !!(await settings()).paused,
     // Who "Ask advisors" offers: the picked advisors (ticked), then the person's own agents.
@@ -1363,6 +1529,14 @@ leaseRenewalRoutes.post('/:id/advise', wrap(async (req, res) => {
   if (!added) throw bad('None of those agents can be asked here.');
   res.json({ added });
 }));
+
+// The chat beside the renewal: its conversation, made the first time.
+leaseRenewalRoutes.post('/:id/chat', wrap(async (req, res) => { res.json(await renewalChat(req.user, req.params.id)); }));
+
+// "Email someone": accounts, legal or a colleague, from the person's own mailbox.
+leaseRenewalRoutes.get('/:id/team-mail', wrap(async (req, res) => { res.json(await teamMailSetup(req.user)); }));
+leaseRenewalRoutes.post('/:id/team-mail/draft', wrap(async (req, res) => { res.json(await teamMailDraft(req.user, req.params.id, req.body || {})); }));
+leaseRenewalRoutes.post('/:id/team-mail', wrap(async (req, res) => { res.json(await teamMailSend(req.user, req.params.id, req.body || {})); }));
 
 // "Rewrite with Reem": the reply in the box, written again as the building management team. Nothing is sent.
 leaseRenewalRoutes.post('/:id/rewrite', wrap(async (req, res) => { res.json(await rewrite(req.params.id, req.body?.text)); }));

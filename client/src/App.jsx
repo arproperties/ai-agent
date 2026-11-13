@@ -15,7 +15,6 @@ import MeetingsPage from './components/Meetings';
 import TranscribePage from './components/Transcribe';
 import LeaseRenewalsPage from './components/LeaseRenewals';
 import DocumentRenewalsPage from './components/DocumentRenewals';
-import LegalCasesPage from './components/LegalCases';
 import TranslatePage from './components/Translate';
 import TenantCarePage from './components/TenantCare';
 import MailRoutingPage from './components/MailRouting';
@@ -55,18 +54,17 @@ const notifiedDuties = params.get('responsibilities') === '1'; // the master gav
 const notifiedRenewal = Number(params.get('renewals')) || null; // a lease renewal needs them: /?renewals=12
 // a document runs out: /?docrenewals=E00056 opens that employee in Document Renewals, =1 the list
 const notifiedDocRenewal = params.get('docrenewals') || null;
-const notifiedLegal = Number(params.get('legal')) || null; // a legal case needs them: /?legal=7
 // Old phone alerts still open /?projects=3 (the Projects screen is gone): just clear it away.
 const notifiedProject = Number(params.get('projects')) || null;
 const notifiedFeeds = params.get('feeds') === '1'; // the morning feed buzz
 const notifiedRenewals = params.has('renewals'); // that one, or the list: /?renewals=list
 // a staff job in one of their buildings needs them: /?building=2&job=41
 const notifiedBuilding = Number(params.get('building')) ? { building: Number(params.get('building')), job: Number(params.get('job')) || null } : null;
-if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedMailRouting || notifiedSharedInbox || notifiedDuties || notifiedRenewals || notifiedLegal || notifiedProject || notifiedBuilding || notifiedFeeds) window.history.replaceState(null, '', '/');
+if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedMailRouting || notifiedSharedInbox || notifiedDuties || notifiedRenewals || notifiedProject || notifiedBuilding || notifiedFeeds) window.history.replaceState(null, '', '/');
 
 // The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
 const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
-  duties: 'duties', diary: 'diary', checklists: 'checklists', attendance: 'attendance', memory: 'memory', email: 'email', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', legal: 'legal', case: 'case_focus' };
+  duties: 'duties', diary: 'diary', checklists: 'checklists', attendance: 'attendance', memory: 'memory', email: 'email', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', case: 'case_focus' };
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -90,12 +88,11 @@ export default function App() {
   const openMenu = () => { if (window.matchMedia('(min-width: 768px)').matches) toggleRail(false); else setDrawer(true); };
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
   const [caseKey, setCaseKey] = useState(null); // the case Case Home shows
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewals ? 'renewals' : notifiedDocRenewal ? 'docrenewals' : notifiedLegal ? 'legal' : notifiedBuilding ? 'buildings' : notifiedFeeds ? 'feeds' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewals ? 'renewals' : notifiedDocRenewal ? 'docrenewals' : notifiedBuilding ? 'buildings' : notifiedFeeds ? 'feeds' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
   const [feedsView, setFeedsView] = useState(notifiedFeeds ? 'feeds' : null); // which Feeds tab the chat header's icon (or the morning buzz) asked for
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const [jumpToRenewal, setJumpToRenewal] = useState(notifiedRenewal); // a lease renewal a notification asked for
   const [jumpToDocRenewal, setJumpToDocRenewal] = useState(notifiedDocRenewal); // a document a notification asked for
-  const [jumpToLegal, setJumpToLegal] = useState(notifiedLegal); // a legal case a notification asked for
   const [hasBuildings, setHasBuildings] = useState(false); // the master, or someone who runs a building
   const [modules, setModules] = useState(null); // Reem's own modules the master has given this person; null until they are known
   const [jumpToBuilding, setJumpToBuilding] = useState(notifiedBuilding); // a building (and job) a notification asked for
@@ -161,7 +158,6 @@ export default function App() {
       if (where.get('responsibilities') === '1') { setPanel('duties'); return; }
       if (where.has('renewals')) { setJumpToRenewal(Number(where.get('renewals')) || null); setPanel('renewals'); return; }
       if (where.get('docrenewals')) { setJumpToDocRenewal(where.get('docrenewals')); setPanel('docrenewals'); return; }
-      if (Number(where.get('legal'))) { setJumpToLegal(Number(where.get('legal'))); setPanel('legal'); return; }
       if (Number(where.get('building'))) {
         setJumpToBuilding({ building: Number(where.get('building')), job: Number(where.get('job')) || null });
         setPanel('buildings');
@@ -280,7 +276,6 @@ export default function App() {
          
           renewalsOpen={panel === 'renewals'} onRenewals={() => { setJumpToRenewal(null); setPanel('renewals'); setDrawer(false); }}
           docRenewalsOpen={panel === 'docrenewals'} onDocRenewals={() => { setJumpToDocRenewal(null); setPanel('docrenewals'); setDrawer(false); }}
-          legalOpen={panel === 'legal'} onLegal={() => { setJumpToLegal(null); setPanel('legal'); setDrawer(false); }}
           modules={modules || []}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
           onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
@@ -345,8 +340,8 @@ export default function App() {
         {panel === 'inventory' && <InventoryPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'buildings3d' && <Buildings3DPage onBack={() => setPanel(null)} />}
         {panel === 'docrenewals' && <DocumentRenewalsPage key={jumpToDocRenewal || 'list'} start={jumpToDocRenewal} onBack={() => { setJumpToDocRenewal(null); setPanel(null); }} />}
-        {panel === 'renewals' && <LeaseRenewalsPage key={jumpToRenewal || 'list'} open={jumpToRenewal} onBack={() => setPanel(null)} />}
-        {panel === 'legal' && <LegalCasesPage key={jumpToLegal || 'list'} open={jumpToLegal} onBack={() => setPanel(null)} />}
+        {panel === 'renewals' && <LeaseRenewalsPage key={jumpToRenewal || 'list'} open={jumpToRenewal} onBack={() => setPanel(null)}
+          chat={agents.length ? { user: me, agents, folders: config.folders, dm, voiceEnabled: config.voice, onOpenFiles: () => setPanel('files') } : null} />}
         {panel === 'case' && caseKey && (
           <CaseHomePage key={caseKey} caseKey={caseKey} folders={config.folders} me={me} onBack={() => setPanel(null)}
             onOpenChat={openChat} onOpenShelf={() => setPanel('files')} />

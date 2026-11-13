@@ -31,10 +31,11 @@ import { focusTurn, claimCase } from './caseFocus.js';
 import { briefOf, keyOf as briefKey } from './caseBrief.js';
 import { primaryCaseBlock, labelExcerpt, sameCase } from './primaryCase.js';
 import { userModules } from './modules.js';
-import { legalKit } from './legalLease.js';
 import { pictureTag, makePicture, pictureKit } from './pictures.js';
 import { AUTO_MODEL, ADVISOR_MODEL, MASTER_MODEL } from './config.js';
 import { addressPrompt, addressKit, loadAddresses } from './addressBook.js';
+import { leaseKit } from './leases.js';
+import { renewalChatBrief } from './leaseRenewals.js';
 import { lessonKit, lessonsFor, lessonsBlock } from './lessons.js';
 import { youtubeAsk, youtubeTurn } from './youtubeChat.js';
 import { browserKit } from './browser/kit.js';
@@ -643,8 +644,8 @@ export async function chat(req, res) {
   const saifsys = await saifsysKit(user);
   // Doing things in saifsys (today: creating an ARS booking) — proposed here, done only from the card.
   const saifsysAct = await saifsysActionKit(user, { conversationId: convId, onCard: (b) => send('arsBooking', b) });
-  // Legal cases with their saifsys leases, read only: for whoever has the Legal cases module.
-  const legal = await legalKit(user);
+  // Any saifsys lease, whatever the talk is about (a renewal, an RDC case): master, Real Estate, Lease renewals.
+  const leases = await leaseKit(user);
   // Websites, worked in Reem's browser while the person watches: with the Browser module, while the master has it on.
   const browser = await browserKit(user, { conversationId: convId, onCard: (t) => send('browser', t) });
   // What the reply carries: pictures drawn for it, and saved files the agent showed.
@@ -679,7 +680,7 @@ export async function chat(req, res) {
     await noticeKit(user, { conversationId: convId, onCard: (c) => send('tenantNotice', c) }), // only with Tenant notices
     // A Dropbox link: read onto their Shelf in the background, into the case this chat is about.
     await dropboxKit(user, { conversationId: convId, agentId: agent.id, caseNumber: focus?.primary?.number }),
-    ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(legal ? [legal] : []), ...(email ? [email] : []), ...(browser ? [browser] : [])];
+    ...(saifsys ? [saifsys] : []), ...(saifsysAct ? [saifsysAct] : []), ...(leases ? [leases] : []), ...(email ? [email] : []), ...(browser ? [browser] : [])];
   // A picture asked for in their own words. It is hung on this reply; its own words are
   // what the reply says if the agent adds none.
   let caption = '';
@@ -727,6 +728,9 @@ export async function chat(req, res) {
     const { model, auto } = chatModel(user, agent);
     if (mailbox) await loadAddresses(); // the master may have added one since the last message
     const system = systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried, canPicture, auto, focus, await lessonsFor(agent), pinned);
+    // A chat opened beside a lease renewal knows that renewal and its lease without being told.
+    const renewal = await renewalChatBrief(user, convId).catch((e) => { console.warn('[chat] renewal brief:', e.message); return null; });
+    if (renewal) system[1].text += `\n\n${renewal}`;
     // A job on a website is many small steps: once the browser is used, the turn gets more rounds.
     let rounds = MAX_ROUNDS;
     for (let turn = 0; turn < rounds; turn++) {

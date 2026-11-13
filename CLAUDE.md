@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An Express 5 API (`server/`, plain ESM JavaScript, no build step) and a React 19 + Vite + Tailwind v4 PWA (`client/`). The app was renamed from Jarvis to **Reem**; the old name survives only in live identifiers that must not change without coordinated work: `/var/www/jarvis` and the pm2 process `jarvis`, the session cookie `jarvis_sid`, the `jarvis:*` localStorage keys and `jarvis:signedout` event, and the saifsys door `api/jarvis/v1` with its `X-Jarvis-Key` / `X-Jarvis-Action-Key` headers. Use "Reem" for anything new. It is an AI assistant for a UAE property company (Saif Holding): chats with agents, a document Shelf with RAG, email, to-dos, lease renewals, legal cases, Document Renewals, case folders for external users, and live reads from the company system **saifsys**. README.md describes each feature and lists the `.env` keys.
+An Express 5 API (`server/`, plain ESM JavaScript, no build step) and a React 19 + Vite + Tailwind v4 PWA (`client/`). The app was renamed from Jarvis to **Reem**; the old name survives only in live identifiers that must not change without coordinated work: `/var/www/jarvis` and the pm2 process `jarvis`, the session cookie `jarvis_sid`, the `jarvis:*` localStorage keys and `jarvis:signedout` event, and the saifsys door `api/jarvis/v1` with its `X-Jarvis-Key` / `X-Jarvis-Action-Key` headers. Use "Reem" for anything new. It is an AI assistant for a UAE property company (Saif Holding): chats with agents, a document Shelf with RAG, email, to-dos, lease renewals, Document Renewals, case folders for external users, and live reads from the company system **saifsys**. README.md describes each feature and lists the `.env` keys.
 
 ## Commands
 
@@ -39,7 +39,7 @@ PowerShell: `$env:TEST_DATABASE_URL='postgres://...'; npm test -- tests/todos.te
 ## Architecture
 
 ### Server boot and routing (`server/index.js`)
-One file wires everything: public routes first (auth, error reports, saifsys's own inbound door `/api/from-saifsys/*` guarded by `fromSaifsys.js`, public case-share links), then `requireUser` → `externalFence` → `billingContext` for all of `/api`, then each feature router. `app.listen` starts the background timers (outbox, import queue, reminders, tenant care, lease renewals, legal cases, mail routing, case folders, buildings, recurring payments, saifsys doc sync, document alerts). Document alerts only run in production with `DOC_RENEWALS_SEND=on` (or `DOCUMENT_ALERTS=on`), because a local copy of the live DB holds real people's phones. For the same reason, off production the timers that email tenants, forward mail, buzz phones or write to saifsys (reminders, tenant care, lease renewals, legal cases, mail routing, case folders, buildings, recurring payments) only start with `LOCAL_SENDING=on`.
+One file wires everything: public routes first (auth, error reports, saifsys's own inbound door `/api/from-saifsys/*` guarded by `fromSaifsys.js`, public case-share links), then `requireUser` → `externalFence` → `billingContext` for all of `/api`, then each feature router. `app.listen` starts the background timers (outbox, import queue, reminders, tenant care, lease renewals, mail routing, case folders, buildings, recurring payments, saifsys doc sync, document alerts). Document alerts only run in production with `DOC_RENEWALS_SEND=on` (or `DOCUMENT_ALERTS=on`), because a local copy of the live DB holds real people's phones. For the same reason, off production the timers that email tenants, forward mail, buzz phones or write to saifsys (reminders, tenant care, lease renewals, mail routing, case folders, buildings, recurring payments) only start with `LOCAL_SENDING=on`.
 
 ### Database (`server/db.js`)
 - Postgres via `pg`, but queries are written with **SQLite-style `?` placeholders** through `db.prepare(sql).get/all/run(...params)` — compiled to `$1…`. `.run()` on `INSERT … RETURNING id` returns `{ changes, id }`. int8/numeric come back as JS numbers.
@@ -50,7 +50,7 @@ One file wires everything: public routes first (auth, error reports, saifsys's o
 ### Access control
 - `server/access.js` holds every cross-user rule (master vs. normal vs. **external** users, agent assignments, `masterReach`). Each rule narrows, none widens; keep new boundaries there so they're testable without HTTP.
 - Roles: the **master** owns agents and sees everything except external users' data; others reach agents through `agent_assignments`. External users (ticked External) get only their own things and private agents.
-- `server/modules.js`: Reem's own feature modules (`shelf`, `legal`, `todos`, `renewals`, `document_renewals`, `email`, …), granted per person in `module_access`. Gate a screen's routes with `needsModule(key)`; `company: true` modules are never given to external users. What a chat needs of the same data stays open, so removing a module never breaks chats. Adding a module = an entry in `MODULES`, its routes behind `needsModule`, and a row in the client settings menu. These are distinct from saifsys modules (`server/saifsys/index.js`), which decide what agents may look up in saifsys.
+- `server/modules.js`: Reem's own feature modules (`shelf`, `todos`, `renewals`, `document_renewals`, `email`, …), granted per person in `module_access`. Gate a screen's routes with `needsModule(key)`; `company: true` modules are never given to external users. What a chat needs of the same data stays open, so removing a module never breaks chats. Adding a module = an entry in `MODULES`, its routes behind `needsModule`, and a row in the client settings menu. These are distinct from saifsys modules (`server/saifsys/index.js`), which decide what agents may look up in saifsys.
 
 ### Chat pipeline (`server/chat.js`)
 - `router.js` picks the agent per message with a fast model (or `@Name` forces one); follow-ups stay with the same agent.
@@ -66,6 +66,7 @@ Each feature is usually one server file exporting `xxxRoutes` (an Express Router
 
 ### saifsys integration
 - Outbound: `server/saifsys/client.js` `askSaifsys(module, action, params)` calls the read-only `api/jarvis/v1` door on saifholdinggroup.com/sys with `SAIFSYS_API_KEY`. Each saifsys-side module file has a matching file here (`ars.js`, `booking.js`, `hr.js`). That PHP side lives in a separate repo (`saifsys/api/jarvis/v1`).
+- Leases: `server/leases.js` is the one place for saifsys leases (search, the whole lease file with the earlier leases on the unit, `leaseText` for prompts, `leaseKit` for chat, `/api/leases`). It reads saifsys's `legal` door (`leases`, `lease` actions); the Legal cases module itself was removed on 2026-11-13. Use it rather than calling saifsys for a lease directly.
 - Inbound: saifsys screens call `/api/from-saifsys/*` with their own key (`fromSaifsys.js`).
 - Dates: the server runs on UTC; use `dubaiDate()` / `dubaiHour()` from `saifsys/client.js` for anything user-facing.
 

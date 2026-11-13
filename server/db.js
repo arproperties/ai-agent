@@ -1780,7 +1780,9 @@ await db.exec(`
 //   lease_renewal_events: the timeline. kind 'out' / 'in' is an email (an outgoing one keeps
 //     its exact bytes, so a retry sends the same Message-ID; an incoming one is 'new' until
 //     Reem has read it); 'step' a step a person took; 'papers' Reem's check of the papers;
-//     'advice' one advisor's view (body) and the reply it suggests (data.reply), never sent by itself.
+//     'advice' one advisor's view (body) and the reply it suggests (data.reply), never sent by itself;
+//     'team' an email a person sent to a colleague (accounts, legal) from their own mailbox, its
+//     sending tracked on the email_drafts row in data.draftId.
 //   lease_renewal_files: what came with the emails, both ways (letters, agreements, cheques).
 await db.exec(`
   CREATE TABLE IF NOT EXISTS lease_renewal_settings (
@@ -1844,7 +1846,15 @@ await db.exec(`
   -- Advisors (2026-10-15): the master's picks, and their views on the timeline.
   ALTER TABLE lease_renewal_settings ADD COLUMN IF NOT EXISTS advisors JSONB NOT NULL DEFAULT '[]';
   ALTER TABLE lease_renewal_events DROP CONSTRAINT IF EXISTS lease_renewal_events_kind_check;
-  ALTER TABLE lease_renewal_events ADD CONSTRAINT lease_renewal_events_kind_check CHECK (kind IN ('out', 'in', 'step', 'papers', 'advice'));
+  ALTER TABLE lease_renewal_events ADD CONSTRAINT lease_renewal_events_kind_check CHECK (kind IN ('out', 'in', 'step', 'papers', 'advice', 'team'));
+  -- The chat beside a renewal (2026-11-13): one saved conversation per person per renewal, which
+  -- knows the lease, the renewal and its emails. It is an ordinary chat, in their list too.
+  CREATE TABLE IF NOT EXISTS lease_renewal_chats (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    renewal_id INTEGER NOT NULL REFERENCES lease_renewals(id) ON DELETE CASCADE,
+    conversation_id INTEGER NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, renewal_id)
+  );
   CREATE TABLE IF NOT EXISTS lease_renewal_files (
     id SERIAL PRIMARY KEY,
     renewal_id INTEGER NOT NULL REFERENCES lease_renewals(id) ON DELETE CASCADE,
@@ -2068,121 +2078,13 @@ await db.exec(`
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS terms_flags JSONB;
 `);
 
-// Legal cases (server/legalCases.js): a legal case from its type to its end, step by step,
-// as Alreem's SRS draws it (docs/superpowers/specs/2026-10-24-legal-cases-design.md).
-//   legal_case_settings: one row. The two cooling periods in days, who besides the master
-//     may take the settlement and case-status decisions (deciders, user ids), how many days
-//     before a period ends the alert goes, and the largest file in MB.
-//   legal_case_types: Unauthorized Use, Rule Violation, ...; the master adds and retires them.
-//     A case keeps the type's name as it was (type_name), so retiring a type loses nothing.
-//   legal_cases: stage is where it is in the flow, status the business state - kept apart
-//     on purpose (SRS: "business status and process stage are distinguishable"). steps holds
-//     each stage's own fields once filled in, by stage key: {"legal_notice": {...}, ...}.
-//   legal_case_events: the timeline and the audit trail. data has before/after where a value changed.
-//   legal_case_files: the documents, by the stage they were added at; files under data/legal-cases.
-//   legal_case_alerts: which alert went for which case, so each goes once.
+// Legal cases was taken out of Reem on 2026-11-13 (the user's call): its tables go, so
+// nothing of it is left behind. The leases it read from saifsys are in server/leases.js.
 await db.exec(`
-  CREATE TABLE IF NOT EXISTS legal_case_settings (
-    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    initial_days INTEGER NOT NULL DEFAULT 7,
-    legal_days INTEGER NOT NULL DEFAULT 30,
-    warn_days INTEGER NOT NULL DEFAULT 3,
-    max_file_mb INTEGER NOT NULL DEFAULT 15,
-    deciders JSONB NOT NULL DEFAULT '[]',
-    updated_at BIGINT DEFAULT ${NOW}
-  );
-  CREATE TABLE IF NOT EXISTS legal_case_types (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    active BOOLEAN NOT NULL DEFAULT true,
-    sort INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE TABLE IF NOT EXISTS legal_cases (
-    id SERIAL PRIMARY KEY,
-    number TEXT NOT NULL UNIQUE,
-    type_id INTEGER REFERENCES legal_case_types(id) ON DELETE SET NULL,
-    type_name TEXT NOT NULL,
-    title TEXT NOT NULL,
-    stage TEXT NOT NULL,
-    status TEXT NOT NULL,
-    priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
-    description TEXT,
-    incident_date TEXT,
-    building TEXT,
-    unit TEXT,
-    party_name TEXT,
-    party_phone TEXT,
-    party_email TEXT,
-    contract_ref TEXT,
-    remarks TEXT,
-    steps JSONB NOT NULL DEFAULT '{}',
-    assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    outcome TEXT,
-    closed_at BIGINT,
-    closed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_at BIGINT DEFAULT ${NOW},
-    updated_at BIGINT DEFAULT ${NOW}
-  );
-  CREATE INDEX IF NOT EXISTS idx_legal_cases_stage ON legal_cases(stage);
-  CREATE TABLE IF NOT EXISTS legal_case_events (
-    id SERIAL PRIMARY KEY,
-    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('created', 'stage', 'decision', 'update', 'assign', 'file', 'note', 'closed')),
-    stage TEXT,
-    title TEXT NOT NULL,
-    data JSONB,
-    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    at BIGINT DEFAULT ${NOW}
-  );
-  CREATE INDEX IF NOT EXISTS idx_legal_case_events ON legal_case_events(case_id, id);
-  CREATE TABLE IF NOT EXISTS legal_case_files (
-    id SERIAL PRIMARY KEY,
-    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
-    stage TEXT NOT NULL,
-    doc_type TEXT NOT NULL,
-    name TEXT NOT NULL,
-    mime TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    path TEXT NOT NULL,
-    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_at BIGINT DEFAULT ${NOW}
-  );
-  CREATE INDEX IF NOT EXISTS idx_legal_case_files ON legal_case_files(case_id);
-  CREATE TABLE IF NOT EXISTS legal_case_alerts (
-    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
-    key TEXT NOT NULL,
-    at BIGINT DEFAULT ${NOW},
-    PRIMARY KEY (case_id, key)
-  );
-  INSERT INTO legal_case_types (name, sort) VALUES
-    ('Unauthorized Use', 1), ('Rule Violation', 2), ('Damage', 3), ('Complaint', 4), ('Cheque Bounce', 5), ('Other', 6)
-    ON CONFLICT (name) DO NOTHING;
-`);
-
-// A legal case's lease in saifsys, and Reem's advice on the case (server/legalLease.js).
-//   legal_case_leases: the lease linked to the case (saifsys re_leases.id) and the last copy
-//     of its file as saifsys gave it, so the case still shows it when saifsys is away.
-//   legal_case_advice: each "Ask Reem" answer on a case, kept with who asked and when; the
-//     newest is shown, the older ones stay as a record of what was advised.
-await db.exec(`
-  CREATE TABLE IF NOT EXISTS legal_case_leases (
-    case_id INTEGER PRIMARY KEY REFERENCES legal_cases(id) ON DELETE CASCADE,
-    lease_id INTEGER NOT NULL,
-    data JSONB,
-    fetched_at BIGINT,
-    linked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    linked_at BIGINT DEFAULT ${NOW}
-  );
-  CREATE INDEX IF NOT EXISTS idx_legal_case_leases_lease ON legal_case_leases(lease_id);
-  CREATE TABLE IF NOT EXISTS legal_case_advice (
-    id SERIAL PRIMARY KEY,
-    case_id INTEGER NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
-    data JSONB NOT NULL,
-    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    at BIGINT DEFAULT ${NOW}
-  );
-  CREATE INDEX IF NOT EXISTS idx_legal_case_advice ON legal_case_advice(case_id, id);
+  DROP TABLE IF EXISTS legal_case_advice, legal_case_leases, legal_case_alerts, legal_case_files,
+    legal_case_events, legal_cases, legal_case_types, legal_case_settings CASCADE;
+  DELETE FROM module_access WHERE module = 'legal';
+  DELETE FROM module_defaults WHERE module = 'legal';
 `);
 
 // Company mailboxes the master added to the address book (server/addressBook.js), next to

@@ -130,17 +130,6 @@ test("only the person's own case folders are matched", async () => {
   assert.equal(g.primary.partyB, 'Mitchell');
 });
 
-test('legal cases are only matched for someone with Legal', async () => {
-  await reset();
-  const user = { id: await makeUser('Staff'), name: 'Staff' };
-  await db.prepare(`INSERT INTO legal_cases (number, type_name, title, stage, status, party_name)
-    VALUES ('LC-2026-0007', 'Rent', 'Unpaid rent Marina 1204', 'notice', 'open', 'Tenant X')`).run();
-  const without = await focusTurn(user, await makeConv(user.id), { text: 'LC-2026-0007 status?' });
-  assert.equal(without.primary?.legalCaseId, undefined);
-  const withLegal = await focusTurn(user, await makeConv(user.id), { text: 'LC-2026-0007 status?', modules: ['legal'] });
-  assert.equal(withLegal.primary.title, 'Unpaid rent Marina 1204');
-});
-
 test("someone else's chat is not touched", async () => {
   await reset();
   const owner = await makeUser('Owner');
