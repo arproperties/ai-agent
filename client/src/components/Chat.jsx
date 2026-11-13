@@ -54,7 +54,8 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation = () => {}, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '', onOpenCase, onOpenFeeds, faceOn = false, embedded = false, title = '', onClose }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation = () => {}, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '', onOpenCase, onOpenFeeds, faceOn = false, embedded = false, title = '', subtitle = '', onClose, intro = null }) {
+  // intro: what an embedded chat opens on instead of the general welcome: { title, text, prompts }.
   // embedded: the chat inside another screen's side panel (the renewal page): no menu, Feeds or
   // New chat in its header, its own title, and a close button.
   const [convId, setConvId] = useState(conversationId);
@@ -337,7 +338,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           <span className="min-w-0">
             <span className="block truncate font-medium leading-tight">{embedded && title ? title : lastAgent ? lastAgent.name : 'New chat'}</span>
             <span className="block truncate text-xs text-mute">
-              {status || (orb === 'listening' ? 'Listening…' : orb === 'speaking' && !busy ? 'Speaking…' : `Auto-picks from your ${agents.length} agents`)}
+              {status || (orb === 'listening' ? 'Listening…' : orb === 'speaking' && !busy ? 'Speaking…' : (embedded && subtitle ? subtitle : `Auto-picks from your ${agents.length} agents`))}
             </span>
           </span>
           {/* The case this chat is about. Shown, never changed: another case is a new chat. */}
@@ -397,7 +398,21 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       <div className="flex min-w-0 flex-1 flex-col">
       {/* messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
-        {messages.length === 0 ? (
+        {messages.length === 0 && intro ? (
+          <div className="flex min-h-full flex-col items-center justify-center gap-5 px-5 py-8 text-center">
+            <Orb state={orb} className="w-[min(36vw,120px)]" />
+            <div>
+              <b className="block text-[19px] font-light">{orb === 'thinking' ? 'Thinking…' : intro.title}</b>
+              <span className="mt-1 block text-sm text-mute">{intro.text}</span>
+            </div>
+            <div className="flex w-full max-w-sm flex-col gap-2">
+              {intro.prompts.map((q) => (
+                <button key={q} onClick={() => send(q, [])}
+                  className="glass rounded-2xl px-3.5 py-2.5 text-left text-[13px] transition hover:-translate-y-px hover:bg-white/10">{q}</button>
+              ))}
+            </div>
+          </div>
+        ) : messages.length === 0 ? (
           <div className="flex min-h-full flex-col items-center justify-center gap-6 px-5 py-8 text-center">
             {/* Smaller on somebody's very first visit: the orb is the welcome for a
                 returning user, but on day one what is under it has to be on the screen. */}

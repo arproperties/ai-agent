@@ -922,7 +922,9 @@ function Renewal({ id, onBack, chat = null }) {
               <p className="font-medium">Ask AI</p>
               <p className="mt-1 text-xs text-mute">Your AI chat, on the right. It already knows this lease, the old lease from saifsys and every email with the tenant.</p>
               <div className="mt-3 grid gap-2">
-                {chat && <Btn primary busy={busy === 'chat'} disabled={!!talk} onClick={openTalk} className="justify-center"><Sparkles size={14} /> {talk ? 'Open on the right' : 'Ask AI'}</Btn>}
+                {chat && (talk
+                  ? <Btn onClick={() => setTalk(null)} className="justify-center"><X size={14} /> Close Ask AI</Btn>
+                  : <Btn primary busy={busy === 'chat'} onClick={openTalk} className="justify-center"><Sparkles size={14} /> Ask AI</Btn>)}
                 <a href={`/api/lease-renewals/${id}/case-pack`} download
                   className="flex items-center justify-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt">
                   <FolderDown size={14} /> RDC case pack
@@ -939,8 +941,18 @@ function Renewal({ id, onBack, chat = null }) {
       {/* The chat beside the renewal: the same chat as everywhere, which already knows this lease.
           On a computer it sits on the right and the page makes room; on a phone it covers the page. */}
       {talk && chat && (
-        <div className="fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-stroke bg-[var(--color-bg)] shadow-2xl shadow-black/50 lg:w-[24rem] xl:w-[28rem]">
-          <Chat key={talk} {...chat} conversationId={talk} embedded title={`${r.building} ${r.unit} · chat`} onClose={() => setTalk(null)} />
+        <div className="ask-ai-in fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-stroke bg-[var(--color-bg)] shadow-2xl shadow-black/50 lg:w-[24rem] xl:w-[28rem]">
+          <Chat key={talk} {...chat} conversationId={talk} embedded title={`Ask AI · ${r.building} ${r.unit}`} subtitle="Knows this lease and every email" onClose={() => setTalk(null)}
+            intro={{
+              title: `${r.tenant} · ${r.building} ${r.unit}`,
+              text: 'I have this renewal, the old lease from saifsys and every email with the tenant. Ask me anything about it.',
+              prompts: [
+                'Where does this renewal stand, in short?',
+                'Compare the old lease charges with our offer',
+                r.renewal.dispute ? 'What exactly is the tenant disputing, and how should we answer?' : 'What did the tenant say so far?',
+                'Write a reply to the tenant',
+              ],
+            }} />
         </div>
       )}
     </Page>
