@@ -627,7 +627,7 @@ function TeamMail({ id, onClose, onSent }) {
   };
 
   return (
-    <Sheet title="Email someone" onClose={onClose} wide="text">
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pt-4">
       {!setup ? (error ? <Problem text={error} /> : <div className="grid place-items-center py-10 text-mute"><Loader2 className="animate-spin" /></div>) : (
         <div className="space-y-4">
           {setup.problem && <Problem text={setup.problem} />}
@@ -655,10 +655,10 @@ function TeamMail({ id, onClose, onSent }) {
                       className="min-w-0 flex-1 bg-transparent py-1 font-medium outline-none placeholder:text-mute/70" /></div>
                 </div>
                 {busy === 'write'
-                  ? <div className="grid h-[38dvh] min-h-52 place-items-center border-t border-stroke text-sm text-mute"><span className="flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> Reem is writing it from this lease…</span></div>
+                  ? <div className="grid h-[34dvh] min-h-52 place-items-center border-t border-stroke text-sm text-mute"><span className="flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> Reem is writing it from this lease…</span></div>
                   : <textarea value={text} onChange={(e) => { changed.current = true; setText(e.target.value); }} aria-label="Email"
                       placeholder={reason === 'other' ? 'Say below what it is about, then tap Write with Reem. Or write it yourself here.' : ''}
-                      className="block h-[38dvh] min-h-52 w-full resize-y border-t border-stroke bg-transparent px-4 py-3.5 text-[15px] leading-relaxed outline-none placeholder:text-mute/70" />}
+                      className="block h-[34dvh] min-h-52 w-full resize-y border-t border-stroke bg-transparent px-4 py-3.5 text-[15px] leading-relaxed outline-none placeholder:text-mute/70" />}
               </div>
 
               <div className="space-y-1.5">
@@ -676,13 +676,13 @@ function TeamMail({ id, onClose, onSent }) {
           )}
 
           <Problem text={error} />
-          <div className="sticky bottom-0 -mx-5 flex flex-wrap justify-end gap-2 border-t border-stroke bg-surface px-5 pb-1 pt-3">
+          <div className="sticky bottom-0 -mx-5 flex flex-wrap justify-end gap-2 border-t border-stroke bg-[var(--color-bg)] px-5 pb-4 pt-3">
             <Btn onClick={onClose}>Cancel</Btn>
             <Btn primary busy={busy === 'send'} disabled={!setup.from || !to.length || !subject.trim() || !text.trim() || busy === 'write'} onClick={send}><Send size={14} /> Send</Btn>
           </div>
         </div>
       )}
-    </Sheet>
+    </div>
   );
 }
 
@@ -734,19 +734,22 @@ function AskFigure({ r, action, onClose, onNext }) {
 function Renewal({ id, onBack, chat = null }) {
   const [r, setR] = useState(null);
   const [error, setError] = useState('');
-  const [sheet, setSheet] = useState(null); // { figure: action } | { compose: ask } | { team: true } | { lease: id }
-  const [talk, setTalk] = useState(null); // the conversation of the chat beside this renewal, while it is open
-  const [leaving, setLeaving] = useState(false); // the chat is sliding out: it goes once the slide ends
-  const closeTalk = () => {
+  const [sheet, setSheet] = useState(null); // { figure: action } | { compose: ask } | { lease: id }
+  // The panel on the right: Ask AI (the chat beside this renewal) or Email someone, one at a time.
+  const [side, setSide] = useState(null); // { kind: 'chat', conv } | { kind: 'team' }
+  const [leaving, setLeaving] = useState(false); // the panel is sliding out: it goes once the slide ends
+  const talk = side?.kind === 'chat' ? side.conv : null;
+  const closeSide = () => {
     if (leaving) return;
     setLeaving(true);
-    setTimeout(() => { setTalk(null); setLeaving(false); }, 260);
+    setTimeout(() => { setSide(null); setLeaving(false); }, 260);
   };
   const openTalk = async () => {
     setBusy('chat'); setError('');
-    try { setTalk((await api.post(`/lease-renewals/${id}/chat`)).conversationId); } catch (e) { setError(e.message); }
+    try { setLeaving(false); setSide({ kind: 'chat', conv: (await api.post(`/lease-renewals/${id}/chat`)).conversationId }); } catch (e) { setError(e.message); }
     setBusy('');
   };
+  const openTeam = () => { setLeaving(false); setSide({ kind: 'team' }); };
   const [busy, setBusy] = useState('');
   const load = useCallback(() => api.get(`/lease-renewals/${id}`).then(setR).catch((e) => setError(e.message)), [id]);
   const [checked, setChecked] = useState('');
@@ -816,7 +819,7 @@ function Renewal({ id, onBack, chat = null }) {
 
   return (
     <Page title={`${r.building} · ${r.unit}`} onBack={onBack}>
-      <div className={`space-y-5 pb-10 transition-[padding] duration-300 ease-out ${talk && !leaving ? 'lg:pr-[25rem] xl:pr-[29rem]' : ''}`}>
+      <div className={`space-y-5 pb-10 transition-[padding] duration-300 ease-out ${side && !leaving ? 'lg:pr-[25rem] xl:pr-[29rem]' : ''}`}>
         {/* Who, the rent, and the time left: one band across the top */}
         <div className="rounded-3xl border border-stroke bg-white/[0.04] px-5 py-4">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-4">
@@ -838,7 +841,7 @@ function Renewal({ id, onBack, chat = null }) {
               : DONE.includes(s)
                 ? <Stat label="Lease ends" value={day(r.end_date)} />
                 : <Stat label="Lease ends" value={day(r.end_date)} extra={<span className={r.days_left <= 30 ? 'text-bad' : 'text-mute'}>{r.days_left} days</span>} />}
-            {chat && !talk && <Btn primary busy={busy === 'chat'} onClick={openTalk} className="shrink-0 lg:hidden"><Sparkles size={14} /> Ask AI</Btn>}
+            {chat && !side && <Btn primary busy={busy === 'chat'} onClick={openTalk} className="shrink-0 lg:hidden"><Sparkles size={14} /> Ask AI</Btn>}
           </div>
         </div>
 
@@ -922,14 +925,16 @@ function Renewal({ id, onBack, chat = null }) {
             <section className="p-5">
               <p className="font-medium">Email the team</p>
               <p className="mt-1 text-xs text-mute">Accounts review, legal, or a colleague. Reem writes it from this lease; it goes from your own mailbox.</p>
-              <Btn onClick={() => setSheet({ team: true })} className="mt-3 w-full justify-center"><Mail size={14} /> Email someone</Btn>
+              {side?.kind === 'team'
+                ? <Btn onClick={closeSide} className="mt-3 w-full justify-center"><X size={14} /> Close Email someone</Btn>
+                : <Btn onClick={openTeam} className="mt-3 w-full justify-center"><Mail size={14} /> Email someone</Btn>}
             </section>
             <section className="p-5">
               <p className="font-medium">Ask AI</p>
               <p className="mt-1 text-xs text-mute">Your AI chat, on the right. It already knows this lease, the old lease from saifsys and every email with the tenant.</p>
               <div className="mt-3 grid gap-2">
                 {chat && (talk
-                  ? <Btn onClick={closeTalk} className="justify-center"><X size={14} /> Close Ask AI</Btn>
+                  ? <Btn onClick={closeSide} className="justify-center"><X size={14} /> Close Ask AI</Btn>
                   : <Btn primary busy={busy === 'chat'} onClick={openTalk} className="justify-center"><Sparkles size={14} /> Ask AI</Btn>)}
                 <a href={`/api/lease-renewals/${id}/case-pack`} download
                   className="flex items-center justify-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt">
@@ -942,13 +947,17 @@ function Renewal({ id, onBack, chat = null }) {
       </div>
       {sheet?.figure && <AskFigure r={r} action={sheet.figure} onClose={() => setSheet(null)} onNext={(ask) => setSheet({ compose: ask })} />}
       {sheet?.compose && <Compose ask={sheet.compose} onClose={() => setSheet(null)} onSent={done} />}
-      {sheet?.team && <TeamMail id={id} onClose={() => setSheet(null)} onSent={done} />}
       {sheet?.lease && <LeaseSheet id={sheet.lease} onClose={() => setSheet(null)} />}
       {/* The chat beside the renewal: the same chat as everywhere, which already knows this lease.
           On a computer it sits on the right and the page makes room; on a phone it covers the page. */}
+      {side?.kind === 'team' && (
+        <SidePanel key="team" leaving={leaving} icon={Mail} title="Email someone" subtitle={`About ${r.building} ${r.unit} · from your own mailbox`} onClose={closeSide}>
+          <TeamMail id={id} onClose={closeSide} onSent={() => { closeSide(); load(); }} />
+        </SidePanel>
+      )}
       {talk && chat && (
-        <div className={`${leaving ? 'ask-ai-out' : 'ask-ai-in'} fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-stroke bg-[var(--color-bg)] shadow-2xl shadow-black/50 lg:w-[24rem] xl:w-[28rem]`}>
-          <Chat key={talk} {...chat} conversationId={talk} embedded title={`Ask AI · ${r.building} ${r.unit}`} subtitle="Knows this lease and every email" onClose={closeTalk}
+        <div key={`chat-${talk}`} className={`${leaving ? 'ask-ai-out' : 'ask-ai-in'} fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-stroke bg-[var(--color-bg)] shadow-2xl shadow-black/50 lg:w-[24rem] xl:w-[28rem]`}>
+          <Chat key={talk} {...chat} conversationId={talk} embedded title={`Ask AI · ${r.building} ${r.unit}`} subtitle="Knows this lease and every email" onClose={closeSide}
             intro={{
               title: `${r.tenant} · ${r.building} ${r.unit}`,
               text: 'I have this renewal, the old lease from saifsys and every email with the tenant. Ask me anything about it.',
@@ -962,6 +971,27 @@ function Renewal({ id, onBack, chat = null }) {
         </div>
       )}
     </Page>
+  );
+}
+
+/**
+ * A panel that slides in from the right of the renewal page, as Ask AI does: on a computer
+ * the page makes room for it, on a phone it covers the page. Used by Email someone.
+ */
+function SidePanel({ leaving, icon: I, title, subtitle, onClose, children }) {
+  return (
+    <div className={`${leaving ? 'ask-ai-out' : 'ask-ai-in'} fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-stroke bg-[var(--color-bg)] shadow-2xl shadow-black/50 lg:w-[24rem] xl:w-[28rem]`}>
+      <header className="flex items-center gap-3 border-b border-stroke/60 px-4 pb-2 pt-safe">
+        <span className="my-1 grid size-[38px] shrink-0 place-items-center rounded-full bg-gradient-to-br from-p1 via-p2 to-p3 text-white"><I size={17} /></span>
+        <span className="min-w-0 flex-1 py-1">
+          <span className="block truncate font-medium leading-tight">{title}</span>
+          {subtitle && <span className="block truncate text-xs text-mute">{subtitle}</span>}
+        </span>
+        <button onClick={onClose} aria-label={`Close ${title}`} title="Close"
+          className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><X size={20} /></button>
+      </header>
+      {children}
+    </div>
   );
 }
 
