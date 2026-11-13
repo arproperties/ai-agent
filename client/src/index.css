@@ -324,7 +324,9 @@ body::after, .sky::after {
 /* Ask AI on a renewal: the chat slides in from the right. */
 @keyframes ask-ai-in { from { transform: translateX(100%); opacity: 0.6; } to { transform: none; opacity: 1; } }
 .ask-ai-in { animation: ask-ai-in 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
-@media (prefers-reduced-motion: reduce) { .ask-ai-in { animation: none; } }
+@keyframes ask-ai-out { to { transform: translateX(100%); opacity: 0.6; } }
+.ask-ai-out { animation: ask-ai-out 0.26s cubic-bezier(0.4, 0, 1, 1) forwards; }
+@media (prefers-reduced-motion: reduce) { .ask-ai-in, .ask-ai-out { animation: none; } }
 @keyframes rise { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
 .rise { animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 

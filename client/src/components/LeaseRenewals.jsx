@@ -736,6 +736,12 @@ function Renewal({ id, onBack, chat = null }) {
   const [error, setError] = useState('');
   const [sheet, setSheet] = useState(null); // { figure: action } | { compose: ask } | { team: true } | { lease: id }
   const [talk, setTalk] = useState(null); // the conversation of the chat beside this renewal, while it is open
+  const [leaving, setLeaving] = useState(false); // the chat is sliding out: it goes once the slide ends
+  const closeTalk = () => {
+    if (leaving) return;
+    setLeaving(true);
+    setTimeout(() => { setTalk(null); setLeaving(false); }, 260);
+  };
   const openTalk = async () => {
     setBusy('chat'); setError('');
     try { setTalk((await api.post(`/lease-renewals/${id}/chat`)).conversationId); } catch (e) { setError(e.message); }
@@ -810,7 +816,7 @@ function Renewal({ id, onBack, chat = null }) {
 
   return (
     <Page title={`${r.building} · ${r.unit}`} onBack={onBack}>
-      <div className={`space-y-5 pb-10 ${talk ? 'lg:pr-[25rem] xl:pr-[29rem]' : ''}`}>
+      <div className={`space-y-5 pb-10 transition-[padding] duration-300 ease-out ${talk && !leaving ? 'lg:pr-[25rem] xl:pr-[29rem]' : ''}`}>
         {/* Who, the rent, and the time left: one band across the top */}
         <div className="rounded-3xl border border-stroke bg-white/[0.04] px-5 py-4">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-4">
@@ -923,7 +929,7 @@ function Renewal({ id, onBack, chat = null }) {
               <p className="mt-1 text-xs text-mute">Your AI chat, on the right. It already knows this lease, the old lease from saifsys and every email with the tenant.</p>
               <div className="mt-3 grid gap-2">
                 {chat && (talk
-                  ? <Btn onClick={() => setTalk(null)} className="justify-center"><X size={14} /> Close Ask AI</Btn>
+                  ? <Btn onClick={closeTalk} className="justify-center"><X size={14} /> Close Ask AI</Btn>
                   : <Btn primary busy={busy === 'chat'} onClick={openTalk} className="justify-center"><Sparkles size={14} /> Ask AI</Btn>)}
                 <a href={`/api/lease-renewals/${id}/case-pack`} download
                   className="flex items-center justify-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt">
@@ -941,8 +947,8 @@ function Renewal({ id, onBack, chat = null }) {
       {/* The chat beside the renewal: the same chat as everywhere, which already knows this lease.
           On a computer it sits on the right and the page makes room; on a phone it covers the page. */}
       {talk && chat && (
-        <div className="ask-ai-in fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-stroke bg-[var(--color-bg)] shadow-2xl shadow-black/50 lg:w-[24rem] xl:w-[28rem]">
-          <Chat key={talk} {...chat} conversationId={talk} embedded title={`Ask AI · ${r.building} ${r.unit}`} subtitle="Knows this lease and every email" onClose={() => setTalk(null)}
+        <div className={`${leaving ? 'ask-ai-out' : 'ask-ai-in'} fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-stroke bg-[var(--color-bg)] shadow-2xl shadow-black/50 lg:w-[24rem] xl:w-[28rem]`}>
+          <Chat key={talk} {...chat} conversationId={talk} embedded title={`Ask AI · ${r.building} ${r.unit}`} subtitle="Knows this lease and every email" onClose={closeTalk}
             intro={{
               title: `${r.tenant} · ${r.building} ${r.unit}`,
               text: 'I have this renewal, the old lease from saifsys and every email with the tenant. Ask me anything about it.',
