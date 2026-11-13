@@ -37,6 +37,7 @@ function stub({ leases = [LEASE], replies = [], docs = [], files = {} } = {}) {
         return { ok: true, lease: { lease: { id: params.id, number: 'L-7', status: 'active', start_date: '2025-08-01', end_date: '2026-07-31',
           annual_rent: 36000, installments: 4, chiller_fee: 3500, admin_fee: 0, notes: '' }, ejari: { number: 'EJ-99' }, saifsys_legal: { cases: [] } } };
       }
+      if (`${module}/${action}` === 'legal/leases') return { ok: true, leases: [] }; // the earlier leases on the unit
       assert.equal(`${module}/${action}`, 'realestate/renewals_due'); return { ok: true, leases };
     },
     act: async (module, action, body) => {
@@ -403,7 +404,7 @@ test('advisors: they answer only when asked, the agents picked and what the pers
   assert.equal(asked[1].ask, 'Help me negotiate the chiller fee');
   assert.equal(asked[1].dispute, 'Claims the increase breaks the index');
   assert.match(asked[1].facts, /AED 36,000 a year/);
-  assert.match(asked[1].facts, /current contract in saifsys \(lease L-7[\s\S]*chiller fee AED 3,500[\s\S]*Ejari EJ-99/, 'the contract from saifsys, with its charges');
+  assert.match(asked[1].facts, /Lease L-7 in saifsys \(active\)[\s\S]*chiller fee AED 3,500[\s\S]*Ejari EJ-99/, 'the contract from saifsys, with its charges');
   assert.match(asked[1].thread, /We wrote[\s\S]*Tenant wrote/, 'the emails, oldest first');
   const advice = await db.prepare(`SELECT title, data FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'advice'`).all(r.id);
   assert.deepEqual(advice.map((a) => [a.title, a.data.agent.name, a.data.reply, a.data.asked, a.data.ask]),
@@ -891,4 +892,81 @@ test('an email that failed is tried again, further apart each time, never twice 
   const before = sends.length;
   await R.resend();
   assert.equal(sends.length, before);
+});
+
+// ---------- emailing the team ----------
+
+test('Email someone: Reem drafts it from the lease, it goes from the person\'s own mailbox, and stays out of the tenant thread', async () => {
+  const boss = await setup();
+  stub();
+  const asked = [];
+  let kicked = 0;
+  R.useForTests({
+    mailbox: async () => ({ address: 'francis@ainalreempro.com', canSend: true }),
+    kick: () => { kicked += 1; },
+    teamEmail: async (x) => { asked.push(x); return { subject: 'Accounts review: PARK PLACE 610', body: 'Dear Accounts Team,\n\nPlease review.' }; },
+    caseSummary: async (x) => { story = x.story; return null; },
+  });
+  let story = '';
+  const r = await start(boss);
+  const sentToTenant = world.sent.length;
+
+  const d = await R.teamMailDraft({ ...boss, name: 'Francis' }, r.id, { reason: 'accounts', to: ['accounts@ainalreempro.com'] });
+  assert.equal(d.subject, 'Accounts review: PARK PLACE 610');
+  assert.match(asked[0].facts, /AED 39,600 a year/, 'the renewal\'s own figures');
+  assert.match(asked[0].facts, /Where it stands: The offer was sent/);
+  assert.match(asked[0].reason, /^Accounts review/);
+  assert.equal(asked[0].sender, 'Francis');
+  await assert.rejects(R.teamMailDraft(boss, r.id, { reason: 'other' }), /what the email is about/);
+
+  await assert.rejects(R.teamMailSend(boss, r.id, { to: ['acount@ainalreempro.com'], subject: 's', text: 't' }), /not in the company address book/);
+  await assert.rejects(R.teamMailSend(boss, r.id, { to: ['someone@gmail.com'], subject: 's', text: 't' }), /not in the company address book/);
+  await R.teamMailSend(boss, r.id, { reason: 'accounts', to: ['accounts@ainalreempro.com'], cc: ['rona@ainalreempro.com'], subject: d.subject, text: d.body });
+
+  const draft = await db.prepare('SELECT * FROM email_drafts WHERE user_id = ?').get(boss.id);
+  assert.equal(draft.from_addr, 'francis@ainalreempro.com', 'from the person, never the Tenant care inbox');
+  assert.equal(draft.status, 'approved', 'handed to the outbox');
+  assert.deepEqual(JSON.parse(draft.cc_addrs), ['rona@ainalreempro.com']);
+  assert.equal(kicked, 1);
+  assert.equal(world.sent.length, sentToTenant, 'nothing through the Tenant care inbox');
+  assert.deepEqual((await timeline(r.id)).at(-1), 'team: Emailed accounts@ainalreempro.com · Accounts review');
+
+  // Not part of the emails with the tenant, so the advisors and the RDC pack never read it as one.
+  await R.casePack(await R.getRenewal(r.id));
+  assert.match(story, /Offer sent/);
+  assert.doesNotMatch(story, /Please review|Accounts review/);
+});
+
+test('Email someone: a mailbox that cannot send is refused, and nothing is drafted', async () => {
+  const boss = await setup();
+  stub();
+  R.useForTests({ mailbox: async () => ({ address: 'me@ainalreempro.com', canSend: false }), kick: () => {} });
+  const r = await start(boss);
+  assert.match((await R.teamMailSetup(boss)).problem, /reading only/);
+  await assert.rejects(R.teamMailSend(boss, r.id, { to: ['accounts@ainalreempro.com'], subject: 's', text: 't' }), /cannot send/);
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM email_drafts').get()).n, 0);
+});
+
+// ---------- the chat beside a renewal ----------
+
+test('the chat beside a renewal: one per person, it knows the lease and the emails, and no one else\'s chat gets it', async () => {
+  const boss = await setup();
+  stub();
+  const r = await start(boss);
+  const { conversationId } = await R.renewalChat({ ...boss, name: 'Boss' }, r.id);
+  assert.deepEqual(await R.renewalChat(boss, r.id), { conversationId }, 'opened again: the same chat');
+  assert.equal((await db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId)).title, 'PARK PLACE 610 · lease renewal');
+
+  const brief = await R.renewalChatBrief({ ...boss, name: 'Boss' }, conversationId);
+  assert.match(brief, /<lease_renewal>/);
+  assert.match(brief, /Where it stands: The offer was sent/);
+  assert.match(brief, /Lease L-7 in saifsys[\s\S]*chiller fee AED 3,500/, 'the old lease, with its charges');
+  assert.match(brief, /We wrote to the tenant[^:]*: Offer sent/, 'the whole story, with the emails');
+
+  const other = { id: await makeUser('Other') };
+  assert.equal(await R.renewalChatBrief(other, conversationId), null, 'not their chat');
+  const { id: plain } = await db.prepare('INSERT INTO conversations (user_id, title) VALUES (?, ?) RETURNING id').run(boss.id, 'hello');
+  assert.equal(await R.renewalChatBrief(boss, plain), null, 'an ordinary chat knows nothing of it');
+  const { conversationId: theirs } = await R.renewalChat(other, r.id);
+  assert.notEqual(theirs, conversationId, 'each person has their own');
 });

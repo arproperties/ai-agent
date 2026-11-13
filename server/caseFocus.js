@@ -15,16 +15,13 @@ import { dubaiDate } from './saifsys/client.js';
 import { deadlinesFor } from './caseDeadlines.js';
 import { briefOf, saveBrief, approve, dismiss } from './caseBrief.js';
 
-/** The cases this person has of their own: their case folders, and legal cases if they have Legal. */
-export async function knownCases(user, modules = []) {
+/** The cases this person has of their own: their case folders. */
+export async function knownCases(user) {
   const folders = await db.prepare('SELECT id, case_number, party_a, party_b FROM case_folders WHERE user_id = ?').all(user.id);
-  const legal = modules.includes('legal')
-    ? await db.prepare('SELECT id, number, title, party_name FROM legal_cases').all() : [];
   const { pattern } = await db.prepare('SELECT pattern FROM case_settings WHERE user_id = ?').get(user.id) || {};
   return {
     known: [
       ...folders.map((f) => ({ number: f.case_number, partyA: f.party_a, partyB: f.party_b, folderId: f.id })),
-      ...legal.map((c) => ({ number: c.number, title: c.title, partyB: c.party_name, legalCaseId: c.id })),
     ],
     patterns: pattern ? [pattern] : [],
   };
@@ -50,7 +47,7 @@ const addRefs = (refs, found, primary) => {
 export async function focusTurn(user, conversationId, { text = '', fileNames = [], modules = [] } = {}) {
   const conv = await db.prepare('SELECT primary_case, reference_cases FROM conversations WHERE id = ? AND user_id = ?').get(conversationId, user.id);
   if (!conv) return null;
-  const { known, patterns } = await knownCases(user, modules);
+  const { known, patterns } = await knownCases(user);
   const now = { text, fileNames };
   let primary = conv.primary_case;
   let references = conv.reference_cases || [];

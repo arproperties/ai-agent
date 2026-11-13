@@ -54,7 +54,9 @@ const IconBtn = ({ icon, label, onClick, className = '' }) => (
   </button>
 );
 
-export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '', onOpenCase, onOpenFeeds, faceOn = false }) {
+export default function Chat({ user, agents, folders, dm, conversationId, voiceEnabled, firstRun = false, expiring = [], due = { todos: [], routines: [] }, onDueChanged, onConversation = () => {}, onMenu, onNewChat, onOpenFiles, onOpenLists, menuBadge = 0, railHidden = false, draft = '', onOpenCase, onOpenFeeds, faceOn = false, embedded = false, title = '', onClose }) {
+  // embedded: the chat inside another screen's side panel (the renewal page): no menu, Feeds or
+  // New chat in its header, its own title, and a close button.
   const [convId, setConvId] = useState(conversationId);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -319,10 +321,10 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     <div className="relative flex h-full flex-col">
       {/* header */}
       <header className="flex items-center gap-1 border-b border-stroke/60 px-2 pb-2 pt-safe md:px-4">
-        <span className={`relative ${railHidden ? '' : 'md:hidden'}`}>
+        {!embedded && <span className={`relative ${railHidden ? '' : 'md:hidden'}`}>
           <IconBtn icon={railHidden ? 'railOpen' : 'menu'} label={menuBadge ? 'Menu (new messages)' : 'Menu'} onClick={onMenu} />
           {menuBadge > 0 && <span className="pointer-events-none absolute right-1.5 top-1.5 size-2.5 rounded-full bg-emerald-400 ring-2 ring-bg" />}
-        </span>
+        </span>}
         <div className="flex min-w-0 flex-1 items-center gap-3 py-1 pl-1">
           {lastAgent ? (
             <Avatar icon={lastAgent.icon} color={lastAgent.color} size={38}
@@ -333,7 +335,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             </span>
           )}
           <span className="min-w-0">
-            <span className="block truncate font-medium leading-tight">{lastAgent ? lastAgent.name : 'New chat'}</span>
+            <span className="block truncate font-medium leading-tight">{embedded && title ? title : lastAgent ? lastAgent.name : 'New chat'}</span>
             <span className="block truncate text-xs text-mute">
               {status || (orb === 'listening' ? 'Listening…' : orb === 'speaking' && !busy ? 'Speaking…' : `Auto-picks from your ${agents.length} agents`)}
             </span>
@@ -354,7 +356,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         {/* The master has Feeds and YouTube here instead of live voice and new chat (New chat
             is still at the top of the sidebar). Feeds is the master's alone, so everyone else
             keeps the two they had. */}
-        {user.role === 'master' && onOpenFeeds ? (
+        {embedded ? null : user.role === 'master' && onOpenFeeds ? (
           <>
             <button onClick={() => onOpenFeeds('feeds')} aria-label="Feeds" title="Feeds"
               className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt">
@@ -375,7 +377,8 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
             <span className="absolute right-1 top-1 grid min-w-4 place-items-center rounded-full bg-p1 px-1 text-[10px] font-semibold leading-4 text-white">{docIds.length}</span>
           </button>
         )}
-        {!(user.role === 'master' && onOpenFeeds) && <IconBtn icon="edit" label="New Reem chat" onClick={onNewChat} />}
+        {!embedded && !(user.role === 'master' && onOpenFeeds) && <IconBtn icon="edit" label="New Reem chat" onClick={onNewChat} />}
+        {embedded && onClose && <IconBtn icon="x" label="Close the chat" onClick={onClose} />}
       </header>
 
       {/* A chat about a case has its files on the left and its timer on the right, where the

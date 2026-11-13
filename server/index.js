@@ -72,10 +72,9 @@ import { moduleRoutes, needsModule, needsModuleUnless, userModules, giveToEveryo
 import { noticeRoutes } from './notices.js';
 import { pictureRoutes } from './pictures.js';
 import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
+import { leaseRoutes } from './leases.js';
 import { buildings3dRoutes } from './buildings3d.js';
 import { billingContext, billingRoutes, billAs } from './billing.js';
-import { legalCaseRoutes, startLegalCases } from './legalCases.js';
-import { legalLeaseRoutes } from './legalLease.js';
 import { feedRoutes, startFeeds } from './feeds.js';
 import { uploadLimitMB, MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB, MAX_IFC_MB } from './dwg.js';
 import { isRevit, REVIT_HELP } from './ifc.js';
@@ -152,9 +151,8 @@ app.use('/api/shared-inbox', sharedInboxRoutes); // the emails Mail routing pass
 app.use('/api/modules', moduleRoutes); // which of Reem's own modules this person has been given
 app.use('/api/notices', noticeRoutes); // a watchman's report on a unit, emailed to its tenant
 app.use('/api/buildings-3d', buildings3dRoutes); // every saifsys building in 3D, read live, nothing kept (module buildings_3d)
+app.use('/api/leases', leaseRoutes); // any saifsys lease, read only: master, saifsys Real Estate, Lease renewals
 app.use('/api/lease-renewals', leaseRenewalRoutes); // leases ending within 120 days, renewed with the tenant by email step by step (module renewals)
-app.use('/api/legal-cases', legalLeaseRoutes); // each case's lease from saifsys, its checks and Reem's advice (module legal)
-app.use('/api/legal-cases', legalCaseRoutes); // legal cases step by step, cooling periods to closure (module legal)
 app.use('/api/pictures', pictureRoutes); // the pictures a chat drew for /explain, /breakdown and /explore
 app.use('/api/responsibilities/mine', needsModule('duties')); // their own page; the rest is the master's, and a chat's
 app.use('/api/address-book', addressRoutes); // company mailboxes the master added, next to the built-in ones (master only)
@@ -632,7 +630,6 @@ app.listen(PORT, '0.0.0.0', () => {
   if (sending) {
     billAs({ userId: null, job: 'tenantcare' }, startTenantCare); // does nothing until the Tenant care inbox is connected
     billAs({ userId: null, job: 'renewals' }, startLeaseRenewals); // reads tenants' replies to renewals and sends the reminders
-    billAs({ userId: null, job: 'other' }, startLegalCases); // tells people when a cooling period is about to end, or has run over
     billAs({ userId: null, job: 'mail' }, startMailRouting); // does nothing until the shared mailbox is connected
   }
   claimPastChats().catch((e) => console.error('[case focus]', e.message)); // chats of agents bound to a case before this ran
