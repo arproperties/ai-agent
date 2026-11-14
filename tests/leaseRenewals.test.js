@@ -970,3 +970,27 @@ test('the chat beside a renewal: one per person, it knows the lease and the emai
   const { conversationId: theirs } = await R.renewalChat(other, r.id);
   assert.notEqual(theirs, conversationId, 'each person has their own');
 });
+
+test('a reply goes on the same thread like Reply All: the tenant\'s email quoted underneath, whoever they copied kept on Cc, no notice again', async () => {
+  const boss = await setup();
+  const addr = (...a) => ({ value: a.map((address) => ({ address })) });
+  stub({ files: { '1:900': { from: addr(LEASE.email), to: addr('care@company.com'), cc: addr('brother@mail.com', 'accounts@ainalreempro.com'),
+    subject: 'Re: Lease renewal', date: new Date(NOW), text: 'Can you lower the rent please?' } } });
+  const r = await start(boss);
+  await R.claim({ uid: 900, from: LEASE.email, subject: 'Re: Lease renewal', text: 'Can you lower the rent please?', messageId: '<t1@mail.com>', at: 1 }, 1);
+  const d = await R.draft(boss, { id: r.id, action: 'reply', words: 'We will check.' });
+  assert.deepEqual(d.cc, ['brother@mail.com'], 'accounts@ is already the Bcc, so not Cc too');
+  assert.deepEqual(d.attachments, []);
+  await R.send(boss, { id: r.id, action: 'reply', text: 'Dear Mohamed,\n\nWe will check.' });
+  const m = lastMail();
+  assert.match(m, /In-Reply-To: <t1@mail\.com>/);
+  assert.match(m, /Subject: Re: Lease renewal: PARK PLACE, Unit 610/);
+  assert.match(m, /Cc: brother@mail\.com/);
+  assert.match(m, /Can you lower the rent please\?/, 'the tenant\'s email is quoted underneath');
+  assert.doesNotMatch(m, /Renewal notice/, 'the notice is not sent again');
+  assert.ok(world.sent.at(-1).envelope.to.includes('brother@mail.com'));
+  // The next email (a reminder, say) quotes our reply and keeps the Cc.
+  await R.send(boss, { id: r.id, action: 'reply', text: 'Dear Mohamed,\n\nA follow-up.' });
+  assert.match(lastMail(), /Cc: brother@mail\.com/);
+  assert.match(lastMail(), /We will check\./);
+});
