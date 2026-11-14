@@ -103,15 +103,26 @@ test('a paused entry and one that does not create its own are left alone', async
   await assert.rejects(createNow(jessa, byHand.id, '2027-01-02'), /is paused/);
 });
 
-test('changing an entry is for the months to come', async () => {
+test('changing an entry is for the months to come, and its amount for the lines nothing came in on', async () => {
   const { jessa } = await setup();
   const e = await saveEntry(jessa, null, washer, '2026-10-05');
   const changed = await saveEntry(jessa, e.id, { ...washer, amount: 200, day: 10 }, '2026-10-20');
   assert.equal(changed.amount, 200);
   await createDuePayments('2026-11-10');
   assert.deepEqual(await months(e.id), [
-    { month: '2026-10', due_date: '2026-10-05', amount: 150, status: 'pending' },
+    { month: '2026-10', due_date: '2026-10-05', amount: 200, status: 'pending' },
     { month: '2026-11', due_date: '2026-11-10', amount: 200, status: 'pending' },
+  ]);
+  // Money came in on October (all of it) and November (a part): both keep their amount.
+  const [oct, nov] = await db.prepare('SELECT id FROM recurring_payment_dues WHERE payment_id = ? ORDER BY month').all(e.id);
+  await addReceipt(jessa, oct.id, { account_id: 1, paid_on: '2026-10-10', amount: '200' }, '2026-11-10');
+  await addReceipt(jessa, nov.id, { account_id: 1, paid_on: '2026-11-10', amount: '50' }, '2026-11-10');
+  await createDuePayments('2026-12-10');
+  await saveEntry(jessa, e.id, { ...washer, amount: 300, day: 10 }, '2026-12-11');
+  assert.deepEqual(await months(e.id), [
+    { month: '2026-10', due_date: '2026-10-05', amount: 200, status: 'paid' },
+    { month: '2026-11', due_date: '2026-11-10', amount: 200, status: 'pending' },
+    { month: '2026-12', due_date: '2026-12-10', amount: 300, status: 'pending' },
   ]);
 });
 
