@@ -97,7 +97,7 @@ const RULES = [
   [/^\/leasing\/services(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
   [/^\/leasing\/sources(\/|$)/, ['sources', 'leasing', 'prospects'], ['sources', 'leasing']], // a prospect picks where they came from
   [/^\/leasing\/(units\/[^/]+\/inspections|inspections|inspection-photos)(\/|$)/, ['leasing', 'properties'], ['leasing', 'properties']],
-  [/^\/leasing\/(available|bookings|installments|payments|docs)(\/|$)/, ['leasing'], ['leasing']],
+  [/^\/leasing\/(available|bookings|installments|payments|charges|slips|docs)(\/|$)/, ['leasing'], ['leasing']], // charges: taking off one added by hand; slips: Riley reading a payment slip
   [/^\/leasing(\/|$)/, MASTER, MASTER], // a leasing route with no line above is the master's until it is given one
   [/^\/properties\/renewals(\/|$)/, ['documents'], ['documents']],
   [/^\/properties\/places\/?$/, ['documents', 'properties', 'prospects'], ['documents', 'properties']], // the names only: a prospect picks the unit wanted

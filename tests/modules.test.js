@@ -89,6 +89,9 @@ test('each route names the modules that may read it and the modules that may cha
   assert.deepEqual(rule('/leasing/bookings/7/payments'), [['leasing'], ['leasing']]);
   assert.deepEqual(rule('/leasing/payments/7/receipt'), [['leasing'], ['leasing']]);
   assert.deepEqual(rule('/leasing/available'), [['leasing'], ['leasing']]);
+  // Every route the lease's Payments screen calls is the leasing module's, not the master's alone.
+  assert.deepEqual(needed('DELETE', '/leasing/charges/7'), ['leasing']);
+  assert.deepEqual(needed('POST', '/leasing/slips/read'), ['leasing']);
   assert.deepEqual(rule('/leasing/tenants'), [['tenants', 'leasing', 'reports'], ['tenants', 'leasing']]);
   assert.deepEqual(rule('/leasing/tenants/3'), [['tenants', 'leasing', 'reports'], ['tenants', 'leasing']]);
   assert.deepEqual(rule('/leasing/tenants/3/history'), [['tenants'], ['tenants']]);
