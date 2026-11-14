@@ -2802,6 +2802,10 @@ await db.exec(`
   -- The master's YouTube key (Google's YouTube Data API), encrypted like a mailbox password,
   -- for searching and browsing YouTube on the Feeds page. '' = not set.
   ALTER TABLE feed_settings ADD COLUMN IF NOT EXISTS youtube_key TEXT NOT NULL DEFAULT '';
+  -- The switch on the Feeds page: whether Reem looks everything up by itself each morning.
+  -- Off to begin with, because every morning costs a dollar or two in web reading; the page
+  -- and its Refresh button stay, so the master still gets a feed when he asks for one.
+  ALTER TABLE feed_settings ADD COLUMN IF NOT EXISTS auto_on BOOLEAN NOT NULL DEFAULT false;
   -- YouTube searches kept for 24 hours, so asking the same thing again costs none of the
   -- key's daily allowance (a search is 100 of its 10,000 units).
   CREATE TABLE IF NOT EXISTS yt_search_cache (

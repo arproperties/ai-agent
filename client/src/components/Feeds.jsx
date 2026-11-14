@@ -96,6 +96,30 @@ function BuzzSetting({ value, onSaved }) {
   );
 }
 
+// Whether Reem gathers the feed by itself each morning. Off saves the web reading it costs;
+// the page stays and Refresh still makes a feed when asked.
+function AutoSetting({ on, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  const flip = async () => {
+    setSaving(true);
+    try { const r = await api.put('/feeds/settings', { auto_on: !on }); onSaved(r.auto_on); } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-stroke px-4 py-2.5 text-sm">
+      <RefreshCw size={16} className="text-mute" />
+      <span className="flex-1">
+        Gather the feed every morning
+        <span className="block text-xs text-mute">{on ? 'Costs about $1 to $2 a day.' : 'Off. Tap Refresh when you want today\'s feed.'}</span>
+      </span>
+      <button role="switch" aria-checked={on} aria-label="Gather the feed every morning" disabled={saving} onClick={flip}
+        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${on ? 'bg-p1' : 'bg-white/15'}`}>
+        <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
+      </button>
+    </div>
+  );
+}
+
 const STARTERS = ['Why did gold move today?', 'Petrol this month vs last month', 'How much is 50,000 INR in AED?', 'What does the news mean for our rents?'];
 
 // The chat at the foot of the page. It lives only while the page is open: the feed itself
@@ -217,7 +241,8 @@ export default function Feeds({ onBack, start }) {
           <YouTubeBrowser connected={!!data.youtube} videos={data.videos || []} onVideos={(videos) => setData((d) => ({ ...d, videos }))} onConnected={() => setData((d) => ({ ...d, youtube: true }))} />
         ) : (
         <>
-        <BuzzSetting value={data.settings.push_at} onSaved={(push_at) => setData((d) => ({ ...d, settings: { push_at } }))} />
+        <BuzzSetting value={data.settings.push_at} onSaved={(push_at) => setData((d) => ({ ...d, settings: { ...d.settings, push_at } }))} />
+        <AutoSetting on={!!data.settings.auto_on} onSaved={(auto_on) => setData((d) => ({ ...d, settings: { ...d.settings, auto_on } }))} />
 
         {(refreshing || data.running) && (
           <p className="flex items-center gap-2 rounded-2xl bg-p1/10 px-4 py-3 text-sm"><Loader2 size={16} className="animate-spin text-p1" /> Reem is looking everything up. This takes a minute or two.</p>

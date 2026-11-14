@@ -217,7 +217,7 @@ const masters = async () => (await db.prepare(`SELECT id FROM users WHERE role =
 
 async function settings() {
   await db.prepare('INSERT INTO feed_settings (id) VALUES (1) ON CONFLICT DO NOTHING').run();
-  return db.prepare('SELECT push_at, pushed_on FROM feed_settings WHERE id = 1').get();
+  return db.prepare('SELECT push_at, pushed_on, auto_on FROM feed_settings WHERE id = 1').get();
 }
 
 const fmt = (n, d = 2) => (n == null ? null : Number(n).toFixed(d));
@@ -241,7 +241,9 @@ async function tick() {
   const startAt = Math.min(START, pushAt == null ? START : Math.max(0, pushAt - LEAD));
   const today = await db.prepare('SELECT data, error, tries, made_at FROM feed_days WHERE day = ?').get(day);
 
-  const due = now >= startAt && !running && (!today
+  // With the morning switch off nothing is looked up here, so there is nothing to buzz about
+  // either; a feed the master made himself with Refresh still buzzes at its time.
+  const due = s.auto_on && now >= startAt && !running && (!today
     || (!today.data && today.tries < MAX_TRIES && Date.now() / 1000 - today.made_at >= RETRY_SECS));
   const [master] = await masters();
   if (due && master) await billAs({ userId: master, job: 'feeds' }, () => makeFeed(day)).catch((e) => console.error('[feeds]', e.message));
@@ -314,7 +316,7 @@ feedRoutes.get('/', wrap(async (req, res) => {
   const history = await db.prepare('SELECT day, data FROM feed_days WHERE data IS NOT NULL ORDER BY day DESC LIMIT 60').all();
   const s = await settings();
   const videos = await db.prepare('SELECT id, video_id, url, title FROM feed_videos ORDER BY id DESC').all();
-  res.json({ day, today: today || null, history, videos, running: !!running, settings: { push_at: s.push_at }, youtube: await hasYouTubeKey() });
+  res.json({ day, today: today || null, history, videos, running: !!running, settings: { push_at: s.push_at, auto_on: !!s.auto_on }, youtube: await hasYouTubeKey() });
 }));
 
 // Search again now: the first morning, a failed one, or prices that have moved since.
@@ -325,14 +327,20 @@ feedRoutes.post('/refresh', wrap(async (req, res) => {
   res.json({ ok: true, running: true });
 }));
 
-// '' turns the buzz off; HH:MM (Dubai) sets it.
+// The two switches on the page, each sent on its own. push_at: '' turns the buzz off, HH:MM
+// (Dubai) sets it. auto_on: whether Reem gathers the feed by itself each morning.
 feedRoutes.put('/settings', wrap(async (req, res) => {
-  const pushAt = String(req.body?.push_at ?? '').trim();
-  if (pushAt && !validTime(pushAt)) throw bad('Pick a time like 07:00', 400);
+  const body = req.body || {};
   await settings();
-  // A time already past today, with today's buzz not yet sent, goes on the next check.
-  await db.prepare('UPDATE feed_settings SET push_at = ? WHERE id = 1').run(pushAt);
-  res.json({ ok: true, push_at: pushAt });
+  if ('push_at' in body) {
+    const pushAt = String(body.push_at ?? '').trim();
+    if (pushAt && !validTime(pushAt)) throw bad('Pick a time like 07:00', 400);
+    // A time already past today, with today's buzz not yet sent, goes on the next check.
+    await db.prepare('UPDATE feed_settings SET push_at = ? WHERE id = 1').run(pushAt);
+  }
+  if ('auto_on' in body) await db.prepare('UPDATE feed_settings SET auto_on = ? WHERE id = 1').run(body.auto_on === true);
+  const s = await settings();
+  res.json({ ok: true, push_at: s.push_at, auto_on: !!s.auto_on });
 }));
 
 // ---------- the Watch card ----------
