@@ -45,7 +45,7 @@ const TABLES = [
   'recurring_buildings', 'recurring_payments', 'recurring_payment_dues', 'recurring_payment_receipts', 'recurring_accounts', 'recurring_transfers', 'recurring_heads',
   'mail_front', 'mail_route_rules', 'mail_people', 'mail_log', 'backup_state',
   'lease_renewal_settings', 'lease_renewals', 'lease_renewal_events', 'lease_renewal_files', 'lease_renewal_nudges', 'lease_renewal_chats', 'lease_renewal_dispute_reminders',
-  'document_texts', 'document_copies', 'company_addresses', 'address_proposals', 'lesson_proposals', 'agent_lessons','ai_costs', 'ai_keys', 'saifsys_doc_links', 'doc_renewal_case_tasks', 'doc_renewal_case_events', 'doc_renewal_cases', 'doc_renewal_case_settings', 'document_alerts', 'document_alert_settings', 'document_types', 'document_categories',
+  'document_texts', 'document_copies', 'company_addresses', 'address_proposals', 'lesson_proposals', 'agent_lessons','ai_costs', 'ai_keys', 'saifsys_doc_links', 'saifsys_company_doc_links', 'doc_renewal_case_tasks', 'doc_renewal_case_events', 'doc_renewal_cases', 'doc_renewal_case_settings', 'document_alerts', 'document_alert_settings', 'document_types', 'document_categories',
   'case_settings', 'case_folders', 'case_emails', 'case_proposals', 'case_time', 'case_deadline_scans', 'case_deadlines',
   'case_briefs', 'case_brief_suggestions', 'server_health', 'app_connectors',
   'projects', 'project_members', 'project_proposals', 'project_proposal_shown', 'project_moves', 'project_manpower',

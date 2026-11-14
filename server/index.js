@@ -37,6 +37,7 @@ import { recoverAtBoot as recoverBrowser } from './browser/engine.js';
 import { docCategoryRoutes, seedCategories } from './docCategories.js';
 import { documentRenewalRoutes, proTaskRoutes } from './documentRenewals.js';
 import { startSaifsysDocSync } from './saifsysDocSync.js';
+import { startSaifsysCompanyDocSync } from './saifsysCompanyDocs.js';
 import { startDocumentAlerts } from './documentAlerts.js';
 import { sendingOn } from './renewalCases.js';
 import { buildingRoutes, startBuildings } from './buildings.js';
@@ -608,6 +609,8 @@ app.listen(PORT, '0.0.0.0', () => {
   recoverBrowser().catch((e) => console.error('[browser]', e.message));
   // saifsys's employee documents onto the Shelf, for Document Renewals: nightly, and once now
   startSaifsysDocSync();
+  // saifsys's company documents (trade licences, Ejari...) onto the Shelf: every 15 minutes
+  startSaifsysCompanyDocSync();
   // Expiry alerts (pushes and to-dos) on the live server only, unless asked for: a local copy of
   // the live database holds real people's phones, which a test run must not wake. And on live
   // only while Document Renewals sending is switched on (the master's switch, or DOC_RENEWALS_SEND).

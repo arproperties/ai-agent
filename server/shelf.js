@@ -96,14 +96,18 @@ export function byName(docs, query) {
 
 const label = (text) => text.replace(/^\[[^\]]*\]\s*/, ''); // indexChunks() puts the title in front of every piece
 const day = (secs) => dubaiDate(Number(secs) * 1000);
-const line = (d) => `#${d.id} ${d.title || d.name} (${d.folder || 'Other'}${d.doc_date ? `, ${d.doc_date}` : ''}${d.expires_on ? `; expires ${d.expires_on}` : ''}; file: ${d.name}` +
+// An old issue says so first, with the one that replaced it: the chat answers from the current one.
+const line = (d) => `${d.superseded_by ? `OLD - replaced by #${d.superseded_by}: ` : ''}#${d.id} ${d.title || d.name} (${d.folder || 'Other'}${d.doc_date ? `, ${d.doc_date}` : ''}${d.expires_on ? `; expires ${d.expires_on}` : ''}; file: ${d.name}` +
+  `${d.from_saifsys ? '; from saifsys, where staff keep it up to date' : ''}` +
   `${d.uploader ? `; uploaded by ${d.uploader}${d.created_at ? ` on ${day(d.created_at)}` : ''}` : ''})`;
 
 // A private agent's turn reads only the person's own files, the master's too (agentScope).
 // The master reaches everyone's files but an external person's (access.js). Never the own
 // files of an agent bound to another case (notOtherCases).
 const scopeOf = (user) => (user.ownFilesOnly ? agentScope(user) : notOtherCases(user, isMaster(user) ? masterReach('t') : retrievalScope(user.id)));
-const DOC_COLS = `t.id, t.user_id, t.title, t.name, t.folder, t.company, t.tags, t.summary, t.doc_date, t.expires_on, t.created_at,
+const DOC_COLS = `t.id, t.user_id, t.title, t.name, t.folder, t.company, t.tags, t.summary, t.doc_date, t.expires_on, t.created_at, t.superseded_by,
+  (EXISTS (SELECT 1 FROM saifsys_company_doc_links l WHERE l.document_id = t.id)
+    OR EXISTS (SELECT 1 FROM saifsys_doc_links l WHERE l.document_id = t.id)) AS from_saifsys,
   CASE WHEN t.user_id = ? THEN NULL ELSE coalesce(u.name, u.email) END AS uploader`;
 
 /**
@@ -195,7 +199,10 @@ export async function searchFiles(user, query, uploadedBy) {
   }
   add(inside);
 
-  const found = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_FILES).map(([id]) => known.get(id));
+  // Current issues before old ones, each kept in its order: the renewed licence comes before
+  // the one it replaced, whichever matched the words better.
+  const found = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_FILES).map(([id]) => known.get(id))
+    .sort((a, b) => (a.superseded_by ? 1 : 0) - (b.superseded_by ? 1 : 0));
   if (!found.length) {
     return `No saved file${whose} matches "${q}" (${docs.length} files looked through). Before telling the user it is not there, ` +
       'search again with other words - a different spelling of the name, the building, the kind of document.';
@@ -211,7 +218,8 @@ export async function searchFiles(user, query, uploadedBy) {
       bit && `   Inside: …${bit.replace(/\s+/g, ' ').slice(0, 240)}…`].filter(Boolean).join('\n');
   });
   return `${found.length} of ${docs.length} saved files${whose}, best match first. read_file opens one by its number. ` +
-    `"About" was written when the file was filed and can be wrong - read the file before stating what it decided, an amount or a date.\n${out.join('\n')}`;
+    `"About" was written when the file was filed and can be wrong - read the file before stating what it decided, an amount or a date.` +
+    `${found.some((d) => d.superseded_by) ? ' A file marked OLD has been replaced by a newer issue: answer from the current one, and use the old one only when they ask about the old one (and say it is old).' : ''}\n${out.join('\n')}`;
 }
 
 /**
@@ -311,7 +319,9 @@ export const SHELF_TOOLS = [
       'Always use it before saying a file is not there. Names are often spelt as they were heard: if nothing comes back, try another spelling or other words. ' +
       'Every file knows who uploaded it: when they ask what someone uploaded or sent to the Shelf, pass uploaded_by, and leave query out to get all of them (the list says what each is, so pick the invoices etc. from it) - ' +
       'never search for the person\'s name inside the files for that. "What has Syed bought", "Said\'s bills" and the like are questions about what that person uploaded; ' +
-      'a team member\'s name may be spelt as heard (Syed, Saeed for Said) and is still them.',
+      'a team member\'s name may be spelt as heard (Syed, Saeed for Said) and is still them. ' +
+      'Company documents (trade licences, Ejari, establishment cards, MOA, VAT and tax certificates) come from saifsys and are kept current there: ' +
+      'when an old and a current issue both come back, answer from the current one.',
     input_schema: {
       type: 'object',
       properties: {
