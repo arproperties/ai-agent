@@ -12,6 +12,7 @@ import { withMailbox, replySubject } from './imap.js';
 import { sendPush } from './push.js';
 import { createTodo } from './todos.js';
 import { renderPdf } from './replyDoc.js';
+import { quoteOf } from './emailQuote.js';
 import { needsModule, userModules } from './modules.js';
 import { inbox, fileInSent, ownWords, claimTenantMail, checkTenantMail } from './tenantCare.js';
 import { askSaifsys, actSaifsys, saifsysConfigured, saifsysActionsConfigured, dubaiDate } from './saifsys/client.js';
@@ -393,8 +394,9 @@ async function mail(r, { title, text, attachments = [], user = null, data = null
   const ids = thread.map((t) => t.message_id);
   const subject = ids.length ? replySubject(subjectOf(r)) : subjectOf(r);
   const bcc = bccFor(await settings(), r);
+  const { quote, cc } = await onThread(r, acc, bcc);
   const m = await compose({
-    from: { name: 'Tenant Care', address: acc ? acc.email : 'tenant-care@invalid' }, to: [r.lease.email], bcc, subject, text, attachments,
+    from: { name: 'Tenant Care', address: acc ? acc.email : 'tenant-care@invalid' }, to: [r.lease.email], cc, bcc, subject, text, attachments, quote,
     ...(ids.length ? { inReplyTo: ids[ids.length - 1], references: ids.join(' ') } : {}),
   });
   const { id } = await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, subject, message_id, raw, status, error, data, user_id, at)
@@ -406,6 +408,32 @@ async function mail(r, { title, text, attachments = [], user = null, data = null
   if (acc) await deliver(acc, id, m);
   await mirror(r, `Email to the tenant: ${title}`, { text });
   return id;
+}
+
+/** The last email on the renewal's thread, parsed: the tenant's (from the inbox) or our own (its saved bytes). */
+async function lastOnThread(renewalId) {
+  const e = await db.prepare(`SELECT kind, ref, raw FROM lease_renewal_events WHERE renewal_id = ? AND message_id IS NOT NULL AND kind IN ('in', 'out')
+    ORDER BY id DESC LIMIT 1`).get(renewalId);
+  if (!e) return null;
+  if (e.kind === 'in') return e.ref ? D.fetch(e.ref) : null;
+  return e.raw ? simpleParser(e.raw) : null;
+}
+
+/**
+ * What a reply carries from the thread, like Reply All in Outlook: the last email quoted
+ * underneath, and everyone else who was on it kept on Cc (someone the tenant copied in, a
+ * colleague we copied before). Never the tenant twice, never our own inbox, never a Bcc.
+ * Without these a renewal reply arrived as a few lines with no history, to the tenant only.
+ * A thread that cannot be read sends the email as it is, rather than not at all.
+ */
+async function onThread(r, acc, bcc = []) {
+  let last = null;
+  try { last = await lastOnThread(r.id); } catch (e) { console.warn('[lease renewals] could not read the thread:', e.message); }
+  if (!last) return { quote: null, cc: [] };
+  const skip = new Set([String(r.lease.email || '').toLowerCase(), String(acc?.email || '').toLowerCase(), ...bcc]);
+  const cc = [...new Set([last.from, last.to, last.cc].flatMap((f) => (f?.value || []).map((a) => String(a.address || '').trim().toLowerCase())))]
+    .filter((x) => EMAIL.test(x) && !skip.has(x)).slice(0, 10);
+  return { quote: quoteOf(last), cc };
 }
 
 // Emails being handed to the mail server right now. Staff tapping Send and the clock's retry
@@ -441,7 +469,11 @@ export async function resend() {
       AND (e.tried_at IS NULL OR e.tried_at <= ? - LEAST(180 * power(2, e.tries - 1), 21600))
     ORDER BY e.id LIMIT 20`).all(MAX_TRIES, secs());
   const s = await settings();
-  for (const x of rows) await deliver(acc, x.id, { raw: x.raw, envelope: { from: acc.email, to: [x.lease.email, ...bccFor(s, x)] } });
+  for (const x of rows) {
+    // Whoever the email was copied to is in its own Cc line; the retry reaches them too.
+    const cc = await simpleParser(x.raw).then((p) => (p.cc?.value || []).map((a) => a.address).filter(Boolean)).catch(() => []);
+    await deliver(acc, x.id, { raw: x.raw, envelope: { from: acc.email, to: [x.lease.email, ...cc, ...bccFor(s, x)] } });
+  }
   return rows.length;
 }
 
@@ -601,8 +633,9 @@ export async function draft(user, body) {
     const last = await db.prepare(`SELECT reading FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'in' ORDER BY id DESC LIMIT 1`).get(p.r.id || 0);
     if (last?.reading?.suggestedReply) p.text = replyText(p.r, last.reading.suggestedReply);
   }
+  const cc = p.r.id ? (await onThread(p.r, await inbox(), bccFor(p.s, p.r))).cc : [];
   return {
-    to: p.r.lease.email, subject: subjectOf(p.r), text: p.text, rent: p.amount, cheques: p.cheques, source: p.source,
+    to: p.r.lease.email, cc, subject: subjectOf(p.r), text: p.text, rent: p.amount, cheques: p.cheques, source: p.source,
     schedule: p.quote?.cheques || null, total: p.quote?.cheques_total ?? null,
     fees: p.quote?.fees || null, charges: p.quote ? chargesOf(p.quote) : null,
     attachments: body.action === 'start' ? [noticeName(p.r)] : body.action === 'accept' ? [contractName(p.r)] : [],

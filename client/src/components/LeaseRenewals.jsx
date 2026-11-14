@@ -561,6 +561,7 @@ function Compose({ ask, onClose, onSent }) {
           <div className="overflow-hidden rounded-2xl border border-stroke bg-surface-2">
             <div className="divide-y divide-stroke text-sm">
               <div className="flex gap-3 px-4 py-2.5"><span className="w-16 shrink-0 text-mute">To</span><span className="min-w-0 break-all">{d.to}</span></div>
+              {d.cc?.length > 0 && <div className="flex gap-3 px-4 py-2.5"><span className="w-16 shrink-0 text-mute">Cc</span><span className="min-w-0 break-all">{d.cc.join(', ')}</span></div>}
               <div className="flex gap-3 px-4 py-2.5"><span className="w-16 shrink-0 text-mute">Subject</span><span className="min-w-0 font-medium">{d.subject}</span></div>
             </div>
             <textarea value={text} onChange={(e) => setText(e.target.value)} aria-label="Email"
