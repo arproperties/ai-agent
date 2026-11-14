@@ -73,6 +73,8 @@ const AUTO_FIXES = 3;
 const DEFAULT_ADMIN = 1500; // the admin fee a renewal starts with     // papers sent back by Reem before a person looks
 const REMIND_AFTER = 10;  // days of silence before each reminder
 const REMINDERS = 2;
+const DISPUTE_REMIND_AFTER = 25; // days of silence after our last email before a disputing tenant's reminder is ready (the user, 2026-11-14)
+const DISPUTE_REMINDERS = 2;     // then No answer: more would read as pressure, and a dispute can turn on it
 const EVERY = 3 * 60_000;
 const DIR = `${DATA_DIR}/lease-renewals`;
 const MAX_FILE = 10 * 1024 * 1024;
@@ -184,7 +186,12 @@ const ROW = (r) => r && {
   ...r, offer: N(r.offer), agreed: N(r.agreed), tenant_offer: N(r.tenant_offer), rera_pct: N(r.rera_pct),
   last_out_at: N(r.last_out_at), last_in_at: N(r.last_in_at), created_at: N(r.created_at), updated_at: N(r.updated_at),
 };
-export const getRenewal = async (id) => ROW(await db.prepare('SELECT * FROM lease_renewals WHERE id = ?').get(Number(id) || 0));
+export const getRenewal = async (id) => {
+  const r = ROW(await db.prepare('SELECT * FROM lease_renewals WHERE id = ?').get(Number(id) || 0));
+  // A dispute reminder waiting for a person's Send, shown on the renewal.
+  if (r) r.dispute_reminder = (await db.prepare(`SELECT n, created_at FROM lease_renewal_dispute_reminders WHERE renewal_id = ? AND status = 'ready'`).get(r.id)) || null;
+  return r;
+};
 
 const JSON_COLS = ['lease', 'rent_source', 'quote', 'received', 'papers', 'plan'];
 async function update(id, fields) {
@@ -375,6 +382,11 @@ const reminderText = (r, payee) => (['agreed', 'papers_ok'].includes(r.status)
   : [dear(r), '', `A reminder about the renewal of your tenancy of ${r.lease.building}, Unit ${r.lease.unit}, which ends on ${longDate(r.lease.end_date)}.`, '',
     `Our offer is ${aed(r.offer)} a year. Please reply to this email to accept, or tell us what you would like to propose.`, ...SIGN].join('\n'));
 
+/** To a disputing tenant gone quiet: only that we wrote and wait for an answer. No offer, no argument, nothing new. */
+const disputeReminderText = (r) => [dear(r), '',
+  `We wrote to you${r.last_out_at ? ` on ${longDate(dubaiDate(r.last_out_at * 1000))}` : ''} about the renewal of your tenancy of ${r.lease.building}, Unit ${r.lease.unit}, and we have not heard back from you.`, '',
+  'Please reply to our email below.', ...SIGN].join('\n');
+
 const keep = async (renewalId, eventId, { name, mime, buffer }) => {
   mkdirSync(DIR, { recursive: true });
   const path = `${DIR}/${randomUUID()}.${FILE_TYPES[mime]}`;
@@ -546,6 +558,7 @@ const ACTIONS = {
   accept: { from: ['offer_sent', 'negotiating'], title: (rent) => `Agreed · ${aed(rent)}` },
   not_renewing: { from: ['offer_sent', 'negotiating', 'agreed', 'papers_ok'], title: () => 'Not renewing' },
   reply: { from: OPEN, title: () => 'Reply sent' },
+  remind: { from: ['offer_sent', 'negotiating', 'agreed'], title: () => 'Dispute reminder sent' },
   fix: { from: ['agreed'], title: () => 'Asked to fix the papers' },
   convert: { from: ['agreed', 'papers_ok'], title: (rent) => `Renewed in saifsys · ${aed(rent)}` },
 };
@@ -607,6 +620,7 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera
   if (action === 'accept') text = agreedText(r, quote, amount, s.payee);
   if (action === 'not_renewing') text = notRenewingText(r);
   if (action === 'reply') text = replyText(r, words || '');
+  if (action === 'remind') text = disputeReminderText(r);
   if (action === 'fix') text = fixText(r, r.papers || checkPapers(r, r.received || {}, s.payee));
   if (action === 'convert') text = doneText(r);
   // Start: the increase the RERA index allows, as the person read it off DLD's calculator.
@@ -740,6 +754,21 @@ export async function send(user, body) {
       text: `${r.lease.payment_method === 'cheque' ? 'Collect the original cheques and register' : 'Register'} the Ejari for ${r.lease.building} ${r.lease.unit}`,
       notes: `Renewed by email at ${aed(r.agreed)} a year, ${longDate(r.quote.start_date)} to ${longDate(r.quote.end_date)}. saifsys renewal #${r.workflow_id}.`,
     }).catch((e) => console.warn('[lease renewals] to-do:', e.message));
+    return getRenewal(r.id);
+  }
+
+  if (body.action === 'remind') {
+    // Claimed first, so two taps (or a tap and the clock) never send it twice.
+    const d = await db.prepare(`UPDATE lease_renewal_dispute_reminders SET status = 'sent', sent_at = ?, user_id = ? WHERE renewal_id = ? AND status = 'ready' RETURNING id, n`)
+      .get(secs(), user?.id || null, r.id);
+    if (!d) throw bad('There is no reminder waiting to go: the tenant may have replied, or it was sent already.', 409);
+    try {
+      const eventId = await mail(r, { title: `Dispute reminder ${d.n} sent`, text, user });
+      await db.prepare('UPDATE lease_renewal_dispute_reminders SET event_id = ? WHERE id = ?').run(eventId, d.id);
+    } catch (e) {
+      await db.prepare(`UPDATE lease_renewal_dispute_reminders SET status = 'ready', sent_at = NULL, user_id = NULL WHERE id = ?`).run(d.id);
+      throw e;
+    }
     return getRenewal(r.id);
   }
 
@@ -1205,6 +1234,45 @@ export async function chase() {
   }
 }
 
+/**
+ * A tenant who disputes it and has gone quiet: 25 days after our last email (a person's reply
+ * to the dispute, or a reminder) Reem gets a short reminder ready and buzzes the renewals
+ * people; nothing goes until one of them taps Send. Twice at most since the tenant last wrote,
+ * then No answer, for a person to decide (legal, RDC). A reply from the tenant, another email
+ * of ours, or the renewal ending drops a reminder still waiting.
+ */
+export async function disputeChase() {
+  const s = await settings();
+  const ready = await db.prepare(`SELECT d.id, d.renewal_id, d.created_at, r.status, r.dispute, r.last_in_at, r.last_out_at FROM lease_renewal_dispute_reminders d
+    JOIN lease_renewals r ON r.id = d.renewal_id WHERE d.status = 'ready'`).all();
+  for (const x of ready) {
+    const stale = !ACTIONS.remind.from.includes(x.status) || !x.dispute || !s.reminders
+      || Number(x.last_in_at || 0) >= Number(x.created_at) || Number(x.last_out_at || 0) > Number(x.created_at);
+    if (stale) await db.prepare(`UPDATE lease_renewal_dispute_reminders SET status = 'cancelled' WHERE id = ? AND status = 'ready'`).run(x.id);
+  }
+  if (!s.reminders) return;
+  const rows = await db.prepare(`SELECT id FROM lease_renewals r WHERE status IN ('offer_sent', 'negotiating', 'agreed') AND waiting IS NULL
+    AND dispute IS NOT NULL AND last_out_at IS NOT NULL AND (last_in_at IS NULL OR last_out_at > last_in_at) AND last_out_at <= ?
+    AND NOT EXISTS (SELECT 1 FROM lease_renewal_dispute_reminders d WHERE d.renewal_id = r.id AND d.status = 'ready')`)
+    .all(secs() - DISPUTE_REMIND_AFTER * 86400);
+  for (const { id } of rows) {
+    const r = await getRenewal(id);
+    const { n } = await db.prepare(`SELECT count(*)::int AS n FROM lease_renewal_dispute_reminders WHERE renewal_id = ? AND status = 'sent' AND sent_at > ?`)
+      .get(r.id, r.last_in_at || 0);
+    if (n >= DISPUTE_REMINDERS) {
+      await update(r.id, { waiting: 'no_answer' });
+      await step(r, `No answer to the dispute after ${DISPUTE_REMINDERS} reminders`);
+      await tell(r, `No answer from the tenant after ${DISPUTE_REMINDERS} dispute reminders. Decide the next step.`);
+      continue;
+    }
+    const made = await db.prepare(`INSERT INTO lease_renewal_dispute_reminders (renewal_id, n, created_at) VALUES (?, ?, ?)
+      ON CONFLICT (renewal_id) WHERE status = 'ready' DO NOTHING RETURNING id`).get(r.id, n + 1, secs());
+    if (!made) continue;
+    await step(r, `Dispute reminder ${n + 1} ready: no reply for ${DISPUTE_REMIND_AFTER} days. Nothing goes until a person taps Send`);
+    await tell(r, `No reply to the dispute for ${DISPUTE_REMIND_AFTER} days. Reminder ${n + 1} is ready: tap Send.`);
+  }
+}
+
 // ---------- the offers due, and the leases waiting for the RERA check ----------
 
 /** Scheduled offers whose day has come, sent by Reem. One that fails stops, for staff to Send now. */
@@ -1255,6 +1323,7 @@ export async function tick() {
   try {
     await readInbound();
     await chase();
+    await disputeChase();
     await resend();
     if (saifsysConfigured()) {
       await sendDue();
@@ -1278,7 +1347,8 @@ const out = (r) => r && {
   id: r.id, status: r.status, waiting: r.waiting, dispute: r.dispute, error: r.error, offer: r.offer, agreed: r.agreed,
   tenantOffer: r.tenant_offer, cheques: r.cheques, rentSource: r.rent_source, workflowId: r.workflow_id,
   schedule: r.quote?.cheques || null, total: r.quote?.cheques_total ?? null, start: r.quote?.start_date ?? null, end: r.quote?.end_date ?? null,
-  papers: r.papers, reminders: r.reminders, lastOutAt: r.last_out_at, lastInAt: r.last_in_at, updatedAt: r.updated_at,
+  papers: r.papers, reminders: r.reminders,
+  disputeReminder: r.dispute_reminder ? { n: r.dispute_reminder.n, readyAt: Number(r.dispute_reminder.created_at) } : null, lastOutAt: r.last_out_at, lastInAt: r.last_in_at, updatedAt: r.updated_at,
   auto: r.auto, reraPct: r.rera_pct, indexRent: r.rera_pct !== null ? indexRentFrom(r.lease.annual_rent, r.rera_pct) : null,
   sendOn: r.status === 'scheduled' ? sendDate(r.lease) : null,
 };

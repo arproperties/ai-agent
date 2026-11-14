@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles, Trash2, Eye, EyeOff, Settings as Gear, History,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles, Trash2, Eye, EyeOff, Settings as Gear, History, BellRing,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -502,7 +502,7 @@ const Line = ({ label, value }) => (
 
 const TITLES = {
   start: 'Renewal offer', counter: 'Counter-offer', index: 'RERA index rent', accept: 'Agree', not_renewing: 'Not renewing',
-  reply: 'Reply', fix: 'What to fix', convert: 'Renew in saifsys',
+  reply: 'Reply', fix: 'What to fix', convert: 'Renew in saifsys', remind: 'Dispute reminder',
 };
 
 /** The email a step sends, written by Reem, read (and changed if need be) by the person, then sent. */
@@ -806,6 +806,7 @@ function Renewal({ id, onBack, chat = null }) {
     counter: { label: 'Counter', icon: HandCoins, run: () => setSheet({ figure: 'counter' }) },
     index: { label: 'RERA index rent', icon: Scale, run: () => setSheet({ figure: 'index' }) },
     reply: { label: 'Reply', icon: Reply, run: () => setSheet({ compose: { id, action: 'reply' } }) },
+    remind: { label: 'Send the reminder', icon: BellRing, run: () => setSheet({ compose: { id, action: 'remind' } }) },
     seen: { label: 'No reply needed', icon: Check, run: () => mark('seen'), busy: busy === 'seen' },
     fix: { label: 'Ask to fix', icon: Repeat, run: () => setSheet({ compose: { id, action: 'fix' } }) },
     papers_ok: { label: 'Papers OK', icon: ShieldCheck, run: () => mark('papers_ok'), busy: busy === 'papers_ok' },
@@ -1134,6 +1135,12 @@ function nextStep(r) {
   if (s === 'converted') return { tone: 'done', icon: Check, title: 'Renewed', sub: 'saifsys has the new lease, and the tenant was told.', main: [], more: [] };
   if (s === 'not_renewing') return { tone: 'done', icon: Ban, title: 'Not renewing', sub: 'The tenant was told what happens next.', main: [], more: [] };
   if (s === 'closed') return { tone: 'done', icon: X, title: 'Handled outside Reem', sub: 'No more emails or reminders go to the tenant.', main: [], more: [] };
+  // A disputing tenant silent for 25 days since our last email: Reem wrote a reminder, a person sends it.
+  if (rn.disputeReminder && ['offer_sent', 'negotiating', 'agreed'].includes(s)) {
+    return { tone: 'bad', icon: BellRing, title: `No reply to the dispute: reminder ${rn.disputeReminder.n} is ready`,
+      sub: `${rn.lastOutAt ? `Our last email went ${when(rn.lastOutAt)}. ` : ''}Nothing goes to the tenant until you tap Send.`,
+      main: ['remind', 'reply'], more: ['not_renewing', 'close'] };
+  }
   if (s === 'papers_ok') return { tone: 'go', icon: FileText, title: 'Ready to renew in saifsys', sub: 'saifsys makes the new lease and its cheques, then the tenant is told.', main: ['convert'], more: ['reply', ...end] };
   if (s === 'agreed') {
     const p = rn.papers;
@@ -1154,11 +1161,14 @@ function nextStep(r) {
   }
   if (rn.waiting === 'no_answer') {
     const main = ['reply'];
-    return { tone: 'bad', icon: Clock, title: 'No answer from the tenant', sub: `Reem reminded them ${rn.reminders} times. Write to them, or handle it yourself.`, main, more: rest(main) };
+    return { tone: 'bad', icon: Clock, title: 'No answer from the tenant',
+      sub: rn.dispute ? 'Two dispute reminders went and the tenant has not answered. Decide the next step: legal, or RDC.' : `Reem reminded them ${rn.reminders} times. Write to them, or handle it yourself.`, main, more: rest(main) };
   }
   const main = ['reply'];
   return { tone: 'wait', icon: Clock, title: "Waiting for the tenant's reply",
-    sub: `${rn.lastOutAt ? `Last email ${when(rn.lastOutAt)}. ` : ''}Reem reminds them after a week of silence${rn.auto ? ' and answers their reply by itself' : ''}.`, main, more: rest(main) };
+    sub: `${rn.lastOutAt ? `Last email ${when(rn.lastOutAt)}. ` : ''}${rn.dispute
+      ? 'The tenant disputes it: after 25 days of silence Reem gets a reminder ready, and you send it.'
+      : `Reem reminds them after ten days of silence${rn.auto ? ' and answers their reply by itself' : ''}.`}`, main, more: rest(main) };
 }
 
 /** The steps that do not fit the moment, one tap away. */
