@@ -54,6 +54,36 @@ test('money for the lease as a whole pays the extra charges due before the rent,
   assert.equal((await paymentPlan(bk.id, { amount: 5000, received_on: AT }, AT)).extra, 470);
 });
 
+test('the person recording a payment can choose which overdue rows it goes on, instead of oldest first', async () => {
+  const { staff, bk } = await tower();
+  await addCharge(bk.id, { label: 'Key Deposit', due_date: '2026-10-01', amount: 30 }, staff);
+  const rows = await bookingPayments(bk.id, AT);
+  const id = (name, due) => rows.find((r) => r.name === name && r.due_date === due).id;
+  const [dep, key, rent1, rent2] = [id('Security deposit', '2026-09-15'), id('Key Deposit', '2026-10-01'), id('Rent', '2026-09-15'), id('Rent', '2026-10-15')];
+  const pay = (amount, split) => ({ amount, method: 'cash', received_on: '2026-10-08', split });
+
+  // The form is told what is due by that day, to choose among: not the rent of 10/15.
+  const auto = await paymentPlan(bk.id, { amount: 1000, received_on: '2026-10-08' }, AT);
+  assert.deepEqual(auto.due.map((r) => [r.name, r.left]), [['Security deposit', 5000], ['Key Deposit', 30], ['Rent', 4500]]);
+
+  // 1,000 on the rent and the key deposit, skipping the security deposit that oldest-first would fill.
+  const plan = await paymentPlan(bk.id, pay(1000, JSON.stringify({ [dep]: 0, [key]: 30, [rent1]: 970 })), AT);
+  assert.deepEqual(plan.rows.map((r) => [r.name, r.part, r.after]), [['Key Deposit', 30, 0], ['Rent', 970, 3530]]);
+
+  await assert.rejects(payBooking(bk.id, pay(1000, { [rent2]: 1000 }), staff, AT), /only be placed on what is due/);
+  await assert.rejects(payBooking(bk.id, pay(1000, { [key]: 31, [rent1]: 969 }), staff, AT), /Only USD 30 is still owed on Key Deposit/);
+  await assert.rejects(payBooking(bk.id, pay(1000, { [rent1]: 1200 }), staff, AT), /only USD 1,000 was received/);
+  await assert.rejects(payBooking(bk.id, pay(1000, { [rent1]: 900 }), staff, AT), /USD 100 of this payment has not been placed/);
+
+  const made = await payBooking(bk.id, pay(1000, { [key]: 30, [rent1]: 970 }), staff, AT);
+  assert.deepEqual(made.map((p) => [p.installment_id, p.amount]), [[key, 30], [rent1, 970]]);
+  assert.equal(new Set(made.map((p) => p.batch)).size, 1); // still the one payment in Transactions
+
+  // Everything due filled by choice: what is beyond it goes on what is not due yet, as before.
+  const ahead = await payBooking(bk.id, pay(8630, { [dep]: 5000, [rent1]: 3530 }), staff, AT);
+  assert.deepEqual(ahead.map((p) => [p.installment_id, p.amount]), [[dep, 5000], [rent1, 3530], [rent2, 100]]);
+});
+
 test('a late fee is added once the days of grace are over, and comes off if the money had come in time', async () => {
   const { staff, bk } = await tower();
   await assert.rejects(saveSettings({ latefee: { on: true, amount: 0, percent: 0 } }), /an amount or a percent of the rent/);

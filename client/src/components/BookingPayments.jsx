@@ -119,29 +119,73 @@ function Transactions({ bookingId, stamp: version }) {
 const stamp = (secs) => new Date(Number(secs) * 1000).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 /** Where money for the whole lease will go, worked out by the server as it will save it, as the amount is typed. */
-function Plan({ url, amount, on }) {
+/* What is due by the day the money came in is listed with an amount box each, filled as the server would spread it
+   (charges first, then rent, oldest first). Changing a box, or unticking a row, makes it the person's own `split`
+   ({ row id: amount typed }), which must use up the money before it can be saved (`onProblem` says what is wrong).
+   What is not due yet cannot be chosen: it only takes what is beyond everything due. */
+function Plan({ url, amount, on, split, setSplit, onProblem }) {
   const [p, setP] = useState(null);
+  const cents = (n) => Math.round(n * 100) / 100;
+  const due = p?.due ?? [];
+  const auto = (r) => p.rows.find((x) => x.id === r.id)?.part ?? 0;
+  const val = (r) => (split ? Number(split[r.id]) || 0 : auto(r));
+  const rest = split ? cents((Number(amount) || 0) - due.reduce((t, r) => t + val(r), 0)) : 0;
+  const over = split && due.find((r) => val(r) > r.left);
+  const problem = !split ? ''
+    : over ? `Only ${aed(over.left)} is still owed on ${over.name}.`
+    : rest < 0 ? `${aed(-rest)} more than the amount received is placed.`
+    : rest > 0 && due.some((r) => val(r) < r.left) ? `${aed(rest)} is still to be placed.` : '';
+  useEffect(() => { onProblem(problem); }, [problem]);
+  const chosen = split && !problem ? JSON.stringify(split) : '';
   useEffect(() => {
     if (!(Number(amount) > 0)) return setP(null);
-    const t = setTimeout(() => api.get(`${url}/plan?amount=${encodeURIComponent(amount)}&received_on=${on}`).then(setP).catch(() => setP(null)), 250);
+    if (split && problem) return; // what is listed stays until the split adds up
+    const t = setTimeout(() => api.get(`${url}/plan?amount=${encodeURIComponent(amount)}&received_on=${on}${chosen ? `&split=${encodeURIComponent(chosen)}` : ''}`)
+      .then(setP).catch(() => { if (!split) setP(null); }), 250);
     return () => clearTimeout(t);
-  }, [url, amount, on]);
+  }, [url, amount, on, chosen, problem]);
   if (!p) return null;
+  // The first change starts from the spread shown, so only the box touched moves.
+  const put = (id, value) => setSplit({ ...(split ?? Object.fromEntries(due.map((r) => [r.id, auto(r) ? String(auto(r)) : '']))), [id]: value });
+  const tick = (r, on) => put(r.id, on ? String(rest > 0 ? Math.min(r.left, rest) : r.left) : '');
+  const ahead = problem ? [] : p.rows.filter((r) => r.due_date > on);
   return (
     <div className="rounded-xl bg-white/[0.04] px-3 py-2.5 text-sm">
       <p className={HEAD}>Where it goes</p>
-      <ul className="mt-1.5 space-y-1">
-        {p.rows.map((r) => (
+      <ul className="mt-1.5 space-y-1.5">
+        {due.map((r) => {
+          const after = cents(r.left - val(r));
+          return (
+            <li key={r.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <label className="flex min-w-0 flex-1 basis-40 items-center gap-2">
+                <input type="checkbox" checked={val(r) > 0} onChange={(e) => tick(r, e.target.checked)} className="size-4 shrink-0 accent-p1" />
+                <span className="min-w-0">{r.name} <span className="text-xs text-mute">· due {fmt(r.due_date)} · {aed(r.left)} owed</span>
+                  {r.status === 'overdue' && <span className={`ml-1.5 rounded-full px-2 py-0.5 text-[11px] ${STATUS.overdue[1]}`}>Overdue</span>}</span>
+              </label>
+              <input type="number" min="0" max={r.left} step="any" aria-label={`Amount for ${r.name}`} placeholder="0"
+                value={split ? split[r.id] ?? '' : auto(r) || ''} onChange={(e) => put(r.id, e.target.value)}
+                className={`glass w-28 rounded-lg px-2.5 py-1.5 text-right tabular-nums outline-none focus:border-p1/70 ${val(r) > r.left ? 'border-bad/70' : ''}`} />
+              <span className={`w-36 text-right text-xs ${after < 0 ? 'text-bad' : val(r) === 0 ? 'text-mute' : after > 0 ? 'text-warn' : 'text-ok'}`}>
+                {after < 0 ? `${aed(-after)} too much` : after > 0 ? `${aed(after)} still owed` : 'paid off'}</span>
+            </li>
+          );
+        })}
+        {ahead.map((r) => (
           <li key={r.id} className="flex flex-wrap items-baseline gap-x-2">
             <span className="min-w-0 flex-1 basis-40">{r.name} <span className="text-xs text-mute">· due {fmt(r.due_date)}</span>
-              {r.status === 'overdue' && <span className={`ml-1.5 rounded-full px-2 py-0.5 text-[11px] ${STATUS.overdue[1]}`}>Overdue</span>}
-              {r.due_date > on && <span className={`ml-1.5 rounded-full px-2 py-0.5 text-[11px] ${STATUS.upcoming[1]}`}>Not due yet</span>}</span>
+              <span className={`ml-1.5 rounded-full px-2 py-0.5 text-[11px] ${STATUS.upcoming[1]}`}>Not due yet</span></span>
             <span className="tabular-nums">{aed(r.part)}</span>
             <span className={`w-36 text-right text-xs ${r.after > 0 ? 'text-warn' : 'text-ok'}`}>{r.after > 0 ? `${aed(r.after)} still owed` : 'paid off'}</span>
           </li>
         ))}
       </ul>
-      {p.extra > 0 && <p className="mt-1.5 text-xs text-bad">{aed(p.extra)} is more than this lease owes ({aed(p.owed)}).</p>}
+      {split ? (
+        <p className="mt-2 flex flex-wrap items-center gap-x-3 text-xs">
+          <span className={problem ? 'text-bad' : 'text-ok'}>{problem || 'All of it is placed.'}</span>
+          <button type="button" onClick={() => setSplit(null)} className="ml-auto flex items-center gap-1 text-p1 hover:underline"><Undo2 size={12} /> Split it for me</button>
+        </p>
+      ) : due.length > 1 && <p className="mt-2 text-xs text-mute">Change an amount, or untick a row, to place the money differently.</p>}
+      {!problem && p.extra > 0 && <p className="mt-1.5 text-xs text-bad">{aed(p.extra)} is more than this lease owes ({aed(p.owed)}).</p>}
     </div>
   );
 }
@@ -157,6 +201,10 @@ function PayForm({ row, url, onDone, onCancel }) {
   const [slip, setSlip] = useState(null); // what was read off it: null before, 'reading', then { amount?, received_on?, method?, reference? }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [split, setSplit] = useState(null); // where the person placed the money themselves, row id to amount; null is the usual spread
+  const [unplaced, setUnplaced] = useState(''); // why that split cannot be saved yet
+  // A split is of one amount on one day: when either changes, it goes back to the usual spread.
+  useEffect(() => { setSplit(null); }, [v.amount, v.received_on]);
   const set = (f) => (e) => setV({ ...v, [f]: e.target.value });
   const whole = Boolean(url);
   url ||= `/leasing/installments/${row.id}/payments`;
@@ -179,6 +227,7 @@ function PayForm({ row, url, onDone, onCancel }) {
     const form = new FormData();
     for (const [k, x] of Object.entries(v)) form.append(k, x);
     if (file) form.append('file', file);
+    if (whole && split) form.append('split', JSON.stringify(split));
     try { await api.upload(url, form); onDone(); } catch (err) { setError(err.message); setBusy(false); }
   };
   return (
@@ -208,11 +257,11 @@ function PayForm({ row, url, onDone, onCancel }) {
           <input value={v.reference} onChange={set('reference')} placeholder={REF[v.method]} className={FIELD} /></label>
       </div>
       {v.method === 'rent_manager' && <p className="text-xs text-mute">Money received before the switch-over. Kept out of QuickBooks.</p>}
-      {whole && <Plan url={url} amount={v.amount} on={v.received_on} />}
+      {whole && <Plan url={url} amount={v.amount} on={v.received_on} split={split} setSplit={setSplit} onProblem={setUnplaced} />}
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm text-mute hover:bg-white/10">Cancel</button>
-        <button disabled={busy || slip === 'reading'} className={PRIMARY}><Banknote size={16} /> {busy ? 'Saving…' : 'Save payment'}</button>
+        <button disabled={busy || slip === 'reading' || Boolean(split && unplaced)} className={PRIMARY}><Banknote size={16} /> {busy ? 'Saving…' : 'Save payment'}</button>
       </div>
     </form>
   );

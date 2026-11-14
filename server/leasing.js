@@ -1103,6 +1103,11 @@ const NO_PAYMENTS = 'This lease is marked not to take payments (Don\'t accept pa
  * the extra charges (deposit, fees, water…) oldest first, then the rent oldest first; after that what
  * is not due yet, by date, a day's charges before its rent. Each row with the `part` it takes and what
  * is left on it `after`; `extra` is what is more than the lease owes.
+ *
+ * With `split` ({ row id: amount }) the person recording it has chosen where the money goes instead:
+ * only among the rows due by the day it came in (`due`, which the form lists to choose from), never
+ * more on a row than it owes, and all of the money placed. What is beyond everything due still goes
+ * on what is not due yet, in the usual order.
  */
 export async function paymentPlan(bookingId, body = {}, today = todayHere()) {
   const b = await getBooking(bookingId);
@@ -1111,15 +1116,45 @@ export async function paymentPlan(bookingId, body = {}, today = todayHere()) {
   const step = (r) => (r.due_date <= on ? rent(r) : 2);
   const open = (await bookingPayments(b.id, today)).filter((r) => r.left > 0)
     .sort((x, y) => step(x) - step(y) || x.due_date.localeCompare(y.due_date) || rent(x) - rent(y));
+  const due = open.filter((r) => r.due_date <= on);
   let left = money(Number(body.amount) || 0);
+  const chosen = splitOf(body.split);
+  const parts = new Map();
+  if (chosen) {
+    for (const [id, n] of chosen) {
+      const r = due.find((x) => x.id === id);
+      if (!r) throw bad('Money can only be placed on what is due and still owed.', 409);
+      if (n > r.left) throw bad(`Only ${cash(r.left)} is still owed on ${r.name}.`, 409);
+      if (n > 0) parts.set(id, n);
+    }
+    const placed = total([...parts.values()], (n) => n);
+    if (placed > left) throw bad(`${cash(placed)} is placed, but only ${cash(left)} was received.`, 409);
+    left = money(left - placed);
+    if (left > 0 && due.some((r) => (parts.get(r.id) ?? 0) < r.left)) throw bad(`${cash(left)} of this payment has not been placed on anything.`, 409);
+  }
   const rows = [];
   for (const r of open) {
-    if (left <= 0) break;
-    const part = Math.min(left, r.left);
-    rows.push({ id: r.id, kind: r.kind, name: r.name, due_date: r.due_date, status: r.status, part, after: money(r.left - part) });
-    left = money(left - part);
+    const part = chosen && r.due_date <= on ? parts.get(r.id) ?? 0 : Math.min(left, r.left);
+    if (!chosen || r.due_date > on) left = money(left - part);
+    if (part > 0) rows.push({ id: r.id, kind: r.kind, name: r.name, due_date: r.due_date, status: r.status, part, after: money(r.left - part) });
   }
-  return { on, rows, owed: total(open, (r) => r.left), extra: Math.max(0, left), open };
+  return { on, rows, due: due.map((r) => ({ id: r.id, name: r.name, due_date: r.due_date, status: r.status, left: r.left })),
+    owed: total(open, (r) => r.left), extra: Math.max(0, left), open };
+}
+
+/** The split chosen on the form, as a Map of row id to amount: an object, or its JSON (a form field, a query). Nothing given is no split. */
+function splitOf(v) {
+  if (v == null || v === '') return null;
+  let o = v;
+  if (typeof v === 'string') { try { o = JSON.parse(v); } catch { o = null; } }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw bad('The split of this payment could not be read.');
+  const out = new Map();
+  for (const [id, n] of Object.entries(o)) {
+    const amount = money(Number(n) || 0);
+    if (amount < 0) throw bad('An amount in the split is below zero.');
+    out.set(Number(id), amount);
+  }
+  return out;
 }
 
 /**
