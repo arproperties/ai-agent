@@ -199,6 +199,12 @@ export function FileCard({ d, onOpen, showShelf = false }) {
             <Sparkles size={11} /> Learned
           </span>
         )}
+        {/* A newer issue of it is on the Shelf (a renewed licence): this one is kept to open, not to go by. */}
+        {d.superseded_by && (
+          <span title={`Old - replaced by #${d.superseded_by}`} className="on-dark absolute left-2.5 top-2.5 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-white">
+            OLD
+          </span>
+        )}
         {/* only master's files are ever shared, so this doubles as "staff can read this" */}
         {d.shared && (
           <span title={d.mine === false ? `Shared with you${d.owner_name ? ` by ${d.owner_name}` : ''}` : 'Shared'} className="absolute right-2.5 top-2.5 flex items-center gap-1 rounded-full bg-p1/85 px-2 py-0.5 text-[10px] font-medium text-white">
@@ -212,7 +218,7 @@ export function FileCard({ d, onOpen, showShelf = false }) {
             line that matters has to be the only one there. */}
         {expiry(d)?.soon
           ? <p className={`mt-auto truncate pt-1 text-[11px] font-medium ${expiryTone(expiry(d))}`}>{expiry(d).label}</p>
-          : <p className="mt-auto truncate pt-1 text-[11px] text-mute">{[showShelf && d.shelf_name, fmtDate(d.doc_date || d.created_at * 1000), fmtSize(d.size)].filter(Boolean).join(' · ')}</p>}
+          : <p className="mt-auto truncate pt-1 text-[11px] text-mute">{[d.from_saifsys && 'From saifsys', showShelf && d.shelf_name, fmtDate(d.doc_date || d.created_at * 1000), fmtSize(d.size)].filter(Boolean).join(' · ')}</p>}
       </div>
     </button>
   );
@@ -576,7 +582,7 @@ function GroupCard({ icon: GI, tone, bg, label, sub, onClick, preview, empty, sm
 function ExpiringSoon({ docs, onOpen }) {
   const rows = useMemo(() => (docs || [])
     .map((d) => ({ d, e: expiry(d) }))
-    .filter(({ e, d }) => e && e.days <= 90 && d.status === 'ready')
+    .filter(({ e, d }) => e && e.days <= 90 && d.status === 'ready' && !d.superseded_by)
     .sort((a, b) => a.e.days - b.e.days || a.d.id - b.d.id)
     .slice(0, 8), [docs]);
   if (!rows.length) return null;

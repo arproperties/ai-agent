@@ -2087,6 +2087,21 @@ await db.exec(`
   );
   -- Whether saifsys itself holds a file for it (null: not known yet), so a document with none is not offered for fetching.
   ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS saifsys_has_file BOOLEAN;
+  -- saifsys's company documents on the Shelf (saifsysCompanyDocs.js): one row per Shelf copy, by
+  -- saifsys document id and version_no (0 = its live, current issue; 1, 2... its earlier issues).
+  -- file_key is saifsys's stored file name, which changes whenever a new file replaces the old.
+  CREATE TABLE IF NOT EXISTS saifsys_company_doc_links (
+    saifsys_id INTEGER NOT NULL,
+    version_no INTEGER NOT NULL DEFAULT 0,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    company_id INTEGER,
+    doc_type TEXT,
+    changed_at TEXT,
+    file_key TEXT,
+    synced_at BIGINT DEFAULT ${NOW},
+    PRIMARY KEY (saifsys_id, version_no)
+  );
+  CREATE INDEX IF NOT EXISTS idx_saifsys_company_doc_links_doc ON saifsys_company_doc_links(document_id);
   -- What Reem read off a labour contract (its pay), with the file's hash: read again only for a new file.
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS terms_read JSONB;
   -- Where that pay differs from the company salary, as last checked: a flag on Document Renewals' bell.

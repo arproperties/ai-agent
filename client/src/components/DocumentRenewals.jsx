@@ -59,12 +59,16 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
   const load = useCallback(() => api.get('/document-renewals').then(setData).catch((e) => setError(e.message)), []);
   useEffect(() => { load(); }, [load]);
 
-  // The master brings saifsys's employee documents across now instead of waiting for the night.
+  // The master brings saifsys's employee and company documents across now instead of waiting.
   const sync = async () => {
     setSyncing(true); setSynced(''); setError('');
     try {
       const r = await api.post('/document-renewals/sync');
-      setSynced(r.skipped ? r.skipped : `From saifsys: ${r.added} new, ${r.updated} changed, ${r.superseded} replaced by a newer one.`);
+      const c = r.company || {};
+      const company = c.error ? ` Company documents: ${c.error}`
+        : c.skipped ? ` Company documents: ${c.skipped}.`
+          : ` Company documents: ${c.added || 0} new, ${(c.updated || 0) + (c.renewed || 0)} changed, ${c.removed || 0} removed.`;
+      setSynced((r.skipped ? r.skipped : `Employee documents: ${r.added} new, ${r.updated} changed, ${r.superseded} replaced by a newer one.`) + company);
       await load();
     } catch (e) { setError(e.message); }
     setSyncing(false);

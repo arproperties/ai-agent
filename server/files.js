@@ -488,7 +488,8 @@ export async function setSharedMany(user, docIds, shared) {
 // Captured facts are left out - they are not files, and once crowded the real ones off.
 export async function libraryCatalog(user) {
   const scope = agentScope(user);
-  const files = `${scope.sql} AND status = 'ready' AND kind IS DISTINCT FROM 'fact'`;
+  // Current issues only: a renewed licence's old copy would read as the one to go by.
+  const files = `${scope.sql} AND status = 'ready' AND kind IS DISTINCT FROM 'fact' AND superseded_by IS NULL`;
   const rows = await db.prepare(`SELECT title, folder, name, doc_date, expires_on FROM documents t
     WHERE ${files} ORDER BY id DESC LIMIT 40`).all(...scope.params);
   const { n } = await db.prepare(`SELECT COUNT(*)::int n FROM documents t WHERE ${files}`).get(...scope.params);
@@ -510,13 +511,17 @@ export async function expiringDocuments(user, within = 90) {
   const days = Math.min(Math.max(Number(within) || 90, 1), 3650);
   const scope = agentScope(user);
   return db.prepare(`SELECT t.* FROM documents t
-    WHERE ${scope.sql} AND status = 'ready' AND expires_on IS NOT NULL
+    WHERE ${scope.sql} AND status = 'ready' AND expires_on IS NOT NULL AND superseded_by IS NULL
       AND expires_on <= to_char(now() + (? || ' days')::interval, 'YYYY-MM-DD')
     ORDER BY expires_on ASC, id DESC LIMIT 100`).all(...scope.params, String(days));
 }
 
 // ---------- the Shelf: a person's own files, and the ones shared with them ----------
-export const DOC_SELECT = `SELECT d.*, c.title conversation_title, a.name shelf_name, u.name owner_name FROM documents d
+// from_saifsys: copied from saifsys (its employee or company documents), changed there, not here.
+export const DOC_SELECT = `SELECT d.*, c.title conversation_title, a.name shelf_name, u.name owner_name,
+  (EXISTS (SELECT 1 FROM saifsys_company_doc_links l WHERE l.document_id = d.id)
+    OR EXISTS (SELECT 1 FROM saifsys_doc_links l WHERE l.document_id = d.id)) AS from_saifsys
+  FROM documents d
   LEFT JOIN conversations c ON c.id = d.conversation_id AND c.user_id = d.user_id
   LEFT JOIN agents a ON a.id = d.agent_id
   LEFT JOIN users u ON u.id = d.user_id`;
@@ -544,7 +549,8 @@ export function docOut({ path, hash, user_id, owner_name, ...d }, viewerId) {
 export async function readableDocuments(user, agentId = null) {
   const scope = agentScope(user, 'd');
   const shelf = Number(agentId) || null;
-  return db.prepare(`${DOC_SELECT} WHERE ${scope.sql} AND (?::int IS NULL OR d.agent_id = ?)
+  // A copy saifsys has since deleted is hidden (saifsysCompanyDocs.js), not deleted.
+  return db.prepare(`${DOC_SELECT} WHERE ${scope.sql} AND d.status <> 'removed' AND (?::int IS NULL OR d.agent_id = ?)
     ORDER BY COALESCE(d.doc_date, to_char(to_timestamp(d.created_at), 'YYYY-MM-DD')) DESC, d.id DESC`).all(...scope.params, shelf, shelf);
 }
 

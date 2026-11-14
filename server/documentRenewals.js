@@ -6,6 +6,7 @@ import { needsModule } from './modules.js';
 import { listCategories } from './docCategories.js';
 import { askSaifsys, dubaiDate } from './saifsys/client.js';
 import { syncNow, fileFor, hrSalary } from './saifsysDocSync.js';
+import { syncCompanyDocsOnce } from './saifsysCompanyDocs.js';
 import multer from 'multer';
 import { alertSettings, saveAlertSettings } from './documentAlerts.js';
 import * as cases from './renewalCases.js';
@@ -58,7 +59,7 @@ async function readableFiles(user, where = 'TRUE', params = []) {
     JOIN document_types dt ON dt.id = t.type_id
     JOIN document_categories dc ON dc.id = t.category_id
     LEFT JOIN users u ON u.id = t.user_id
-    WHERE ${scope.sql} AND t.superseded_by IS NULL AND t.kind IS DISTINCT FROM 'fact' AND (${where})
+    WHERE ${scope.sql} AND t.superseded_by IS NULL AND t.status <> 'removed' AND t.kind IS DISTINCT FROM 'fact' AND (${where})
     ORDER BY t.expires_on ASC NULLS LAST, t.id`).all(...scope.params, ...params);
 }
 
@@ -423,9 +424,11 @@ documentRenewalRoutes.get('/feed', wrap(async (req, res) => { res.json(await ren
 documentRenewalRoutes.get('/subjects', wrap(async (req, res) => {
   res.json(await subjectData(req.user, req.query.name));
 }));
-// The master brings saifsys's employee documents across now, rather than waiting for the night.
+// The master brings saifsys's employee and company documents across now, rather than waiting.
 documentRenewalRoutes.post('/sync', wrap(async (req, res) => {
-  res.json(await syncNow(req.user));
+  const employees = await syncNow(req.user);
+  const company = await syncCompanyDocsOnce().catch((e) => ({ error: e.message }));
+  res.json({ ...employees, company });
 }));
 // Before a document is opened: makes sure its file is here, asking saifsys for it if it was
 // copied before its file came. Then the screen opens /api/documents/:id/file as any file.

@@ -610,11 +610,22 @@ export async function personalMemories(user, query, qvec, k = 12) {
   return ordered.map((r) => (r.created_at ? `${r.text} (saved ${fmtDay(r.created_at)})` : r.text));
 }
 
+/**
+ * Only the current issue of a document: a file superseded by a newer one (a renewed trade
+ * licence, last year's Ejari) or one saifsys has deleted stays out of what the chat is handed
+ * unasked. search_files still finds the old one, marked old, when someone asks for it.
+ */
+export const currentOnly = (scope, t = 't') => ({
+  sql: `(${scope.sql}) AND NOT EXISTS (SELECT 1 FROM documents sd WHERE sd.id = ${t}.document_id
+    AND (sd.superseded_by IS NOT NULL OR sd.status = 'removed'))`,
+  params: scope.params,
+});
+
 export async function recall(user, query) {
   const [qvec] = await embed([query], 'query');
   const memories = await personalMemories(user, query, qvec);
   const pinned = await pinnedMemories(user);
-  const knowledge = await search('chunks', agentScope(user), query, qvec, 6);
+  const knowledge = await search('chunks', currentOnly(agentScope(user)), query, qvec, 6);
   return { memories, pinned, knowledge };
 }
 
