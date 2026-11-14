@@ -285,8 +285,9 @@ async function readEntry(user, input, now) {
 }
 
 /**
- * Add an entry (id null) or change one. Lines already created keep their amount and their
- * date; the change is for the months still to come. A line whose day has already come is
+ * Add an entry (id null) or change one. Lines already created keep their date, and their
+ * amount once money came in on them; a new amount also goes on the lines still pending with
+ * nothing received, so a wrong amount fixed on the entry fixes them too. A line whose day has already come is
  * made straight away, so an entry added on the 5th for the 1st shows this month at once.
  * null: not their entry.
  */
@@ -299,6 +300,10 @@ export async function saveEntry(user, id, input, now = today()) {
   if (old) {
     await db.prepare(`UPDATE recurring_payments SET building_id = ?, head_id = ?, unit = ?, title = ?, amount = ?, day = ?, auto_create = ?,
       first_month = ?, notes = ?, updated_by = ?, updated_at = ${NOW} WHERE id = ?`).run(...values, old.id);
+    if (f.amount !== old.amount) {
+      await db.prepare(`UPDATE recurring_payment_dues d SET amount = ? WHERE d.payment_id = ? AND d.status = 'pending'
+        AND NOT EXISTS (SELECT 1 FROM recurring_payment_receipts r WHERE r.due_id = d.id)`).run(f.amount, old.id);
+    }
   } else {
     entryId = (await db.prepare(`INSERT INTO recurring_payments (building_id, head_id, unit, title, amount, day, auto_create, first_month, notes, updated_by, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).run(...values, user.id)).id;
