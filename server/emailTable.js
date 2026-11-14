@@ -54,10 +54,14 @@ const numeric = (s) => /^[-–—]?$|^[(-]?[A-Z]{0,3}\s?[\d,]+(\.\d+)?\)?%?$/.te
 
 const CELL = 'border:1px solid #cfcfd6;padding:6px 10px;';
 
+const withBreaks = (s) => esc(String(s).replace(/\r/g, '')).replace(/\n/g, '<br>');
+
 /** The email's HTML part: the text as written, with each table drawn as a table. */
 export function bodyHtml(body) {
   const parts = splitTables(body).map((b) => {
-    if (b.text != null) return `<div style="white-space:pre-wrap">${esc(b.text)}</div>`;
+    // Real <br>s, not white-space:pre-wrap: Outlook ignores that style and runs every line
+    // of the email into one paragraph.
+    if (b.text != null) return `<div>${withBreaks(b.text)}</div>`;
     const [head, ...rest] = b.rows;
     const th = head.map((c) => `<th style="${CELL}background:#f2f2f5;text-align:left;font-weight:600">${esc(c)}</th>`).join('');
     const trs = rest.map((r) => `<tr>${r.map((c, k) =>
