@@ -597,6 +597,89 @@ test('automatic: a tenant who disputes it never gets an email from Reem by itsel
   assert.equal(world.sent.length, mails);
 });
 
+/** A renewal the tenant disputed, answered by a person on day 2. */
+async function disputedAndAnswered(boss) {
+  const day = 86400000;
+  const r = await start(boss);
+  world.now = NOW + day;
+  await arrives({ text: 'This increase is not legal, I will go to RDC' });
+  await R.readInbound();
+  world.now = NOW + 2 * day;
+  await R.send(boss, { id: r.id, action: 'reply', text: 'Dear Mohamed,\n\nOur offer is within the RERA index.' });
+  return r;
+}
+const DISPUTES = [{ intent: 'unclear', summary: 'Says it is not legal', dispute: true, disputeNote: 'Says the increase is not legal, cites RDC' }];
+
+test('dispute: 25 days without a reply, a reminder is ready and a person sends it; twice, then No answer', async () => {
+  const boss = await setup();
+  stub({ replies: [...DISPUTES] });
+  const day = 86400000;
+  const r = await disputedAndAnswered(boss);
+  const mails = world.sent.length;
+
+  world.now = NOW + 26 * day; await R.disputeChase(); await R.chase();
+  assert.equal((await R.getRenewal(r.id)).dispute_reminder, null, '24 days is not yet 25');
+  world.now = NOW + 27 * day; await R.disputeChase(); await R.disputeChase(); await R.chase();
+  let x = await R.getRenewal(r.id);
+  assert.equal(x.dispute_reminder.n, 1, 'one reminder ready, however often the clock ticks');
+  assert.equal(world.sent.length, mails, 'nothing goes to the tenant by itself');
+  assert.match(world.pushes.at(-1), /No reply to the dispute for 25 days. Reminder 1 is ready/);
+
+  const d = await R.draft(boss, { id: r.id, action: 'remind' });
+  assert.match(d.text, /We wrote to you on 17 July 2026 about the renewal of your tenancy of PARK PLACE, Unit 610, and we have not heard back from you/);
+  x = await R.send(boss, { id: r.id, action: 'remind' });
+  assert.equal(x.dispute_reminder, null);
+  assert.equal(world.sent.length, mails + 1);
+  assert.match(lastMail(), /Our offer is within the RERA index/, 'our reply quoted underneath');
+  await assert.rejects(R.send(boss, { id: r.id, action: 'remind' }), /no reminder waiting/, 'a second tap sends nothing');
+
+  world.now = NOW + 51 * day; await R.disputeChase();
+  assert.equal((await R.getRenewal(r.id)).dispute_reminder, null, 'the 25 days start again from the reminder');
+  world.now = NOW + 52 * day; await R.disputeChase();
+  assert.equal((await R.getRenewal(r.id)).dispute_reminder.n, 2);
+  await R.send(boss, { id: r.id, action: 'remind' });
+
+  world.now = NOW + 77 * day; await R.disputeChase();
+  x = await R.getRenewal(r.id);
+  assert.deepEqual([x.waiting, x.dispute_reminder], ['no_answer', null], 'no third reminder');
+  assert.equal(world.sent.length, mails + 2);
+  assert.match(world.pushes.at(-1), /after 2 dispute reminders/);
+  assert.deepEqual((await timeline(r.id)).filter((t) => /ispute/.test(t)), [
+    'step: Dispute reminder 1 ready: no reply for 25 days. Nothing goes until a person taps Send',
+    'out: Dispute reminder 1 sent',
+    'step: Dispute reminder 2 ready: no reply for 25 days. Nothing goes until a person taps Send',
+    'out: Dispute reminder 2 sent',
+    'step: No answer to the dispute after 2 reminders',
+  ]);
+});
+
+test('dispute: a reminder still waiting is dropped when the tenant replies or the renewal ends; none while the tenant spoke last', async () => {
+  const boss = await setup();
+  stub({ replies: [...DISPUTES, { intent: 'unclear', summary: 'Still disagrees', dispute: true, disputeNote: 'Still says not legal' }] });
+  const day = 86400000;
+  const r = await disputedAndAnswered(boss);
+  world.now = NOW + 27 * day; await R.disputeChase();
+  assert.equal((await R.getRenewal(r.id)).dispute_reminder.n, 1);
+
+  world.now = NOW + 28 * day;
+  await arrives({ text: 'I still say it is not legal' });
+  await R.readInbound();
+  await R.disputeChase();
+  assert.equal((await R.getRenewal(r.id)).dispute_reminder, null, 'the tenant answered: the reminder is dropped');
+  await assert.rejects(R.send(boss, { id: r.id, action: 'remind' }), /no reminder waiting/);
+  await R.mark(boss, r.id, 'seen'); // read, no reply: the tenant spoke last
+  world.now = NOW + 60 * day; await R.disputeChase();
+  assert.equal((await R.getRenewal(r.id)).dispute_reminder, null, 'never a reminder after the tenant\'s own email');
+
+  // Answered again, quiet again, then handled outside Reem: the reminder goes with it.
+  await R.send(boss, { id: r.id, action: 'reply', text: 'Dear Mohamed,\n\nWe stay with our offer.' });
+  world.now = NOW + 86 * day; await R.disputeChase();
+  assert.equal((await R.getRenewal(r.id)).dispute_reminder.n, 1, 'counted again from the tenant\'s last email');
+  await R.mark(boss, r.id, 'close');
+  await R.disputeChase();
+  assert.equal((await db.prepare(`SELECT count(*)::int AS n FROM lease_renewal_dispute_reminders WHERE status = 'ready'`).get()).n, 0);
+});
+
 test('an email Reem could not read shows why, and Read again reads it', async () => {
   const boss = await setup();
   let r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 42000 });

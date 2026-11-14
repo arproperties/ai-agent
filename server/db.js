@@ -1885,6 +1885,21 @@ await db.exec(`
     at BIGINT DEFAULT ${NOW},
     PRIMARY KEY (lease_id, end_date)
   );
+  -- Reminders to a tenant who disputes the renewal and has gone quiet (2026-11-14). Reem never
+  -- emails a disputing tenant by itself: after 25 days of silence since our last email it gets a
+  -- reminder ready ('ready') and a person taps Send ('sent'). One the tenant's reply or another
+  -- email of ours made pointless is 'cancelled'. n: 1 or 2, counted since the tenant last wrote.
+  CREATE TABLE IF NOT EXISTS lease_renewal_dispute_reminders (
+    id SERIAL PRIMARY KEY,
+    renewal_id INTEGER NOT NULL REFERENCES lease_renewals(id) ON DELETE CASCADE,
+    n INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready', 'sent', 'cancelled')),
+    event_id INTEGER REFERENCES lease_renewal_events(id) ON DELETE SET NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT NOT NULL,
+    sent_at BIGINT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_renewal_dispute_ready ON lease_renewal_dispute_reminders(renewal_id) WHERE status = 'ready';
 `);
 
 // Reading a file in full (2026-10-20). The chunks are cut to overlap for search, so stitched
