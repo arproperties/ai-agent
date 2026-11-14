@@ -63,7 +63,7 @@ export function quoteOf(p) {
     }
   }
 
-  const block = html || `<div style="white-space:pre-wrap">${esc(words)}</div>`;
+  const block = html || `<div>${esc(words).replace(/\n/g, '<br>')}</div>`; // <br>s: Outlook ignores pre-wrap
   const htmlOut = `<div style="border-top:1px solid #b5b5bd;margin-top:18px;padding-top:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px">` +
     `<p style="margin:0 0 12px">${head.map(([k, v]) => `<b>${k}:</b> ${esc(v)}`).join('<br>')}</p>` +
     `${block}</div>`;
