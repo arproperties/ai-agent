@@ -1,9 +1,39 @@
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker } from '../server/tracker.js';
+import express from 'express';
+import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker, fromTrackerRoutes } from '../server/tracker.js';
 
-test.after(async () => { await closeDb(); });
+// The PC's door as index.js mounts it: the key check in front of the two routes.
+let base, server;
+test.before(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/from-tracker', fromTracker, fromTrackerRoutes);
+  app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message })); // eslint-disable-line no-unused-vars
+  server = app.listen(0);
+  base = `http://127.0.0.1:${server.address().port}/api/from-tracker`;
+});
+test.after(async () => { server.close(); await closeDb(); });
+
+const post = (path, body, key) => fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(key ? { 'X-Tracker-Key': key } : {}) }, body: JSON.stringify(body) });
+
+// A day exactly as the contract in the plan has it.
+const DAY = {
+  date: '2026-11-15', first_seen: '08:52', last_seen: '17:41',
+  active_seconds: 24480, idle_seconds: 3120, away_seconds: 4200,
+  running: [['08:50', '12:10'], ['12:40', '17:45']],
+  apps: [{ name: 'Excel', seconds: 11400, titles: [{ title: 'Rent roll Nov.xlsx', seconds: 7000 }] },
+    { name: 'Google Chrome', seconds: 7500, titles: [{ title: 'Dubai Land Department', seconds: 3000 }] }],
+};
+
+/** A paired PC for the tests: the person, the device row and the plain key. */
+async function pairedDevice(name = 'Francisca', device = 'Front desk') {
+  const uid = await makeUser(name);
+  const key = newDeviceKey();
+  const { id } = await db.prepare('INSERT INTO tracker_devices (user_id, name, key_hash, created_at) VALUES (?, ?, ?, ?) RETURNING id').run(uid, device, keyHash(key), 1);
+  return { uid, id, key };
+}
 
 test('a new device key is long, random and stored only as its hash', () => {
   const k = newDeviceKey();
@@ -40,4 +70,46 @@ test('the door: right key sets the device and its person, wrong or missing key i
   assert.equal((await run('nope')).code, 401);
   assert.equal((await run(undefined)).code, 401);
   assert.ok((await db.prepare('SELECT last_seen_at FROM tracker_devices WHERE id = ?').get(ok.device.id)).last_seen_at > 0);
+});
+
+test('hello tells the PC whose it is and when the day ends', async () => {
+  await reset();
+  const { key } = await pairedDevice();
+  const r = await post('/hello', {}, key);
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { name: 'Francisca', device: 'Front desk', day_end: '18:30' });
+});
+
+test('a day is stored once per device and date; a resend replaces it and is pending again', async () => {
+  await reset();
+  const { key } = await pairedDevice();
+  assert.equal((await post('/day', DAY, key)).status, 200);
+  await db.prepare('UPDATE tracker_days SET pending = false, digested_at = ?').run('2026-11-15');
+  const r = await post('/day', { ...DAY, active_seconds: 30000 }, key);
+  assert.deepEqual(await r.json(), { ok: true, day_end: '18:30' });
+  const rows = await db.prepare('SELECT * FROM tracker_days').all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].active_seconds, 30000);
+  assert.equal(rows[0].pending, true, 'arrives again, so HR must hear of the change');
+  assert.equal(rows[0].digested_at, '2026-11-15', 'but Reem remembers it was already emailed');
+  assert.equal(rows[0].apps[0].name, 'Excel');
+});
+
+test('a bad day is refused: wrong date, negative seconds, apps not a list, titles over 5', async () => {
+  await reset();
+  const { key } = await pairedDevice();
+  for (const bad of [{ ...DAY, date: '15/11/2026' }, { ...DAY, active_seconds: -1 }, { ...DAY, apps: 'x' },
+    { ...DAY, apps: [{ name: 'A', seconds: 1, titles: Array(6).fill({ title: 't', seconds: 1 }) }] }]) {
+    assert.equal((await post('/day', bad, key)).status, 400, JSON.stringify(bad).slice(0, 60));
+  }
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM tracker_days').get()).n, 0);
+});
+
+test('a deleted device gets 401 with the pairing message', async () => {
+  await reset();
+  const { key } = await pairedDevice();
+  await db.prepare('DELETE FROM tracker_devices').run();
+  const r = await post('/day', DAY, key);
+  assert.equal(r.status, 401);
+  assert.equal((await r.json()).error, 'This PC is not paired with Reem');
 });
