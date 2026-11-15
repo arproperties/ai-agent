@@ -28,6 +28,9 @@ contract: `docs/superpowers/plans/2026-11-15-activity-tracker.md`.
 - `src/main.js` — Electron: tray, timers, windows, IPC. Wiring only; decisions live above.
 - `ui/firstrun.html` — consent text + the pairing key. `ui/sheet.html` — today's totals and "Send today now".
 - `scripts/make-icons.js` — draws the two tray icons as PNG with plain Node. `scripts/perf.js` — the budget gate.
+- `package.json` `build.npmRebuild: false` — electron-builder must not try to compile anything: `get-windows`
+  ships a prebuilt N-API binary that Electron loads as is, and SQLite is `node:sqlite`, built in. With the
+  default on, the build fails on a machine without Visual Studio.
 
 ## Rules that shape the code (from the spec)
 

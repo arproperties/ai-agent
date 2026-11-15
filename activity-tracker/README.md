@@ -35,7 +35,14 @@ under 1% CPU and about 100 MB of memory in the tray; `npm run perf` measures it 
 
 ## Measured
 
-(Filled in from `npm run perf` on Francis's laptop before each release.)
+`npm run perf` on Francis's laptop (12 GB, i7-1065G7), version 0.1.0, ten minutes in the tray, 2026-11-15:
+
+| | Result | Budget |
+|---|---|---|
+| CPU, 10-minute average | 0.02% of the machine (0.14% of one core) | under 1% |
+| Memory, private working set (Task Manager's figure) | 21 MB average, 28 MB peak | target 100 MB, fail at 150 MB |
+| Memory, total working set (shared pages counted per process) | 123 MB | printed for honesty |
+| Processes | 2 (main, network helper) | |
 
 ## For developers
 

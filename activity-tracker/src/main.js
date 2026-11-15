@@ -25,7 +25,8 @@ const perfRun = process.env.TRACKER_PERF === '1'; // scripts/perf.js: measure th
 // its data, and a pairing key to use without typing. Neither is set on an employee PC.
 if (process.env.TRACKER_DATA_DIR) app.setPath('userData', process.env.TRACKER_DATA_DIR);
 
-app.disableHardwareAcceleration(); // nothing here needs the GPU; this keeps a whole process from starting
+app.disableHardwareAcceleration(); // nothing here needs the GPU
+app.commandLine.appendSwitch('in-process-gpu'); // and the software compositor can live in the main process: one process fewer in the tray
 if (!app.requestSingleInstanceLock()) app.quit();
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -37,7 +38,8 @@ const reemUrl = () => process.env.REEM_URL || store.get('reem_url') || REEM_URL;
 const readKey = async () => {
   const stored = store.get('device_key');
   if (!stored) return null;
-  try { return await safeStorage.decryptStringAsync(Buffer.from(stored, 'base64')); } catch { return null; }
+  // decryptStringAsync answers { result, shouldReEncrypt }, not the string itself.
+  try { return (await safeStorage.decryptStringAsync(Buffer.from(stored, 'base64'))).result; } catch { return null; }
 };
 const writeKey = async (key) => store.set('device_key', (await safeStorage.encryptStringAsync(key)).toString('base64'));
 
