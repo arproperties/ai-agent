@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity Tracker</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f5fb; --card: #fff; --txt: #1d1b2e; --mute: #6b6880; --line: #e4e2ee; --p1: #a78bfa; --p2: #f472b6; --bad: #c0392b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15131f; --card: #1f1c2c; --txt: #f1efff; --mute: #9d99b5; --line: #302c42; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--txt); }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 6px; }
+  p { margin: 0 0 10px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin: 14px 0; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--mute); margin: 0 0 8px; font-weight: 500; }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin: 2px 0; }
+  input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; font: 13px ui-monospace, Consolas, monospace; background: var(--bg); color: var(--txt); }
+  button { margin-top: 12px; width: 100%; padding: 11px; border: 0; border-radius: 999px; font: 500 14px -apple-system, "Segoe UI", sans-serif; color: #fff; background: linear-gradient(135deg, var(--p1), var(--p2)); cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  .error { color: var(--bad); font-size: 13px; margin-top: 8px; min-height: 1.2em; }
+  .mute { color: var(--mute); font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>Activity Tracker</h1>
+  <p class="mute">This PC's part of Reem. It counts how the workday is spent on this computer and sends the day to HR.</p>
+
+  <div class="card">
+    <h2>What is recorded</h2>
+    <ul>
+      <li>Which program and window is in front, and for how long</li>
+      <li>When there is no mouse or keyboard for over 3 minutes (idle)</li>
+      <li>When the PC is locked or asleep (away)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h2>What is not</h2>
+    <ul>
+      <li>No screenshots, no keystrokes, no camera</li>
+      <li>No files, no emails, no messages are read</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h2>Where it goes</h2>
+    <p>The detail stays on this PC and is deleted after 30 days. At the end of each day a summary (first and last activity, time per program) goes to Reem, and HR receives one daily report for everyone.</p>
+  </div>
+
+  <div class="card">
+    <h2>Pairing key from Reem</h2>
+    <input id="key" placeholder="Paste the key the office gave you" autocomplete="off" spellcheck="false">
+    <div class="error" id="error"></div>
+    <button id="go">I understand, start</button>
+  </div>
+
+<script>
+  const key = document.getElementById('key'), error = document.getElementById('error'), go = document.getElementById('go');
+  go.addEventListener('click', async () => {
+    go.disabled = true; error.textContent = '';
+    const r = await window.tracker.pair(key.value);
+    if (r.error) { error.textContent = r.error; go.disabled = false; }
+  });
+  key.addEventListener('keydown', (e) => { if (e.key === 'Enter') go.click(); });
+</script>
+</body>
+</html>

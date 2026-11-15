@@ -1,0 +1,40 @@
+{
+  "name": "activity-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reem's activity tracker: a Windows tray app that counts time per app on an employee PC and sends the day to Reem. No AI.",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "perf": "node scripts/perf.js",
+    "dist": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "get-windows": "^10.0.0"
+  },
+  "devDependencies": {
+    "electron": "^45.3.2",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.reem.activity-tracker",
+    "productName": "Activity Tracker",
+    "files": [
+      "src/**",
+      "ui/**"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    },
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/*.node"
+    ]
+  }
+}
