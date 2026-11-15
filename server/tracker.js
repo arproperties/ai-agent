@@ -1,6 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Router } from 'express';
 import { db } from './db.js';
+import { sendMail } from './mailer.js';
+import { billAs } from './billing.js';
+import { dubaiDate } from './saifsys/client.js';
 
 // Activity tracker: Reem's side of the small tray app that sits on each employee PC
 // (activity-tracker/, a separate program in this repo). The PC counts time per app all day
@@ -203,4 +206,93 @@ export function renderDigest({ day, people = [], late = [], updated = [], titles
     }
   }
   return { subject: title, text, html, csv: csvLines.join('\r\n') + '\r\n' };
+}
+
+// ---------- the 19:00 timer ----------
+
+/** Minutes since Dubai midnight, for comparing with the master's HH:MM. */
+const dubaiMinutes = (at = Date.now()) => {
+  const [h, m] = new Date(at).toLocaleTimeString('en-GB', { timeZone: 'Asia/Dubai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).split(':').map(Number);
+  return h * 60 + m;
+};
+
+/** Two PCs of one person on one date become one line: totals added, apps and their titles merged. */
+function mergeDays(userId, name, date, rows) {
+  const apps = {};
+  for (const r of rows) {
+    for (const a of r.apps || []) {
+      const app = (apps[a.name] ||= { name: a.name, seconds: 0, titles: {} });
+      app.seconds += a.seconds;
+      for (const t of a.titles || []) app.titles[t.title] = (app.titles[t.title] || 0) + t.seconds;
+    }
+  }
+  const sum = (k) => rows.reduce((n, r) => n + r[k], 0);
+  return {
+    user_id: userId, name, date,
+    first_seen: rows.map((r) => r.first_seen).sort()[0],
+    last_seen: rows.map((r) => r.last_seen).sort().at(-1),
+    active_seconds: sum('active_seconds'), idle_seconds: sum('idle_seconds'), away_seconds: sum('away_seconds'),
+    running: rows.flatMap((r) => r.running || []),
+    apps: Object.values(apps).sort((a, b) => b.seconds - a.seconds).map((a) => ({
+      name: a.name, seconds: a.seconds,
+      titles: Object.entries(a.titles).map(([title, seconds]) => ({ title, seconds })).sort((x, y) => y.seconds - x.seconds).slice(0, 5),
+    })),
+  };
+}
+
+/**
+ * What goes into the digest for `day`: everyone with a paired PC, summed per person for the
+ * day (people whose PCs have not reported marked missing); then the pending rows of earlier
+ * dates, split into days HR has never had (late) and days HR had already (updated).
+ */
+export async function collect(day = dubaiDate()) {
+  const people = await db.prepare(`SELECT DISTINCT u.id, u.name FROM tracker_devices d JOIN users u ON u.id = d.user_id ORDER BY u.name, u.id`).all();
+  const pending = await db.prepare(`SELECT t.*, u.id AS user_id, u.name FROM tracker_days t JOIN tracker_devices d ON d.id = t.device_id JOIN users u ON u.id = d.user_id
+                                    WHERE t.pending AND t.date <= ? ORDER BY t.date, u.name`).all(day);
+  const group = (rows) => Object.values(rows.reduce((m, r) => ((m[`${r.user_id}|${r.date}`] ||= []).push(r), m), {}))
+    .map((rs) => mergeDays(rs[0].user_id, rs[0].name, rs[0].date, rs));
+  const today = group(pending.filter((r) => r.date === day));
+  const earlier = pending.filter((r) => r.date !== day);
+  return {
+    people: people.map((p) => today.find((t) => t.user_id === p.id) || { user_id: p.id, name: p.name, date: day, missing: true }),
+    late: group(earlier.filter((r) => !r.digested_at)),
+    updated: group(earlier.filter((r) => r.digested_at)),
+    rowKeys: pending.map((r) => [r.device_id, r.date]),
+  };
+}
+
+let sending = false;
+
+/**
+ * Every five minutes: once the switch is on and the set time has come, send today's digest
+ * to HR, once a day. When mail fails or HR has no address, nothing is marked: the rows stay
+ * pending and the next tick tries again.
+ */
+export async function tick({ now = Date.now(), send = sendMail } = {}) {
+  if (sending) return;
+  const s = await settings();
+  const day = dubaiDate(now);
+  if (!s.on || s.sent_on === day || dubaiMinutes(now) < toMin(s.send_at)) return;
+  if (!s.hr_email.trim()) { console.log('[tracker] digest due but HR has no email address in Settings → Activity reports'); return; }
+  sending = true;
+  try {
+    const { people, late, updated, rowKeys } = await collect(day);
+    const d = renderDigest({ day, people, late, updated, titlesOn: s.titles_on });
+    await send({ to: s.hr_email, subject: d.subject, text: d.text, html: d.html, attachments: [{ filename: `activity-${day}.csv`, content: d.csv, contentType: 'text/csv' }] });
+    for (const [deviceId, date] of rowKeys) await db.prepare('UPDATE tracker_days SET pending = false, digested_at = ? WHERE device_id = ? AND date = ?').run(day, deviceId, date);
+    await db.prepare('UPDATE tracker_settings SET sent_on = ? WHERE id = 1').run(day);
+  } catch (e) {
+    console.error('[tracker] digest not sent:', e.message);
+  } finally {
+    sending = false;
+  }
+}
+
+let timer;
+export function startTracker() {
+  if (timer) return;
+  const run = () => billAs({ userId: null, job: 'other' }, () => tick()).catch((e) => console.error('[tracker]', e.message));
+  timer = setInterval(run, 5 * 60_000);
+  timer.unref();
+  run();
 }

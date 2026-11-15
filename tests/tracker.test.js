@@ -2,7 +2,8 @@ import { db, reset, makeUser, closeDb } from './helpers/db.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker, fromTrackerRoutes, fmtSeconds, renderDigest } from '../server/tracker.js';
+import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker, fromTrackerRoutes, fmtSeconds, renderDigest, collect, tick } from '../server/tracker.js';
+import { dubaiDate } from '../server/saifsys/client.js';
 
 // The PC's door as index.js mounts it: the key check in front of the two routes.
 let base, server;
@@ -146,4 +147,73 @@ test('titles off: no window title anywhere, in text, html or csv', () => {
 test('a day that changed after HR saw it is listed under Updated', () => {
   const d = renderDigest({ day: '2026-11-15', titlesOn: true, people: [], late: [], updated: [{ name: 'Tauqeer', ...DAY, date: '2026-11-14' }] });
   assert.match(d.text, /Updated: Sat 14 Nov\s*\n\s*Tauqeer/);
+});
+
+// ---------- the timer ----------
+
+test('collect sums a person with two PCs and lists people with no report', async () => {
+  await reset();
+  const today = dubaiDate();
+  const a = await pairedDevice('Francisca', 'Laptop');
+  const b = { ...a, ...(await (async () => { const key = newDeviceKey(); const { id } = await db.prepare('INSERT INTO tracker_devices (user_id, name, key_hash, created_at) VALUES (?, ?, ?, ?) RETURNING id').run(a.uid, 'Desktop', keyHash(key), 1); return { id, key }; })()) };
+  await pairedDevice('Ali', 'Office');
+  await post('/day', { ...DAY, date: today }, a.key);
+  await post('/day', { ...DAY, date: today }, b.key);
+  const c = await collect(today);
+  assert.deepEqual(c.people.map((p) => [p.name, p.missing || false]), [['Ali', true], ['Francisca', false]], 'everyone with a PC, by name');
+  const f = c.people.find((p) => p.name === 'Francisca');
+  assert.equal(f.active_seconds, DAY.active_seconds * 2, 'two PCs, one person, one line');
+  assert.equal(f.apps.find((x) => x.name === 'Excel').seconds, 22800);
+  assert.deepEqual(c.late, []); assert.deepEqual(c.updated, []);
+});
+
+test('collect sorts earlier days into late (never emailed) and updated (emailed before)', async () => {
+  await reset();
+  const today = dubaiDate();
+  const { key } = await pairedDevice();
+  await post('/day', { ...DAY, date: '2026-01-02' }, key);
+  await post('/day', { ...DAY, date: '2026-01-03' }, key);
+  await db.prepare(`UPDATE tracker_days SET digested_at = '2026-01-03' WHERE date = '2026-01-03'`).run();
+  const c = await collect(today);
+  assert.deepEqual(c.late.map((e) => e.date), ['2026-01-02']);
+  assert.deepEqual(c.updated.map((e) => e.date), ['2026-01-03']);
+});
+
+test('tick sends once a day at the set time, to the HR address, then marks the rows digested', async () => {
+  await reset();
+  const { key } = await pairedDevice();
+  await post('/day', { ...DAY, date: dubaiDate() }, key);
+  await settings();
+  await db.prepare(`UPDATE tracker_settings SET "on" = true, send_at = '00:00'`).run();
+  const sent = [];
+  const send = async (m) => { sent.push(m); };
+  await tick({ send });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, 'hr@ainalreemproperty.com');
+  assert.match(sent[0].subject, /^Activity report — /);
+  assert.ok(sent[0].html.includes('<table'));
+  assert.equal(sent[0].attachments[0].filename, `activity-${dubaiDate()}.csv`);
+  await tick({ send });
+  assert.equal(sent.length, 1, 'not twice in a day');
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM tracker_days WHERE pending').get()).n, 0);
+  assert.equal((await settings()).sent_on, dubaiDate());
+});
+
+test('tick does nothing while the switch is off, and keeps rows pending when mail fails or HR has no address', async () => {
+  await reset();
+  const { key } = await pairedDevice();
+  await post('/day', { ...DAY, date: dubaiDate() }, key);
+  await settings();
+  const sent = [];
+  await db.prepare(`UPDATE tracker_settings SET send_at = '00:00'`).run();
+  await tick({ send: async (m) => { sent.push(m); } });
+  assert.equal(sent.length, 0, 'off');
+  await db.prepare(`UPDATE tracker_settings SET "on" = true`).run();
+  await tick({ send: async () => { throw new Error('smtp down'); } });
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM tracker_days WHERE pending').get()).n, 1, 'still pending after a failed send');
+  assert.equal((await settings()).sent_on, '');
+  await db.prepare(`UPDATE tracker_settings SET hr_email = ''`).run();
+  await tick({ send: async (m) => { sent.push(m); } });
+  assert.equal(sent.length, 0, 'nowhere to send');
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM tracker_days WHERE pending').get()).n, 1);
 });
