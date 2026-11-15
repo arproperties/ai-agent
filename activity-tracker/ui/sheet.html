@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity Tracker</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f5fb; --card: #fff; --txt: #1d1b2e; --mute: #6b6880; --line: #e4e2ee; --p1: #a78bfa; --p2: #f472b6; --ok: #34c759; --bad: #c0392b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15131f; --card: #1f1c2c; --txt: #f1efff; --mute: #9d99b5; --line: #302c42; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 18px 20px; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--txt); }
+  header { display: flex; align-items: center; gap: 8px; }
+  header h1 { font-size: 17px; font-weight: 500; margin: 0; flex: 1; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
+  .dot.off { background: #999; }
+  .mute { color: var(--mute); font-size: 12.5px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin-top: 14px; }
+  .totals { display: flex; gap: 14px; font-size: 13px; }
+  .totals b { display: block; font-size: 18px; font-weight: 500; }
+  .app { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; margin-top: 10px; font-size: 13px; }
+  .bar { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--p1), var(--p2)); }
+  button { margin-top: 12px; width: 100%; padding: 10px; border: 0; border-radius: 999px; font: 500 14px -apple-system, "Segoe UI", sans-serif; color: #fff; background: linear-gradient(135deg, var(--p1), var(--p2)); cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  .error { color: var(--bad); font-size: 13px; }
+</style>
+</head>
+<body>
+  <header><span class="dot" id="dot"></span><h1>Activity Tracker</h1><span class="mute" id="state">recording</span></header>
+  <div class="mute" id="who"></div>
+
+  <div class="card">
+    <div class="mute">Today</div>
+    <div class="totals">
+      <span>active<b id="active">0m</b></span>
+      <span>idle<b id="idle">0m</b></span>
+      <span>away<b id="away">0m</b></span>
+    </div>
+    <div id="apps"></div>
+  </div>
+
+  <div class="card">
+    <div id="sent" class="mute"></div>
+    <div id="error" class="error"></div>
+    <button id="send">Send today now</button>
+  </div>
+
+<script>
+  const hm = (n) => { const m = Math.round((n || 0) / 60); return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`; };
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const $ = (id) => document.getElementById(id);
+
+  async function refresh() {
+    const t = await window.tracker.today();
+    $('dot').className = 'dot' + (t.recording && !t.pair_error ? '' : ' off');
+    $('state').textContent = t.pair_error ? 'not paired' : (t.recording ? 'recording' : 'stopped');
+    $('who').textContent = t.name ? `${t.name} · ${t.device} · reports to HR at ${t.day_end}` : '';
+    $('active').textContent = hm(t.active_seconds); $('idle').textContent = hm(t.idle_seconds); $('away').textContent = hm(t.away_seconds);
+    const top = t.apps[0]?.seconds || 1;
+    $('apps').innerHTML = t.apps.slice(0, 8).map((a) => `<div class="app"><span>${esc(a.name)}</span><span>${hm(a.seconds)}</span><span class="bar"><i style="width:${Math.round(a.seconds / top * 100)}%"></i></span></div>`).join('')
+      || '<div class="mute" style="margin-top:8px">Nothing yet today.</div>';
+    $('sent').textContent = t.sent_at ? `Last report sent today at ${new Date(t.sent_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : `Today's report goes at ${t.day_end}, or when the PC is shut down.`;
+    $('error').textContent = t.pair_error ? 'This PC is no longer paired with Reem. Ask the office to pair it again.' : '';
+    $('send').disabled = !!t.pair_error;
+  }
+
+  $('send').addEventListener('click', async () => {
+    $('send').disabled = true;
+    const r = await window.tracker.sendNow();
+    if (r !== 'ok') $('error').textContent = r;
+    await refresh();
+    $('send').disabled = false;
+  });
+  window.tracker.onRefresh(refresh);
+  refresh();
+  setInterval(refresh, 30_000);
+</script>
+</body>
+</html>
