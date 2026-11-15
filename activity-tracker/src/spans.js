@@ -37,7 +37,8 @@ export class SpanBook {
    * day simply carries on. `app` null means nothing is focused (the desktop).
    */
   observe({ at, app, title, idleSeconds = 0, locked = false }) {
-    const seen = { app: app || 'Desktop', title: app ? String(title || '') : '' };
+    // Some programs give Windows no friendly name, only their file ("Notepad.exe"); the report should say Notepad.
+    const seen = { app: app ? String(app).replace(/\.exe$/i, '') : 'Desktop', title: app ? String(title || '') : '' };
     if (locked) return this.#move(at, { ...seen, kind: 'away' });
     if (idleSeconds >= IDLE_AFTER) {
       if (this.open?.kind === 'idle') return null; // still idle: nothing changed

@@ -54,3 +54,9 @@ test('running segments follow mark and stop', () => {
   b.markRunning(310);
   assert.deepEqual(b.running, [[100, 200], [300, null]], 'marking while running opens nothing new');
 });
+
+test('a program Windows names only by its file reads as a name, not a file', () => {
+  const b = new SpanBook();
+  see(b, 1, 'Notepad.exe', 'notes.txt - Notepad');
+  assert.equal(b.close(5).app, 'Notepad');
+});
