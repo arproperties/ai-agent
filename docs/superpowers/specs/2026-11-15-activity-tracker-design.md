@@ -60,7 +60,7 @@ Budget, measured with the app in the tray:
 | What | Limit |
 |------|-------|
 | CPU, 10-minute average | under 1% |
-| RAM, all of the app's processes together | under 100 MB |
+| RAM, all of the app's processes together | target 100 MB; the perf test fails above 150 MB |
 | Disk writes | one batch per minute, a few KB |
 | Network | one small request to Reem per day (plus retries if it failed) |
 
@@ -98,8 +98,14 @@ employee PC                               Reem (EC2)                         HR
 
 - **Day end on the PC**: the first of (a) 18:30 Dubai time, (b) Windows shutting down or the
   user signing out after 15:00, (c) the next start of the app if (a) and (b) were missed
-  (PC was off, no internet). Each day is sent once; a resend replaces the row (same person,
-  same date), so a late PC never duplicates.
+  (PC was off, no internet). A resend replaces the row (same device, same date), so a late
+  PC never duplicates. **Work after 18:30** is not lost: the PC sends again at shutdown, and
+  if HR was already emailed the 18:30 figures, the next evening's email lists that day under
+  "Updated: yesterday".
+- **Coverage is reported, not hidden**: the day carries the times the tracker was actually
+  running (`running: [[from, to], …]`). Reem prints gaps over 10 minutes as "tracker not
+  running 14:02–17:30" and a day with no report as "no report". So stopping the tracker is
+  never invisible to HR, which is why it needs no pause button.
 - **What is sent** (JSON, a few KB): date, first_seen, last_seen, active_seconds,
   idle_seconds, away_seconds, apps[] (name, seconds, top 5 titles with seconds). Raw spans
   stay on the PC and are deleted after 30 days. Reem never sees second-by-second data.
@@ -117,8 +123,18 @@ Mounted in `index.js` with two lines, like the saifsys door:
   a Reem person. Body as above. Upsert into `tracker_days`.
 - Tables (idempotent DDL in `db.js`, added to `TABLES` in the test helper):
   - `tracker_devices` (id, user_id, key_hash, name, created_at, last_seen_at)
-  - `tracker_days` (user_id, date, first_seen, last_seen, active_seconds, idle_seconds,
-    away_seconds, apps jsonb, received_at; primary key user_id+date)
+  - `tracker_days` (device_id, date, first_seen, last_seen, active_seconds, idle_seconds,
+    away_seconds, running jsonb, apps jsonb, received_at, digested_at; primary key
+    device_id+date). Keyed by **device**, not person: someone with a laptop and an office
+    desktop has two rows a day and the digest sums them per person. A shared PC gets one
+    install per Windows login, each with its own key.
+- Who gets tracked: a device is paired to a **Reem person**. Someone who does not use Reem
+  gets a Reem account with no modules (they never log in; it only names them in the report).
+  My call; the alternative, pairing to an HR employee code as `fromSaifsys.js` does, is a
+  small change if Francis prefers it.
+- The ingest route accepts days even while the email switch is off, so nothing is lost
+  while HR reports are paused; the PC reads its day-end time from the `hello` and `day`
+  responses, so changing "send time" in Reem reaches every PC.
 - `startTracker()` — the 19:00 Dubai timer. Only runs when the Settings switch is on, and,
   as with every timer that emails real people, off production only with `LOCAL_SENDING=on`.
   Sends with `sendMail()` from `mailer.js` (the company mailbox). Started under `billAs`
@@ -173,8 +189,8 @@ HR at the company. Tracking starts after "I understand". This is the consent ste
 legal review (pending from the Looki research) needs; the wording is Francis's to finalise.
 The tray icon is always visible while tracking.
 
-Pause: version one has **no pause button** (HR's report would be incomplete without saying
-so). If Francis wants one, the paused time is reported as "paused" rather than hidden.
+Pause: version one has **no pause button**. If Francis wants one, the paused time is
+reported to HR as "paused", never hidden.
 
 ## Screens on the PC (one small sheet)
 
@@ -189,11 +205,14 @@ so). If Francis wants one, the paused time is reported as "paused" rather than h
 │   Outlook          1h 02m  ███         │
 ├───────────────────────────────────────┤
 │ Last report sent: yesterday 18:30 ✓    │
-│ [Send today now]  [Launch at startup ✓]│
+│ [Send today now]                       │
 └───────────────────────────────────────┘
 ```
 
-Tray right-click: Open, Send today now, Quit.
+Tray right-click: Open, Send today now. **No Quit and no "launch at startup" tick for
+employees** (either would stop tracking silently); the app is stopped by uninstalling it, and
+any stretch it was not running shows in HR's report as above. The sheet's tick in the mockup
+is therefore dropped.
 
 ## Data on the PC
 
@@ -257,6 +276,9 @@ cost, off by default.
   browser tabs by site where the title allows).
 - The exact JSON shape and the CSV columns.
 - Retry schedule when Reem is unreachable (proposal: every 15 minutes, then at next start).
+- First task of the build: a one-day measurement of Electron's idle RAM with no window
+  (main + GPU + network processes, `app.disableHardwareAcceleration()` on). If it cannot stay
+  under 150 MB, stop and come back before building further.
 - Installer icon and the name shown in Windows.
 - Email HTML styling (match the password-reset email in `mailer.js`).
 
@@ -264,4 +286,7 @@ cost, off by default.
 
 1. Include window titles in the HR report, or app totals only? (Default in the design: titles
    on, with a switch.) Titles show more, but also show personal browsing.
-2. A pause button for employees, yes or no? (Default: no.)
+2. A pause button for employees, yes or no? (Default: no; any time the tracker is not
+   running is printed in HR's report instead.)
+3. People who do not use Reem: give them a Reem account with no modules (default), or pair
+   the device to an HR employee code instead?
