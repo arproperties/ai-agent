@@ -15,7 +15,10 @@ do not disturb the existing Reem app; the report goes by email to HR
 sending activity to the HR email". Earlier version of this document (same day) had a chat
 agent and a mailbox on each PC; both are gone.
 
-Status: design, awaiting Francis's approval. Nothing built.
+Status: **approved by Francis on 2026-11-15** as an employee activity tracker and nothing
+more. A "Reem helper" desktop app (mail connector, Reem screens, local AI to save credits) was
+discussed the same day and dropped: staff use the live Reem app; this add-on only tracks.
+The three questions at the end stand at their defaults until Francis says otherwise.
 
 ## Why
 
