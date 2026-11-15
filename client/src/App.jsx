@@ -21,6 +21,7 @@ import MailRoutingPage from './components/MailRouting';
 import AddressBookPage from './components/AddressBook';
 import AiKeysPage from './components/AiKeys';
 import AppsPage from './components/Apps';
+import ActivityReports from './components/ActivityReports';
 import BrowserSettingsPage from './components/BrowserSettings';
 import BackupsPage from './components/Backups';
 import BillingPage from './components/Billing';
@@ -264,6 +265,7 @@ export default function App() {
           backupsOpen={panel === 'backups'} onBackups={() => { setPanel('backups'); setDrawer(false); }}
           aiKeysOpen={panel === 'aikeys'} onAiKeys={() => { setPanel('aikeys'); setDrawer(false); }}
           appsOpen={panel === 'apps'} onApps={() => { setPanel('apps'); setDrawer(false); }}
+          trackerOpen={panel === 'tracker'} onTracker={() => { setPanel('tracker'); setDrawer(false); }}
           browserOpen={panel === 'browser'} onBrowser={() => { setPanel('browser'); setDrawer(false); }}
           sharedInbox={sharedInbox} sharedInboxOpen={panel === 'sharedinbox'} onSharedInbox={() => { setPanel('sharedinbox'); setDrawer(false); }}
           dutiesOpen={panel === 'duties'} onDuties={() => { setPanel('duties'); setDrawer(false); }}
@@ -329,6 +331,7 @@ export default function App() {
         {panel === 'health' && me.role === 'master' && <ServerHealthPage onBack={() => setPanel(null)} />}
         {panel === 'aikeys' && me.role === 'master' && <AiKeysPage onBack={() => setPanel(null)} />}
         {panel === 'apps' && me.role === 'master' && <AppsPage onBack={() => setPanel(null)} />}
+        {panel === 'tracker' && me.role === 'master' && <ActivityReports onBack={() => setPanel(null)} />}
         {panel === 'browser' && <BrowserSettingsPage onBack={() => setPanel(null)} />}
         {panel === 'backups' && me.role === 'master' && <BackupsPage onBack={() => setPanel(null)} />}
         {panel === 'sharedinbox' && <SharedInboxPage me={me} onBack={() => setPanel(null)} />}
