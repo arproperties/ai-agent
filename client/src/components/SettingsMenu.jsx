@@ -152,8 +152,8 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
             {user.role === 'master' && onAiKeys && <Row role="menuitem" icon={<KeyRound size={17} strokeWidth={1.75} />} label="AI keys" active={aiKeysOpen} onClick={go(onAiKeys)} />}
             {/* Mailboxes connected to Claude.ai as custom connectors. The master's alone. */}
             {user.role === 'master' && onApps && <Row role="menuitem" icon={<Plug size={17} strokeWidth={1.75} />} label="Apps" active={appsOpen} onClick={go(onApps)} />}
-            {/* The activity tracker on employee PCs: switches, paired PCs, the daily email to HR. The master's alone. */}
-            {user.role === 'master' && onTracker && <Row role="menuitem" icon={<Monitor size={17} strokeWidth={1.75} />} label="Activity reports" active={trackerOpen} onClick={go(onTracker)} />}
+            {/* The activity tracker on employee PCs: the days per person for whoever holds the module (HR); the switches and paired PCs for the master. */}
+            {has('activity_reports') && onTracker && <Row role="menuitem" icon={<Monitor size={17} strokeWidth={1.75} />} label="Activity reports" active={trackerOpen} onClick={go(onTracker)} />}
             {/* The pet is still being tried out: the master's alone, off until switched on here.
                 A switch, not a place, so the menu stays open. */}
             {user.role === 'master' && onPet && (

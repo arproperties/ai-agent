@@ -65,7 +65,7 @@ if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || noti
 
 // The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
 const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
-  duties: 'duties', diary: 'diary', checklists: 'checklists', attendance: 'attendance', memory: 'memory', email: 'email', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', case: 'case_focus' };
+  duties: 'duties', diary: 'diary', checklists: 'checklists', attendance: 'attendance', tracker: 'activity_reports', memory: 'memory', email: 'email', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', case: 'case_focus' };
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -331,7 +331,7 @@ export default function App() {
         {panel === 'health' && me.role === 'master' && <ServerHealthPage onBack={() => setPanel(null)} />}
         {panel === 'aikeys' && me.role === 'master' && <AiKeysPage onBack={() => setPanel(null)} />}
         {panel === 'apps' && me.role === 'master' && <AppsPage onBack={() => setPanel(null)} />}
-        {panel === 'tracker' && me.role === 'master' && <ActivityReports onBack={() => setPanel(null)} />}
+        {panel === 'tracker' && <ActivityReports onBack={() => setPanel(null)} />}
         {panel === 'browser' && <BrowserSettingsPage onBack={() => setPanel(null)} />}
         {panel === 'backups' && me.role === 'master' && <BackupsPage onBack={() => setPanel(null)} />}
         {panel === 'sharedinbox' && <SharedInboxPage me={me} onBack={() => setPanel(null)} />}

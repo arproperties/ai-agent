@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Router } from 'express';
 import { db } from './db.js';
+import { isMaster } from './access.js';
 import { sendMail } from './mailer.js';
 import { billAs } from './billing.js';
 import { dubaiDate } from './saifsys/client.js';
@@ -314,28 +315,64 @@ export function startTracker() {
   run();
 }
 
-// ---------- the master's routes (mounted behind requireMaster) ----------
+// ---------- the page's routes (mounted behind the activity_reports module) ----------
+//
+// The master has every module, so the master always reaches these. Anyone else the master
+// has given the module (HR) sees the days and downloads the CSV; the switches and the paired
+// PCs stay the master's alone, checked here route by route.
 
 export const trackerRoutes = Router();
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const masterOnly = (req, res, next) => (isMaster(req.user) ? next() : res.status(403).json({ error: 'Only the master can change this' }));
 
-// The page: switches, paired PCs, the last seven days, and who a new PC can be paired to.
+/** The last `days` days (1–90, default 30) of every PC, newest first, each with its programs. */
+async function recentDays(days) {
+  const n = Math.min(90, Math.max(1, Number(days) || 30));
+  return db.prepare(`SELECT t.date, t.device_id, d.name AS device, u.name AS person, t.first_seen, t.last_seen, t.active_seconds, t.idle_seconds, t.away_seconds, t.apps, t.running, t.pending, t.digested_at
+                     FROM tracker_days t JOIN tracker_devices d ON d.id = t.device_id JOIN users u ON u.id = d.user_id
+                     WHERE t.date >= to_char(now() AT TIME ZONE 'Asia/Dubai' - make_interval(days => ?), 'YYYY-MM-DD') ORDER BY t.date DESC, u.name, d.name`).all(n - 1);
+}
+
+// The page. Everyone with the module: the days and whether titles are shown. The master also
+// gets the switches, the paired PCs and who a new PC can be paired to.
 trackerRoutes.get('/', wrap(async (req, res) => {
-  const [s, devices, days, people] = await Promise.all([
-    settings(),
+  const s = await settings();
+  const days = await recentDays(req.query.days);
+  if (!isMaster(req.user)) return res.json({ master: false, titles_on: s.titles_on, days });
+  const [devices, people] = await Promise.all([
     db.prepare(`SELECT d.id, d.user_id, d.name, u.name AS person, d.created_at, d.last_seen_at
                 FROM tracker_devices d JOIN users u ON u.id = d.user_id ORDER BY u.name, d.name`).all(),
-    db.prepare(`SELECT t.date, t.device_id, d.name AS device, u.name AS person, t.first_seen, t.last_seen, t.active_seconds, t.idle_seconds, t.away_seconds, t.apps, t.pending, t.digested_at
-                FROM tracker_days t JOIN tracker_devices d ON d.id = t.device_id JOIN users u ON u.id = d.user_id
-                WHERE t.date >= to_char(now() AT TIME ZONE 'Asia/Dubai' - interval '6 days', 'YYYY-MM-DD') ORDER BY t.date DESC, u.name`).all(),
     db.prepare(`SELECT id, name FROM users WHERE NOT disabled AND NOT external ORDER BY name`).all(),
   ]);
-  res.json({ settings: s, devices, days, people });
+  res.json({ master: true, titles_on: s.titles_on, settings: s, devices, days, people });
+}));
+
+/** The same days as a CSV for Excel: one row per PC per day per program, a row per title when titles are on. */
+export function csvOf(rows, titlesOn) {
+  const lines = ['person,date,pc,first,last,active_seconds,idle_seconds,away_seconds,app,seconds,title,title_seconds'];
+  for (const r of rows) {
+    const head = [r.person, r.date, r.device, r.first_seen, r.last_seen, r.active_seconds, r.idle_seconds, r.away_seconds];
+    const apps = r.apps?.length ? r.apps : [{ name: '', seconds: '', titles: [] }];
+    for (const a of apps) {
+      const titles = titlesOn ? a.titles || [] : [];
+      if (!titles.length) lines.push([...head, a.name, a.seconds, '', ''].map(csvCell).join(','));
+      for (const t of titles) lines.push([...head, a.name, a.seconds, t.title, t.seconds].map(csvCell).join(','));
+    }
+  }
+  return lines.join('\r\n') + '\r\n';
+}
+
+trackerRoutes.get('/csv', wrap(async (req, res) => {
+  const s = await settings();
+  const rows = await recentDays(req.query.days);
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="activity-${dubaiDate()}.csv"`);
+  res.send(csvOf(rows, s.titles_on));
 }));
 
 // The switches. A bad value changes nothing and says why.
-trackerRoutes.put('/settings', wrap(async (req, res) => {
+trackerRoutes.put('/settings', masterOnly, wrap(async (req, res) => {
   const b = req.body || {};
   if ('send_at' in b && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b.send_at))) throw bad('The send time must be HH:MM');
   if ('hr_email' in b && b.hr_email !== '' && !EMAIL.test(String(b.hr_email).trim())) throw bad('That is not an email address');
@@ -348,7 +385,7 @@ trackerRoutes.put('/settings', wrap(async (req, res) => {
 }));
 
 // Pair a PC: the key comes back once, here, and is never shown again.
-trackerRoutes.post('/devices', wrap(async (req, res) => {
+trackerRoutes.post('/devices', masterOnly, wrap(async (req, res) => {
   const userId = Number(req.body?.user_id);
   const name = String(req.body?.name || '').trim().slice(0, 80);
   if (!name) throw bad('Give the PC a name, like "Front desk"');
@@ -360,7 +397,7 @@ trackerRoutes.post('/devices', wrap(async (req, res) => {
 }));
 
 // Unpair a PC: its days go with it, and its next call gets "not paired".
-trackerRoutes.delete('/devices/:id', wrap(async (req, res) => {
+trackerRoutes.delete('/devices/:id', masterOnly, wrap(async (req, res) => {
   await db.prepare('DELETE FROM tracker_devices WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
 }));

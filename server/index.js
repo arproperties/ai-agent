@@ -183,7 +183,7 @@ app.use('/api', docCategoryRoutes); // Document Renewals: the categories and typ
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
 app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
 app.use('/api/feeds', requireMaster, feedRoutes); // the master's morning page: gold, petrol, rates, shares, weather, news
-app.use('/api/tracker', requireMaster, trackerRoutes); // Settings → Activity reports: paired PCs, switches, the last days (master only)
+app.use('/api/tracker', needsModule('activity_reports'), trackerRoutes); // Activity reports: the days and the CSV for whoever holds the module; switches and paired PCs are checked as the master's inside
 app.use('/api/billing', requireMaster, billingRoutes); // what the AI cost: by person, job and model (master only)
 app.use('/api/server-health', requireMaster, serverHealthRoutes); // disk, memory, database, backups and their growth (master only)
 app.use('/api/backups', requireMaster, backupRoutes); // download the database and every uploaded file, password asked again (master only)

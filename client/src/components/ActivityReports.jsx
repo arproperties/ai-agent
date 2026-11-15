@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Monitor, Trash2, Copy, Check, Plus } from 'lucide-react';
+import { Loader2, Monitor, Trash2, Copy, Check, Plus, Download, ChevronDown, ChevronRight } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 
-// Settings → Activity reports (server/tracker.js), the master's alone. The activity tracker
-// on each employee PC counts time per app and sends the day here; this page holds the
-// switches, pairs PCs to people, and shows the last days. No AI is involved anywhere.
+// Settings → Activity reports (server/tracker.js). The activity tracker on each employee PC
+// counts time per app and sends the day here. Whoever holds the module (HR) sees the days,
+// taps one for its programs, and downloads the CSV; the master also has the switches and
+// pairs PCs to people. No AI is involved anywhere.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const when = (s) => (s ? new Date(s * 1000).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'never');
@@ -91,52 +92,93 @@ function NewDevice({ people, onMade }) {
   );
 }
 
+function DayRow({ d, titlesOn }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <tr className="cursor-pointer border-t border-stroke hover:bg-white/5" onClick={() => setOpen((o) => !o)}>
+        <td className="px-3 py-1.5 whitespace-nowrap">{open ? <ChevronDown size={12} className="inline" /> : <ChevronRight size={12} className="inline" />} {d.date}</td>
+        <td className="px-3 py-1.5">{d.person}</td><td className="px-3 py-1.5">{d.device}</td>
+        <td className="px-3 py-1.5">{d.first_seen}</td><td className="px-3 py-1.5">{d.last_seen}</td>
+        <td className="px-3 py-1.5">{hm(d.active_seconds)}</td><td className="px-3 py-1.5">{hm(d.idle_seconds)}</td><td className="px-3 py-1.5">{hm(d.away_seconds)}</td>
+      </tr>
+      {open && (
+        <tr className="border-t border-stroke bg-white/[0.03]">
+          <td colSpan={8} className="px-4 py-2">
+            {(d.apps || []).length === 0 ? <span className="text-mute">No programs recorded.</span> : (
+              <div className="grid gap-1 sm:grid-cols-2">
+                {d.apps.map((a) => (
+                  <div key={a.name} className="rounded-xl border border-stroke px-3 py-1.5">
+                    <div className="flex justify-between"><span className="font-medium">{a.name}</span><span>{hm(a.seconds)}</span></div>
+                    {titlesOn && (a.titles || []).map((t) => <div key={t.title} className="flex justify-between gap-2 text-mute"><span className="min-w-0 truncate">{t.title}</span><span className="shrink-0">{hm(t.seconds)}</span></div>)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// The CSV comes through fetch rather than a plain link so the session cookie goes with it the same way as every other call.
+async function downloadCsv(days) {
+  const r = await fetch(`/api/tracker/csv?days=${days}`, { credentials: 'include' });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Could not download');
+  const url = URL.createObjectURL(await r.blob());
+  const a = Object.assign(document.createElement('a'), { href: url, download: `activity-${new Date().toISOString().slice(0, 10)}.csv` });
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+const DAYS = 30;
+
 export default function ActivityReports({ onBack }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
-  const load = () => api.get('/tracker').then(setData).catch((e) => { setError(e.message); setData((d) => d || { settings: {}, devices: [], days: [], people: [] }); });
+  const load = () => api.get(`/tracker?days=${DAYS}`).then(setData).catch((e) => { setError(e.message); setData((d) => d || { master: false, titles_on: false, days: [] }); });
   useEffect(() => { load(); }, []);
   const save = async (patch) => { const settings = await api.put('/tracker/settings', patch); setData((d) => ({ ...d, settings })); };
   const remove = (d) => confirm(`Unpair ${d.name} (${d.person})? Its days are deleted and the tracker on that PC stops sending.`)
-    && api.del(`/tracker/devices/${d.id}`).then(load).catch((e) => alert(e.message));
+    && api.del(`/tracker/devices/${d.id}`).then(load).catch((e) => setError(e.message));
 
   return (
-    <Page title="Activity reports" onBack={onBack}>
+    <Page title="Activity reports" onBack={onBack} action={data?.days?.length ? (
+      <button onClick={() => downloadCsv(DAYS).catch((e) => setError(e.message))} className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-mute hover:bg-white/10 hover:text-txt"><Download size={15} /> CSV</button>
+    ) : null}>
       <p className="mb-4 text-sm leading-relaxed text-mute">
-        The tracker on each employee PC counts time per app and sends the day here. Every evening Reem emails HR one report for everyone.
+        The tracker on each employee PC counts time per program and sends the day here. Tap a day to see its programs.
+        {data?.master && ' Every evening Reem can email HR one report for everyone.'}
       </p>
       {data === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : (
         <div className="space-y-2.5">
-          <Switch on={!!data.settings.on} label="Email HR every evening" note={data.settings.on ? `Sent at ${data.settings.send_at} Dubai time.` : 'Off. Days still arrive and are kept.'} onFlip={(on) => save({ on })} />
-          <TextSetting label="HR email" value={data.settings.hr_email || ''} type="email" placeholder="hr@…" onSave={(hr_email) => save({ hr_email })} />
-          <TextSetting label="Send time (Dubai)" value={data.settings.send_at || '19:00'} type="time" onSave={(send_at) => save({ send_at })} />
-          <Switch on={!!data.settings.titles_on} label="Include window titles" note={data.settings.titles_on ? 'The CSV lists the top window titles per app.' : 'App totals only.'} onFlip={(titles_on) => save({ titles_on })} />
+          {data.master && (
+            <>
+              <Switch on={!!data.settings.on} label="Email HR every evening" note={data.settings.on ? `Sent at ${data.settings.send_at} Dubai time.` : 'Off. Days still arrive and are kept.'} onFlip={(on) => save({ on })} />
+              <TextSetting label="HR email" value={data.settings.hr_email || ''} type="email" placeholder="hr@…" onSave={(hr_email) => save({ hr_email })} />
+              <TextSetting label="Send time (Dubai)" value={data.settings.send_at || '19:00'} type="time" onSave={(send_at) => save({ send_at })} />
+              <Switch on={!!data.settings.titles_on} label="Include window titles" note={data.settings.titles_on ? 'Titles show here and in the CSV.' : 'Program totals only.'} onFlip={(titles_on) => save({ titles_on })} />
 
-          <h2 className="pt-3 text-sm font-medium">Paired PCs</h2>
-          {data.devices.length === 0 && <p className="text-xs text-mute">No PC is paired yet.</p>}
-          {data.devices.map((d) => (
-            <div key={d.id} className="flex items-center gap-2 rounded-2xl border border-stroke px-4 py-2.5 text-sm">
-              <Monitor size={15} className="shrink-0 text-mute" />
-              <span className="flex-1 min-w-0 truncate">{d.person} · {d.name}<span className="block text-xs text-mute">last heard {when(d.last_seen_at)}</span></span>
-              <button onClick={() => remove(d)} aria-label={`Unpair ${d.name}`} title="Unpair" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={14} /></button>
-            </div>
-          ))}
-          <NewDevice people={data.people} onMade={load} />
+              <h2 className="pt-3 text-sm font-medium">Paired PCs</h2>
+              {data.devices.length === 0 && <p className="text-xs text-mute">No PC is paired yet.</p>}
+              {data.devices.map((d) => (
+                <div key={d.id} className="flex items-center gap-2 rounded-2xl border border-stroke px-4 py-2.5 text-sm">
+                  <Monitor size={15} className="shrink-0 text-mute" />
+                  <span className="flex-1 min-w-0 truncate">{d.person} · {d.name}<span className="block text-xs text-mute">last heard {when(d.last_seen_at)}</span></span>
+                  <button onClick={() => remove(d)} aria-label={`Unpair ${d.name}`} title="Unpair" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><Trash2 size={14} /></button>
+                </div>
+              ))}
+              <NewDevice people={data.people} onMade={load} />
+            </>
+          )}
 
-          <h2 className="pt-3 text-sm font-medium">Last 7 days</h2>
+          <h2 className="pt-3 text-sm font-medium">Last {DAYS} days</h2>
           {data.days.length === 0 ? <p className="text-xs text-mute">Nothing has arrived yet.</p> : (
             <div className="overflow-x-auto rounded-2xl border border-stroke">
               <table className="w-full text-xs">
                 <thead><tr className="text-left text-mute">{['Date', 'Person', 'PC', 'First', 'Last', 'Active', 'Idle', 'Away'].map((h) => <th key={h} className="px-3 py-2 font-normal">{h}</th>)}</tr></thead>
-                <tbody>
-                  {data.days.map((d) => (
-                    <tr key={`${d.device_id}-${d.date}`} className="border-t border-stroke">
-                      <td className="px-3 py-1.5 whitespace-nowrap">{d.date}</td><td className="px-3 py-1.5">{d.person}</td><td className="px-3 py-1.5">{d.device}</td>
-                      <td className="px-3 py-1.5">{d.first_seen}</td><td className="px-3 py-1.5">{d.last_seen}</td>
-                      <td className="px-3 py-1.5">{hm(d.active_seconds)}</td><td className="px-3 py-1.5">{hm(d.idle_seconds)}</td><td className="px-3 py-1.5">{hm(d.away_seconds)}</td>
-                    </tr>
-                  ))}
-                </tbody>
+                <tbody>{data.days.map((d) => <DayRow key={`${d.device_id}-${d.date}`} d={d} titlesOn={data.titles_on} />)}</tbody>
               </table>
             </div>
           )}

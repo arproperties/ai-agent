@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker, fromTrackerRoutes, fmtSeconds, renderDigest, collect, tick, trackerRoutes, markDigested } from '../server/tracker.js';
 import { trackerReach } from '../server/access.js';
+import { needsModule } from '../server/modules.js';
 import { dubaiDate } from '../server/saifsys/client.js';
 
 // The PC's door as index.js mounts it: the key check in front of the two routes.
@@ -12,14 +13,18 @@ test.before(async () => {
   const app = express();
   app.use(express.json());
   app.use('/api/from-tracker', fromTracker, fromTrackerRoutes);
-  // The master's routes as index.js mounts them, behind requireMaster; here the master is set by hand.
-  app.use('/api/tracker', (req, res, next) => { req.user = { id: 1, role: 'master', name: 'Boss' }; next(); }, trackerRoutes);
+  // The master's routes as index.js mounts them, behind the module; here the master is set by hand.
+  app.use('/api/tracker', (req, res, next) => { req.user = { id: 1, role: 'master', name: 'Boss' }; next(); }, needsModule('activity_reports'), trackerRoutes);
+  // The same routes for an ordinary person: whoever `asUser` names, through the real module check.
+  app.use('/api/tracker-user', (req, res, next) => { db.prepare('SELECT * FROM users WHERE id = ?').get(asUser).then((u) => { req.user = u; next(); }, next); }, needsModule('activity_reports'), trackerRoutes);
   app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message })); // eslint-disable-line no-unused-vars
   server = app.listen(0);
   base = `http://127.0.0.1:${server.address().port}/api/from-tracker`;
 });
 test.after(async () => { server.close(); await closeDb(); });
 
+let asUser = 0;
+const asPerson = (method, path, body) => fetch(`${base.replace('/from-tracker', '/tracker-user')}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
 const master = (method, path, body) => fetch(`${base.replace('/from-tracker', '/tracker')}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
 const post = (path, body, key) => fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(key ? { 'X-Tracker-Key': key } : {}) }, body: JSON.stringify(body) });
 
@@ -276,4 +281,37 @@ test('a window title that looks like a spreadsheet formula is made harmless in t
   assert.doesNotMatch(d.csv, /,=HYPERLINK/);
   assert.match(d.csv, /,"'=HYPERLINK\(""http:\/\/evil""\)",10/);
   assert.match(d.csv, /,'-1\+1,1/);
+});
+
+// ---------- the page for HR (module activity_reports) ----------
+
+test('a person with the module sees the days and the CSV, but not the switches or the devices, and cannot change anything', async () => {
+  await reset();
+  const { key } = await pairedDevice();
+  await post('/day', { ...DAY, date: dubaiDate() }, key);
+  asUser = await makeUser('HR Person');
+  assert.equal((await asPerson('GET', '')).status, 403, 'without the module: nothing');
+  await db.prepare("INSERT INTO module_access (user_id, module) VALUES (?, 'activity_reports')").run(asUser);
+  const page = await (await asPerson('GET', '?days=30')).json();
+  assert.equal(page.master, false);
+  assert.equal(page.days.length, 1);
+  assert.equal(page.days[0].apps[0].name, 'Excel', 'each day carries its programs for the tap-to-open view');
+  assert.equal(page.titles_on, true);
+  assert.equal('devices' in page, false); assert.equal('people' in page, false); assert.equal('settings' in page, false);
+  assert.equal((await asPerson('PUT', '/settings', { on: true })).status, 403);
+  assert.equal((await asPerson('POST', '/devices', { user_id: asUser, name: 'x' })).status, 403);
+  assert.equal((await asPerson('DELETE', '/devices/1')).status, 403);
+  const csv = await asPerson('GET', '/csv?days=30');
+  assert.equal(csv.status, 200);
+  assert.match(csv.headers.get('content-type'), /text\/csv/);
+  const text = await csv.text();
+  assert.match(text, /^person,date,pc,first,last,active_seconds,idle_seconds,away_seconds,app,seconds,title,title_seconds\r?\n/);
+  assert.match(text, /Francisca,\d{4}-\d{2}-\d{2},Front desk,08:52,17:41,24480,3120,4200,Excel,11400,Rent roll Nov.xlsx,7000/);
+});
+
+test('the master still gets everything on the page, and can ask for 30 days', async () => {
+  await reset();
+  const page = await (await master('GET', '?days=30')).json();
+  assert.equal(page.master, true);
+  assert.ok(page.settings && page.devices && page.people);
 });
