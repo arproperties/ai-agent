@@ -76,6 +76,9 @@ Each feature is usually one server file exporting `xxxRoutes` (an Express Router
 ### aol-connector/ (not part of Reem)
 A separate small program stored here only for GitHub: the AOL Mail connector for Claude.ai (own `package.json`, pm2 `aol-connector`, `/var/www/aol-connector`, its own deploy; see `aol-connector/CLAUDE.md`). Reem's build, tests and deploy never include it. Reem's side of it is `server/apps.js` (Settings → Apps).
 
+### activity-tracker/ (not part of Reem)
+The Windows tray app for employee PCs: counts time per program and sends the day to Reem (own `package.json`, own `CLAUDE.md`, ships as an unsigned NSIS installer Francis runs on each PC; never deployed to the server, never in Reem's build or tests). Reem's side is `server/tracker.js`: the public door `/api/from-tracker/*` (one key per PC, sha256 kept, like `fromSaifsys.js`), the master's `/api/tracker` routes behind Settings → Activity reports, and `startTracker()`, the 19:00 Dubai email to HR, which runs only under `sending` and only when the page's switch is on. No AI anywhere in it. The JSON contract between the two is in `docs/superpowers/plans/2026-11-15-activity-tracker.md`.
+
 ### New apps / connectors (the agreed pattern)
 Build any new one (another mailbox for Claude.ai, etc.) the way aol-connector is built: its own folder here (`<name>/`, own `package.json` and `CLAUDE.md`, never in Reem's `server/`, `client/`, build or deploy); stored in this repo, never a personal GitHub; on the same EC2 in `/var/www/<name>` with its own pm2 process, its own port and an nginx `location /<name>-mcp/`; its login typed in **Settings → Apps** (an entry in `APPS` in `server/apps.js`), never in `.env`. This repo is public: no passwords, tokens or links in code.
 
