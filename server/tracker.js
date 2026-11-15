@@ -296,3 +296,54 @@ export function startTracker() {
   timer.unref();
   run();
 }
+
+// ---------- the master's routes (mounted behind requireMaster) ----------
+
+export const trackerRoutes = Router();
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// The page: switches, paired PCs, the last seven days, and who a new PC can be paired to.
+trackerRoutes.get('/', wrap(async (req, res) => {
+  const [s, devices, days, people] = await Promise.all([
+    settings(),
+    db.prepare(`SELECT d.id, d.user_id, d.name, u.name AS person, d.created_at, d.last_seen_at
+                FROM tracker_devices d JOIN users u ON u.id = d.user_id ORDER BY u.name, d.name`).all(),
+    db.prepare(`SELECT t.date, t.device_id, d.name AS device, u.name AS person, t.first_seen, t.last_seen, t.active_seconds, t.idle_seconds, t.away_seconds, t.apps, t.pending, t.digested_at
+                FROM tracker_days t JOIN tracker_devices d ON d.id = t.device_id JOIN users u ON u.id = d.user_id
+                WHERE t.date >= to_char(now() AT TIME ZONE 'Asia/Dubai' - interval '6 days', 'YYYY-MM-DD') ORDER BY t.date DESC, u.name`).all(),
+    db.prepare(`SELECT id, name FROM users WHERE NOT disabled AND NOT external ORDER BY name`).all(),
+  ]);
+  res.json({ settings: s, devices, days, people });
+}));
+
+// The switches. A bad value changes nothing and says why.
+trackerRoutes.put('/settings', wrap(async (req, res) => {
+  const b = req.body || {};
+  if ('send_at' in b && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b.send_at))) throw bad('The send time must be HH:MM');
+  if ('hr_email' in b && b.hr_email !== '' && !EMAIL.test(String(b.hr_email).trim())) throw bad('That is not an email address');
+  await settings();
+  if ('on' in b) await db.prepare('UPDATE tracker_settings SET "on" = ? WHERE id = 1').run(b.on === true);
+  if ('titles_on' in b) await db.prepare('UPDATE tracker_settings SET titles_on = ? WHERE id = 1').run(b.titles_on === true);
+  if ('send_at' in b) await db.prepare('UPDATE tracker_settings SET send_at = ? WHERE id = 1').run(b.send_at);
+  if ('hr_email' in b) await db.prepare('UPDATE tracker_settings SET hr_email = ? WHERE id = 1').run(String(b.hr_email).trim());
+  res.json(await settings());
+}));
+
+// Pair a PC: the key comes back once, here, and is never shown again.
+trackerRoutes.post('/devices', wrap(async (req, res) => {
+  const userId = Number(req.body?.user_id);
+  const name = String(req.body?.name || '').trim().slice(0, 80);
+  if (!name) throw bad('Give the PC a name, like "Front desk"');
+  const person = await db.prepare('SELECT id FROM users WHERE id = ? AND NOT disabled').get(userId);
+  if (!person) throw bad('Pick a person for this PC');
+  const key = newDeviceKey();
+  const { id } = await db.prepare('INSERT INTO tracker_devices (user_id, name, key_hash) VALUES (?, ?, ?) RETURNING id').run(userId, name, keyHash(key));
+  res.json({ id, key });
+}));
+
+// Unpair a PC: its days go with it, and its next call gets "not paired".
+trackerRoutes.delete('/devices/:id', wrap(async (req, res) => {
+  await db.prepare('DELETE FROM tracker_devices WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+}));

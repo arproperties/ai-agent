@@ -2,7 +2,8 @@ import { db, reset, makeUser, closeDb } from './helpers/db.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker, fromTrackerRoutes, fmtSeconds, renderDigest, collect, tick } from '../server/tracker.js';
+import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker, fromTrackerRoutes, fmtSeconds, renderDigest, collect, tick, trackerRoutes } from '../server/tracker.js';
+import { trackerReach } from '../server/access.js';
 import { dubaiDate } from '../server/saifsys/client.js';
 
 // The PC's door as index.js mounts it: the key check in front of the two routes.
@@ -11,12 +12,15 @@ test.before(async () => {
   const app = express();
   app.use(express.json());
   app.use('/api/from-tracker', fromTracker, fromTrackerRoutes);
+  // The master's routes as index.js mounts them, behind requireMaster; here the master is set by hand.
+  app.use('/api/tracker', (req, res, next) => { req.user = { id: 1, role: 'master', name: 'Boss' }; next(); }, trackerRoutes);
   app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message })); // eslint-disable-line no-unused-vars
   server = app.listen(0);
   base = `http://127.0.0.1:${server.address().port}/api/from-tracker`;
 });
 test.after(async () => { server.close(); await closeDb(); });
 
+const master = (method, path, body) => fetch(`${base.replace('/from-tracker', '/tracker')}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
 const post = (path, body, key) => fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(key ? { 'X-Tracker-Key': key } : {}) }, body: JSON.stringify(body) });
 
 // A day exactly as the contract in the plan has it.
@@ -216,4 +220,40 @@ test('tick does nothing while the switch is off, and keeps rows pending when mai
   await tick({ send: async (m) => { sent.push(m); } });
   assert.equal(sent.length, 0, 'nowhere to send');
   assert.equal((await db.prepare('SELECT count(*)::int AS n FROM tracker_days WHERE pending').get()).n, 1);
+});
+
+// ---------- the master's routes ----------
+
+test('only the master reaches the tracker', () => {
+  assert.equal(trackerReach({ role: 'master' }), true);
+  assert.equal(trackerReach({ role: 'user' }), false);
+  assert.equal(trackerReach(null), false);
+});
+
+test('settings round-trip, and nonsense is refused', async () => {
+  await reset();
+  assert.equal((await master('PUT', '/settings', { on: true, hr_email: 'people@example.com', send_at: '18:00', titles_on: false })).status, 200);
+  const r = await (await master('GET', '')).json();
+  assert.equal(r.settings.on, true); assert.equal(r.settings.hr_email, 'people@example.com');
+  assert.equal(r.settings.send_at, '18:00'); assert.equal(r.settings.titles_on, false);
+  assert.equal((await master('PUT', '/settings', { send_at: '25:00' })).status, 400);
+  assert.equal((await master('PUT', '/settings', { hr_email: 'x' })).status, 400);
+  assert.equal((await (await master('GET', '')).json()).settings.send_at, '18:00', 'the bad value changed nothing');
+});
+
+test('a new device opens the door; the page lists it without the key; deleting it shuts the door', async () => {
+  await reset();
+  const uid = await makeUser('Francisca');
+  const made = await (await master('POST', '/devices', { user_id: uid, name: 'Front desk' })).json();
+  assert.match(made.key, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal((await post('/hello', {}, made.key)).status, 200);
+  await post('/day', { ...DAY, date: dubaiDate() }, made.key);
+  const page = await (await master('GET', '')).json();
+  assert.deepEqual(page.devices.map((d) => [d.name, d.person]), [['Front desk', 'Francisca']]);
+  assert.equal(JSON.stringify(page).includes(made.key), false, 'the key is shown once, at creation, never again');
+  assert.equal(page.days.length, 1); assert.equal(page.days[0].person, 'Francisca'); assert.equal(page.days[0].active_seconds, DAY.active_seconds);
+  assert.deepEqual(page.people.map((p) => p.name), ['Francisca'], 'who a new device can be made for');
+  assert.equal((await master('POST', '/devices', { user_id: 9999, name: 'x' })).status, 400);
+  assert.equal((await master('DELETE', `/devices/${made.id}`)).status, 200);
+  assert.equal((await post('/hello', {}, made.key)).status, 401);
 });
