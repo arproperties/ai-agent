@@ -11,6 +11,13 @@ export const dubaiDate = (epoch) => shifted(epoch).slice(0, 10);
 /** 'HH:MM' in Dubai for an epoch in seconds. */
 export const dubaiTime = (epoch) => shifted(epoch).slice(11, 16);
 
+/** [start, end) of a Dubai date as epoch seconds. */
+export function dayBounds(date) {
+  const [y, m, d] = date.split('-').map(Number);
+  const start = Date.UTC(y, m - 1, d) / 1000 - OFFSET;
+  return [start, start + 86400];
+}
+
 /** The epoch second at which the Dubai day after `epoch` begins. */
 function nextMidnight(epoch) {
   const [y, m, d] = dubaiDate(epoch).split('-').map(Number);
@@ -60,11 +67,14 @@ const length = (s) => s.endedAt - s.startedAt;
  * and only those on `date` count; `apps` and `active_seconds` come from active spans alone.
  */
 export function summarise(spans, running, date) {
-  const day = splitAtMidnight(spans).filter((s) => dubaiDate(s.startedAt) === date && s.endedAt > s.startedAt);
-  if (!day.length) return { date, first_seen: '00:00', last_seen: '00:00', active_seconds: 0, idle_seconds: 0, away_seconds: 0, running: [], apps: [] };
-
-  const first = Math.min(...day.map((s) => s.startedAt));
-  const last = Math.max(...day.map((s) => s.endedAt));
+  const all = splitAtMidnight(spans).filter((s) => dubaiDate(s.startedAt) === date && s.endedAt > s.startedAt);
+  // The day runs from the first to the last sign of a person (active or idle). A PC locked
+  // overnight is not fourteen hours "away": away counts only between those two marks.
+  const present = all.filter((s) => s.kind !== 'away');
+  if (!present.length) return { date, first_seen: '00:00', last_seen: '00:00', active_seconds: 0, idle_seconds: 0, away_seconds: 0, running: [], apps: [] };
+  const first = Math.min(...present.map((s) => s.startedAt));
+  const last = Math.max(...present.map((s) => s.endedAt));
+  const day = all.filter((s) => s.kind !== 'away' || (s.startedAt >= first && s.endedAt <= last));
   const seconds = (kind) => day.filter((s) => s.kind === kind).reduce((n, s) => n + length(s), 0);
 
   const byApp = {};
@@ -80,8 +90,7 @@ export function summarise(spans, running, date) {
   }));
 
   // Running segments clipped to this day; one still open closes at the day's last activity.
-  const dayStart = first - ((first + OFFSET) % 86400);
-  const dayEnd = dayStart + 86400;
+  const [dayStart, dayEnd] = dayBounds(date);
   const segments = (running || [])
     .map(([from, to]) => [from, to ?? last])
     .map(([from, to]) => [Math.max(from, dayStart), Math.min(to, dayEnd)])

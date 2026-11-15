@@ -49,3 +49,9 @@ test('a 401 is a pairing problem with Reem\'s own words; anything else is a plai
 test('a dead Reem is a plain error, not a pairing one', async () => {
   await assert.rejects(() => hello('http://127.0.0.1:9', 'k'), (err) => !(err instanceof PairingError));
 });
+
+test('a 403 (disabled account) is a pairing problem too: retrying will not fix it', async () => {
+  const d = await door(403, { error: 'This Reem account has been disabled' });
+  await assert.rejects(() => hello(d.url, 'k'), (e) => e instanceof PairingError && /disabled/.test(e.message));
+  d.close();
+});

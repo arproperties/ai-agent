@@ -72,3 +72,30 @@ test('settings round-trip, and opening the same file twice is fine', () => {
   assert.equal(b.get('consented_at'), 123, 'numbers come back as numbers');
   b.close(); done();
 });
+
+test('a span over Dubai midnight is stored on both dates, and running segments are found by overlap', () => {
+  const { path, done } = fresh();
+  const s = openStore(path);
+  const MID = DAY1 + 16 * 3600; // Dubai midnight between the two days (DAY1 is 08:00)
+  const t = MID - 600; // 23:50 Dubai on day 1
+  s.addSpans([span(t, t + 1200, 'Excel', 'Late night')]);
+  assert.deepEqual(s.spansOn('2026-11-15').map((x) => [x.startedAt, x.endedAt]), [[t, MID]], 'ends at midnight');
+  assert.deepEqual(s.spansOn('2026-11-16').map((x) => [x.startedAt, x.endedAt]), [[MID, t + 1200]], 'starts at midnight');
+  s.addRunning([t, null]);
+  assert.deepEqual(s.runningOn('2026-11-16'), [[t, null]], 'a PC left on overnight is still running on the new day');
+  s.addRunning([t, t + 1200]);
+  assert.deepEqual(s.runningOn('2026-11-16'), [[t, t + 1200]]);
+  assert.deepEqual(s.runningOn('2026-11-17'), [], 'and not on a day it never touched');
+  s.close(); done();
+});
+
+test('a day with work after it was sent counts as unsent again', () => {
+  const { path, done } = fresh();
+  const s = openStore(path);
+  s.addSpans([span(DAY1, DAY1 + 50)]);
+  s.markSent('2026-11-15', DAY1 + 100);
+  assert.deepEqual(s.unsentDates(), []);
+  s.addSpans([span(DAY1 + 200, DAY1 + 260)]);
+  assert.deepEqual(s.unsentDates(), ['2026-11-15'], 'new work since the send: HR should hear of it');
+  s.close(); done();
+});

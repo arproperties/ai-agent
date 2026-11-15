@@ -67,3 +67,13 @@ test('an empty day still has the contract shape', () => {
   const d = summarise([], [], '2026-11-15');
   assert.deepEqual(d, { date: '2026-11-15', first_seen: '00:00', last_seen: '00:00', active_seconds: 0, idle_seconds: 0, away_seconds: 0, running: [], apps: [] });
 });
+
+test('a PC locked overnight: the day starts and ends with activity, and away counts only inside it', () => {
+  const night = span(dubai(2026, 11, 15, 0, 0), dubai(2026, 11, 15, 8, 50), 'Desktop', '', 'away');
+  const evening = span(dubai(2026, 11, 15, 17, 0), dubai(2026, 11, 15, 23, 59), 'Desktop', '', 'away');
+  const lunch = span(dubai(2026, 11, 15, 12, 0), dubai(2026, 11, 15, 13, 0), 'Excel', 'A', 'away');
+  const d = summarise([night, ...SPANS, lunch, span(dubai(2026, 11, 15, 13, 0), dubai(2026, 11, 15, 17, 0), 'Word', 'B'), evening], [], '2026-11-15');
+  assert.equal(d.first_seen, '08:50', 'the night before counts for nothing');
+  assert.equal(d.last_seen, '17:00');
+  assert.equal(d.away_seconds, 600 + 3600, 'only the away stretches between first and last activity');
+});

@@ -2,7 +2,7 @@ import { db, reset, makeUser, closeDb } from './helpers/db.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker, fromTrackerRoutes, fmtSeconds, renderDigest, collect, tick, trackerRoutes } from '../server/tracker.js';
+import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker, fromTrackerRoutes, fmtSeconds, renderDigest, collect, tick, trackerRoutes, markDigested } from '../server/tracker.js';
 import { trackerReach } from '../server/access.js';
 import { dubaiDate } from '../server/saifsys/client.js';
 
@@ -256,4 +256,24 @@ test('a new device opens the door; the page lists it without the key; deleting i
   assert.equal((await master('POST', '/devices', { user_id: 9999, name: 'x' })).status, 400);
   assert.equal((await master('DELETE', `/devices/${made.id}`)).status, 200);
   assert.equal((await post('/hello', {}, made.key)).status, 401);
+});
+
+test('a day that arrives while the email is being sent is not marked as emailed', async () => {
+  await reset();
+  const { key } = await pairedDevice();
+  await post('/day', { ...DAY, date: dubaiDate() }, key);
+  const { rowKeys } = await collect(dubaiDate());
+  await new Promise((r) => setTimeout(r, 1100)); // received_at is in whole seconds
+  await post('/day', { ...DAY, date: dubaiDate(), active_seconds: 1 }, key); // arrives after collect, before the mark
+  await markDigested(rowKeys, dubaiDate());
+  const row = await db.prepare('SELECT pending FROM tracker_days').get();
+  assert.equal(row.pending, true, 'HR did not see this version, so it stays pending for tomorrow');
+});
+
+test('a window title that looks like a spreadsheet formula is made harmless in the CSV', () => {
+  const day = { ...DAY, apps: [{ name: 'Google Chrome', seconds: 10, titles: [{ title: '=HYPERLINK("http://evil")', seconds: 10 }, { title: '-1+1', seconds: 1 }] }] };
+  const d = renderDigest({ day: '2026-11-15', titlesOn: true, people: [{ name: 'Francisca', ...day }], late: [], updated: [] });
+  assert.doesNotMatch(d.csv, /,=HYPERLINK/);
+  assert.match(d.csv, /,"'=HYPERLINK\(""http:\/\/evil""\)",10/);
+  assert.match(d.csv, /,'-1\+1,1/);
 });

@@ -131,7 +131,13 @@ export const topApps = (apps = [], n = 3) => [...apps].sort((a, b) => b.seconds 
   .map((a) => `${a.name} ${fmtSeconds(a.seconds)}`).join(' · ');
 
 const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-const csvCell = (v) => (/[",\r\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+// A title that starts like a formula (=, +, -, @) would run as one when HR opens the CSV in
+// Excel; titles come from any website a PC visited, so such a cell is prefixed with a quote.
+const csvCell = (v) => {
+  let t = String(v);
+  if (/^[=+\-@]/.test(t)) t = `'${t}`;
+  return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+};
 
 /** 'Sun 15 Nov 2026' for a YYYY-MM-DD; the time zone is fixed so the server's UTC clock cannot shift the day. */
 export function dayName(date, { year = true } = {}) {
@@ -257,8 +263,19 @@ export async function collect(day = dubaiDate()) {
     people: people.map((p) => today.find((t) => t.user_id === p.id) || { user_id: p.id, name: p.name, date: day, missing: true }),
     late: group(earlier.filter((r) => !r.digested_at)),
     updated: group(earlier.filter((r) => r.digested_at)),
-    rowKeys: pending.map((r) => [r.device_id, r.date]),
+    rowKeys: pending.map((r) => [r.device_id, r.date, r.received_at]),
   };
+}
+
+/**
+ * The rows that went into an email are no longer pending. A row that arrived again while the
+ * email was being sent has a newer received_at and so stays pending: HR did not see that
+ * version, and it goes out tomorrow as "Updated" rather than being quietly replaced.
+ */
+export async function markDigested(rowKeys, day) {
+  for (const [deviceId, date, receivedAt] of rowKeys) {
+    await db.prepare('UPDATE tracker_days SET pending = false, digested_at = ? WHERE device_id = ? AND date = ? AND received_at = ?').run(day, deviceId, date, receivedAt);
+  }
 }
 
 let sending = false;
@@ -279,7 +296,7 @@ export async function tick({ now = Date.now(), send = sendMail } = {}) {
     const { people, late, updated, rowKeys } = await collect(day);
     const d = renderDigest({ day, people, late, updated, titlesOn: s.titles_on });
     await send({ to: s.hr_email, subject: d.subject, text: d.text, html: d.html, attachments: [{ filename: `activity-${day}.csv`, content: d.csv, contentType: 'text/csv' }] });
-    for (const [deviceId, date] of rowKeys) await db.prepare('UPDATE tracker_days SET pending = false, digested_at = ? WHERE device_id = ? AND date = ?').run(day, deviceId, date);
+    await markDigested(rowKeys, day);
     await db.prepare('UPDATE tracker_settings SET sent_on = ? WHERE id = 1').run(day);
   } catch (e) {
     console.error('[tracker] digest not sent:', e.message);

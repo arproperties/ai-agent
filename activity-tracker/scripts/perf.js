@@ -2,10 +2,11 @@
 // reads its CPU and memory every ten seconds; it fails if the average CPU is 1% or more or
 // any sample's memory (all of the app's processes together) is 150 MB or more. Target 100 MB.
 //
-// Memory is judged on the private working set, the "Memory" column Task Manager shows: pages
-// this app alone holds. The total working set is printed too, but it counts the Chromium DLLs
-// shared by every process (and by any other Electron app on the PC) once per process, so it
-// overstates what the laptop actually gives up.
+// Memory is judged twice. The private working set is the "Memory" column Task Manager shows:
+// pages this app alone holds, the laptop's real cost. The total working set counts the Chromium
+// DLLs shared by every process once per process, so it overstates the cost, but it is the
+// plain reading of the spec's "all of the app's processes together", so it must stay under the
+// fail line as well.
 //
 //   npm run perf                 # the real ten minutes
 //   PERF_MINUTES=1 npm run perf  # a quick look
@@ -81,12 +82,13 @@ try {
   const peak = Math.max(...samples.map((s) => s.priv));
   const avg = samples.reduce((n, s) => n + s.priv, 0) / samples.length;
   const rssAvg = samples.reduce((n, s) => n + s.rss, 0) / samples.length;
+  const rssPeak = Math.max(...samples.map((s) => s.rss));
 
   console.log('\nResult');
   console.log(`  CPU: ${cpuMachine.toFixed(2)}% of the machine (${cpuOneCore.toFixed(2)}% of one core, ${cpus().length} cores) — limit ${CPU_LIMIT}%`);
   console.log(`  RAM (private working set, as Task Manager shows): average ${mb(avg)} MB, peak ${mb(peak)} MB — target ${RSS_TARGET_MB} MB, fail at ${RSS_FAIL_MB} MB`);
-  console.log(`  RAM (total working set, shared pages counted per process): average ${mb(rssAvg)} MB`);
-  const ok = cpuMachine < CPU_LIMIT && peak / 1024 / 1024 < RSS_FAIL_MB;
+  console.log(`  RAM (total working set, shared pages counted per process): average ${mb(rssAvg)} MB, peak ${mb(rssPeak)} MB — fail at ${RSS_FAIL_MB} MB too`);
+  const ok = cpuMachine < CPU_LIMIT && peak / 1024 / 1024 < RSS_FAIL_MB && rssPeak / 1024 / 1024 < RSS_FAIL_MB;
   console.log(ok ? '  PASS' : '  FAIL');
   process.exitCode = ok ? 0 : 1;
 } catch (e) {

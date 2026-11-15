@@ -20,12 +20,13 @@ async function post(url, key, path, body) {
     throw new Error(`Reem could not be reached: ${e.cause?.message || e.message}`);
   }
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401) throw new PairingError(data.error || 'This PC is not paired with Reem');
+  // 401: the key is gone. 403: the person's Reem account is disabled. Neither is cured by retrying.
+  if (res.status === 401 || res.status === 403) throw new PairingError(data.error || 'This PC is not paired with Reem');
   if (!res.ok) throw new Error(data.error || `Reem answered ${res.status}`);
   return data;
 }
 
-/** Who this PC belongs to and when its day ends, straight after pairing and at each start. */
+/** Who this PC belongs to and when its day ends; called when pairing. */
 export const hello = (url, key) => post(url, key, 'hello', {});
 
 /** One day's summary (see summary.js). Resolves to Reem's { ok, day_end }. */

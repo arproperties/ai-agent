@@ -32,6 +32,9 @@
       "oneClick": true,
       "perMachine": false
     },
-    "npmRebuild": false
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/*.node"
+    ]
   }
 }

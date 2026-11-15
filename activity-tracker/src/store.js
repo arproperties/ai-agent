@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { dubaiDate } from './summary.js';
+import { dubaiDate, splitAtMidnight, dayBounds } from './summary.js';
 
 // The PC's own little database: the day's spans, when the tracker was running, which days
 // were sent, and a few settings. One file under %APPDATA%\activity-tracker. Nothing here
@@ -46,16 +46,19 @@ export function openStore(path) {
   const addSpans = (spans) => {
     db.exec('BEGIN');
     try {
-      for (const s of spans) insertSpan.run(dubaiDate(s.startedAt), s.startedAt, s.endedAt, s.app, s.title, s.kind);
+      // A span over Dubai midnight is stored as two, one per date, so each date's read is complete.
+      for (const s of splitAtMidnight(spans)) insertSpan.run(dubaiDate(s.startedAt), s.startedAt, s.endedAt, s.app, s.title, s.kind);
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
   };
   const upsertRunning = db.prepare('INSERT INTO running (started_at, date, ended_at) VALUES (?, ?, ?) ON CONFLICT (started_at) DO UPDATE SET ended_at = excluded.ended_at');
   const spansOn = db.prepare('SELECT started_at AS startedAt, ended_at AS endedAt, app, title, kind FROM spans WHERE date = ? ORDER BY started_at');
-  const runningOn = db.prepare('SELECT started_at, ended_at FROM running WHERE date = ? ORDER BY started_at');
+  // Running segments by overlap with the day, not by the date they began: a PC left on overnight is still running tomorrow.
+  const runningOn = db.prepare('SELECT started_at, ended_at FROM running WHERE started_at < ? AND (ended_at IS NULL OR ended_at > ?) ORDER BY started_at');
   const sentAt = db.prepare('SELECT sent_at FROM days WHERE date = ?');
   const markSent = db.prepare('INSERT INTO days (date, sent_at) VALUES (?, ?) ON CONFLICT (date) DO UPDATE SET sent_at = excluded.sent_at');
-  const unsent = db.prepare('SELECT DISTINCT s.date FROM spans s LEFT JOIN days d ON d.date = s.date WHERE d.sent_at IS NULL ORDER BY s.date');
+  // Dates never sent, and dates with work recorded after they were sent: both are owed to Reem.
+  const unsent = db.prepare('SELECT s.date FROM spans s LEFT JOIN days d ON d.date = s.date GROUP BY s.date HAVING MAX(d.sent_at) IS NULL OR MAX(s.ended_at) > MAX(d.sent_at) ORDER BY s.date');
   const getSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
   const setSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value');
   const pruneSpans = db.prepare('DELETE FROM spans WHERE ended_at < ?');
@@ -69,11 +72,11 @@ export function openStore(path) {
     spansOn: (date) => spansOn.all(date).map((r) => ({ ...r })), // node:sqlite rows have no prototype; callers want plain objects
     /** A running segment [from, to|null]; the same `from` again replaces it (closing it). */
     addRunning: ([from, to]) => { upsertRunning.run(from, dubaiDate(from), to ?? null); },
-    runningOn: (date) => runningOn.all(date).map((r) => [r.started_at, r.ended_at ?? null]),
+    runningOn: (date) => { const [from, to] = dayBounds(date); return runningOn.all(to, from).map((r) => [r.started_at, r.ended_at ?? null]); },
     /** When a date's summary reached Reem, or null. */
     sentAt: (date) => sentAt.get(date)?.sent_at ?? null,
     markSent: (date, epoch) => { markSent.run(date, epoch); },
-    /** Dates that have spans but never reached Reem: what to send when the app starts. */
+    /** Dates owed to Reem: never sent, or worked on after they were sent. */
     unsentDates: () => unsent.all().map((r) => r.date),
     /** Settings as JSON, so numbers and booleans come back as they went in. */
     get: (key) => { const row = getSetting.get(key); return row ? JSON.parse(row.value) : null; },

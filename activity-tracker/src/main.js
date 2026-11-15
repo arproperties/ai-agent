@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { activeWindow } from 'get-windows';
 import { SpanBook } from './spans.js';
-import { summarise, dubaiDate, dubaiTime, cleanTitle } from './summary.js';
+import { summarise, dubaiDate, dubaiTime } from './summary.js';
 import { openStore } from './store.js';
 import { shouldSend, yesterdayUnsent } from './dayEnd.js';
 import { hello, sendDay, PairingError } from './reem.js';
@@ -31,6 +31,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 
 const now = () => Math.floor(Date.now() / 1000);
 let store, tray, book, locked = false, pairError = '', sheet = null, lastTry = null, pollTimer, flushTimer, dayTimer, runningFrom = null;
+let shutdownWindow = null, lastDate = null;
 
 // ---------- settings on disk ----------
 
@@ -70,7 +71,7 @@ function startTracking() {
   pollTimer = setInterval(glance, POLL_MS);
   flushTimer = setInterval(flush, FLUSH_MS);
   dayTimer = setInterval(() => dayEndCheck(false), 60_000);
-  setTray(true);
+  setTray(!pairError);
   sendOldDays().catch(() => {});
   store.prune(30);
 }
@@ -101,19 +102,32 @@ async function send(date) {
     store.markSent(date, now());
     if (r.day_end) store.set('day_end', r.day_end);
     pairError = '';
+    store.set('pair_error', '');
     lastTry = null;
     return true;
   } catch (e) {
     lastTry = now();
-    if (e instanceof PairingError) { pairError = e.message; setTray(false); }
+    if (e instanceof PairingError) {
+      // Reem no longer knows this key: remember that across restarts, drop the key so the tray
+      // icon opens the pairing screen again, and keep counting so nothing is lost meanwhile.
+      pairError = e.message;
+      store.set('pair_error', pairError);
+      store.set('device_key', '');
+      setTray(false);
+    }
     console.error('[send]', e.message);
     return false;
   }
 }
 
 async function dayEndCheck(shuttingDown) {
-  if (pairError || perfRun) return;
+  if (perfRun) return;
   const today = dubaiDate(now());
+  // A new date: yesterday may have work recorded after it was sent (an evening at the desk on a
+  // PC that was never shut down), so it is owed again; and the old spans can go.
+  if (lastDate && today !== lastDate) { store.prune(30); sendOldDays().catch(() => {}); }
+  lastDate = today;
+  if (pairError) return;
   const lastSpan = [...pendingSpans].at(-1)?.endedAt ?? (book?.open ? now() : null);
   const due = shouldSend({ nowDubai: dubaiTime(now()), dayEnd: store.get('day_end') || '18:30', sentAt: store.sentAt(today), shuttingDown, lastTry, now: now(), lastSpanAt: lastSpan });
   if (due) await send(today);
@@ -159,7 +173,8 @@ function window(file, size) {
 }
 
 function openSheet() {
-  if (!store.get('consented_at')) return openFirstRun();
+  // No consent yet, or the key was dropped after Reem said "not paired": the pairing screen.
+  if (!store.get('consented_at') || !store.get('device_key')) return openFirstRun();
   if (sheet) { sheet.focus(); return; }
   sheet = window('sheet.html', { width: 380, height: 520 });
   sheet.on('closed', () => { sheet = null; });
@@ -193,8 +208,11 @@ async function pair(key) {
     await writeKey(clean);
     store.set('person_name', r.name); store.set('device_name', r.device); store.set('day_end', r.day_end);
     store.set('consented_at', now());
+    pairError = '';
+    store.set('pair_error', '');
     if (!process.env.TRACKER_DATA_DIR) app.setLoginItemSettings({ openAtLogin: true });
-    startTracking();
+    if (!pollTimer) startTracking(); // first pairing
+    else { setTray(true); sendOldDays().catch(() => {}); } // paired again after "not paired": counting never stopped
     firstRun?.close();
     return { ok: true };
   } catch (e) {
@@ -202,7 +220,6 @@ async function pair(key) {
   }
 }
 ipcMain.handle('pair', async (_e, key) => { const r = await pair(key); if (r.ok) openSheet(); return r; });
-ipcMain.handle('clean-title', (_e, appName, title) => cleanTitle(appName, title));
 
 // ---------- lifecycle ----------
 
@@ -215,13 +232,19 @@ app.whenReady().then(() => {
   powerMonitor.on('unlock-screen', () => { locked = false; });
   powerMonitor.on('suspend', () => { locked = true; });
   powerMonitor.on('resume', () => { locked = false; });
-  // Windows is shutting down or the person is signing out: this is the end of the day.
-  powerMonitor.on('shutdown', (e) => {
-    e.preventDefault();
+  // Windows is shutting down, restarting or signing the person out: this is the end of the day.
+  // Windows says so to a window, not to the app (powerMonitor's 'shutdown' is Linux and macOS
+  // only), so a hidden 1×1 window exists for this one purpose. The session cannot be held back,
+  // so everything here is quick: the store writes are synchronous and land; the send gets a few
+  // seconds and no more, and anything missed is sent when the PC is next on.
+  shutdownWindow = new BrowserWindow({ show: false, width: 1, height: 1, skipTaskbar: true, webPreferences: { sandbox: true, backgroundThrottling: true } });
+  shutdownWindow.loadURL('about:blank');
+  shutdownWindow.on('session-end', () => {
     stopTracking();
-    Promise.race([dayEndCheck(true), new Promise((r) => setTimeout(r, 8_000))]).finally(() => app.quit());
+    Promise.race([dayEndCheck(true), new Promise((r) => setTimeout(r, 4_000))]).finally(() => app.exit(0));
   });
 
+  pairError = store.get('pair_error') || '';
   if (store.get('consented_at')) startTracking();
   else if (process.env.TRACKER_PAIR_KEY) pair(process.env.TRACKER_PAIR_KEY).then((r) => { if (r.error) console.error('[pair]', r.error); });
   else { setTray(false); openFirstRun(); }
