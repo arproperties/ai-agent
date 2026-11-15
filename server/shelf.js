@@ -6,8 +6,9 @@ import { dubaiDate } from './saifsys/client.js';
 
 // The Shelf, for the agent to look through itself.
 //
-// Every message already carries a first guess: six pieces of text picked by recall() and
-// the names of the newest files. On a Shelf of thousands that guess is often wrong, and
+// A message carries a first guess: a few pieces of text picked by recall() (for the company's
+// own people only the ones that plainly match, see knowledge.js) and the names of the newest
+// files. On a Shelf of thousands that guess is often wrong, and
 // an agent with nothing else to go on said "it is not on your Shelf" about files that had
 // been there for weeks. These two tools let it look before it says so: search_files
 // answers in files, read_file gives the words of one.
