@@ -114,3 +114,93 @@ fromTrackerRoutes.post('/day', wrap(async (req, res) => {
   const s = await settings();
   res.json({ ok: true, day_end: dayEndOf(s.send_at) });
 }));
+
+// ---------- the HR digest ----------
+
+/** '6h 48m', '52m', '0m': the way the office reads a day. */
+export function fmtSeconds(n) {
+  const m = Math.round((n || 0) / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`;
+}
+
+/** 'Excel 3h 10m · Google Chrome 2h 05m': the biggest apps of a day in one line. */
+export const topApps = (apps = [], n = 3) => [...apps].sort((a, b) => b.seconds - a.seconds).slice(0, n)
+  .map((a) => `${a.name} ${fmtSeconds(a.seconds)}`).join(' · ');
+
+const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const csvCell = (v) => (/[",\r\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+
+/** 'Sun 15 Nov 2026' for a YYYY-MM-DD; the time zone is fixed so the server's UTC clock cannot shift the day. */
+export function dayName(date, { year = true } = {}) {
+  const d = new Date(`${date}T12:00:00Z`);
+  const part = (o) => d.toLocaleDateString('en-GB', { timeZone: 'Asia/Dubai', ...o });
+  return `${part({ weekday: 'short' })} ${part({ day: 'numeric' })} ${part({ month: 'short' })}${year ? ` ${part({ year: 'numeric' })}` : ''}`;
+}
+
+const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+
+/** Stretches over ten minutes between first and last activity when the tracker was not running, as 'HH:MM–HH:MM'. */
+function gaps(entry) {
+  const segs = [...(entry.running || [])].sort((a, b) => toMin(a[0]) - toMin(b[0]));
+  const out = [];
+  for (let i = 1; i < segs.length; i++) {
+    if (toMin(segs[i][0]) - toMin(segs[i - 1][1]) > 10) out.push(`${segs[i - 1][1]}–${segs[i][0]}`);
+  }
+  return out;
+}
+
+const pad = (s, n) => String(s).padEnd(n);
+const COLS = [['Name', 14], ['First', 8], ['Last', 8], ['Active', 9], ['Idle', 8], ['Away', 8]];
+
+function textRows(entries) {
+  const head = COLS.map(([h, w]) => pad(h, w)).join('') + 'Top apps';
+  const lines = entries.map((e) => {
+    if (e.missing) return `${pad(e.name, 14)}${pad('—', 8)}${pad('—', 8)}no report yet`;
+    const cells = [e.name, e.first_seen, e.last_seen, fmtSeconds(e.active_seconds), fmtSeconds(e.idle_seconds), fmtSeconds(e.away_seconds)];
+    const notes = gaps(e).map((g) => `tracker not running ${g}`);
+    return cells.map((c, i) => pad(c, COLS[i][1])).join('') + topApps(e.apps) + (notes.length ? `\n${pad('', 14)}${notes.join(', ')}` : '');
+  });
+  return [head, ...lines].join('\n');
+}
+
+function htmlRows(entries) {
+  const cell = (c, extra = '') => `<td style="padding:6px 10px;border-bottom:1px solid #eee;white-space:nowrap${extra}">${escape(c)}</td>`;
+  const head = `<tr>${[...COLS.map(([h]) => h), 'Top apps'].map((h) => `<th style="text-align:left;padding:6px 10px;border-bottom:2px solid #ddd;font-weight:500">${h}</th>`).join('')}</tr>`;
+  const rows = entries.map((e) => {
+    if (e.missing) return `<tr>${cell(e.name)}${cell('—')}${cell('—')}<td colspan="4" style="padding:6px 10px;color:#888">no report yet</td></tr>`;
+    const notes = gaps(e).map((g) => `tracker not running ${g}`).join(', ');
+    return `<tr>${cell(e.name)}${cell(e.first_seen)}${cell(e.last_seen)}${cell(fmtSeconds(e.active_seconds))}${cell(fmtSeconds(e.idle_seconds))}${cell(fmtSeconds(e.away_seconds))}`
+      + `<td style="padding:6px 10px;border-bottom:1px solid #eee">${escape(topApps(e.apps))}${notes ? `<div style="color:#b45309;font-size:12px">${escape(notes)}</div>` : ''}</td></tr>`;
+  });
+  return `<table style="border-collapse:collapse;font-size:14px">${head}${rows.join('')}</table>`;
+}
+
+/**
+ * The email HR gets: today's table, then the days that arrived late (never emailed before)
+ * and the days that changed after HR saw them. Window titles go only into the CSV, and only
+ * while the master's "include window titles" switch is on.
+ */
+export function renderDigest({ day, people = [], late = [], updated = [], titlesOn = true }) {
+  const title = `Activity report — ${dayName(day)}`;
+  const byDate = (list) => Object.entries(list.reduce((m, e) => ((m[e.date] ||= []).push(e), m), {})).sort(([a], [b]) => b.localeCompare(a));
+  const sections = [['Late', late], ['Updated', updated]].flatMap(([label, list]) => byDate(list).map(([date, entries]) => ({ heading: `${label}: ${dayName(date, { year: false })}`, entries })));
+
+  const text = [title, '', textRows(people), ...sections.flatMap((s) => ['', s.heading, textRows(s.entries).split('\n').slice(1).join('\n')]),
+    '', `Attached: activity-${day}.csv (one row per person per app${titlesOn ? ', with top titles' : ''}).`].join('\n');
+
+  const html = `<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:900px;margin:auto;padding:24px;color:#1d1b2e">
+    <h2 style="font-weight:500">${escape(title)}</h2>${htmlRows(people)}
+    ${sections.map((s) => `<h3 style="font-weight:500;margin-top:24px">${escape(s.heading)}</h3>${htmlRows(s.entries)}`).join('')}
+    <p style="color:#777;font-size:13px;margin-top:24px">Away is a locked or sleeping PC; idle is no mouse or keyboard for over 3 minutes. The CSV attached has one row per person per app.</p></div>`;
+
+  const csvLines = ['name,date,app,seconds,title,title_seconds'];
+  for (const e of [...people, ...late, ...updated]) {
+    if (e.missing) continue;
+    for (const a of e.apps || []) {
+      const titles = titlesOn ? a.titles || [] : [];
+      if (!titles.length) csvLines.push([e.name, e.date, a.name, a.seconds, '', ''].map(csvCell).join(','));
+      for (const t of titles) csvLines.push([e.name, e.date, a.name, a.seconds, t.title, t.seconds].map(csvCell).join(','));
+    }
+  }
+  return { subject: title, text, html, csv: csvLines.join('\r\n') + '\r\n' };
+}

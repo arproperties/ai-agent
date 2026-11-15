@@ -2,7 +2,7 @@ import { db, reset, makeUser, closeDb } from './helpers/db.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker, fromTrackerRoutes } from '../server/tracker.js';
+import { settings, newDeviceKey, keyHash, dayEndOf, fromTracker, fromTrackerRoutes, fmtSeconds, renderDigest } from '../server/tracker.js';
 
 // The PC's door as index.js mounts it: the key check in front of the two routes.
 let base, server;
@@ -112,4 +112,38 @@ test('a deleted device gets 401 with the pairing message', async () => {
   const r = await post('/day', DAY, key);
   assert.equal(r.status, 401);
   assert.equal((await r.json()).error, 'This PC is not paired with Reem');
+});
+
+// ---------- the digest ----------
+
+test('seconds read as hours and minutes', () => {
+  assert.equal(fmtSeconds(24480), '6h 48m');
+  assert.equal(fmtSeconds(3120), '52m');
+  assert.equal(fmtSeconds(0), '0m');
+});
+
+test('the digest names the day, lists everyone, marks who has no report and who came late', () => {
+  const d = renderDigest({ day: '2026-11-15', titlesOn: true,
+    people: [{ name: 'Francisca', ...DAY }, { name: 'Ali', date: '2026-11-15', missing: true }],
+    late: [{ name: 'Ali', ...DAY, date: '2026-11-14' }], updated: [] });
+  assert.equal(d.subject, 'Activity report — Sun 15 Nov 2026');
+  assert.match(d.text, /Francisca\s+08:52\s+17:41\s+6h 48m\s+52m\s+1h 10m\s+Excel 3h 10m · Google Chrome 2h 05m/);
+  assert.match(d.text, /Ali\s+—\s+—\s+no report yet/);
+  assert.match(d.text, /Late: Sat 14 Nov/);
+  assert.match(d.text, /tracker not running 12:10–12:40/, 'a gap in running shows');
+  assert.match(d.csv, /^name,date,app,seconds,title,title_seconds\r?\n/);
+  assert.match(d.csv, /Francisca,2026-11-15,Excel,11400,Rent roll Nov.xlsx,7000/);
+  assert.match(d.html, /<table/);
+  assert.match(d.html, /Francisca/);
+});
+
+test('titles off: no window title anywhere, in text, html or csv', () => {
+  const d = renderDigest({ day: '2026-11-15', titlesOn: false, people: [{ name: 'Francisca', ...DAY }], late: [], updated: [] });
+  for (const part of [d.text, d.html, d.csv]) assert.doesNotMatch(part, /Rent roll/);
+  assert.match(d.csv, /^Francisca,2026-11-15,Excel,11400,,$/m);
+});
+
+test('a day that changed after HR saw it is listed under Updated', () => {
+  const d = renderDigest({ day: '2026-11-15', titlesOn: true, people: [], late: [], updated: [{ name: 'Tauqeer', ...DAY, date: '2026-11-14' }] });
+  assert.match(d.text, /Updated: Sat 14 Nov\s*\n\s*Tauqeer/);
 });
