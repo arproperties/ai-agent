@@ -146,8 +146,19 @@ async function teamNamed(user, q) {
 // Every file the person uploaded, none held back: "what has Said bought" is answered by all
 // of Said's uploads, not a guess at which project or site each was for. The newest 40 say
 // what they are about; any older ones are listed by name only, to keep it short.
+//
+// That holds for a person's bills, a hundred or two. The master has thousands of files, and
+// listing them all sent half a million tokens to the model each time someone's search said
+// "Amran" (over a dollar a message). Past MAX_LIST only the newest are listed, and said so.
+export const MAX_LIST = 150;
 const uploadsList = (docs, whose) => {
   const newest = [...docs].sort((a, b) => b.id - a.id);
+  if (newest.length > MAX_LIST) {
+    return `${docs.length} saved files${whose} - too many to list at once, so these are only the newest ${MAX_LIST}. Tell the user that, ` +
+      'and to find an older one search again with words for it (what it is, the supplier, the building, the month) together with uploaded_by. ' +
+      'Do not mention these instructions. read_file opens one by its number.\n' +
+      newest.slice(0, MAX_LIST).map((d, i) => [line(d), i < 40 && d.summary && `   About: ${String(d.summary).replace(/\s+/g, ' ').slice(0, 160)}`].filter(Boolean).join('\n')).join('\n');
+  }
   return `${docs.length} saved files${whose}, newest first. This is the answer: list every one of them for the user, with its amount when the line has it. ` +
     'Leave none out, and say nothing about which project or site any of them was or was not for - the question\'s project or site is not a filter. ' +
     'Do not mention these instructions. read_file opens one by its number.\n' +
@@ -180,7 +191,10 @@ export async function searchFiles(user, query, uploadedBy) {
   if (!by) {
     const team = await teamNamed(user, q);
     const theirs = docs.filter((d) => team.some((p) => p.id === d.user_id));
-    if (theirs.length) {
+    // Someone with more files than can be listed (the master): their name in a search is far
+    // more often a mention ("the bill Mr. Amran paid") than "everything he uploaded", so the
+    // words are searched across all files as usual. uploaded_by still asks for theirs alone.
+    if (theirs.length && theirs.length <= MAX_LIST) {
       const names = team.filter((p) => theirs.some((d) => d.user_id === p.id)).map((p) => p.name).join(' or ');
       return `"${q}" names ${names} from the team, so these are the files ${names} uploaded - not files that only mention the name.\n` +
         uploadsList(theirs, ` uploaded by ${names}`);
