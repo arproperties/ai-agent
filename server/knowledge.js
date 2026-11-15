@@ -621,11 +621,52 @@ export const currentOnly = (scope, t = 't') => ({
   params: scope.params,
 });
 
-export async function recall(user, query) {
+// ---------- the lean way: Shelf pieces only when they plainly answer the question ----------
+//
+// Six pieces went with every message, "yes" and "continue" included, picked by any shared
+// word as readily as by meaning: about a third of what each message cost to send, most of it
+// beside the point. Lean sends a piece only when its meaning is close to the question, three
+// at most, and nothing at all for a reply too short to be a question. The agent still has
+// search_files and read_file for anything more. Captured facts are not files, so those tools
+// cannot find them: the facts that match are kept, counted apart from the file pieces.
+export const STRONG_DIST = 0.18; // similarity > 0.82: a piece that answers measured 0.84-0.93 (see MAX_DIST)
+export const LEAN_PIECES = 3;
+
+/** True when what was said has enough in it to look anything up: "yes" and "ok, continue" do not. */
+export function worthLooking(said) {
+  const words = (String(said || '').toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []).filter((w) => !STOP.has(w) && !FILLER.has(w));
+  return new Set(words).size >= 2;
+}
+const FILLER = new Set('yes yeah yep okay sure fine good great thanks thank please continue proceed ahead done right correct exactly agreed'.split(' '));
+
+/** From pieces nearest first ({ text, dist, fact }): the file pieces that match strongly, then the facts that match. */
+export function pickStrong(rows, max = LEAN_PIECES) {
+  const files = rows.filter((r) => !r.fact && r.dist < STRONG_DIST).slice(0, max);
+  const facts = rows.filter((r) => r.fact && r.dist < MAX_DIST).slice(0, max);
+  return [...files, ...facts].map((r) => r.text);
+}
+
+async function strongPieces(scope, qvec) {
+  if (!qvec) return []; // no embeddings today: the agent looks with its own tools
+  const rows = await db.prepare(`SELECT t.text, t.embedding <=> ?::vector AS dist,
+      EXISTS (SELECT 1 FROM documents fd WHERE fd.id = t.document_id AND fd.kind = 'fact') AS fact
+    FROM chunks t WHERE ${scope.sql} AND t.embedding IS NOT NULL
+    ORDER BY dist LIMIT 20`).all(toVecLiteral(qvec), ...scope.params);
+  return pickStrong(rows);
+}
+
+/**
+ * What goes with a message unasked: memories, pinned facts and pieces of the Shelf.
+ * lean: only pieces that plainly answer `said` (the person's own words, without the case
+ * number the search adds), as above. Without it, the six best by meaning or shared words.
+ */
+export async function recall(user, query, { lean = false, said = query } = {}) {
   const [qvec] = await embed([query], 'query');
   const memories = await personalMemories(user, query, qvec);
   const pinned = await pinnedMemories(user);
-  const knowledge = await search('chunks', currentOnly(agentScope(user)), query, qvec, 6);
+  const scope = currentOnly(agentScope(user));
+  const knowledge = !lean ? await search('chunks', scope, query, qvec, 6)
+    : worthLooking(said) ? await strongPieces(scope, qvec) : [];
   return { memories, pinned, knowledge };
 }
 

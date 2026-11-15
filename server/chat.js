@@ -95,6 +95,9 @@ export function chatModel(user, agent) {
 const carriedCase = (c, primary) => (primary && c.case && !sameCase(c.case.number, primary.number)
   ? ` case="${String(c.case.number).replace(/"/g, "'")}" about="a reference case, not ${String(primary.number).replace(/"/g, "'")}"` : '');
 
+// How many of the newest file names go with a message the lean way: enough for "the one I just uploaded".
+const LEAN_FILES = 5;
+
 function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, carried = [], canPicture = false, auto = false, focus = null, taught = null, pinned = []) {
   const others = team.filter((a) => a.id !== agent.id).map((a) => a.name);
   const parts = [
@@ -295,7 +298,9 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   if (library.files.length) {
     const some = library.total > library.files.length;
     context.push(`<file_library>\n${some ? `The newest ${library.files.length} of the user's ${library.total} saved files - search_files reaches the rest.` : "The user's saved files (newest first)."} ` +
-      `Relevant excerpts appear in <knowledge>. Files can be opened from the Shelf screen in the app.\n${library.files.join('\n')}\n</file_library>`);
+      // Lean: a piece is only handed over when it plainly matches, so the agent is told to go and look.
+      `${library.lean ? 'An excerpt appears in <knowledge> only when one plainly matches the question: when the answer may be in a saved file and is not there, look with search_files and read_file before you answer.'
+        : 'Relevant excerpts appear in <knowledge>.'} Files can be opened from the Shelf screen in the app.\n${library.files.join('\n')}\n</file_library>`);
   }
   // Drafts this chat wrote that are still waiting. A reply ends with only its words saved, so
   // without this the agent could not see the email it was asked to change, and wrote it again
@@ -692,8 +697,13 @@ export async function chat(req, res) {
   }
   const kitFor = (name) => kits.find((k) => k.definitions.some((d) => d.name === name));
   // The case's number goes into the search too, so the case's own files come up first.
-  const { memories, pinned, knowledge } = await recall(reader, [text || meta.map((f) => f.name).join(' '), focus?.primary?.number].filter(Boolean).join(' '));
-  const library = await libraryCatalog(reader); // same every turn, so read it once
+  // The company's own people get the Shelf the lean way (knowledge.js): pieces only when they
+  // plainly answer the question, and the last few file names rather than forty. Someone from
+  // outside the company keeps the full hand: their Shelf is their own case, small and all of it to the point.
+  const lean = !external;
+  const lookFor = text || meta.map((f) => f.name).join(' ');
+  const { memories, pinned, knowledge } = await recall(reader, [lookFor, focus?.primary?.number].filter(Boolean).join(' '), { lean, said: lookFor });
+  const library = { ...await libraryCatalog(reader, lean ? LEAN_FILES : 40), lean }; // same every turn, so read it once
   // Chats brought in by this message, plus any brought in earlier: once a chat is carried
   // into this conversation it stays for every message after it, which is what "this chat
   // has both of those chats" has to mean.
