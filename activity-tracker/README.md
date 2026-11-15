@@ -40,9 +40,14 @@ under 1% CPU and about 100 MB of memory in the tray; `npm run perf` measures it 
 | | Result | Budget |
 |---|---|---|
 | CPU, 10-minute average | 0.02% of the machine (0.14% of one core) | under 1% |
-| Memory, private working set (Task Manager's figure) | 21 MB average, 28 MB peak | target 100 MB, fail at 150 MB |
-| Memory, total working set (shared pages counted per process) | 123 MB | printed for honesty |
-| Processes | 2 (main, network helper) | |
+| Memory, private working set (Task Manager's "Memory" column) | 49 MB average, 50 MB peak | target 100 MB, fail at 150 MB |
+| Memory, total working set (shared Chromium pages counted once per process) | 215 MB average, 219 MB peak | guard at 250 MB |
+| Processes | 3: main, network helper, and a hidden 1×1 window whose only job is to hear Windows shutting down | |
+
+The private figure is what the laptop actually gives up and what Task Manager shows; the total
+counts the same shared DLLs three times. The hidden window exists because Windows tells a
+window, not the app, that the session is ending; without it the day would never be sent at
+shutdown or sign-out. It costs about 15 MB private.
 
 ## For developers
 
