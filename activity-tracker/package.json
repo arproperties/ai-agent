@@ -12,7 +12,6 @@
     "dist": "electron-builder --win nsis"
   },
   "dependencies": {
-    "better-sqlite3": "^13.2.0",
     "get-windows": "^10.0.0"
   },
   "devDependencies": {
@@ -22,8 +21,16 @@
   "build": {
     "appId": "com.reem.activity-tracker",
     "productName": "Activity Tracker",
-    "files": ["src/**", "ui/**"],
-    "win": { "target": "nsis" },
-    "nsis": { "oneClick": true, "perMachine": false }
+    "files": [
+      "src/**",
+      "ui/**"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
   }
 }

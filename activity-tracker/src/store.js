@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { dubaiDate } from './summary.js';
 
 // The PC's own little database: the day's spans, when the tracker was running, which days
@@ -7,6 +7,9 @@ import { dubaiDate } from './summary.js';
 //
 // Dates are stored beside each row as the Dubai date, so "today's spans" is one indexed
 // read rather than arithmetic over every row.
+//
+// Node's own SQLite (node:sqlite) rather than a native package: nothing to compile for
+// Electron, no Visual Studio on the build machine, one less thing that can break an install.
 
 const DDL = `
   CREATE TABLE IF NOT EXISTS spans (
@@ -35,14 +38,18 @@ const DDL = `
 `;
 
 export function openStore(path) {
-  const db = new Database(path);
-  db.pragma('journal_mode = WAL');
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA journal_mode = WAL');
   db.exec(DDL);
 
   const insertSpan = db.prepare('INSERT INTO spans (date, started_at, ended_at, app, title, kind) VALUES (?, ?, ?, ?, ?, ?)');
-  const addSpans = db.transaction((spans) => {
-    for (const s of spans) insertSpan.run(dubaiDate(s.startedAt), s.startedAt, s.endedAt, s.app, s.title, s.kind);
-  });
+  const addSpans = (spans) => {
+    db.exec('BEGIN');
+    try {
+      for (const s of spans) insertSpan.run(dubaiDate(s.startedAt), s.startedAt, s.endedAt, s.app, s.title, s.kind);
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+  };
   const upsertRunning = db.prepare('INSERT INTO running (started_at, date, ended_at) VALUES (?, ?, ?) ON CONFLICT (started_at) DO UPDATE SET ended_at = excluded.ended_at');
   const spansOn = db.prepare('SELECT started_at AS startedAt, ended_at AS endedAt, app, title, kind FROM spans WHERE date = ? ORDER BY started_at');
   const runningOn = db.prepare('SELECT started_at, ended_at FROM running WHERE date = ? ORDER BY started_at');
@@ -59,7 +66,7 @@ export function openStore(path) {
     /** Closed spans from the SpanBook, kept in one transaction (the once-a-minute flush). */
     addSpans: (spans) => { if (spans.length) addSpans(spans); },
     /** Spans of one Dubai date, oldest first, in the SpanBook's shape. */
-    spansOn: (date) => spansOn.all(date),
+    spansOn: (date) => spansOn.all(date).map((r) => ({ ...r })), // node:sqlite rows have no prototype; callers want plain objects
     /** A running segment [from, to|null]; the same `from` again replaces it (closing it). */
     addRunning: ([from, to]) => { upsertRunning.run(from, dubaiDate(from), to ?? null); },
     runningOn: (date) => runningOn.all(date).map((r) => [r.started_at, r.ended_at ?? null]),
