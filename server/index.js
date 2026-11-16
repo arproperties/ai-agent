@@ -284,16 +284,18 @@ app.delete('/api/agents/:id', requireMaster, wrap(async (req, res) => {
 
 // ---------- conversations ----------
 app.get('/api/conversations', wrap(async (req, res) => {
-  res.json(await db.prepare(`SELECT c.id, c.title, c.updated_at,
+  // Pinned chats first, so one pinned long ago never falls past the 200 cut.
+  res.json(await db.prepare(`SELECT c.id, c.title, c.updated_at, c.pinned_at,
       (SELECT agent_id FROM messages m WHERE m.conversation_id = c.id AND agent_id IS NOT NULL ORDER BY m.id DESC LIMIT 1) agent_id
-    FROM conversations c WHERE c.user_id = ? ORDER BY c.updated_at DESC LIMIT 200`).all(req.user.id));
+    FROM conversations c WHERE c.user_id = ?
+    ORDER BY c.pinned_at DESC NULLS LAST, c.updated_at DESC LIMIT 200`).all(req.user.id));
 }));
 // search chat titles and message text; returns a short snippet around the match
 app.get('/api/conversations/search', wrap(async (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, 100);
   if (!q) return res.json([]);
   const like = ilike(q); // ILIKE: SQLite's LIKE ignored case, Postgres' does not
-  const rows = await db.prepare(`SELECT c.id, c.title, c.updated_at,
+  const rows = await db.prepare(`SELECT c.id, c.title, c.updated_at, c.pinned_at,
       (SELECT agent_id FROM messages m WHERE m.conversation_id = c.id AND agent_id IS NOT NULL ORDER BY m.id DESC LIMIT 1) agent_id,
       (SELECT content FROM messages m WHERE m.conversation_id = c.id AND m.content ILIKE ? ESCAPE '\\' ORDER BY m.id DESC LIMIT 1) hit
     FROM conversations c
@@ -316,9 +318,15 @@ app.get('/api/conversations/:id/messages', wrap(async (req, res) => {
     FROM messages m WHERE m.conversation_id = ? ORDER BY m.id`).all(Number(req.params.id));
   res.json(rows.map((m) => ({ ...m, files: JSON.parse(m.files), sources: JSON.parse(m.sources || '[]'), carried: m.carried || [] })));
 }));
-// Renamed from the chat list. The title is only ever set when a chat starts, so a new
-// name is kept from then on.
+// Renamed or pinned from the chat list. The title is only ever set when a chat starts, so a
+// new name is kept from then on.
 app.patch('/api/conversations/:id', wrap(async (req, res) => {
+  if (typeof req.body.pinned === 'boolean') {
+    const r = await db.prepare(`UPDATE conversations SET pinned_at = ${req.body.pinned ? 'EXTRACT(EPOCH FROM now())::bigint' : 'NULL'} WHERE id = ? AND user_id = ?`)
+      .run(Number(req.params.id), req.user.id);
+    if (!r.changes) return notFound(res);
+    return res.json({ ok: true, pinned: req.body.pinned });
+  }
   const title = String(req.body.title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
   if (!title) return res.status(400).json({ error: 'Give the chat a name' });
   const r = await db.prepare('UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?').run(title, Number(req.params.id), req.user.id);

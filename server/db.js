@@ -2370,6 +2370,9 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_case_brief_suggestions ON case_brief_suggestions(user_id, case_key, status);
   ALTER TABLE conversations ADD COLUMN IF NOT EXISTS brief_upto INTEGER;
+  -- Pinned from the chat list: kept at the top whatever its age (when it was pinned, so the
+  -- most recently pinned sits first).
+  ALTER TABLE conversations ADD COLUMN IF NOT EXISTS pinned_at BIGINT;
 `);
 
 // One reading an hour of the numbers that grow (server/serverHealth.js), so the master's

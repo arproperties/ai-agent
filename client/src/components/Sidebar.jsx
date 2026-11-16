@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, X, Users, Eye, ChevronRight, MoreHorizontal, Pencil } from 'lucide-react';
+import { Search, X, Users, Eye, ChevronRight, MoreHorizontal, Pencil, Pin, PinOff } from 'lucide-react';
 import { api } from '../lib/api';
 import { groupChats } from '../lib/chatGroups';
 import Icon from './Icon';
@@ -43,7 +43,7 @@ const Label = ({ children, action }) => (
   </div>
 );
 
-export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, translateOpen, onTranslate, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, trackerOpen, onTracker, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, sharedInbox, sharedInboxOpen, onSharedInbox, dutiesOpen, onDuties, checklistsOpen, onChecklists, diaryOpen, onDiary, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, buildings3dOpen, onBuildings3d, renewalsOpen, onRenewals, modules, petOn, onPet, faceOn, onFace, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onRenameConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onSwitchAccount, onAddAccount, onClose, onCollapse }) {
+export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, expiring = 0, dueTodos = 0, todosOpen, onTodos, translateOpen, onTranslate, meetingsOpen, onMeetings, transcribeOpen, onTranscribe, tenantCare, tenantCareOpen, onTenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, trackerOpen, onTracker, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, sharedInbox, sharedInboxOpen, onSharedInbox, dutiesOpen, onDuties, checklistsOpen, onChecklists, diaryOpen, onDiary, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, onBuildings, inventoryOpen, onInventory, buildings3dOpen, onBuildings3d, renewalsOpen, onRenewals, modules, petOn, onPet, faceOn, onFace, messagesOpen, unreadMessages = 0, onMessages, onNewChat, onOpenConv, onDeleteConv, onRenameConv, onPinConv, onEditAgent, onFiles, onMemory, onEmail, onPeople, onActivity, onLogout, onSwitchAccount, onAddAccount, onClose, onCollapse }) {
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
   const [q, setQ] = useState('');
   const [searching, setSearching] = useState(false);
@@ -68,7 +68,13 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
 
   const closeSearch = () => { setQ(''); setResults(null); setSearching(false); };
   const showTeam = user.role === 'master' || agents.length > 1;
-  const groups = groupChats(convs);
+  // Pinned chats get their own heading at the top and leave the date headings, so a chat
+  // you keep coming back to is never buried under this week's ones.
+  const pinned = convs.filter((c) => c.pinned_at);
+  const groups = [
+    ...(pinned.length ? [{ label: 'Pinned', items: pinned }] : []),
+    ...groupChats(convs.filter((c) => !c.pinned_at)),
+  ];
 
   // One chat row, used by both the grouped list and the search results. Search is the
   // only place the snippet appears: in the idle list it doubles the height of every row
@@ -118,6 +124,10 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
         {open && (<>
           <div className="fixed inset-0 z-40" onClick={() => setMenuFor(null)} />
           <div className="absolute right-1 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg border border-stroke bg-surface py-1 text-sm shadow-xl">
+            <button onClick={() => { setMenuFor(null); onPinConv(c.id, !c.pinned_at); }}
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-white/10">
+              {c.pinned_at ? <><PinOff size={14} /> Unpin</> : <><Pin size={14} /> Pin</>}
+            </button>
             <button onClick={() => { setMenuFor(null); setRenaming({ id: c.id, title: c.title || '' }); }}
               className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-white/10">
               <Pencil size={14} /> Rename
