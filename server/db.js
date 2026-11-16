@@ -2197,6 +2197,15 @@ await db.exec(`
   ALTER TABLE ai_costs ADD COLUMN IF NOT EXISTS key_source TEXT;
 `);
 
+// People the master took off Settings → Team activity (server/teamActivity.js): shared
+// logins, test accounts, building watch accounts. Only the page forgets them; nothing else.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS team_activity_hidden (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    hidden_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+`);
+
 // The AI keys the master types in (server/aiKeys.js): the company's (owner_id 0) and any
 // person's own, which wins for that person. Stored encrypted; .env stays the last fallback.
 // failed_at/failed_reason: the last time the provider turned the key down, shown on screen.

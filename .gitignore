@@ -7,3 +7,4 @@ client/dist
 .DS_Store
 .superpowers
 dev.log
+.claude/settings.local.json

@@ -76,6 +76,7 @@ import { leaseRenewalRoutes, startLeaseRenewals } from './leaseRenewals.js';
 import { leaseRoutes } from './leases.js';
 import { buildings3dRoutes } from './buildings3d.js';
 import { billingContext, billingRoutes, billAs } from './billing.js';
+import { teamActivityRoutes } from './teamActivity.js';
 import { feedRoutes, startFeeds } from './feeds.js';
 import { fromTracker, fromTrackerRoutes, trackerRoutes, startTracker } from './tracker.js';
 import { uploadLimitMB, MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB, MAX_IFC_MB } from './dwg.js';
@@ -185,6 +186,7 @@ app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no modul
 app.use('/api/feeds', requireMaster, feedRoutes); // the master's morning page: gold, petrol, rates, shares, weather, news
 app.use('/api/tracker', needsModule('activity_reports'), trackerRoutes); // Activity reports: the days and the CSV for whoever holds the module; switches and paired PCs are checked as the master's inside
 app.use('/api/billing', requireMaster, billingRoutes); // what the AI cost: by person, job and model (master only)
+app.use('/api/team-activity', requireMaster, teamActivityRoutes); // how each person is using Reem: questions, emails, files, to-dos (master only)
 app.use('/api/server-health', requireMaster, serverHealthRoutes); // disk, memory, database, backups and their growth (master only)
 app.use('/api/backups', requireMaster, backupRoutes); // download the database and every uploaded file, password asked again (master only)
 app.use('/api/admin', adminRoutes); // master-only oversight; guarded inside the router
