@@ -18,7 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import { readDashboard, barShare, barValue } from './dashboardCore.js';
+import { readDashboard, barShare, barValue, slices, arcPath, linePoints } from './dashboardCore.js';
 
 const OPEN = /^[ \t]*<!--\s*doc\s*-->[ \t]*$/im;
 const CLOSE = /^[ \t]*<!--\s*\/doc\s*-->[ \t]*$/im;
@@ -486,14 +486,32 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     }
   }
 
-  // The dashboard as in the chat: its number boxes in rows of up to four, then each bar
-  // chart with the labels on the left, then the colour key as dots.
+  // The dashboard as in the chat: the colour key, its number boxes in rows of up to four,
+  // then each chart in the order the agent wrote them.
   function drawDashboard(d) {
     const mark = (name) => Object.values(MARKS).find((m) => m.name === name) || MARKS['🔵'];
     const line = (text, size, max, base = {}) => wrap([{ text: sanitize(text) }], size, max, base)[0];
     if (d.title) { y -= 4; room(40); flow([{ text: sanitize(d.title) }], { size: 12.5, base: { bold: true }, color: ACCENT, rtl: rtlOf(d.title) }); }
     if (d.subtitle) flow([{ text: sanitize(d.subtitle) }], { size: 9, color: SOFT, rtl: rtlOf(d.subtitle) });
     if (d.title || d.subtitle) y -= 4;
+    // The colour key goes under the title, where it is never left alone on a page of its own.
+    // Each colour has its own label and a wide gap before the next, so a dot is never read
+    // as belonging to the word before it.
+    if (d.legend.length) {
+      y -= 4;
+      const size = 9;
+      room(15);
+      let x = MARGIN.x;
+      for (const l of d.legend) {
+        const text = line(l.label, size, width - 14);
+        const w = 12 + lineWidth(text);
+        if (x > MARGIN.x && x + w > MARGIN.x + width) { y -= 15; room(15); x = MARGIN.x; }
+        page.drawCircle({ x: x + 3.5, y: y - size + 3, size: 3.5, color: mark(l.color).dot });
+        drawLine(text, x + 12, y - size, SOFT);
+        x += w + 18;
+      }
+      y -= 19;
+    }
     const gap = 8;
     for (let r = 0; r < d.tiles.length; r += 4) {
       const row = d.tiles.slice(r, r + 4);
@@ -513,37 +531,86 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     }
     for (const c of d.charts) {
       y -= 4;
-      if (c.title) { room(40); flow([{ text: sanitize(c.title) }], { size: 10.5, base: { bold: true }, rtl: rtlOf(c.title) }); }
+      if (c.title) { room(60); flow([{ text: sanitize(c.title) }], { size: 10.5, base: { bold: true }, rtl: rtlOf(c.title) }); }
       const size = 8.5;
-      const labelW = Math.min(width * 0.38, Math.max(...c.bars.map((b) => textWidth(sanitize(b.label), size))) + 10);
-      const valueW = Math.max(...c.bars.map((b) => textWidth(sanitize(barValue(c, b)), size))) + 10;
-      const barMax = width - labelW - valueW;
-      for (const b of c.bars) {
-        room(17);
-        drawLine(line(b.label, size, labelW - 10), MARGIN.x, y - 11, INK);
-        const bw = Math.max(2, barShare(c, b) * barMax);
-        page.drawRectangle({ x: MARGIN.x + labelW, y: y - 13, width: bw, height: 10, color: mark(b.color).dot });
-        drawLine(line(barValue(c, b), size, valueW), MARGIN.x + labelW + bw + 5, y - 11, SOFT);
-        y -= 17;
+      if (c.type === 'donut') {
+        // The ring on the left, and each slice's colour, name, number and share beside it.
+        const parts = slices(c).filter((p) => p.share > 0);
+        const r = 34, h = Math.max(2 * r + 18, parts.length * 15 + 6);
+        room(h);
+        const cx = MARGIN.x + r + 9, cy = y - r - 9;
+        for (const p of parts) page.drawSvgPath(arcPath(0, 0, r, p.from + 0.004, p.to - 0.004), { x: cx, y: cy, borderColor: mark(p.color).dot, borderWidth: 13 });
+        const total = c.items.reduce((t, i) => t + i.value, 0).toLocaleString('en-US', { maximumFractionDigits: 1 });
+        page.drawText(total, { x: cx - F.bold.widthOfTextAtSize(total, 13) / 2, y: cy - 4, size: 13, font: F.bold, color: INK });
+        let ly = y - 4;
+        for (const p of parts) {
+          const x = MARGIN.x + 2 * r + 36;
+          page.drawCircle({ x: x + 3.5, y: ly - size + 3, size: 3.5, color: mark(p.color).dot });
+          drawLine(line(`${p.label}   ${barValue(c, p)} · ${Math.round(p.share * 100)}%`, size, width - (x - MARGIN.x) - 14), x + 12, ly - size, INK);
+          ly -= 15;
+        }
+        y -= h;
+      } else if (c.type === 'line') {
+        // The trend as a line over light guide lines, with the first and last labels under it.
+        const h = 90;
+        room(h + 18);
+        const pts = linePoints(c, width - 12, h - 10);
+        for (const f of [0, 0.5, 1]) page.drawLine({ start: { x: MARGIN.x, y: y - 5 - (h - 10) * f }, end: { x: MARGIN.x + width, y: y - 5 - (h - 10) * f }, thickness: 0.4, color: LINE });
+        page.drawSvgPath(pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' '), { x: MARGIN.x + 6, y: y - 5, borderColor: mark(c.color).dot, borderWidth: 1.8 });
+        for (const p of pts) page.drawCircle({ x: MARGIN.x + 6 + p.x, y: y - 5 - p.y, size: 2, color: mark(c.color).dot });
+        y -= h;
+        const first = line(`${pts[0].label}: ${barValue(c, pts[0])}`, size, width / 2 - 6);
+        const last = line(`${pts.at(-1).label}: ${barValue(c, pts.at(-1))}`, size, width / 2 - 6);
+        drawLine(first, MARGIN.x, y - size, SOFT);
+        drawLine(last, MARGIN.x + width - lineWidth(last), y - size, SOFT);
+        y -= 16;
+      } else if (c.type === 'gauge') {
+        // Up to four gauges a row: a three-quarter ring, the share in the middle, the name under it.
+        const per = 4, w = width / per, r = 26;
+        for (let k = 0; k < c.items.length; k += per) {
+          room(2 * r + 34);
+          c.items.slice(k, k + per).forEach((g, j) => {
+            const cx = MARGIN.x + w * j + w / 2, cy = y - r - 6;
+            const share = Math.min(1, g.value / g.max);
+            page.drawSvgPath(arcPath(0, 0, r, -0.375, 0.375), { x: cx, y: cy, borderColor: LINE, borderWidth: 7 });
+            if (share > 0) page.drawSvgPath(arcPath(0, 0, r, -0.375, -0.375 + 0.75 * share), { x: cx, y: cy, borderColor: mark(g.color).dot, borderWidth: 7 });
+            const pct = `${Math.round(share * 100)}%`;
+            page.drawText(pct, { x: cx - F.bold.widthOfTextAtSize(pct, 12) / 2, y: cy - 4, size: 12, font: F.bold, color: INK });
+            const name = line(g.label, size, w - 8);
+            drawLine(name, cx - lineWidth(name) / 2, cy - r - 8, INK);
+            const of = line(`${g.value.toLocaleString('en-US')} of ${g.max.toLocaleString('en-US')}`, 7.5, w - 8);
+            drawLine(of, cx - lineWidth(of) / 2, cy - r - 19, SOFT);
+          });
+          y -= 2 * r + 34;
+        }
+      } else if (c.type === 'timeline') {
+        // Down the page in date order: a dot on a line, the date, then what happens.
+        for (const t of c.items) {
+          const text = wrap([{ text: sanitize(t.label) }], 9.5, width - 110);
+          const h = text.length * 13 + (t.note ? 12 : 0) + 8;
+          room(h);
+          page.drawLine({ start: { x: MARGIN.x + 4, y }, end: { x: MARGIN.x + 4, y: y - h }, thickness: 0.8, color: LINE });
+          page.drawCircle({ x: MARGIN.x + 4, y: y - 8, size: 3.5, color: mark(t.color).dot });
+          if (t.date) drawLine(line(t.date, size, 80, { bold: true }), MARGIN.x + 14, y - 11, mark(t.color).dot);
+          text.forEach((l, i) => drawLine(l, MARGIN.x + 100, y - 11 - i * 13, INK));
+          if (t.note) drawLine(line(t.note, 8, width - 110), MARGIN.x + 100, y - 11 - text.length * 13, SOFT);
+          y -= h;
+        }
+      } else {
+        const labelW = Math.min(width * 0.38, Math.max(...c.items.map((b) => textWidth(sanitize(b.label), size))) + 10);
+        const valueW = Math.max(...c.items.map((b) => textWidth(sanitize(barValue(c, b)), size))) + 10;
+        const barMax = width - labelW - valueW;
+        for (const b of c.items) {
+          room(17);
+          drawLine(line(b.label, size, labelW - 10), MARGIN.x, y - 11, INK);
+          const bw = Math.max(2, barShare(c, b) * barMax);
+          page.drawRectangle({ x: MARGIN.x + labelW, y: y - 13, width: bw, height: 10, color: mark(b.color).dot });
+          drawLine(line(barValue(c, b), size, valueW), MARGIN.x + labelW + bw + 5, y - 11, SOFT);
+          y -= 17;
+        }
       }
     }
-    // Each colour with its own label and a wide gap before the next, so a dot is never read
-    // as belonging to the word before it.
-    if (d.legend.length) {
-      y -= 4;
-      const size = 9;
-      room(15);
-      let x = MARGIN.x;
-      for (const l of d.legend) {
-        const text = line(l.label, size, width - 14);
-        const w = 12 + lineWidth(text);
-        if (x > MARGIN.x && x + w > MARGIN.x + width) { y -= 15; room(15); x = MARGIN.x; }
-        page.drawCircle({ x: x + 3.5, y: y - size + 3, size: 3.5, color: mark(l.color).dot });
-        drawLine(text, x + 12, y - size, SOFT);
-        x += w + 18;
-      }
-      y -= 15;
-    }
+
   }
 
   function drawTable(table) {

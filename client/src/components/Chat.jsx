@@ -521,6 +521,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 onDelete={savedIdOf(m) && !m.streaming ? () => removeMessage(m) : undefined}
                 onReplyTo={m.role === 'assistant' ? setQuote : undefined}
                 onContinue={m.cut_short && !m.streaming && !busy && i === messages.length - 1 ? () => send('Continue', []) : undefined}
+                onAsk={m.role === 'assistant' && !busy ? (q) => send(q, []) : undefined}
                 onRemoveText={m.role === 'assistant' && savedIdOf(m) && !m.streaming ? (t) => removeText(m, t) : undefined}
                 onPdf={savedIdOf(m) && m.content && !(m.role === 'assistant' && lastDrawing(m.content)) ? () => setPdfOf({ id: savedIdOf(m), content: m.content, own: m.role === 'user' }) : undefined} />
             ))}

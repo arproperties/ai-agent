@@ -112,14 +112,14 @@ const VOICE = {
 
 // A reply as it reads: its words, with any drawing shown as a picture where it was written.
 // A YouTube video it links to plays under it.
-function Reply({ content, savedId }) {
+function Reply({ content, savedId, onAsk }) {
   // A row of YouTube videos (youtubeChat.js) is drawn as one; the words around it as usual.
   // A dashboard (dashboardCore.js) is drawn as boxes and bars where it was written.
   const parts = splitYouTube(content).flatMap((y) => (y.youtube ? [y] : splitDrawings(y.text)))
     .flatMap((p) => (p.text !== undefined ? splitDashboards(p.text).map((d) => (d.pending ? { dashPending: true } : d)) : [p]));
   return (
     <>
-      {parts.map((p, i) => (p.youtube ? <YouTubeRow key={i} data={p.youtube} /> : 'dashboard' in p ? <DashboardCard key={i} dashboard={p.dashboard} />
+      {parts.map((p, i) => (p.youtube ? <YouTubeRow key={i} data={p.youtube} /> : 'dashboard' in p ? <DashboardCard key={i} dashboard={p.dashboard} onAsk={onAsk} />
         : p.dashPending ? <DashboardPending key={i} /> : p.text !== undefined ? (
         <div key={i} className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypeMarkRows} components={markdownComponents}>{hideMarkers(p.text)}</Markdown></div>
       ) : p.pending ? <DrawingPending key={i} /> : <DrawingCard key={i} drawing={p.drawing} messageId={savedId} />))}
@@ -176,10 +176,11 @@ function SelectionBar({ rootRef, onListen, onReply, onRemove }) {
   );
 }
 
+// onAsk(text): sends a question about the reply into the chat (a tap on a dashboard).
 // savedId: the reply's row, which the PDF and AutoCAD files are made from. drawingFrom: the
 // latest drawing up to this reply, for a reply that hands it over as a file.
 // readNow: the reply to a spoken question, to read out as soon as it is shown.
-export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, readNow, onReadStarted, onOpenFile, onShare, onPdf, onDelete, onReplyTo, onRemoveText, onContinue, savedId, drawingFrom, status }) {
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, readNow, onReadStarted, onOpenFile, onShare, onPdf, onDelete, onReplyTo, onRemoveText, onContinue, onAsk, savedId, drawingFrom, status }) {
   const [copied, setCopied] = useState(false);
   const bodyRef = useRef();
   const reading = voice !== 'idle';
@@ -292,7 +293,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
       ) : msg.content ? (
         <div ref={bodyRef} onClick={jump} className={reading ? 'cursor-pointer' : undefined}
           title={voice === 'speaking' ? 'Tap to pause' : reading ? 'Tap a word to read from there' : undefined}>
-          <Reply content={msg.content} savedId={savedId} />
+          <Reply content={msg.content} savedId={savedId} onAsk={msg.streaming ? undefined : onAsk} />
           {!msg.streaming && (voiceEnabled || onReplyTo || onRemoveText) && (
             <SelectionBar rootRef={bodyRef} onListen={voiceEnabled ? listen : undefined} onReply={onReplyTo} onRemove={onRemoveText} />
           )}
