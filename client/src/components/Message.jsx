@@ -11,6 +11,8 @@ import Avatar from './Avatar';
 import { hideMarkers } from '../lib/replyDoc';
 import { splitDrawings, withoutDrawings, exportAsked } from '../lib/drawing';
 import { DrawingCard, DrawingPending, DrawingFile } from './Drawing';
+import { splitDashboards, withoutDashboards } from '../../../server/dashboardCore.js';
+import { DashboardCard, DashboardPending } from './Dashboard';
 import { ThinkingPlane } from './PaperPlane';
 import { onSpeechProgress } from '../lib/voice';
 import { makeHighlighter, readingPlan, pointAt } from '../lib/highlight';
@@ -112,10 +114,13 @@ const VOICE = {
 // A YouTube video it links to plays under it.
 function Reply({ content, savedId }) {
   // A row of YouTube videos (youtubeChat.js) is drawn as one; the words around it as usual.
-  const parts = splitYouTube(content).flatMap((y) => (y.youtube ? [y] : splitDrawings(y.text)));
+  // A dashboard (dashboardCore.js) is drawn as boxes and bars where it was written.
+  const parts = splitYouTube(content).flatMap((y) => (y.youtube ? [y] : splitDrawings(y.text)))
+    .flatMap((p) => (p.text !== undefined ? splitDashboards(p.text).map((d) => (d.pending ? { dashPending: true } : d)) : [p]));
   return (
     <>
-      {parts.map((p, i) => (p.youtube ? <YouTubeRow key={i} data={p.youtube} /> : p.text !== undefined ? (
+      {parts.map((p, i) => (p.youtube ? <YouTubeRow key={i} data={p.youtube} /> : 'dashboard' in p ? <DashboardCard key={i} dashboard={p.dashboard} />
+        : p.dashPending ? <DashboardPending key={i} /> : p.text !== undefined ? (
         <div key={i} className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypeMarkRows} components={markdownComponents}>{hideMarkers(p.text)}</Markdown></div>
       ) : p.pending ? <DrawingPending key={i} /> : <DrawingCard key={i} drawing={p.drawing} messageId={savedId} />))}
       <YouTubeCards text={content} className="mt-3 max-w-xl" />
@@ -267,7 +272,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
   }
 
   const copy = async () => {
-    await navigator.clipboard?.writeText(hideMarkers(withoutDrawings(withoutYouTube(msg.content))).trim());
+    await navigator.clipboard?.writeText(hideMarkers(withoutDashboards(withoutDrawings(withoutYouTube(msg.content)))).trim());
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
