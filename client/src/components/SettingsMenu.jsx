@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, Activity, FileClock, ChevronRight, Search, NotebookPen, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box, Globe } from 'lucide-react';
+import { Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, Activity, FileClock, ChevronRight, Search, NotebookPen, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box, Globe, Monitor } from 'lucide-react';
 import Icon from './Icon';
 import { CaseTimeSheet } from './CaseRails';
 import { Row, Count } from './NavRow';
@@ -43,7 +43,7 @@ function Group({ title, open, onToggle, count = 0, q = '', children }) {
   );
 }
 
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, diaryOpen, onDiary, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, trackerOpen, onTracker, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, diaryOpen, onDiary, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -152,6 +152,8 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
             {user.role === 'master' && onAiKeys && <Row role="menuitem" icon={<KeyRound size={17} strokeWidth={1.75} />} label="AI keys" active={aiKeysOpen} onClick={go(onAiKeys)} />}
             {/* Mailboxes connected to Claude.ai as custom connectors. The master's alone. */}
             {user.role === 'master' && onApps && <Row role="menuitem" icon={<Plug size={17} strokeWidth={1.75} />} label="Apps" active={appsOpen} onClick={go(onApps)} />}
+            {/* The activity tracker on employee PCs: the days per person for whoever holds the module (HR); the switches and paired PCs for the master. */}
+            {has('activity_reports') && onTracker && <Row role="menuitem" icon={<Monitor size={17} strokeWidth={1.75} />} label="Activity reports" active={trackerOpen} onClick={go(onTracker)} />}
             {/* The pet is still being tried out: the master's alone, off until switched on here.
                 A switch, not a place, so the menu stays open. */}
             {user.role === 'master' && onPet && (

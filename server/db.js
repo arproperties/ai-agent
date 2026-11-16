@@ -2802,6 +2802,10 @@ await db.exec(`
   -- The master's YouTube key (Google's YouTube Data API), encrypted like a mailbox password,
   -- for searching and browsing YouTube on the Feeds page. '' = not set.
   ALTER TABLE feed_settings ADD COLUMN IF NOT EXISTS youtube_key TEXT NOT NULL DEFAULT '';
+  -- The switch on the Feeds page: whether Reem looks everything up by itself each morning.
+  -- Off to begin with, because every morning costs a dollar or two in web reading; the page
+  -- and its Refresh button stay, so the master still gets a feed when he asks for one.
+  ALTER TABLE feed_settings ADD COLUMN IF NOT EXISTS auto_on BOOLEAN NOT NULL DEFAULT false;
   -- YouTube searches kept for 24 hours, so asking the same thing again costs none of the
   -- key's daily allowance (a search is 100 of its 10,000 units).
   CREATE TABLE IF NOT EXISTS yt_search_cache (
@@ -2886,4 +2890,48 @@ await db.exec(`
     updated_at BIGINT NOT NULL DEFAULT ${NOW}
   );
   CREATE INDEX IF NOT EXISTS idx_diary_user ON diary_entries(user_id, updated_at DESC);
+`);
+
+// Activity tracker: the desktop tray app on each employee PC (activity-tracker/, not part of
+// Reem) sends one small summary of the day; Reem emails HR one digest a day. No AI anywhere.
+//   tracker_settings: one row, the master's switches. Off to begin with, because the digest
+//     goes to a real HR mailbox.
+//   tracker_devices: one row per paired PC. Only the sha256 of the key is kept, so a database
+//     dump cannot impersonate a PC; the key itself is shown once when the device is made.
+//   tracker_days: a day as one PC saw it. Keyed by device, not person: someone with a laptop
+//     and a desktop has two rows a day and the digest sums them. pending = HR has not had this
+//     row since it last arrived; digested_at = the day of the last email it went in, so a day
+//     that arrives again after HR saw it is listed as "Updated" rather than quietly replaced.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS tracker_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    "on" BOOLEAN NOT NULL DEFAULT false,
+    hr_email TEXT NOT NULL DEFAULT 'hr@ainalreemproperty.com',
+    send_at TEXT NOT NULL DEFAULT '19:00',
+    titles_on BOOLEAN NOT NULL DEFAULT true,
+    sent_on TEXT NOT NULL DEFAULT ''
+  );
+  CREATE TABLE IF NOT EXISTS tracker_devices (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    key_hash TEXT NOT NULL UNIQUE,
+    created_at BIGINT NOT NULL DEFAULT ${NOW},
+    last_seen_at BIGINT
+  );
+  CREATE TABLE IF NOT EXISTS tracker_days (
+    device_id INTEGER NOT NULL REFERENCES tracker_devices(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    active_seconds INTEGER NOT NULL,
+    idle_seconds INTEGER NOT NULL,
+    away_seconds INTEGER NOT NULL,
+    running JSONB NOT NULL DEFAULT '[]',
+    apps JSONB NOT NULL DEFAULT '[]',
+    received_at BIGINT NOT NULL DEFAULT ${NOW},
+    pending BOOLEAN NOT NULL DEFAULT true,
+    digested_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (device_id, date)
+  );
 `);

@@ -77,6 +77,7 @@ import { leaseRoutes } from './leases.js';
 import { buildings3dRoutes } from './buildings3d.js';
 import { billingContext, billingRoutes, billAs } from './billing.js';
 import { feedRoutes, startFeeds } from './feeds.js';
+import { fromTracker, fromTrackerRoutes, trackerRoutes, startTracker } from './tracker.js';
 import { uploadLimitMB, MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB, MAX_IFC_MB } from './dwg.js';
 import { isRevit, REVIT_HELP } from './ifc.js';
 import { roughModelFor } from './rough3d.js';
@@ -120,6 +121,7 @@ app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; che
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
+app.use('/api/from-tracker', fromTracker, fromTrackerRoutes); // the activity tracker on each employee PC sends its day; own key per PC, see tracker.js
 app.use('/api/connector', connectorRoutes); // the AOL connector server asks which mailbox a link opens; this machine only (apps.js)
 app.use('/api/case-share', publicCaseRoutes); // a case folder shared by link: anyone with it, while it is on (caseShare.js)
 app.use('/api', requireUser); // everything below needs a signed-in user
@@ -181,6 +183,7 @@ app.use('/api', docCategoryRoutes); // Document Renewals: the categories and typ
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
 app.use('/api/pro-tasks', proTaskRoutes); // a PRO's own renewal tasks (no module needed: only their own)
 app.use('/api/feeds', requireMaster, feedRoutes); // the master's morning page: gold, petrol, rates, shares, weather, news
+app.use('/api/tracker', needsModule('activity_reports'), trackerRoutes); // Activity reports: the days and the CSV for whoever holds the module; switches and paired PCs are checked as the master's inside
 app.use('/api/billing', requireMaster, billingRoutes); // what the AI cost: by person, job and model (master only)
 app.use('/api/server-health', requireMaster, serverHealthRoutes); // disk, memory, database, backups and their growth (master only)
 app.use('/api/backups', requireMaster, backupRoutes); // download the database and every uploaded file, password asked again (master only)
@@ -652,6 +655,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // The morning feed: searched at 6, the master's phone buzzed at the time they chose. Same rule: a
   // local copy of the live database would buzz the master's real phone and pay for a search every morning.
   if (sending) startFeeds();
+  if (sending) startTracker(); // the 19:00 activity digest to HR: a real mailbox, so the same rule
   if (sending) startBackupReminder(); // a buzz to the master when nobody has downloaded a backup for a week
   // The 5 pm "today's manpower not sent" push to a project's store keeper. Live only unless asked
   // for, like the document alerts: a local copy of the live database holds real people's phones.

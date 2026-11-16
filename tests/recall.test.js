@@ -104,3 +104,38 @@ test("master does not read a user's private chunks through recall", async () => 
   assert.ok(!(await chunkIds(master, lawyer)).includes('sara private diary'),
     'master oversight is the admin router, not a widening of recall');
 });
+
+// ---------- the lean way (what goes with a message unasked) ----------
+
+test('a reply too short to be a question looks nothing up; a real question does', async () => {
+  const { worthLooking } = await import('../server/knowledge.js');
+  for (const said of ['yes', 'Ok', 'continue', 'yes please go ahead', 'thank you', '', 'ok, done']) assert.equal(worthLooking(said), false, said);
+  for (const said of ['Where is the boys camp?', 'trade licence expiry', 'please prepare the payment voucher for the painters']) assert.equal(worthLooking(said), true, said);
+});
+
+test('lean keeps only file pieces that match strongly, three at most, and the facts that match', async () => {
+  const { pickStrong, STRONG_DIST } = await import('../server/knowledge.js');
+  const rows = [
+    { text: 'answers it', dist: 0.09, fact: false },
+    { text: 'a rule that matches', dist: 0.2, fact: true }, // a fact needs only the ordinary match
+    { text: 'close', dist: 0.12, fact: false },
+    { text: 'also close', dist: 0.15, fact: false },
+    { text: 'a fourth', dist: 0.16, fact: false },
+    { text: 'shares a word, not the meaning', dist: STRONG_DIST + 0.01, fact: false },
+    { text: 'an unrelated rule', dist: 0.3, fact: true },
+  ];
+  assert.deepEqual(pickStrong(rows), ['answers it', 'close', 'also close', 'a rule that matches']);
+  assert.deepEqual(pickStrong([]), []);
+});
+
+test('the file list sent with a message can be cut to the newest few, still saying how many there are', async () => {
+  const { master } = await fixture();
+  const { libraryCatalog } = await import('../server/files.js');
+  await db.prepare(`INSERT INTO documents (user_id, name, title, kind, shared, status)
+    SELECT ?, 'f' || g || '.pdf', 'File ' || g, 'doc', false, 'ready' FROM generate_series(1, 12) g`).run(master.id);
+  const lean = await libraryCatalog(master, 5);
+  assert.equal(lean.files.length, 5);
+  assert.equal(lean.total, 12);
+  assert.match(lean.files[0], /File 12/, 'newest first');
+  assert.equal((await libraryCatalog(master)).files.length, 12, 'forty when not asked otherwise');
+});

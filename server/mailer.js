@@ -36,7 +36,7 @@ export async function sendPasswordReset(user, link) {
  * One email from the app's own address, for someone whose mailbox cannot send. replyTo is
  * their own address, so the answer goes to them and not to the app.
  */
-export async function sendMail({ to, cc, subject, text, replyTo, attachments }) {
+export async function sendMail({ to, cc, subject, text, html, replyTo, attachments }) {
   if (!transport) throw Object.assign(new Error('Outgoing mail is not set up'), { status: 400 });
-  return transport.sendMail({ from: MAIL_FROM || SMTP_USER, to, cc, subject, text, replyTo, attachments });
+  return transport.sendMail({ from: MAIL_FROM || SMTP_USER, to, cc, subject, text, html, replyTo, attachments });
 }

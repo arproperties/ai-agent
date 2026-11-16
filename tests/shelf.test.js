@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
-import { shelfKit, spellingMatch, soundKey } from '../server/shelf.js';
+import { shelfKit, spellingMatch, soundKey, MAX_LIST } from '../server/shelf.js';
 import { libraryCatalog } from '../server/files.js';
 
 test.after(() => closeDb());
@@ -144,6 +144,24 @@ test('"what has Syed purchased" gives what Said uploaded first, not files that o
 
   // A plain word that sounds like the name is not the person.
   assert.doesNotMatch((await call(master, 'search_files', { query: 'ledger left side' })).content, /from the team/);
+});
+
+test('someone with thousands of files: naming them searches every file as usual, and their uploads list stops at the newest 150', async () => {
+  const { master } = await fixture();
+  const said = await makeUser('Said');
+  await db.prepare(`INSERT INTO documents (user_id, name, title, kind, shared, status)
+    SELECT ?, 'r' || g || '.pdf', 'Receipt ' || g, 'doc', false, 'ready' FROM generate_series(1, ${MAX_LIST + 10}) g`).run(said);
+  // The bill that names him, filed by someone else: what "the bill Said paid" is asking for.
+  const bill = await doc(master.id, 'Cash bill AED 420 paid by Said – Chinaren');
+
+  const asked = (await call(master, 'search_files', { query: 'Said cash bill Chinaren' })).content;
+  assert.doesNotMatch(asked, /from the team/, 'not answered with every file he uploaded');
+  assert.match(asked, new RegExp(`#${bill} `));
+  assert.ok(asked.length < 20_000, 'and short');
+
+  const all = (await call(master, 'search_files', { uploaded_by: 'Said' })).content;
+  assert.match(all, new RegExp(`^${MAX_LIST + 10} saved files uploaded by Said - too many to list at once`));
+  assert.equal(all.match(/^#\d+ /gm).length, MAX_LIST, 'only the newest are listed');
 });
 
 test('show_files hangs the files themselves on the reply, and only ones the person may open', async () => {

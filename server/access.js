@@ -19,6 +19,12 @@ export const isMaster = (user) => user?.role === 'master';
 export const isExternal = (user) => !!user?.external && !isMaster(user);
 
 /**
+ * Who sees the activity tracker's days and devices (tracker.js): the master alone. Staff
+ * have no screen for it in version one; their PC's summary goes to HR by email.
+ */
+export const trackerReach = (user) => isMaster(user);
+
+/**
  * What the master's "see everyone's" reads cover, as a condition on table alias `t`:
  * everybody's rows but an external person's.
  */

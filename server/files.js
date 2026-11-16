@@ -486,12 +486,14 @@ export async function setSharedMany(user, docIds, shared) {
 // Only the newest few, with how many there are in all: on a Shelf of thousands the list
 // is a glimpse, and the agent has to know that or it reads "not listed" as "not there".
 // Captured facts are left out - they are not files, and once crowded the real ones off.
-export async function libraryCatalog(user) {
+// `newest` is how many are named: forty went with every message, which the lean chat cuts
+// to the last few (what was just uploaded), leaving the rest to search_files.
+export async function libraryCatalog(user, newest = 40) {
   const scope = agentScope(user);
   // Current issues only: a renewed licence's old copy would read as the one to go by.
   const files = `${scope.sql} AND status = 'ready' AND kind IS DISTINCT FROM 'fact' AND superseded_by IS NULL`;
   const rows = await db.prepare(`SELECT title, folder, name, doc_date, expires_on FROM documents t
-    WHERE ${files} ORDER BY id DESC LIMIT 40`).all(...scope.params);
+    WHERE ${files} ORDER BY id DESC LIMIT ${Math.max(0, Math.floor(Number(newest)) || 0)}`).all(...scope.params);
   const { n } = await db.prepare(`SELECT COUNT(*)::int n FROM documents t WHERE ${files}`).get(...scope.params);
   return {
     total: n,

@@ -63,6 +63,19 @@ test('the buzz time can be changed or turned off, and nonsense is refused', asyn
   assert.equal((await (await fetch(base)).json()).settings.push_at, '');
 });
 
+test('gathering every morning starts off, and its switch does not disturb the buzz time', async () => {
+  await reset();
+  assert.equal((await (await fetch(base)).json()).settings.auto_on, false, 'off until the master turns it on');
+  assert.equal((await put('/settings', { auto_on: true })).status, 200);
+  const on = (await (await fetch(base)).json()).settings;
+  assert.equal(on.auto_on, true);
+  assert.equal(on.push_at, '07:00', 'the buzz time is left alone');
+  await put('/settings', { push_at: '06:30' });
+  assert.equal((await (await fetch(base)).json()).settings.auto_on, true, 'and changing the buzz leaves the switch alone');
+  await put('/settings', { auto_on: false });
+  assert.equal((await (await fetch(base)).json()).settings.auto_on, false);
+});
+
 test('a question needs a question', async () => {
   const r = await fetch(`${base}/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [] }) });
   assert.equal(r.status, 400);
