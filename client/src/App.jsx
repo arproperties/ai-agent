@@ -217,6 +217,10 @@ export default function App() {
     if (id === chat.id) openChat(null);
     loadConvs();
   };
+  const pinConv = async (id, pinned) => {
+    await api.patch(`/conversations/${id}`, { pinned });
+    loadConvs();
+  };
   const renameConv = async (id, title) => {
     await api.patch(`/conversations/${id}`, { title });
     loadConvs();
@@ -251,7 +255,7 @@ export default function App() {
         <div className="h-full md:w-72">
         <Sidebar user={me} agents={agents} convs={convs} activeConvId={panel && panel !== 'activity' ? null : chat.id} filesOpen={panel === 'files'}
           messagesOpen={panel === 'messages'} unreadMessages={dm.unread} onMessages={() => { setPanel('messages'); setDrawer(false); }}
-          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} onRenameConv={renameConv} petOn={petOn} onPet={togglePet} faceOn={faceOn} onFace={me.external ? undefined : toggleFace}
+          onNewChat={() => openChat(null)} onOpenConv={openChat} onDeleteConv={deleteConv} onRenameConv={renameConv} onPinConv={pinConv} petOn={petOn} onPet={togglePet} faceOn={faceOn} onFace={me.external ? undefined : toggleFace}
           expiring={expiring.length} dueTodos={due.todos.length + due.routines.length} todosOpen={panel === 'todos'} onTodos={() => { setPanel('todos'); setDrawer(false); }}
           meetingsOpen={panel === 'meetings'} onMeetings={() => { setPanel('meetings'); setDrawer(false); }}
           translateOpen={panel === 'translate'} onTranslate={() => { setPanel('translate'); setDrawer(false); }}
