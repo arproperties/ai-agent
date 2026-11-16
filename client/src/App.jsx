@@ -25,6 +25,7 @@ import ActivityReports from './components/ActivityReports';
 import BrowserSettingsPage from './components/BrowserSettings';
 import BackupsPage from './components/Backups';
 import BillingPage from './components/Billing';
+import TeamActivityPage from './components/TeamActivity';
 import ServerHealthPage from './components/ServerHealth';
 import FeedsPage from './components/Feeds';
 import SharedInboxPage from './components/SharedInbox';
@@ -265,6 +266,7 @@ export default function App() {
           addressBookOpen={panel === 'addressbook'} onAddressBook={() => { setPanel('addressbook'); setDrawer(false); }}
           feedsOpen={panel === 'feeds'} onFeeds={() => { setFeedsView(null); setPanel('feeds'); setDrawer(false); }}
           billingOpen={panel === 'billing'} onBilling={() => { setPanel('billing'); setDrawer(false); }}
+          teamActivityOpen={panel === 'team'} onTeamActivity={() => { setPanel('team'); setDrawer(false); }}
           healthOpen={panel === 'health'} onHealth={() => { setPanel('health'); setDrawer(false); }}
           backupsOpen={panel === 'backups'} onBackups={() => { setPanel('backups'); setDrawer(false); }}
           aiKeysOpen={panel === 'aikeys'} onAiKeys={() => { setPanel('aikeys'); setDrawer(false); }}
@@ -332,6 +334,7 @@ export default function App() {
         {panel === 'addressbook' && me.role === 'master' && <AddressBookPage onBack={() => setPanel(null)} />}
         {panel === 'feeds' && me.role === 'master' && <FeedsPage key={feedsView || 'menu'} start={feedsView} onBack={() => { setFeedsView(null); setPanel(null); }} />}
         {panel === 'billing' && me.role === 'master' && <BillingPage onBack={() => setPanel(null)} />}
+        {panel === 'team' && me.role === 'master' && <TeamActivityPage onBack={() => setPanel(null)} />}
         {panel === 'health' && me.role === 'master' && <ServerHealthPage onBack={() => setPanel(null)} />}
         {panel === 'aikeys' && me.role === 'master' && <AiKeysPage onBack={() => setPanel(null)} />}
         {panel === 'apps' && me.role === 'master' && <AppsPage onBack={() => setPanel(null)} />}

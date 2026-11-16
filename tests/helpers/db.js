@@ -39,7 +39,7 @@ const TABLES = [
   'voice_profiles', 'meetings', 'meeting_parts', 'meeting_lines', 'transcripts', 'translations', 'translation_turns', 'team_reminders', 'team_reminder_people', 'team_reminder_photos', 'reminder_suggestions', 'suggestion_scans',
   'tenant_inbox', 'tenant_inbox_members', 'tenant_asks', 'responsibilities', 'responsibility_proposals', 'hr_links',
   'checklists', 'checklist_items', 'checklist_runs', 'checklist_run_items', 'diary_entries',
-  'buildings', 'building_jobs_seen',
+  'buildings', 'building_jobs_seen', 'team_activity_hidden',
   'inventory_areas', 'inventory_items', 'inventory_log', 'inventory_proposals',
   'module_access', 'module_rollouts', 'module_defaults', 'tenant_notices', 'tenant_notice_photos', 'pictures',
   'recurring_buildings', 'recurring_payments', 'recurring_payment_dues', 'recurring_payment_receipts', 'recurring_accounts', 'recurring_transfers', 'recurring_heads',
