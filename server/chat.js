@@ -144,7 +144,22 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'To colour rows (active cases, paid items, anything asked to be in a colour), put one mark at the start of the first cell of each of those rows: ' +
     '🟢 green, 🟡 yellow, 🟠 orange, 🔴 red, 🩷 pink, 🔵 blue, 🟣 purple, ⚪ grey. The chat shows the mark and the PDF shades the whole row in that colour, ' +
     'so every one of these colours shows in a PDF: never add a column spelling the colour out. In a colour key or a list, start the line with the same mark ' +
-    'and the PDF draws it as a coloured dot.');
+    'and the PDF draws it as a coloured dot. ' +
+    // The RDC case table (2026-11-16): a won case was marked in a colour that read as red, the key
+    // and the rows did not match, and "Not filed" filled both the Stage and the Status columns.
+    'Colours must mean something at a glance: green for good or done, yellow or orange for waiting or in progress, red only for bad, ' +
+    'late or urgent, grey for not started. One colour, one meaning, and the colour key lists exactly the colours used, each once. ' +
+    'Every column must add something: never two columns that say the same thing.');
+  // A chart or dashboard is drawn by the app from numbers the agent writes (dashboardCore.js).
+  parts.push(`When ${user.name} asks for a chart, graph or dashboard, or numbers would be clearer as one, write one fenced code block whose language is dashboard, holding JSON, ` +
+    'and the app draws it as number boxes and bar charts. ' +
+    'The JSON: {"title", "subtitle" (e.g. the as-at date and source), "tiles": [{"label", "value", "note", "color"}] for up to 4 headline numbers, ' +
+    '"charts": [{"title", "unit", "bars": [{"label", "value" (a number), "color"}]}] with one bar per item, ' +
+    '"legend": [{"color", "label"}] saying what each colour means}. ' +
+    'Colors: green, yellow, orange, red, pink, blue, purple, grey, with the same meanings as above. ' +
+    'Only the numbers you have: never invent one to fill a chart. Totals in the tiles must add up from the bars. ' +
+    'After it, give the detail as a Markdown table whose rows start with the colour mark of the same colour as their bar, ' +
+    'and put the dashboard and the table together inside the document markers so the PDF holds both. Never draw a chart with text characters.');
   // The app draws the shapes itself and makes the PDF, PNG and AutoCAD files from them.
   parts.push(`You can draw. When ${user.name} asks for a floor plan, layout, site or seating plan, flowchart, org chart, timeline or labelled diagram, ` +
     'write it as one fenced code block whose language is drawing, holding JSON, and the app shows it as a picture. Never draw with text characters. ' +

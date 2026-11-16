@@ -18,6 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import { readDashboard, barShare, barValue } from './dashboardCore.js';
 
 const OPEN = /^[ \t]*<!--\s*doc\s*-->[ \t]*$/im;
 const CLOSE = /^[ \t]*<!--\s*\/doc\s*-->[ \t]*$/im;
@@ -152,7 +153,9 @@ export function parseBlocks(markdown) {
       const fence = t.slice(0, 3);
       const code = [];
       while (++i < lines.length && !lines[i].trim().startsWith(fence)) code.push(lines[i]);
-      blocks.push({ type: 'code', lines: code });
+      // A dashboard (dashboardCore.js) is drawn as its boxes and bars, not printed as JSON.
+      const dashboard = /^```dashboard\b/.test(t) && readDashboard(code.join('\n'));
+      blocks.push(dashboard ? { type: 'dashboard', dashboard } : { type: 'code', lines: code });
     } else if ((m = /^(#{1,6})\s+(.*?)\s*#*$/.exec(t))) {
       flush(); blocks.push({ type: 'heading', level: m[1].length, text: m[2] });
     } else if (/^([-*_])(\s*\1){2,}$/.test(t)) {
@@ -477,6 +480,69 @@ export async function renderPdf({ title, markdown, date = new Date() }) {
     } else if (b.type === 'table') {
       drawTable(b);
       y -= 10;
+    } else if (b.type === 'dashboard') {
+      drawDashboard(b.dashboard);
+      y -= 10;
+    }
+  }
+
+  // The dashboard as in the chat: its number boxes in rows of up to four, then each bar
+  // chart with the labels on the left, then the colour key as dots.
+  function drawDashboard(d) {
+    const mark = (name) => Object.values(MARKS).find((m) => m.name === name) || MARKS['🔵'];
+    const line = (text, size, max, base = {}) => wrap([{ text: sanitize(text) }], size, max, base)[0];
+    if (d.title) { y -= 4; room(40); flow([{ text: sanitize(d.title) }], { size: 12.5, base: { bold: true }, color: ACCENT, rtl: rtlOf(d.title) }); }
+    if (d.subtitle) flow([{ text: sanitize(d.subtitle) }], { size: 9, color: SOFT, rtl: rtlOf(d.subtitle) });
+    if (d.title || d.subtitle) y -= 4;
+    const gap = 8;
+    for (let r = 0; r < d.tiles.length; r += 4) {
+      const row = d.tiles.slice(r, r + 4);
+      const cols = Math.min(4, d.tiles.length);
+      const w = (width - gap * (cols - 1)) / cols;
+      const h = row.some((t) => t.note) ? 54 : 44;
+      room(h + gap);
+      row.forEach((t, i) => {
+        const x = MARGIN.x + i * (w + gap);
+        page.drawRectangle({ x, y: y - h, width: w, height: h, color: FILL });
+        if (t.color) page.drawRectangle({ x, y: y - h, width: 3, height: h, color: mark(t.color).dot });
+        drawLine(line(t.label, 8, w - 16), x + 9, y - 13, SOFT);
+        drawLine(line(t.value, 15, w - 16, { bold: true }), x + 9, y - 32, INK);
+        if (t.note) drawLine(line(t.note, 7.5, w - 16), x + 9, y - 45, SOFT);
+      });
+      y -= h + gap;
+    }
+    for (const c of d.charts) {
+      y -= 4;
+      if (c.title) { room(40); flow([{ text: sanitize(c.title) }], { size: 10.5, base: { bold: true }, rtl: rtlOf(c.title) }); }
+      const size = 8.5;
+      const labelW = Math.min(width * 0.38, Math.max(...c.bars.map((b) => textWidth(sanitize(b.label), size))) + 10);
+      const valueW = Math.max(...c.bars.map((b) => textWidth(sanitize(barValue(c, b)), size))) + 10;
+      const barMax = width - labelW - valueW;
+      for (const b of c.bars) {
+        room(17);
+        drawLine(line(b.label, size, labelW - 10), MARGIN.x, y - 11, INK);
+        const bw = Math.max(2, barShare(c, b) * barMax);
+        page.drawRectangle({ x: MARGIN.x + labelW, y: y - 13, width: bw, height: 10, color: mark(b.color).dot });
+        drawLine(line(barValue(c, b), size, valueW), MARGIN.x + labelW + bw + 5, y - 11, SOFT);
+        y -= 17;
+      }
+    }
+    // Each colour with its own label and a wide gap before the next, so a dot is never read
+    // as belonging to the word before it.
+    if (d.legend.length) {
+      y -= 4;
+      const size = 9;
+      room(15);
+      let x = MARGIN.x;
+      for (const l of d.legend) {
+        const text = line(l.label, size, width - 14);
+        const w = 12 + lineWidth(text);
+        if (x > MARGIN.x && x + w > MARGIN.x + width) { y -= 15; room(15); x = MARGIN.x; }
+        page.drawCircle({ x: x + 3.5, y: y - size + 3, size: 3.5, color: mark(l.color).dot });
+        drawLine(text, x + 12, y - size, SOFT);
+        x += w + 18;
+      }
+      y -= 15;
     }
   }
 
