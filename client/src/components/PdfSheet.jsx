@@ -4,6 +4,8 @@ import remarkGfm from 'remark-gfm';
 import { rehypeMarkRows } from '../lib/markRows';
 import { api } from '../lib/api';
 import { documentPart } from '../lib/replyDoc';
+import { splitDashboards } from '../../../server/dashboardCore.js';
+import { DashboardCard } from './Dashboard';
 import Icon from './Icon';
 import Sheet from './Sheet';
 
@@ -52,7 +54,11 @@ export default function PdfSheet({ messageId, content, own = false, onClose, onO
       </p>
 
       <div className="paper md mb-4 max-h-[46dvh] overflow-auto md:max-h-[64dvh] rounded-2xl bg-white px-5 py-4 text-[13px] text-[#1c1a2e] shadow-inner">
-        {part ? <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypeMarkRows}>{part.markdown}</Markdown> : <p>There is no document in this reply.</p>}
+        {/* A dashboard is drawn as it is in the chat (in the light colours, on the paper), not shown as its JSON. */}
+        {part ? splitDashboards(part.markdown).map((p, i) => (p.text !== undefined
+          ? <Markdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={rehypeMarkRows}>{p.text}</Markdown>
+          : <div key={i} data-mode="light" className="not-md">{p.pending ? null : <DashboardCard dashboard={p.dashboard} />}</div>))
+          : <p>There is no document in this reply.</p>}
       </div>
 
       {error && <p className="mb-3 text-sm text-bad">{error}</p>}

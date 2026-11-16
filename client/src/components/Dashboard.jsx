@@ -78,7 +78,7 @@ function Donut({ chart, ask }) {
         {parts.map((p, i) => (
           <Tap key={i} ask={ask && (() => ask(p))} className="flex w-full items-center gap-2 px-1.5 py-1">
             <span className="size-2.5 shrink-0 rounded-full" style={{ background: `rgb(${rgb(p.color)})`, boxShadow: glow(p.color, 0.7) }} />
-            <span dir="auto" className="min-w-0 flex-1 truncate text-[12px] text-txt/90">{p.label}</span>
+            <span dir="auto" className="line-clamp-2 min-w-0 flex-1 text-[12px] leading-snug text-txt/90">{p.label}</span>
             <span className="shrink-0 text-[12px] tabular-nums text-mute">{barValue(chart, p)} · {Math.round(p.share * 100)}%</span>
           </Tap>
         ))}

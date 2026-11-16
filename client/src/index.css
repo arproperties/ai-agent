@@ -371,6 +371,8 @@ body::after, .sky::after {
 .md h1 { font-size: 1.25em; } .md h2 { font-size: 1.12em; } .md h3 { font-size: 1em; }
 .md ul { list-style: disc; padding-left: 1.3em; } .md ol { list-style: decimal; padding-left: 1.3em; }
 .md li + li { margin-top: 0.25em; }
+/* A dashboard inside a document preview (PdfSheet.jsx) keeps its own layout, not the document's list styles. */
+.md .not-md ol { list-style: none; padding-left: 0; } .md .not-md li + li { margin-top: 0; }
 .md a { color: var(--color-p3); text-decoration: underline; }
 .md strong { color: var(--color-hi); font-weight: 600; }
 .md code { background: color-mix(in srgb, var(--color-white) 8%, transparent); padding: 0.1em 0.35em; border-radius: 6px; font-size: 0.9em; }
