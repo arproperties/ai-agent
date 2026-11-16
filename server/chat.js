@@ -155,13 +155,16 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'Every column must add something: never two columns that say the same thing.');
   // A chart or dashboard is drawn by the app from numbers the agent writes (dashboardCore.js).
   parts.push(`When ${user.name} asks for a chart, graph or dashboard, or numbers would be clearer as one, write one fenced code block whose language is dashboard, holding JSON, ` +
-    'and the app draws it as number boxes and bar charts. ' +
-    'The JSON: {"title", "subtitle" (e.g. the as-at date and source), "tiles": [{"label", "value", "note", "color"}] for up to 4 headline numbers, ' +
-    '"charts": [{"title", "unit", "bars": [{"label", "value" (a number), "color"}]}] with one bar per item, ' +
-    '"legend": [{"color", "label"}] saying what each colour means}. ' +
+    'and the app draws it. First get the real data with your tools, then pick the charts that answer the question best. ' +
+    'The JSON: {"title", "subtitle" (the as-at date and source), "tiles": [{"label", "value", "note", "color"}] for up to 4 headline numbers, ' +
+    '"charts": [{"type", "title", "unit", "items": [...]}], "legend": [{"color", "label"}] saying what each colour means}. Chart types and their items: ' +
+    '"bar" to compare items, [{"label", "value", "color"}]; "donut" for parts of one whole (up to 8 slices), [{"label", "value", "color"}]; ' +
+    '"line" for a trend over time, in date order, [{"label" (the date or month), "value"}] with the chart\'s own "color"; ' +
+    '"gauge" for progress against a target, [{"label", "value", "max", "color"}]; "timeline" for dates and deadlines, [{"date", "label", "note", "color"}]. ' +
+    'Use one to three charts, never two showing the same numbers. ' +
     'Colors: green, yellow, orange, red, pink, blue, purple, grey, with the same meanings as above. ' +
-    'Only the numbers you have: never invent one to fill a chart. Totals in the tiles must add up from the bars. ' +
-    'After it, give the detail as a Markdown table whose rows start with the colour mark of the same colour as their bar, ' +
+    'Only the numbers you have: never invent one to fill a chart. Totals in the tiles must add up from the charts. ' +
+    'After it, give the detail as a Markdown table when there is one, its rows starting with the colour mark of the same colour as their bar, ' +
     'and put the dashboard and the table together inside the document markers so the PDF holds both. Never draw a chart with text characters.');
   // The app draws the shapes itself and makes the PDF, PNG and AutoCAD files from them.
   parts.push(`You can draw. When ${user.name} asks for a floor plan, layout, site or seating plan, flowchart, org chart, timeline or labelled diagram, ` +
