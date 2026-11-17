@@ -76,6 +76,9 @@ Each feature is usually one server file exporting `xxxRoutes` (an Express Router
 ### aol-connector/ (not part of Reem)
 A separate small program stored here only for GitHub: the AOL Mail connector for Claude.ai (own `package.json`, pm2 `aol-connector`, `/var/www/aol-connector`, its own deploy; see `aol-connector/CLAUDE.md`). Reem's build, tests and deploy never include it. Reem's side of it is `server/apps.js` (Settings → Apps).
 
+### business-mail-connector/ (not part of Reem)
+A copy of aol-connector for **each person's own** work mailbox (Titan) in their own Claude.ai (own `package.json`, pm2 `business-mail-connector`, `/var/www/business-mail-connector`, port 3003, nginx `/mail-mcp/`; see `business-mail-connector/CLAUDE.md`). Reem's side is `server/mailConnector.js`: module `claude_mail`, one link per person to the mailbox they connected under Email, sending only when their "Allow sending and actions" switch is on; the master's list is in Settings → Apps.
+
 ### activity-tracker/ (not part of Reem)
 The Windows tray app for employee PCs: counts time per program and sends the day to Reem (own `package.json`, own `CLAUDE.md`, ships as an unsigned NSIS installer Francis runs on each PC; never deployed to the server, never in Reem's build or tests). Reem's side is `server/tracker.js`: the public door `/api/from-tracker/*` (one key per PC, sha256 kept, like `fromSaifsys.js`), the master's `/api/tracker` routes behind Settings → Activity reports, and `startTracker()`, the 19:00 Dubai email to HR, which runs only under `sending` and only when the page's switch is on. No AI anywhere in it. The JSON contract between the two is in `docs/superpowers/plans/2026-11-15-activity-tracker.md`.
 

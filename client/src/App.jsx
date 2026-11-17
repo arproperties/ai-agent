@@ -21,6 +21,7 @@ import MailRoutingPage from './components/MailRouting';
 import AddressBookPage from './components/AddressBook';
 import AiKeysPage from './components/AiKeys';
 import AppsPage from './components/Apps';
+import ClaudeMailPage from './components/ClaudeMail';
 import ActivityReports from './components/ActivityReports';
 import BrowserSettingsPage from './components/BrowserSettings';
 import BackupsPage from './components/Backups';
@@ -66,7 +67,7 @@ if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || noti
 
 // The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
 const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
-  duties: 'duties', diary: 'diary', checklists: 'checklists', attendance: 'attendance', tracker: 'activity_reports', memory: 'memory', email: 'email', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', case: 'case_focus' };
+  duties: 'duties', diary: 'diary', checklists: 'checklists', attendance: 'attendance', tracker: 'activity_reports', memory: 'memory', email: 'email', claudemail: 'claude_mail', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', case: 'case_focus' };
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -286,7 +287,7 @@ export default function App() {
           docRenewalsOpen={panel === 'docrenewals'} onDocRenewals={() => { setJumpToDocRenewal(null); setPanel('docrenewals'); setDrawer(false); }}
           modules={modules || []}
           onEditAgent={(a) => { setEditing(a); setDrawer(false); }} onFiles={() => { setPanel('files'); setDrawer(false); }} onMemory={() => { setPanel('memory'); setDrawer(false); }}
-          onEmail={() => { setPanel('email'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
+          onEmail={() => { setPanel('email'); setDrawer(false); }} claudeMailOpen={panel === 'claudemail'} onClaudeMail={() => { setPanel('claudemail'); setDrawer(false); }} onPeople={() => { setPanel('people'); setDrawer(false); }} onActivity={() => { setPanel('activity'); setDrawer(false); }}
           onLogout={logout} onSwitchAccount={switchAccount} onAddAccount={() => { setAdding(true); setDrawer(false); }} onClose={() => setDrawer(false)} onCollapse={() => toggleRail(true)} />
         </div>
       </aside>
@@ -359,6 +360,7 @@ export default function App() {
         {panel === 'todos' && <ListsPage onBack={() => setPanel(null)} onChanged={loadDue} />}
         {panel === 'memory' && <MemoryPage onBack={() => setPanel(null)} />}
         {panel === 'email' && <EmailPage returned={outlookReturn} onBack={() => setPanel(null)} />}
+        {panel === 'claudemail' && <ClaudeMailPage onBack={() => setPanel(null)} onEmail={() => setPanel('email')} />}
         {panel === 'people' && <AdminPage agents={agents} me={me} onBack={() => setPanel(null)} />}
         {panel === 'messages' && <MessengerPage dm={dm} voiceEnabled={config.voice} openChatId={jumpToChat} onOpened={chatOpened} onBack={() => setPanel(null)} />}
         {/* An agent is a page over whatever is open, last so it is on top. */}

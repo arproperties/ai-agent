@@ -43,7 +43,7 @@ function Group({ title, open, onToggle, count = 0, q = '', children }) {
   );
 }
 
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, teamActivityOpen, onTeamActivity, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, trackerOpen, onTracker, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, diaryOpen, onDiary, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, teamActivityOpen, onTeamActivity, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, trackerOpen, onTracker, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, diaryOpen, onDiary, attendanceOpen, onAttendance, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, claudeMailOpen, onClaudeMail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -126,6 +126,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
           <Group title="People & mail" {...fold('People & mail')}>
             {has('document_renewals') && <Row role="menuitem" icon={<FileClock size={17} strokeWidth={1.75} />} label="Document renewals" active={docRenewalsOpen} onClick={go(onDocRenewals)} />}
             {has('email') && <Row role="menuitem" icon={<Icon name="mail" size={17} />} label="Email" onClick={go(onEmail)} />}
+            {has('claude_mail') && onClaudeMail && <Row role="menuitem" icon={<Plug size={17} strokeWidth={1.75} />} label="Email in Claude.ai" active={claudeMailOpen} onClick={go(onClaudeMail)} />}
             {/* The emails Mail routing passed on to them, answered from the shared address. */}
             {sharedInbox && <Row role="menuitem" icon={<Inbox size={17} strokeWidth={1.75} />} label="Shared inbox" active={sharedInboxOpen} onClick={go(onSharedInbox)} />}
             {/* The shared mailbox: who each email goes to, and who sent what. The master's alone. */}

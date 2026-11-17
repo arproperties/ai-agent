@@ -32,6 +32,7 @@ import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
 import { aiKeyRoutes, hasKey } from './aiKeys.js';
 import { appRoutes, connectorRoutes } from './apps.js';
+import { mailConnectorRoutes, mailConnectorPeopleRoutes, mailConnectorDoor } from './mailConnector.js';
 import { browserRoutes } from './browser/routes.js';
 import { recoverAtBoot as recoverBrowser } from './browser/engine.js';
 import { docCategoryRoutes, seedCategories } from './docCategories.js';
@@ -123,6 +124,7 @@ app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in 
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api/from-tracker', fromTracker, fromTrackerRoutes); // the activity tracker on each employee PC sends its day; own key per PC, see tracker.js
+app.use('/api/connector/business', mailConnectorDoor); // the business mail connector asks which person's mailbox a link opens; this machine only (mailConnector.js)
 app.use('/api/connector', connectorRoutes); // the AOL connector server asks which mailbox a link opens; this machine only (apps.js)
 app.use('/api/case-share', publicCaseRoutes); // a case folder shared by link: anyone with it, while it is on (caseShare.js)
 app.use('/api', requireUser); // everything below needs a signed-in user
@@ -178,7 +180,9 @@ app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come 
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
 app.use('/api/ai-keys', aiKeyRoutes); // the company's AI keys and anyone's own (master only)
+app.use('/api/apps/mail-people', mailConnectorPeopleRoutes); // who has an Email in Claude.ai link, to switch one off (master only)
 app.use('/api/apps', appRoutes); // mailboxes connected to Claude.ai as custom connectors (master only)
+app.use('/api/mail-connector', needsModule('claude_mail'), mailConnectorRoutes); // a person's own mailbox as a Claude.ai connector (mailConnector.js)
 app.use('/api/browser', browserRoutes); // Reem using websites from the chat: live window, saved logins, switches (module browser)
 app.use('/api', docCategoryRoutes); // Document Renewals: the categories and types a Shelf file can be filed as
 app.use('/api/document-renewals', documentRenewalRoutes); // the Document Renewals screen (module holders and the master)
