@@ -201,7 +201,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
           <Settings s={data.settings} agents={data.agents} inbox={data.inbox} onSaved={() => { load(); setSettingsOpen(false); }} />
         </Sheet>
       )}
-      {history && <SaifsysSheet lease={history} onClose={() => setHistory(null)} />}
+      {history && <SaifsysSheet lease={history} onClose={() => setHistory(null)} onTaken={(r) => { setHistory(null); load(); if (r?.id) setOpen(r.id); }} />}
       {starting && <StartSheet lease={starting} onClose={() => setStarting(null)} onDone={(r) => { setStarting(null); load(); if (r?.id) setOpen(r.id); }} />}
     </Page>
   );
@@ -247,10 +247,14 @@ const STEP = {
   decision_accept: 'Accepted the offer', decision_negotiate: 'Asked to discuss', decision_reject: 'Said no to the renewal',
   admin_reject: 'Rejected the renewal', admin_negotiation_reply: 'Replied to the tenant', document_uploaded: 'Uploaded a paper',
   contract_opened: 'Opened the contract', electronic_sign: 'Signed the contract', reem_started: 'Started from Reem',
+  negotiation_message_tenant: 'Wrote a message', negotiation_finalize_accept: 'Accepted the offer', negotiation_finalize_reject: 'Said no to the renewal',
+  reem_takeover: 'Took it over in Reem',
 };
 // Steps whose text is a person's own words, worth showing under the step.
-const SAID = ['decision_negotiate', 'decision_reject', 'admin_negotiation_reply'];
+const SAID = ['decision_negotiate', 'decision_reject', 'admin_negotiation_reply', 'negotiation_message_tenant'];
 const CHOSE = { accept: 'Accept', negotiate: 'Discuss', reject: 'Not renewing' };
+// Past the talking in saifsys: the staff finish these there, Reem does not take them over.
+const TOO_FAR = ['contract_ready', 'signed', 'completed', 'converted'];
 const stamp = (s) => (s ? `${day(s)}${String(s).length > 10 ? `, ${String(s).slice(11, 16)}` : ''}` : '');
 
 const Fact = ({ label, children }) => (children ? (
@@ -258,17 +262,36 @@ const Fact = ({ label, children }) => (children ? (
 ) : null);
 
 /** What saifsys holds on a lease's renewal: who did what, what the tenant said, step by step. */
-function SaifsysSheet({ lease, onClose }) {
+function SaifsysSheet({ lease, onClose, onTaken }) {
   const [list, setList] = useState(null);
   const [error, setError] = useState('');
+  const [taking, setTaking] = useState(false);
   useEffect(() => {
     api.get(`/lease-renewals/saifsys/${lease.lease_id}`).then((r) => setList(r.renewals)).catch((e) => setError(e.message));
   }, [lease.lease_id]);
+  // Take over: the newest renewal there becomes Reem's. Not once the lease has ended, and not
+  // when the contract is already with the tenant or signed: the staff finish those in saifsys.
+  const newest = list?.[0];
+  const canTake = newest && !lease.expired && !TOO_FAR.includes(newest.status);
+  const take = () => {
+    setTaking(true);
+    setError('');
+    api.post(`/lease-renewals/saifsys/${lease.lease_id}/takeover`, {}).then(onTaken).catch((e) => { setError(e.message); setTaking(false); });
+  };
   return (
     <Sheet title={`${lease.building} · Unit ${lease.unit}`} icon={<History size={18} className="text-mute" />} wide="text" onClose={onClose}>
       <div className="space-y-5">
         <p className="text-sm text-mute">{lease.tenant} · ends {day(lease.end_date)} · the renewal as the staff ran it in saifsys</p>
         <Problem text={error} />
+        {canTake && (
+          <div className="space-y-3 rounded-2xl border border-p1/30 bg-p1/[0.06] p-4">
+            <p className="text-sm">
+              <span className="font-medium">Carry it on in Reem.</span> The same renewal continues from where the staff stopped{newest.status === 'rejected' ? ', opened again' : ''}:
+              no new offer goes to the tenant, and nothing is sent until you tap Send. saifsys locks it for the staff, and the tenant can still answer in the tenant portal or by email.
+            </p>
+            <Btn primary busy={taking} onClick={take}><ArrowRight size={15} /> Take over in Reem</Btn>
+          </div>
+        )}
         {!error && !list && <div className="grid place-items-center py-10 text-mute"><Loader2 className="animate-spin" /></div>}
         {list && list.length === 0 && <p className="py-8 text-center text-sm text-mute">saifsys has no renewal on this lease.</p>}
         {(list || []).map((w) => {
@@ -929,7 +952,7 @@ function Renewal({ id, onBack, chat = null }) {
             </div>
             <Stat label="Current" value={aed(r.annual_rent)} muted />
             <ArrowRight size={16} className="hidden shrink-0 text-mute sm:block" />
-            <Stat label={`${rn.agreed ? 'Agreed' : 'Our offer'}${rn.rentSource?.kind === 'rera_index' ? ' · RERA index' : rn.rentSource?.kind === 'dld_api' ? ' · DLD API' : ''}`}
+            <Stat label={`${rn.agreed ? 'Agreed' : 'Our offer'}${rn.rentSource?.kind === 'rera_index' ? ' · RERA index' : rn.rentSource?.kind === 'dld_api' ? ' · DLD API' : rn.rentSource?.kind === 'saifsys' ? ' · the staff\'s, in saifsys' : ''}`}
               value={aed(rn.agreed ?? rn.offer)} strong
               extra={rise !== null && Math.abs(rise) >= 0.05 ? <span className={rise > 0 ? 'text-ok' : 'text-warn'}>{rise > 0 ? '+' : ''}{rise.toFixed(1)}%</span> : null} />
             {rn.tenantOffer && !rn.agreed && <Stat label="Tenant asks" value={aed(rn.tenantOffer)} />}
@@ -1394,7 +1417,7 @@ function Event({ e, r, newest, busy, onReadAgain }) {
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <p className="font-medium leading-snug">{e.title}</p>
-            <p className="text-xs text-mute">{who} · {when(e.at)}{newest ? ' · latest' : ''}</p>
+            <p className="text-xs text-mute">{who}{e.data?.via === 'portal' ? ' · in the tenant portal' : ''} · {when(e.at)}{newest ? ' · latest' : ''}</p>
           </div>
           {e.kind === 'out' && e.status === 'failed' && <span className="flex items-center gap-1 text-xs text-bad"><Clock size={12} /> Not sent yet</span>}
           {sending && <span className="flex items-center gap-1 text-xs text-mute"><Clock size={12} /> Sending…</span>}

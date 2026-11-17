@@ -1104,3 +1104,133 @@ test('a renewal the staff ran in saifsys opens with who did what; an old saifsys
   assert.equal(old.status, 502);
   assert.match(old.body.error, /not been uploaded/);
 });
+
+// ---------- taking over a renewal the staff ran in saifsys ----------
+
+// saifsys's log of the renewal the staff ran on LEASE: offered, the tenant asked to discuss, rejected.
+const T = Math.floor(NOW / 1000); // the test's now: saifsys's log is before it, the portal's news after
+const STAFF_LOG = [
+  { id: 500, type: 'admin_send_renewal_notice', text: 'Renewal notice email sent', by: 'A Staff', tenant: false, ts: T - 50 * 86400 },
+  { id: 519, type: 'notice_opened', text: 'Tenant opened renewal notice in portal.', by: 'Tenant', tenant: true, ts: T - 40 * 86400 },
+  { id: 520, type: 'decision_negotiate', text: 'Need to discuss the rent', by: 'Tenant', tenant: true, ts: T - 40 * 86400 + 34 },
+  { id: 525, type: 'admin_reject', text: 'Renewal workflow rejected by admin.', by: 'A Staff', tenant: false, ts: T - 36 * 86400 },
+];
+const STAFF_FEES = { admin: 1500, chiller: 8000, parking: 0, small_store: 0, big_store: 0, ev: 0, pest: 0 };
+
+/** The world with a staff renewal (#99) on the lease. log grows as the tenant acts in the portal. */
+function staffWorld({ lease = { ...LEASE, saifsys_rejected: true }, was = 'rejected', log = [...STAFF_LOG], replies = [] } = {}) {
+  stub({ leases: [lease], replies });
+  world.log = log;
+  R.useForTests({
+    ask: async (module, action) => {
+      if (`${module}/${action}` === 'realestate/renewals_due') return { ok: true, leases: [lease] };
+      if (`${module}/${action}` === 'realestate/renewal_history') return { ok: true, renewals: [{ workflow_id: 99, status: 'negotiation', events: world.log, messages: [] }] };
+      if (`${module}/${action}` === 'legal/lease') return { ok: true, lease: { lease: { id: 294, number: 'L-7', status: 'active' }, ejari: {}, saifsys_legal: { cases: [] } } };
+      if (`${module}/${action}` === 'legal/leases') return { ok: true, leases: [] };
+      throw new Error(`unexpected ask ${module}/${action}`);
+    },
+    act: async (module, action, body) => {
+      world.acts.push({ action, ...body });
+      if (action === 'takeover') {
+        world.log.push({ id: 734, type: 'reem_takeover', text: 'Taken over in Reem', by: 'Care', tenant: false, ts: T });
+        return { renewal: { workflow_id: 99, status: 'negotiation', was, proposed_rent: 39600, cheques: 3, fees: STAFF_FEES } };
+      }
+      if (action === 'quote') return { quote: { ...quoteOf(body.rent), fees: { admin: body.admin_fees, chiller: body.chiller_charges, chiller_shown: true } } };
+      if (action === 'contract') return { contract: { name: 'contract_525.pdf', data: Buffer.from('%PDF-saifsys-contract').toString('base64') } };
+      return { renewal: { workflow_id: body.workflow_id } };
+    },
+  });
+}
+const saifsysLine = (id) => db.prepare('SELECT kind, title, body, status, data, at FROM lease_renewal_events WHERE renewal_id = ? ORDER BY at, id').all(id);
+
+test('Take over: the staff\'s rejected renewal carries on in Reem, same renewal, nothing sent, the tenant\'s last word waiting', async () => {
+  const boss = await setup();
+  staffWorld({ replies: [{ intent: 'unclear', summary: 'Wants to discuss the rent', dispute: false, asksLess: true }] });
+  const r = await R.takeover(boss, LEASE.lease_id);
+
+  // The same saifsys renewal, at the staff's rent and cheques, priced with the staff's charges.
+  assert.equal(r.status, 'negotiating');
+  assert.equal(r.workflow_id, 99);
+  assert.equal(r.offer, 39600);
+  assert.equal(r.cheques, 3);
+  assert.equal(r.auto, false);
+  assert.deepEqual(world.acts.map((a) => a.action), ['takeover', 'quote']);
+  assert.equal(world.acts[1].admin_fees, 1500);
+  assert.equal(world.acts[1].chiller_charges, 8000);
+  assert.equal(world.sent.length, 0); // no email: a second offer would only confuse the tenant
+
+  // What happened in saifsys is on the timeline, under the day it happened.
+  const t = await saifsysLine(r.id);
+  assert.match(t[0].title, /A Staff, in saifsys: sent the renewal notice/);
+  assert.equal(Number(t[0].at), T - 50 * 86400);
+  assert.match(t[1].title, /Tenant, in the portal: opened the notice/);
+  assert.match(t[3].title, /A Staff, in saifsys: rejected the renewal/);
+  assert.match(t[4].title, /Taken over from saifsys \(it was rejected there\)/);
+  // The tenant's unanswered word is read like an email and waits for a person.
+  assert.equal(t[2].kind, 'in');
+  assert.equal(t[2].body, 'Need to discuss the rent');
+  assert.equal(t[2].status, 'read');
+  assert.equal(t[2].data.via, 'portal');
+  assert.equal(r.waiting, 'reply');
+  assert.equal(r.portal_seen, 734);
+
+  await assert.rejects(R.takeover(boss, LEASE.lease_id), /already in Reem/);
+});
+
+test('Take over: a reply goes by email and into the portal; what the tenant does in the portal comes in like an email', async () => {
+  const boss = await setup();
+  staffWorld({ replies: [{ intent: 'unclear', summary: 'Wants to discuss the rent', dispute: false }, { intent: 'accept', summary: 'Accepts', dispute: false }] });
+  const r = await R.takeover(boss, LEASE.lease_id);
+
+  await R.send(boss, { id: r.id, action: 'reply', text: 'Dear Mohamed,\n\nHappy to discuss. The rent follows the index.' });
+  assert.equal(world.sent.length, 1);
+  const note = world.mirrored.find((m) => m.action === 'note' && /Email to the tenant/.test(m.message));
+  assert.equal(note.to_tenant, true); // saifsys shows it to the tenant in the portal
+  assert.match(note.text, /Happy to discuss/);
+
+  // Nothing new in the portal: nothing comes in.
+  assert.equal(await R.checkPortal(), 0);
+
+  // The tenant accepts in the portal, and uploads a paper there.
+  world.log.push({ id: 800, type: 'reem_email', text: 'Email to the tenant', by: 'Care', tenant: false, ts: T + 100 });
+  world.log.push({ id: 801, type: 'decision_accept', text: 'Decision: accept', by: 'Tenant', tenant: true, ts: T + 200 });
+  world.log.push({ id: 802, type: 'document_uploaded', text: 'passport: p.pdf', by: 'Tenant', tenant: true, ts: T + 300 });
+  assert.equal(await R.checkPortal(), 1);
+  await R.readInbound();
+  const after = await R.getRenewal(r.id);
+  assert.equal(after.portal_seen, 802);
+  assert.equal(after.waiting, 'reply');
+  const t = await saifsysLine(r.id);
+  const came = t.find((e) => e.kind === 'in' && Number(e.at) === T + 200);
+  assert.equal(came.body, 'I accept the renewal offer.');
+  assert.equal(came.status, 'read');
+  assert.ok(t.some((e) => /Tenant, in the portal: uploaded a paper/.test(e.title)));
+  assert.ok(world.pushes.some((p) => /uploaded a paper in the tenant portal/.test(p)));
+
+  // Read once: the same lines are not taken in again.
+  assert.equal(await R.checkPortal(), 0);
+});
+
+test('Take over: an unfinished renewal can be taken; a lease with none, or one Reem already runs, cannot; a renewal Reem started stays email only', async () => {
+  const boss = await setup();
+  // Unfinished: the staff sent the notice and left it.
+  staffWorld({ lease: { ...LEASE, saifsys_renewal: 'notice_sent' }, was: 'notice_sent', log: [STAFF_LOG[0]] });
+  const r = await R.takeover(boss, LEASE.lease_id);
+  assert.equal(r.status, 'negotiating');
+  assert.equal(r.waiting, null); // the tenant has said nothing yet
+  assert.match((await saifsysLine(r.id)).at(-1).title, /it was notice sent there/);
+
+  // No staff renewal on the lease: there is nothing to take over.
+  await setup();
+  staffWorld({ lease: { ...LEASE } });
+  await assert.rejects(R.takeover(boss, LEASE.lease_id), /no renewal for this lease in saifsys/);
+  assert.equal(world.acts.length, 0);
+
+  // A renewal Reem started itself: its emails are not copied to the portal.
+  const boss2 = await setup();
+  stub();
+  const own = await start(boss2);
+  assert.equal(own.portal_seen, null);
+  assert.ok(world.mirrored.filter((m) => m.action === 'note').every((m) => !m.to_tenant));
+  assert.equal(await R.checkPortal(), 0);
+});
