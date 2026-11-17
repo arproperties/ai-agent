@@ -3,19 +3,26 @@ import { Loader2, Copy, Check, RefreshCw, Trash2, Plug } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 
-// Settings → Email in Claude.ai (server/mailConnector.js): a person's own work mailbox in
-// their own Claude.ai. The mailbox is the one already connected under Email, so there is
-// no password to type here: one tap makes the private link to paste into Claude.ai.
+// Email in Claude.ai (server/mailConnector.js): a person's own work mailbox in their own
+// Claude.ai. The mailbox is the one already connected under Email, so there is no password
+// to type here: one tap makes the private link to paste into Claude.ai. The same box sits
+// on its own page in the menu and under the mailbox on the Email page, where people look.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const BUTTON = 'flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white disabled:opacity-60';
 
-export default function ClaudeMailPage({ onBack, onEmail }) {
+/**
+ * The box itself. On the Email page (`inEmail`) it shows nothing for someone without the
+ * module or without a mailbox: the card above it is where they connect one.
+ */
+export function ClaudeMailBox({ onEmail, inEmail = false }) {
   const [state, setState] = useState(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  useEffect(() => { api.get('/mail-connector').then(setState).catch((e) => { setError(e.message); setState({}); }); }, []);
+  useEffect(() => {
+    api.get('/mail-connector').then(setState).catch((e) => { if (!inEmail) setError(e.message); setState({ hidden: inEmail }); });
+  }, [inEmail]);
 
   const run = async (what, fn) => {
     setBusy(what); setError('');
@@ -30,11 +37,10 @@ export default function ClaudeMailPage({ onBack, onEmail }) {
   const remove = () => confirm('Remove the link? Claude.ai will stop reading your mail.')
     && run('remove', () => api.del('/mail-connector'));
 
+  if (inEmail && (!state || state.hidden || !state.mailbox)) return null;
   return (
-    <Page title="Email in Claude.ai" onBack={onBack}>
-      <p className="mb-4 text-sm leading-relaxed text-mute">
-        Use your work mailbox inside your own Claude.ai: Claude can search and read your emails and attachments, and send for you.
-      </p>
+    <>
+      {inEmail && <h3 className="mb-1 mt-1 text-sm font-medium">Use this mailbox in Claude.ai</h3>}
       {state === null ? <Loader2 size={18} className="mx-auto my-6 animate-spin text-mute" /> : !state.mailbox ? (
         <div className="rounded-[1.25rem] border border-stroke bg-white/[0.035] p-3.5 text-sm">
           <p className="leading-relaxed">First connect your mailbox under <b className="font-medium">Email</b>. This page then gives you the link.</p>
@@ -80,6 +86,17 @@ export default function ClaudeMailPage({ onBack, onEmail }) {
         </div>
       )}
       {error && <p className="mt-3 text-sm text-bad">{error}</p>}
+    </>
+  );
+}
+
+export default function ClaudeMailPage({ onBack, onEmail }) {
+  return (
+    <Page title="Email in Claude.ai" onBack={onBack}>
+      <p className="mb-4 text-sm leading-relaxed text-mute">
+        Use your work mailbox inside your own Claude.ai: Claude can search and read your emails and attachments, and send for you.
+      </p>
+      <ClaudeMailBox onEmail={onEmail} />
     </Page>
   );
 }
