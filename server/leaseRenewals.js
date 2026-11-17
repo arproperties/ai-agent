@@ -1558,6 +1558,21 @@ leaseRenewalRoutes.get('/', wrap(async (req, res) => {
   });
 }));
 
+// A renewal the staff ran in saifsys themselves: who started it, who rejected it, what the
+// tenant answered and every step, so nobody has to open saifsys to learn why it stopped. View only.
+leaseRenewalRoutes.get('/saifsys/:leaseId', wrap(async (req, res) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId) || leaseId <= 0) return res.status(404).json({ error: 'Not found' });
+  try {
+    const { renewals = [] } = await D.ask('realestate', 'renewal_history', { lease_id: leaseId });
+    res.json({ renewals });
+  } catch (e) {
+    // A saifsys without the renewal_history action yet says "Unknown": say what is missing, not that.
+    if (/unknown/i.test(e.message)) throw bad('saifsys cannot show a renewal\'s history yet: its update has not been uploaded.', 502);
+    throw e;
+  }
+}));
+
 leaseRenewalRoutes.get('/:id', wrap(async (req, res) => {
   const r = await getRenewal(req.params.id);
   if (!r) return res.status(404).json({ error: 'Not found' });

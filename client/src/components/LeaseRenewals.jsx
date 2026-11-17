@@ -48,6 +48,8 @@ function chipOf(l) {
 }
 // Not renewing: the tenant said so in Reem, or the staff rejected the renewal in saifsys.
 const rejected = (l) => l.renewal?.status === 'not_renewing' || (!l.renewal && l.saifsys_rejected);
+// A renewal the staff ran in saifsys, with no renewal of Reem's: tapping it shows what they did there.
+const inSaifsys = (l) => !l.renewal && !!(l.saifsys_renewal || l.saifsys_rejected || l.saifsys_last);
 const needsYou = (l) => !!(l.renewal?.waiting || (l.renewal?.dispute && !DONE.includes(l.renewal.status)) || l.renewal?.status === 'papers_ok');
 
 const Chip = ({ c: [label, tone] }) => <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs ${CHIP[tone]}`}>{label}</span>;
@@ -92,6 +94,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(openFirst || null); // a renewal's id
   const [starting, setStarting] = useState(null); // a lease to start
+  const [history, setHistory] = useState(null); // a lease whose renewal the staff ran in saifsys
   const [settingsOpen, setSettingsOpen] = useState(false); // the master's settings, in a sheet so they don't sit under the list
   // The Expired tab: every lease that ended unrenewed, or only those ending between two dates.
   const [expired, setExpired] = useState(null);
@@ -188,7 +191,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
           {tab === 'expired' && <Problem text={expiredError} />}
           {shown.length === 0 ? <p className="pt-12 text-center text-sm text-mute">Nothing here.</p> : (
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.expired || l.saifsys_renewal || l.saifsys_rejected ? null : setStarting(l))} />)}
+              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : inSaifsys(l) ? setHistory(l) : l.expired ? null : setStarting(l))} />)}
             </ul>
           )}
         </div>
@@ -198,6 +201,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
           <Settings s={data.settings} agents={data.agents} inbox={data.inbox} onSaved={() => { load(); setSettingsOpen(false); }} />
         </Sheet>
       )}
+      {history && <SaifsysSheet lease={history} onClose={() => setHistory(null)} />}
       {starting && <StartSheet lease={starting} onClose={() => setStarting(null)} onDone={(r) => { setStarting(null); load(); if (r?.id) setOpen(r.id); }} />}
     </Page>
   );
@@ -208,7 +212,7 @@ function LeaseCard({ l, onOpen }) {
   const live = r && !DONE.includes(r.status);
   return (
     <li>
-      <button onClick={onOpen} disabled={!r && !!(l.expired || l.saifsys_renewal || l.saifsys_rejected)}
+      <button onClick={onOpen} disabled={!r && !!l.expired && !inSaifsys(l)}
         className={`flex h-full w-full flex-col gap-2 rounded-2xl border bg-white/[0.04] p-4 text-left transition hover:bg-white/[0.07] disabled:cursor-default ${needsYou(l) ? 'border-warn/50' : 'border-stroke'}`}>
         <div className="flex w-full items-start gap-2">
           <div className="min-w-0 flex-1">
@@ -229,8 +233,99 @@ function LeaseCard({ l, onOpen }) {
           <p className="truncate text-xs text-mute">{[l.premises_number && `Premises ${l.premises_number}`, l.ejari && `Ejari ${l.ejari}`].filter(Boolean).join(' · ')}</p>
         )}
         {!r && !l.expired && !l.saifsys_renewal && !l.saifsys_rejected && <p className="text-xs text-p1">{l.days_left <= 120 ? 'Check the RERA index to start' : 'Tap to start the renewal'}</p>}
+        {inSaifsys(l) && <p className="text-xs text-p1">Tap to see what the staff did in saifsys</p>}
       </button>
     </li>
+  );
+}
+
+// ---------- a renewal the staff ran in saifsys ----------
+
+// saifsys's own names for a step, said plainly. Anything not here shows as saifsys wrote it.
+const STEP = {
+  admin_send_renewal_notice: 'Sent the renewal notice', notice_opened: 'Opened the notice', acknowledged: 'Acknowledged the notice',
+  decision_accept: 'Accepted the offer', decision_negotiate: 'Asked to discuss', decision_reject: 'Said no to the renewal',
+  admin_reject: 'Rejected the renewal', admin_negotiation_reply: 'Replied to the tenant', document_uploaded: 'Uploaded a paper',
+  contract_opened: 'Opened the contract', electronic_sign: 'Signed the contract', reem_started: 'Started from Reem',
+};
+// Steps whose text is a person's own words, worth showing under the step.
+const SAID = ['decision_negotiate', 'decision_reject', 'admin_negotiation_reply'];
+const CHOSE = { accept: 'Accept', negotiate: 'Discuss', reject: 'Not renewing' };
+const stamp = (s) => (s ? `${day(s)}${String(s).length > 10 ? `, ${String(s).slice(11, 16)}` : ''}` : '');
+
+const Fact = ({ label, children }) => (children ? (
+  <div className="flex gap-3 text-sm"><span className="w-28 shrink-0 text-mute">{label}</span><span className="min-w-0 flex-1">{children}</span></div>
+) : null);
+
+/** What saifsys holds on a lease's renewal: who did what, what the tenant said, step by step. */
+function SaifsysSheet({ lease, onClose }) {
+  const [list, setList] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get(`/lease-renewals/saifsys/${lease.lease_id}`).then((r) => setList(r.renewals)).catch((e) => setError(e.message));
+  }, [lease.lease_id]);
+  return (
+    <Sheet title={`${lease.building} · Unit ${lease.unit}`} icon={<History size={18} className="text-mute" />} wide="text" onClose={onClose}>
+      <div className="space-y-5">
+        <p className="text-sm text-mute">{lease.tenant} · ends {day(lease.end_date)} · the renewal as the staff ran it in saifsys</p>
+        <Problem text={error} />
+        {!error && !list && <div className="grid place-items-center py-10 text-mute"><Loader2 className="animate-spin" /></div>}
+        {list && list.length === 0 && <p className="py-8 text-center text-sm text-mute">saifsys has no renewal on this lease.</p>}
+        {(list || []).map((w) => {
+          const no = w.status === 'rejected';
+          const last = [...w.events].reverse().find((e) => e.type === 'admin_reject');
+          return (
+            <section key={w.workflow_id} className="space-y-4 rounded-2xl border border-stroke bg-white/[0.04] p-4">
+              <div className="flex items-center gap-2">
+                <p className="flex-1 font-medium">Renewal #{w.workflow_id}</p>
+                <Chip c={[w.status.replace(/_/g, ' '), no ? 'bad' : w.status === 'converted' ? 'ok' : 'p1']} />
+              </div>
+              {/* The Reject button in saifsys asks for no reason, so the tenant's last word is the nearest thing to one. */}
+              {no && (
+                <div className="rounded-xl bg-bad/10 p-3 text-sm">
+                  <p><span className="font-medium">Rejected by {w.rejected_by || last?.by || 'the staff'}</span>{last ? ` on ${stamp(last.at)}` : ''}.</p>
+                  <p className="mt-1 text-mute">saifsys does not ask for a reason when a renewal is rejected, so none was written. {w.tenant_response ? 'The last thing the tenant said is below.' : 'The tenant wrote nothing either.'}</p>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Fact label="Rent">{w.current_rent !== null && `${aed(w.current_rent)} → ${aed(w.proposed_rent)}${w.cheques ? ` · ${w.cheques} cheques` : ''}`}</Fact>
+                <Fact label="Started">{[w.started_by, stamp(w.started_at)].filter(Boolean).join(' · ')}</Fact>
+                <Fact label="Handled by">{w.assigned_to}</Fact>
+                <Fact label="Notice sent">{[w.notice_sent_by, stamp(w.notice_sent_at)].filter(Boolean).join(' · ')}</Fact>
+                <Fact label="Tenant chose">{w.tenant_decision && [CHOSE[w.tenant_decision] || w.tenant_decision, stamp(w.tenant_decision_at)].filter(Boolean).join(' · ')}</Fact>
+                <Fact label="Tenant said">{w.tenant_response && <span className="whitespace-pre-wrap">“{w.tenant_response}”</span>}</Fact>
+                <Fact label="Staff notes">{w.staff_notes && w.staff_notes !== w.tenant_response && <span className="whitespace-pre-wrap">{w.staff_notes}</span>}</Fact>
+              </div>
+              {w.messages.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs uppercase tracking-wide text-mute">Messages</p>
+                  {w.messages.map((m, i) => (
+                    <div key={i} className={`rounded-xl p-3 text-sm ${m.from === 'tenant' ? 'bg-white/5' : 'bg-p1/10'}`}>
+                      <p className="text-xs text-mute">{m.from === 'tenant' ? 'Tenant' : m.by || 'Staff'} · {stamp(m.at)}</p>
+                      <p className="mt-1 whitespace-pre-wrap">{m.text}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-wide text-mute">Every step, newest first</p>
+                {w.events.length === 0 && <p className="text-sm text-mute">saifsys logged no steps.</p>}
+                {[...w.events].reverse().map((e, i) => (
+                  <div key={i} className="flex gap-3 text-sm">
+                    <span className="w-28 shrink-0 text-xs text-mute">{stamp(e.at)}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium">{e.by || 'Staff'}</span>: {STEP[e.type] || e.type.replace(/_/g, ' ')}
+                      {e.text && !STEP[e.type] && <span className="text-mute"> · {e.text}</span>}
+                      {e.text && SAID.includes(e.type) && <span className="block whitespace-pre-wrap text-mute">“{e.text}”</span>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </Sheet>
   );
 }
 
