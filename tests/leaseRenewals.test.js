@@ -108,13 +108,13 @@ test('the offer is a draft first, at any rent we choose; nothing goes out until 
   const d = await R.draft(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000 });
   assert.equal(d.to, 'tenant@mail.com');
   assert.match(d.text, /Annual rent: AED 45,000/);
-  assert.deepEqual(d.attachments, ['Renewal notice - PARK PLACE 610.pdf']);
+  assert.deepEqual(d.attachments, [], 'the offer goes with no PDF');
   assert.equal(world.sent.length, 0);
   assert.deepEqual(world.acts.map((a) => a.action), ['quote'], 'saifsys only priced it');
   assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_renewals').get()).n, 0);
 });
 
-test('Send: saifsys makes its renewal, the offer goes with saifsys\'s own notice, and the timeline starts', async () => {
+test('Send: saifsys makes its renewal, the offer goes with no PDF, and the timeline starts', async () => {
   const boss = await setup();
   stub();
   const r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000, text: 'Dear Mohamed,\n\nOur offer, as we discussed.' });
@@ -123,8 +123,8 @@ test('Send: saifsys makes its renewal, the offer goes with saifsys\'s own notice
   assert.equal(world.acts[1].email, 'care@company.com');
   assert.match(lastMail(), /Subject: Lease renewal: PARK PLACE, Unit 610/);
   assert.match(lastMail(), /Our offer, as we discussed/, 'the words the person approved, not the draft');
-  assert.match(lastMail(), /Renewal notice - PARK PLACE 610\.pdf/);
-  assert.ok(lastMail().includes(Buffer.from('%PDF-saifsys-notice!!').toString('base64')), 'the PDF saifsys made, not one of ours');
+  assert.doesNotMatch(lastMail(), /Renewal notice/, 'saifsys\'s notice is left off');
+  assert.ok(!lastMail().includes(Buffer.from('%PDF-saifsys-notice!!').toString('base64')), 'no PDF attached');
   assert.deepEqual(await timeline(r.id), ['out: Offer sent · AED 45,000']);
   await assert.rejects(start(boss), /already started/, 'a second tap starts nothing');
 });
