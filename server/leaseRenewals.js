@@ -334,8 +334,7 @@ const offerText = (r, q, rent) => [dear(r), '',
   'Our renewal offer:', ...offerLines(q, rent), '',
   `Please reply to this email by ${replyBy()}:`,
   '- to accept, simply reply "I accept";',
-  '- or tell us what you would like to propose.', '',
-  'The terms of the renewal and the documents we will need are in the attached letter.', ...SIGN].join('\n');
+  '- or tell us what you would like to propose.', ...SIGN].join('\n');
 
 const counterText = (r, q, rent) => [dear(r), '',
   'Thank you for your reply.', '',
@@ -612,7 +611,6 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera
   const quote = amount && action !== 'convert' ? (action !== 'accept' || amount !== r.offer || !r.quote ? await quoteFor(r.lease, amount, n, fees) : r.quote) : r.quote;
 
   let text;
-  // The offer carries saifsys's own renewal notice, made by saifsys when the renewal starts.
   if (action === 'start') text = offerText(r, quote, amount);
   if (action === 'counter') text = counterText(r, quote, amount);
   if (action === 'index') text = indexText(r, quote, amount);
@@ -638,7 +636,6 @@ const sendDate = (lease) => addDays(lease.end_date, -SEND_AT);
 const replyBy = () => longDate(addDays(today(), 14));
 
 const contractName = (r) => `Tenancy contract - ${r.lease.building} ${r.lease.unit}.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
-const noticeName = (r) => `Renewal notice - ${r.lease.building} ${r.lease.unit}.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
 
 /** The email a step would send, for the person to read. Nothing is sent or saved. */
 export async function draft(user, body) {
@@ -652,22 +649,20 @@ export async function draft(user, body) {
     to: p.r.lease.email, cc, subject: subjectOf(p.r), text: p.text, rent: p.amount, cheques: p.cheques, source: p.source,
     schedule: p.quote?.cheques || null, total: p.quote?.cheques_total ?? null,
     fees: p.quote?.fees || null, charges: p.quote ? chargesOf(p.quote) : null,
-    attachments: body.action === 'start' ? [noticeName(p.r)] : body.action === 'accept' ? [contractName(p.r)] : [],
+    attachments: body.action === 'accept' ? [contractName(p.r)] : [],
     sendOn: p.sendOn,
   };
 }
 
 /**
  * The offer itself, for a renewal not yet sent: saifsys makes its renewal at this rent, and
- * the email goes with saifsys's own notice. A person's Send, or Reem on the day.
+ * the email goes out on its own. saifsys's renewal notice PDF is left off on purpose: the
+ * office did not want it attached. A person's Send, or Reem on the day.
  */
 async function sendOffer(r, { text, fees, user = null }) {
   const { renewal } = await saifsys('start', { lease_id: r.lease.lease_id, end_date: r.lease.end_date, rent: r.offer, cheques: r.cheques, ...feesOf(fees) });
-  // Never an offer without saifsys's notice. Trying again picks up the same saifsys renewal.
-  if (!renewal.notice?.data) throw bad('saifsys did not send its renewal notice PDF, so nothing was emailed. Check the latest realestate_renewal.php is uploaded to saifsys, then try again.', 502);
   r = await update(r.id, { status: 'offer_sent', workflow_id: renewal.workflow_id, plan: null, waiting: null, error: null });
-  const attachments = [{ filename: noticeName(r), contentType: 'application/pdf', content: renewal.notice.data }];
-  await mail(r, { title: ACTIONS.start.title(r.offer), text, attachments, user, data: { rent: r.offer, source: r.rent_source } });
+  await mail(r, { title: ACTIONS.start.title(r.offer), text, user, data: { rent: r.offer, source: r.rent_source } });
   return getRenewal(r.id);
 }
 
