@@ -6,6 +6,7 @@ import Icon from './Icon';
 import Page from './Page';
 import DraftCard from './DraftCard';
 import PasswordField from './PasswordField';
+import { ClaudeMailBox } from './ClaudeMail';
 
 const Notice = ({ ok, children }) => (
   <p className={`mb-3 flex items-start gap-2 rounded-2xl px-3.5 py-2.5 text-sm ${ok ? 'bg-ok/10 text-ok' : 'bg-bad/10 text-bad'}`}>
@@ -228,6 +229,8 @@ export default function EmailPage({ returned, onBack }) {
             </div>
           )}
           <ImapCard account={imap.account} onChange={changed} />
+          {/* Reloads when the mailbox or its sending switch changes, so the box says the right thing. */}
+          {imap.account && <ClaudeMailBox inEmail key={`${imap.account.email}:${imap.account.canWrite}`} />}
           {(outlook.enabled || outlook.account) && <OutlookCard state={outlook} onChange={changed} />}
         </div>
       )}
