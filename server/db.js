@@ -1871,6 +1871,10 @@ await db.exec(`
   ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS rera_pct NUMERIC;
   ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS auto BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS plan JSONB;
+  -- A renewal the staff ran in saifsys that Reem took over (2026-11-17): portal_seen is the
+  -- last line of saifsys's log Reem has read, so what the tenant does in the tenant portal
+  -- after it comes in like an email. Null for every other renewal: those are email only.
+  ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS portal_seen INTEGER;
   ALTER TABLE lease_renewals DROP CONSTRAINT IF EXISTS lease_renewals_status_check;
   ALTER TABLE lease_renewals ADD CONSTRAINT lease_renewals_status_check
     CHECK (status IN ('scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'converted', 'not_renewing', 'closed'));

@@ -417,7 +417,8 @@ async function mail(r, { title, text, attachments = [], user = null, data = null
   for (const a of attachments) await keep(r.id, id, { name: a.filename, mime: a.contentType, buffer: Buffer.from(a.content, 'base64') });
   await update(r.id, { last_out_at: secs() });
   if (acc) await deliver(acc, id, m);
-  await mirror(r, `Email to the tenant: ${title}`, { text });
+  // A tenant who was answering in the portal reads our email there too.
+  await mirror(r, `Email to the tenant: ${title}`, { text, toTenant: r.portal_seen !== null && r.portal_seen !== undefined });
   return id;
 }
 
@@ -508,10 +509,11 @@ const saifsys = async (action, body) => D.act('realestate_renewal', action, { em
  * log for each email and step (the email itself in its notes), and the tenant's papers with
  * its tenant uploads. Never in the way: a copy that fails is only noted in the server log.
  */
-async function mirror(r, message, { text = null, files = [] } = {}) {
+async function mirror(r, message, { text = null, files = [], toTenant = false } = {}) {
   if (!r.workflow_id) return;
   try {
-    await D.mirror('note', { workflow_id: r.workflow_id, message: message.slice(0, 500), ...(text ? { text } : {}) });
+    // toTenant: on a renewal taken over from the staff, saifsys also shows the text to the tenant in the portal.
+    await D.mirror('note', { workflow_id: r.workflow_id, message: message.slice(0, 500), ...(text ? { text } : {}), ...(toTenant && text ? { to_tenant: true } : {}) });
     for (const f of files) await D.mirror('file', { workflow_id: r.workflow_id, name: f.name, mime: f.mime, data: f.data });
   } catch (e) {
     console.warn(`[lease renewals] could not copy to saifsys renewal #${r.workflow_id}:`, e.message);
@@ -579,7 +581,7 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera
     const lease = (await dueLeases()).find((l) => l.lease_id === Number(leaseId));
     if (!lease) throw bad(`That lease is not in saifsys's list of leases ending within ${DAYS_AHEAD} days.`, 404);
     if (lease.saifsys_renewal) throw bad(`The staff already have a renewal for this lease in saifsys (${lease.saifsys_renewal}).`, 409);
-    if (lease.saifsys_rejected) throw bad('The staff rejected this renewal in saifsys: the tenant is not renewing.', 409);
+    if (lease.saifsys_rejected) throw bad('The staff rejected this renewal in saifsys. Open it and tap Take over to carry it on here.', 409);
     if (!String(lease.email || '').includes('@')) throw bad('saifsys has no email for this tenant. Add it in saifsys first.', 409);
     if (await db.prepare('SELECT 1 FROM lease_renewals WHERE lease_id = ? AND end_date = ?').get(lease.lease_id, lease.end_date)) throw bad('This renewal has already started.', 409);
     r = { id: null, lease, status: null };
@@ -636,6 +638,115 @@ const sendDate = (lease) => addDays(lease.end_date, -SEND_AT);
 const replyBy = () => longDate(addDays(today(), 14));
 
 const contractName = (r) => `Tenancy contract - ${r.lease.building} ${r.lease.unit}.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
+
+// ---------- a renewal the staff ran in saifsys, taken over ----------
+//
+// The staff started it in saifsys and stopped: rejected it, or left it unfinished. A person
+// taps Take over and it is Reem's from there: the same saifsys renewal (opened again if it
+// was rejected, locked for the staff), not a new offer, so the tenant is not asked twice.
+// What happened in saifsys comes along as the first lines of the timeline. The tenant keeps
+// the tenant portal: what they do there comes in like an email (checkPortal), and what Reem
+// emails them is shown there too (mirror's toTenant). Reem never takes one over by itself.
+
+// saifsys's names for a step, said plainly, for the timeline.
+const SAIFSYS_STEP = {
+  admin_send_renewal_notice: 'sent the renewal notice', notice_opened: 'opened the notice', acknowledged: 'acknowledged the notice',
+  decision_accept: 'accepted the offer', decision_negotiate: 'asked to discuss', decision_reject: 'said no to the renewal',
+  negotiation_message_tenant: 'wrote', negotiation_finalize_accept: 'accepted the offer', negotiation_finalize_reject: 'said no to the renewal',
+  admin_reject: 'rejected the renewal', admin_negotiation_reply: 'replied to the tenant', document_uploaded: 'uploaded a paper',
+  contract_opened: 'opened the contract', electronic_sign: 'signed the contract',
+};
+// What a tenant does in the portal that is an answer to us, and what each means said out loud.
+const PORTAL_ANSWER = {
+  decision_accept: 'I accept the renewal offer.', negotiation_finalize_accept: 'I accept the renewal offer.',
+  decision_reject: 'I do not want to renew.', negotiation_finalize_reject: 'I do not want to renew.',
+  decision_negotiate: '', negotiation_message_tenant: '',
+};
+const STAFF_ANSWER = ['admin_negotiation_reply', 'reem_email'];
+const isAnswer = (e) => e.tenant && e.type in PORTAL_ANSWER;
+// The portal fills "Decision: accept" when the tenant typed nothing: not their words.
+const typed = (e) => (/^Decision: /.test(e.text || '') ? '' : String(e.text || '').trim());
+const portalWords = (e) => [PORTAL_ANSWER[e.type], typed(e)].filter(Boolean).join(' ') || 'I would like to discuss the offer.';
+
+/** What the tenant did in the portal, kept as an email from them is: read by Reem on the next pass. */
+const portalIn = (r, e) => db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, status, data, at)
+  VALUES (?, 'in', 'Tenant wrote in the portal', ?, 'new', ?, ?)`).run(r.id, portalWords(e), JSON.stringify({ via: 'portal', saifsys_event: e.id }), e.ts || secs());
+
+/** A line of saifsys's log on the timeline, under the moment it happened. Not copied back to saifsys. */
+const portalStep = (r, e) => {
+  const did = SAIFSYS_STEP[e.type] || String(e.type).replace(/_/g, ' ');
+  const said = e.tenant && typed(e) && e.type !== 'document_uploaded' ? `: “${typed(e).slice(0, 300)}”` : '';
+  return db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, data, at) VALUES (?, 'step', ?, ?, ?)`)
+    .run(r.id, `${e.tenant ? 'Tenant, in the portal' : `${e.by || 'Staff'}, in saifsys`}: ${did}${said}`, JSON.stringify({ via: e.tenant ? 'portal' : 'saifsys', saifsys_event: e.id }), e.ts || secs());
+};
+
+/** saifsys's log for the renewal Reem has: every line, oldest first. */
+async function saifsysLog(leaseId, workflowId) {
+  const { renewals = [] } = await D.ask('realestate', 'renewal_history', { lease_id: leaseId });
+  return (renewals.find((x) => x.workflow_id === workflowId)?.events || []).filter((e) => e.id);
+}
+
+/** A person takes over the renewal the staff ran in saifsys. Nothing is sent to the tenant. */
+export async function takeover(user, leaseId) {
+  const lease = (await dueLeases()).find((l) => l.lease_id === Number(leaseId));
+  if (!lease) throw bad(`That lease is not in saifsys's list of leases ending within ${DAYS_AHEAD} days.`, 404);
+  if (!lease.saifsys_renewal && !lease.saifsys_rejected) throw bad('The staff have no renewal for this lease in saifsys. Start it here instead.', 409);
+  if (!String(lease.email || '').includes('@')) throw bad('saifsys has no email for this tenant. Add it in saifsys first.', 409);
+  if (await db.prepare('SELECT 1 FROM lease_renewals WHERE lease_id = ? AND end_date = ?').get(lease.lease_id, lease.end_date)) throw bad('This renewal is already in Reem.', 409);
+
+  // saifsys first: safe to ask again, so a failure further down is put right by tapping again.
+  const { renewal: w } = await saifsys('takeover', { lease_id: lease.lease_id, end_date: lease.end_date });
+  const rent = Number(w.proposed_rent);
+  // Priced with the charges the staff set, so the cheques are the ones the tenant was shown.
+  const quote = await quoteFor(lease, rent, w.cheques, w.fees);
+  const log = await saifsysLog(lease.lease_id, w.workflow_id);
+
+  const made = await db.prepare(`INSERT INTO lease_renewals (lease_id, end_date, lease, status, offer, cheques, rent_source, quote, started_by, auto, workflow_id, portal_seen)
+    VALUES (?, ?, ?, 'negotiating', ?, ?, ?, ?, ?, false, ?, ?) ON CONFLICT (lease_id, end_date) DO NOTHING RETURNING id`)
+    .get(lease.lease_id, lease.end_date, JSON.stringify(lease), rent, w.cheques, JSON.stringify({ kind: 'saifsys' }), JSON.stringify(quote),
+      user?.id || null, w.workflow_id, Math.max(0, ...log.map((e) => e.id)));
+  if (!made) throw bad('This renewal is already in Reem.', 409);
+  const r = await getRenewal(made.id);
+
+  // The tenant's last word, if nobody answered it: Reem reads it like an email, so it waits for a person.
+  const talk = log.filter((e) => isAnswer(e) || STAFF_ANSWER.includes(e.type));
+  const open = talk.length && isAnswer(talk[talk.length - 1]) ? talk[talk.length - 1] : null;
+  for (const e of log) {
+    if (e.type === 'reem_takeover') continue; // said below, with the person's name
+    if (e === open) await portalIn(r, e);
+    else await portalStep(r, e);
+  }
+  const was = String(w.was || '').replace(/_/g, ' ');
+  await step(r, `Taken over from saifsys${was ? ` (it was ${was} there)` : ''}: Reem runs it from here`, { user });
+  await readInbound().catch((e) => console.warn('[lease renewals] reading the tenant\'s last word failed:', e.message));
+  return getRenewal(r.id);
+}
+
+/**
+ * What tenants did in the portal on the renewals Reem took over, since the last look. An
+ * answer (accept, discuss, not renewing, a message) comes in like an email and is read the
+ * same way; a paper or a signature is a line on the timeline and a buzz, for a person to
+ * open in saifsys (papers through the portal are not read by Reem yet).
+ */
+export async function checkPortal() {
+  const rows = (await db.prepare(`SELECT * FROM lease_renewals WHERE portal_seen IS NOT NULL AND status IN ('offer_sent', 'negotiating', 'agreed', 'papers_ok')`).all()).map(ROW);
+  let n = 0;
+  for (const r of rows) {
+    try {
+      const fresh = (await saifsysLog(r.lease_id, r.workflow_id)).filter((e) => e.id > r.portal_seen);
+      if (!fresh.length) continue;
+      for (const e of fresh.filter((x) => x.tenant)) {
+        if (isAnswer(e)) { await portalIn(r, e); n += 1; continue; }
+        await portalStep(r, e);
+        if (['document_uploaded', 'electronic_sign'].includes(e.type)) await tell(r, `The tenant ${SAIFSYS_STEP[e.type]} in the tenant portal. Open the renewal in saifsys to see it.`);
+      }
+      await db.prepare('UPDATE lease_renewals SET portal_seen = ? WHERE id = ?').run(Math.max(...fresh.map((e) => e.id)), r.id);
+    } catch (e) {
+      console.warn(`[lease renewals] could not read the portal for renewal #${r.id}:`, e.message);
+    }
+  }
+  return n;
+}
 
 /** The email a step would send, for the person to read. Nothing is sent or saved. */
 export async function draft(user, body) {
@@ -1316,6 +1427,7 @@ export async function tick() {
   if (busy) return;
   busy = true;
   try {
+    if (saifsysConfigured()) await checkPortal();
     await readInbound();
     await chase();
     await disputeChase();
@@ -1343,6 +1455,8 @@ const out = (r) => r && {
   tenantOffer: r.tenant_offer, cheques: r.cheques, rentSource: r.rent_source, workflowId: r.workflow_id,
   schedule: r.quote?.cheques || null, total: r.quote?.cheques_total ?? null, start: r.quote?.start_date ?? null, end: r.quote?.end_date ?? null,
   papers: r.papers, reminders: r.reminders,
+  // Taken over from the staff: the tenant can answer in the tenant portal as well as by email.
+  portal: r.portal_seen !== null && r.portal_seen !== undefined,
   disputeReminder: r.dispute_reminder ? { n: r.dispute_reminder.n, readyAt: Number(r.dispute_reminder.created_at) } : null, lastOutAt: r.last_out_at, lastInAt: r.last_in_at, updatedAt: r.updated_at,
   auto: r.auto, reraPct: r.rera_pct, indexRent: r.rera_pct !== null ? indexRentFrom(r.lease.annual_rent, r.rera_pct) : null,
   sendOn: r.status === 'scheduled' ? sendDate(r.lease) : null,
@@ -1572,6 +1686,8 @@ leaseRenewalRoutes.get('/saifsys/:leaseId', wrap(async (req, res) => {
     throw e;
   }
 }));
+// Take over: that renewal is Reem's from here. Anyone with Lease renewals may (the user, 2026-11-17).
+leaseRenewalRoutes.post('/saifsys/:leaseId/takeover', wrap(async (req, res) => { res.json(out(await takeover(req.user, req.params.leaseId))); }));
 
 leaseRenewalRoutes.get('/:id', wrap(async (req, res) => {
   const r = await getRenewal(req.params.id);
@@ -1609,6 +1725,7 @@ leaseRenewalRoutes.post('/send', wrap(async (req, res) => { res.json(out(await s
 // "Check for replies": the Tenant care inbox now, then any new email read, instead of waiting for the clock.
 leaseRenewalRoutes.post('/check', wrap(async (req, res) => {
   await D.checkMail();
+  if (saifsysConfigured()) await checkPortal();
   res.json({ read: await readInbound() });
 }));
 
