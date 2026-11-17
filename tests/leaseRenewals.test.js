@@ -1077,3 +1077,30 @@ test('a reply goes on the same thread like Reply All: the tenant\'s email quoted
   assert.match(lastMail(), /Cc: brother@mail\.com/);
   assert.match(lastMail(), /We will check\./);
 });
+
+// ---------- a renewal the staff ran in saifsys ----------
+
+test('a renewal the staff ran in saifsys opens with who did what; an old saifsys is said plainly', async () => {
+  const boss = await setup();
+  // The route run as Express runs it, without a socket: what it answers, or the error it hands on.
+  const get = (url) => new Promise((done) => {
+    const res = { code: 200, status(c) { this.code = c; return this; }, json(body) { done({ status: this.code, body }); } };
+    R.leaseRenewalRoutes({ method: 'GET', url, user: boss, headers: {}, query: {} }, res, (err) => done({ status: err?.status || 404, body: { error: err?.message || 'Not found' } }));
+  });
+  const asked = [];
+  const history = [{ workflow_id: 99, status: 'rejected', rejected_by: 'A Staff', tenant_response: 'Need to discuss the rent', events: [], messages: [] }];
+  R.useForTests({ ask: async (module, action, params) => { asked.push([module, action, params]); return { ok: true, renewals: history }; } });
+  const ok = await get('/saifsys/150');
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body.renewals, history);
+  assert.deepEqual(asked, [['realestate', 'renewal_history', { lease_id: 150 }]]);
+
+  assert.equal((await get('/saifsys/abc')).status, 404); // not a lease: saifsys is not asked
+  assert.equal(asked.length, 1);
+
+  // saifsys before its update: the person is told what is missing, not "Unknown action".
+  R.useForTests({ ask: async () => { throw Object.assign(new Error('saifsys said: Unknown Real Estate action.'), { status: 502 }); } });
+  const old = await get('/saifsys/150');
+  assert.equal(old.status, 502);
+  assert.match(old.body.error, /not been uploaded/);
+});
