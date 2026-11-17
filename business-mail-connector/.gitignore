@@ -1,0 +1,4 @@
+node_modules/
+.env
+# Reem's root .gitignore hides .env.*; this one is only the example, no secrets.
+!.env.example

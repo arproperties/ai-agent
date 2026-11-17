@@ -2237,6 +2237,17 @@ await db.exec(`
   );
 `);
 
+// Email in Claude.ai (server/mailConnector.js): a person's private link to their own
+// mailbox (the one in imap_accounts) for their Claude.ai. Its own table, not a column on
+// imap_accounts: reconnecting the mailbox under Email must not change or kill the link.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS mail_connectors (
+    user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    token      TEXT NOT NULL UNIQUE,
+    created_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+`);
+
 // Case folders for an external user (server/caseFolders.js): their inbox sorted by case number.
 //   case_settings:  the user's own case-number pattern (empty = the built-in ones)
 //   case_folders:   one folder per case; case_key is the number in a form that matches across spellings

@@ -94,6 +94,47 @@ function AppBox({ app, onSaved }) {
   );
 }
 
+// Email in Claude.ai (server/mailConnector.js): each person makes their own link from their
+// own screen. The master only sees who has one and can switch it off; the links themselves
+// never come here. Unticking the module on their People profile also stops it.
+function MailPeople() {
+  const [people, setPeople] = useState(null);
+  const [busy, setBusy] = useState(0);
+  const [error, setError] = useState('');
+  useEffect(() => { api.get('/apps/mail-people').then(setPeople).catch((e) => { setError(e.message); setPeople([]); }); }, []);
+  const off = async (p) => {
+    if (!confirm(`Switch off ${p.name}'s Email in Claude.ai? Their link stops working at once.`)) return;
+    setBusy(p.userId); setError('');
+    try { setPeople(await api.del(`/apps/mail-people/${p.userId}`)); } catch (e) { setError(e.message); } finally { setBusy(0); }
+  };
+  return (
+    <div className="mt-5">
+      <h3 className="mb-1 text-sm font-medium">Email in Claude.ai</h3>
+      <p className="mb-2.5 text-xs leading-relaxed text-mute">
+        People connect their own work mailbox to their own Claude.ai, under Settings → Email in Claude.ai. Tick the module on their People profile to give it.
+      </p>
+      {people === null ? <Loader2 size={16} className="mx-auto my-3 animate-spin text-mute" />
+        : !people.length ? <p className="text-xs text-mute">Nobody has connected yet.</p> : (
+          <div className="space-y-1.5">
+            {people.map((p) => (
+              <div key={p.userId} className="flex items-center gap-2 rounded-xl border border-stroke bg-white/[0.035] px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm">{p.name}</div>
+                  <div className="truncate text-xs text-mute">{p.email || 'no mailbox'} · since {day(p.madeAt)}</div>
+                </div>
+                <button onClick={() => off(p)} disabled={!!busy} aria-label={`Switch off ${p.name}`} title="Switch off"
+                  className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad">
+                  {busy === p.userId ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      {error && <p className="mt-2 text-xs text-bad">{error}</p>}
+    </div>
+  );
+}
+
 export default function AppsPage({ onBack }) {
   const [apps, setApps] = useState(null);
   const [error, setError] = useState('');
@@ -110,6 +151,7 @@ export default function AppsPage({ onBack }) {
         </div>
       )}
       {error && <p className="mt-3 text-sm text-bad">{error}</p>}
+      <MailPeople />
     </Page>
   );
 }
