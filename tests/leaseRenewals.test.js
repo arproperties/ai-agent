@@ -61,6 +61,7 @@ function stub({ leases = [LEASE], replies = [], docs = [], files = {} } = {}) {
     file: async () => {},
     push: async (ids, msg) => { world.pushes.push(msg.body); },
     todo: async (userId, t) => { world.todos.push({ userId, ...t }); },
+    past: async (acc, email, since) => { world.pastAsked = { email, since }; return world.past || []; },
   });
 }
 
@@ -1233,4 +1234,83 @@ test('Take over: an unfinished renewal can be taken; a lease with none, or one R
   assert.equal(own.portal_seen, null);
   assert.ok(world.mirrored.filter((m) => m.action === 'note').every((m) => !m.to_tenant));
   assert.equal(await R.checkPortal(), 0);
+});
+
+// ---------- the emails written before the takeover ----------
+
+/** An email in the Tenant care inbox from before the takeover. */
+const pastMail = (n, from, at, text, extra = {}) => ({
+  messageId: `<past-${n}@mail>`, from, name: from === LEASE.email ? 'Mohamed Saeed' : 'Gautam', to: [from === LEASE.email ? 'care@company.com' : LEASE.email],
+  cc: [], subject: 'Re: Renewal of PARK PLACE 610', text, at, raw: Buffer.from(`Message-ID: <past-${n}@mail>\r\nFrom: ${from}\r\nTo: x@y.z\r\nSubject: Re: Renewal\r\n\r\n${text}`), attachments: [], ...extra,
+});
+
+test('Take over: the emails the staff and the tenant wrote are brought onto the timeline; answered, nothing waits and nothing is sent', async () => {
+  const boss = await setup();
+  staffWorld();
+  world.past = [
+    pastMail(1, LEASE.email, T - 49 * 86400, 'DLD allows no increase.'),
+    pastMail(2, 'gautam@company.com', T - 30 * 86400, 'Please find the revised contract.', {
+      cc: ['tenant@mail.com', 'jacob@company.com'],
+      attachments: [{ filename: 'contract.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF-revised') }],
+    }),
+    pastMail(3, 'agent@broker.com', T - 29 * 86400, 'I act for the tenant.'), // neither the tenant nor us: left out
+    pastMail(4, LEASE.email, T - 20 * 86400, 'Two cheques please.'),
+    pastMail(5, 'care@company.com', T - 10 * 86400, 'Management refuses. Deadline 6 PM.'),
+  ];
+  const r = await R.takeover(boss, LEASE.lease_id);
+
+  assert.equal(world.pastAsked.email, LEASE.email);
+  assert.equal(world.pastAsked.since, T - 51 * 86400); // a day before saifsys's notice
+  const t = await saifsysLine(r.id);
+  const mails = t.filter((e) => e.data?.past);
+  assert.deepEqual(mails.map((e) => e.kind), ['in', 'out', 'in', 'out']);
+  assert.equal(mails[1].body, 'Please find the revised contract.');
+  assert.equal(mails[1].data.name, 'Gautam');
+  assert.deepEqual(mails[1].data.cc, ['jacob@company.com']);
+  assert.equal(mails[1].status, 'sent');
+  const files = await db.prepare('SELECT name FROM lease_renewal_files WHERE renewal_id = ?').all(r.id);
+  assert.deepEqual(files.map((f) => f.name), ['contract.pdf']);
+
+  // The staff wrote last: the September "discuss" was answered, nothing waits, and Reem read nothing.
+  const after = await R.getRenewal(r.id);
+  assert.equal(after.waiting, null);
+  assert.equal(after.last_out_at, null); // so the silence reminders do not email the tenant by themselves
+  assert.ok(t.filter((e) => e.kind === 'in').every((e) => e.status === 'read'));
+  assert.equal(world.sent.length, 0);
+  assert.ok(!world.mirrored.some((m) => /Please find the revised|DLD allows/.test(m.text || '')));
+  await R.chase();
+  assert.equal(world.sent.length, 0);
+
+  // The tenant answers the staff's last email: it lands on this renewal, by its thread.
+  assert.equal(await R.claim({ uid: 900, from: 'other@mail.com', inReplyTo: '<past-5@mail>', subject: 'Re', text: 'OK, I accept.', at: T + 60 }, 1), true);
+  assert.ok((await saifsysLine(r.id)).some((e) => e.kind === 'in' && e.body === 'OK, I accept.' && e.data.via === 'thread'));
+
+  // Bringing them in again adds nothing.
+  assert.equal((await R.bringInPast(boss, r.id)).n, 0);
+});
+
+test('Take over: a last email from the tenant nobody answered waits for a person; Bring in past emails is only for a taken-over renewal', async () => {
+  const boss = await setup();
+  staffWorld({ replies: [{ intent: 'unclear', summary: 'Wants to discuss the rent', dispute: false }, { intent: 'unclear', summary: 'Asks for two cheques', dispute: false, asksLess: true }] });
+  const r = await R.takeover(boss, LEASE.lease_id); // the inbox had nothing yet: the portal's "discuss" is read
+  world.past = [pastMail(1, 'care@company.com', T - 30 * 86400, 'Revised offer.'), pastMail(2, LEASE.email, T - 5 * 86400, 'Two cheques please.')];
+  const { n, renewal } = await R.bringInPast(boss, r.id);
+  assert.equal(n, 2);
+  assert.equal(renewal.waiting, 'reply');
+  const t = await saifsysLine(r.id);
+  const last = t.filter((e) => e.kind === 'in').at(-1);
+  assert.equal(last.body, 'Two cheques please.');
+  assert.equal(last.title, 'Asks for two cheques'); // read by Reem, like any reply
+  assert.equal(t.filter((e) => e.kind === 'in' && e.data?.via === 'portal')[0].status, 'read');
+  assert.equal(world.sent.length, 0);
+
+  // Our reply then goes on the same thread, quoting the tenant's email.
+  await R.send(boss, { id: r.id, action: 'reply', text: 'Dear Mohamed,\n\nFour cheques stay.' });
+  assert.match(lastMail(), /In-Reply-To: <past-2@mail>/);
+  assert.match(lastMail(), /Two cheques please/);
+
+  const boss2 = await setup();
+  stub();
+  const own = await start(boss2);
+  await assert.rejects(R.bringInPast(boss2, own.id), /Only a renewal taken over/);
 });
