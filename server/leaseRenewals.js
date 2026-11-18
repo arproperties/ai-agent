@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { mkdirSync } from 'node:fs';
-import { writeFile, readFile } from 'node:fs/promises';
+import { writeFile, readFile, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { simpleParser } from 'mailparser';
 import { db } from './db.js';
@@ -769,7 +769,15 @@ const PAST_RAW = 5 * 1024 * 1024;   // an email kept whole (to quote it in our r
 const SKIP_BOX = /trash|bin|deleted|spam|junk|draft/i;
 const addrs = (a) => [].concat(a || []).flatMap((o) => o?.value || []).map((x) => String(x.address || '').trim().toLowerCase()).filter(Boolean);
 
-/** Every email in the inbox to, from or copied to the tenant since `since` (seconds), oldest first. */
+/** Whether the tenant is on an email: its sender, or in To, Cc or Bcc. */
+const onMail = (m, email) => [m.from, ...(m.to || []), ...(m.cc || []), ...(m.bcc || [])].map((x) => String(x || '').toLowerCase()).includes(email);
+
+/**
+ * Every email in the inbox to, from or copied to the tenant since `since` (seconds), oldest first.
+ * The addresses are checked here, on each email's envelope, never left to the mail server's
+ * search: Titan answered a FROM/TO/CC search with every recent email in the folder, and the
+ * first takeover brought in 58 emails about other units (2026-11-18).
+ */
 async function readPastMail(acc, email, since) {
   return withMailbox(acc, async (c) => {
     const boxes = (await c.list()).filter((f) => !['\\Trash', '\\Junk', '\\Drafts', '\\All'].includes(f.specialUse)
@@ -779,9 +787,18 @@ async function readPastMail(acc, email, since) {
     for (const f of boxes) {
       const lock = await c.getMailboxLock(f.path, { readOnly: true });
       try {
-        const uids = (await c.search({ or: [{ from: email }, { to: email }, { cc: email }], since: new Date(since * 1000) }, { uid: true })) || [];
+        const uids = (await c.search({ since: new Date(since * 1000) }, { uid: true })) || [];
         if (!uids.length) continue;
-        for await (const m of c.fetch(uids.slice(-PAST_MAX), { uid: true, internalDate: true, source: true }, { uid: true })) {
+        // The envelopes first (small), and only the tenant's emails fetched whole.
+        const hits = [];
+        for await (const m of c.fetch(uids, { uid: true, envelope: true }, { uid: true })) {
+          const e = m.envelope || {};
+          const at = e.date ? new Date(e.date).getTime() / 1000 : Infinity;
+          const list = (k) => (e[k] || []).map((x) => x.address);
+          if (at >= since && onMail({ from: list('from')[0], to: list('to'), cc: list('cc'), bcc: list('bcc') }, email)) hits.push(m.uid);
+        }
+        if (!hits.length) continue;
+        for await (const m of c.fetch(hits.slice(-PAST_MAX), { uid: true, internalDate: true, source: true }, { uid: true })) {
           const p = await simpleParser(m.source).catch(() => null);
           if (!p) continue;
           const key = p.messageId || `${f.path}:${m.uid}`;
@@ -789,7 +806,7 @@ async function readPastMail(acc, email, since) {
           seen.add(key);
           mail.push({
             messageId: p.messageId || null, from: addrs(p.from)[0] || '', name: p.from?.value?.[0]?.name || '',
-            to: addrs(p.to), cc: addrs(p.cc), subject: p.subject || '', text: mailText(p),
+            to: addrs(p.to), cc: addrs(p.cc), bcc: addrs(p.bcc), subject: p.subject || '', text: mailText(p),
             at: Math.floor(new Date(p.date || m.internalDate || Date.now()).getTime() / 1000),
             raw: m.source.length <= PAST_RAW ? m.source : null, attachments: p.attachments || [],
           });
@@ -808,16 +825,39 @@ async function pastSince(r) {
   return Math.floor(Date.parse(`${addDays(r.lease.end_date, -150)}T00:00:00Z`) / 1000);
 }
 
-/** The past emails onto the renewal's timeline. Safe to run again: an email already there is skipped. Returns how many came in. */
+/** The past emails onto the renewal's timeline. Safe to run again: an email already there is skipped. Returns how many came in and went. */
 async function importPast(r) {
   const acc = await inbox();
   if (!acc) throw bad('The Tenant care inbox is not connected.', 409);
   const tenant = String(r.lease.email || '').trim().toLowerCase();
   const ours = String(acc.email || '').toLowerCase();
   const domain = ours.split('@')[1];
+  // Only emails the tenant is on, checked again here whatever the mailbox answered; one
+  // email twice (the Sent copy and the copy to ourselves, with different IDs) kept once.
+  const twice = new Set();
+  const mails = (await D.past(acc, tenant, await pastSince(r))).filter((m) => {
+    const key = `${String(m.from || '').toLowerCase()}|${m.subject || ''}|${Math.floor((m.at || 0) / 60)}`;
+    if (!onMail(m, tenant) || twice.has(key)) return false;
+    twice.add(key);
+    return true;
+  });
+
+  // Brought in earlier but not one of the tenant's emails (the first takeover took in other
+  // units' emails, 2026-11-18): taken off the timeline, with their files.
+  const keepIds = mails.map((m) => m.messageId).filter(Boolean);
+  const stale = await db.prepare(`SELECT id FROM lease_renewal_events WHERE renewal_id = ? AND data->>'past' = 'true'
+    AND (message_id IS NULL OR NOT (message_id = ANY(?::text[])))`).all(r.id, keepIds);
+  let removed = 0;
+  if (stale.length) {
+    const ids = stale.map((x) => x.id);
+    const files = await db.prepare('SELECT path FROM lease_renewal_files WHERE event_id = ANY(?::int[])').all(ids);
+    removed = (await db.prepare('DELETE FROM lease_renewal_events WHERE id = ANY(?::int[])').run(ids)).changes;
+    for (const f of files) await unlink(f.path).catch(() => {});
+  }
+
   const have = new Set((await db.prepare('SELECT message_id FROM lease_renewal_events WHERE renewal_id = ? AND message_id IS NOT NULL').all(r.id)).map((x) => x.message_id));
   const added = [];
-  for (const m of await D.past(acc, tenant, await pastSince(r))) {
+  for (const m of mails) {
     if (m.messageId && have.has(m.messageId)) continue;
     const from = String(m.from || '').toLowerCase();
     const fromTenant = from === tenant;
@@ -837,7 +877,7 @@ async function importPast(r) {
     if (m.messageId) have.add(m.messageId);
     added.push(id);
   }
-  if (!added.length) return 0;
+  if (!added.length && !removed) return { added: 0, removed: 0 };
 
   // Who spoke last, now that the whole conversation is here. The tenant, in an email just
   // brought in: Reem reads it and it waits for a person. Anyone else: the tenant's older words
@@ -845,12 +885,13 @@ async function importPast(r) {
   // an old email, the silence reminders would email the tenant by themselves.
   const last = await db.prepare(`SELECT id, kind FROM lease_renewal_events WHERE renewal_id = ? AND kind IN ('in', 'out') ORDER BY at DESC, id DESC LIMIT 1`).get(r.id);
   await db.prepare(`UPDATE lease_renewal_events SET status = 'read' WHERE renewal_id = ? AND kind = 'in' AND status = 'new' AND id <> ?`).run(r.id, last.id);
+  if (!last) return { added: added.length, removed };
   if (last.kind === 'in' && added.includes(last.id)) {
     await db.prepare(`UPDATE lease_renewal_events SET status = 'new', title = 'Tenant replied' WHERE id = ?`).run(last.id);
   } else if (last.kind === 'out' && r.waiting === 'reply') {
     await update(r.id, { waiting: null });
   }
-  return added.length;
+  return { added: added.length, removed };
 }
 
 /** "Bring in past emails", for a renewal taken over before Reem did it by itself. */
@@ -858,9 +899,9 @@ export async function bringInPast(user, id) {
   const r = await getRenewal(id);
   if (!r) throw bad('Not found', 404);
   if (r.portal_seen === null || r.portal_seen === undefined) throw bad('Only a renewal taken over from saifsys has past emails to bring in.', 409);
-  const n = await importPast(r);
-  if (n) await readInbound();
-  return { n, renewal: await getRenewal(r.id) };
+  const { added, removed } = await importPast(r);
+  if (added) await readInbound();
+  return { n: added, removed, renewal: await getRenewal(r.id) };
 }
 
 /** The email a step would send, for the person to read. Nothing is sent or saved. */
@@ -1804,7 +1845,7 @@ leaseRenewalRoutes.get('/saifsys/:leaseId', wrap(async (req, res) => {
 // Take over: that renewal is Reem's from here. Anyone with Lease renewals may (the user, 2026-11-17).
 leaseRenewalRoutes.post('/saifsys/:leaseId/takeover', wrap(async (req, res) => { res.json(out(await takeover(req.user, req.params.leaseId))); }));
 // The emails written before the takeover, brought in again (a renewal taken over before Reem did it by itself).
-leaseRenewalRoutes.post('/:id/past-emails', wrap(async (req, res) => { const { n, renewal } = await bringInPast(req.user, req.params.id); res.json({ n, renewal: out(renewal) }); }));
+leaseRenewalRoutes.post('/:id/past-emails', wrap(async (req, res) => { const { n, removed, renewal } = await bringInPast(req.user, req.params.id); res.json({ n, removed, renewal: out(renewal) }); }));
 
 leaseRenewalRoutes.get('/:id', wrap(async (req, res) => {
   const r = await getRenewal(req.params.id);

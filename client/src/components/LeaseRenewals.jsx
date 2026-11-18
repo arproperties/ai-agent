@@ -887,9 +887,10 @@ function Renewal({ id, onBack, chat = null }) {
   const bringPast = async () => {
     setBusy('past'); setError(''); setChecked('');
     try {
-      const { n } = await api.post(`/lease-renewals/${id}/past-emails`);
+      const { n, removed } = await api.post(`/lease-renewals/${id}/past-emails`);
       setR(await api.get(`/lease-renewals/${id}`));
-      setChecked(n ? `${n} email${n > 1 ? 's' : ''} brought in.` : 'No other emails with this tenant in the Tenant care inbox.');
+      const said = [n && `${n} email${n > 1 ? 's' : ''} brought in`, removed && `${removed} not with this tenant taken off`].filter(Boolean).join(', ');
+      setChecked(said ? `${said}.` : 'No other emails with this tenant in the Tenant care inbox.');
     } catch (e) { setError(e.message); }
     setBusy('');
   };

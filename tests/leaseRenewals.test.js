@@ -1287,6 +1287,19 @@ test('Take over: the emails the staff and the tenant wrote are brought onto the 
 
   // Bringing them in again adds nothing.
   assert.equal((await R.bringInPast(boss, r.id)).n, 0);
+
+  // A mailbox that answers with emails the tenant is not on (Titan did, 2026-11-18): none
+  // come in, and any brought in before are taken off with their files.
+  const bad = await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, message_id, status, data, at)
+    VALUES (?, 'out', 'Emailed the tenant: Move out Procedure - Ayla 405', 'x', '<other@mail>', 'sent', '{"past": true}', ?) RETURNING id`).run(r.id, T - 2 * 86400);
+  world.past = [...world.past, pastMail(6, 'care@company.com', T - 86400, 'Your cheque bounced.', { to: ['someone@else.com'] })];
+  const again = await R.bringInPast(boss, r.id);
+  assert.equal(again.n, 0);
+  assert.equal(again.removed, 1);
+  const left = await saifsysLine(r.id);
+  assert.ok(!left.some((e) => e.id === bad.id || /Ayla 405|bounced/.test(`${e.title} ${e.body}`)));
+  assert.equal(left.filter((e) => e.data?.past).length, 4);
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_renewal_files WHERE renewal_id = ?').get(r.id)).n, 1);
 });
 
 test('Take over: a last email from the tenant nobody answered waits for a person; Bring in past emails is only for a taken-over renewal', async () => {
