@@ -9,6 +9,7 @@ import { isMaster, listedAgents } from './access.js';
 import { decrypt } from './secrets.js';
 import { compose, sendRaw, friendlySmtp } from './smtp.js';
 import { withMailbox, replySubject } from './imap.js';
+import { mailText } from './mailText.js';
 import { sendPush } from './push.js';
 import { createTodo } from './todos.js';
 import { renderPdf } from './replyDoc.js';
@@ -422,13 +423,14 @@ async function mail(r, { title, text, attachments = [], user = null, data = null
   return id;
 }
 
-/** The last email on the renewal's thread, parsed: the tenant's (from the inbox) or our own (its saved bytes). */
+/** The last email on the renewal's thread, parsed: its saved bytes, or the tenant's from the inbox. */
 async function lastOnThread(renewalId) {
   const e = await db.prepare(`SELECT kind, ref, raw FROM lease_renewal_events WHERE renewal_id = ? AND message_id IS NOT NULL AND kind IN ('in', 'out')
     ORDER BY id DESC LIMIT 1`).get(renewalId);
   if (!e) return null;
-  if (e.kind === 'in') return e.ref ? D.fetch(e.ref) : null;
-  return e.raw ? simpleParser(e.raw) : null;
+  // An email brought in from before a takeover keeps its own bytes, whoever wrote it.
+  if (e.raw) return simpleParser(e.raw);
+  return e.kind === 'in' && e.ref ? D.fetch(e.ref) : null;
 }
 
 /**
@@ -718,6 +720,9 @@ export async function takeover(user, leaseId) {
   }
   const was = String(w.was || '').replace(/_/g, ' ');
   await step(r, `Taken over from saifsys${was ? ` (it was ${was} there)` : ''}: Reem runs it from here`, { user });
+  // The emails the staff and the tenant wrote meanwhile. An inbox that cannot be read leaves
+  // the takeover done: "Bring in past emails" on the renewal tries again.
+  await importPast(r).catch((e) => console.warn('[lease renewals] bringing in the past emails failed:', e.message));
   await readInbound().catch((e) => console.warn('[lease renewals] reading the tenant\'s last word failed:', e.message));
   return getRenewal(r.id);
 }
@@ -746,6 +751,116 @@ export async function checkPortal() {
     }
   }
   return n;
+}
+
+// ---------- the emails the staff and the tenant wrote before it was taken over ----------
+//
+// The staff mostly argue a renewal out by email from the Tenant care inbox, not in saifsys,
+// so saifsys's log alone gives an old picture: a "discuss" from September that the staff
+// answered five times since. These bring that conversation onto the timeline, as it was:
+// every email to or from the tenant since the notice, from every folder of the inbox but the
+// bin, spam and drafts. Nothing is sent, and none of it is read by Reem or copied to saifsys,
+// except a last email from the tenant that nobody answered: that one waits for a person, as
+// any reply does. Their Message-IDs are kept, so the tenant answering one of the staff's old
+// emails lands on this renewal.
+
+const PAST_MAX = 100;               // emails brought in at most, the newest
+const PAST_RAW = 5 * 1024 * 1024;   // an email kept whole (to quote it in our reply) up to this size
+const SKIP_BOX = /trash|bin|deleted|spam|junk|draft/i;
+const addrs = (a) => [].concat(a || []).flatMap((o) => o?.value || []).map((x) => String(x.address || '').trim().toLowerCase()).filter(Boolean);
+
+/** Every email in the inbox to, from or copied to the tenant since `since` (seconds), oldest first. */
+async function readPastMail(acc, email, since) {
+  return withMailbox(acc, async (c) => {
+    const boxes = (await c.list()).filter((f) => !['\\Trash', '\\Junk', '\\Drafts', '\\All'].includes(f.specialUse)
+      && !SKIP_BOX.test(f.path) && !f.flags?.has?.('\\Noselect'));
+    const seen = new Set();
+    const mail = [];
+    for (const f of boxes) {
+      const lock = await c.getMailboxLock(f.path, { readOnly: true });
+      try {
+        const uids = (await c.search({ or: [{ from: email }, { to: email }, { cc: email }], since: new Date(since * 1000) }, { uid: true })) || [];
+        if (!uids.length) continue;
+        for await (const m of c.fetch(uids.slice(-PAST_MAX), { uid: true, internalDate: true, source: true }, { uid: true })) {
+          const p = await simpleParser(m.source).catch(() => null);
+          if (!p) continue;
+          const key = p.messageId || `${f.path}:${m.uid}`;
+          if (seen.has(key)) continue; // the same email in two folders
+          seen.add(key);
+          mail.push({
+            messageId: p.messageId || null, from: addrs(p.from)[0] || '', name: p.from?.value?.[0]?.name || '',
+            to: addrs(p.to), cc: addrs(p.cc), subject: p.subject || '', text: mailText(p),
+            at: Math.floor(new Date(p.date || m.internalDate || Date.now()).getTime() / 1000),
+            raw: m.source.length <= PAST_RAW ? m.source : null, attachments: p.attachments || [],
+          });
+        }
+      } finally { lock.release(); }
+    }
+    return mail.sort((a, b) => a.at - b.at).slice(-PAST_MAX);
+  });
+}
+D.past = readPastMail;
+
+/** From when to look: a day before saifsys's first line on the renewal (the notice), else 150 days before the end. */
+async function pastSince(r) {
+  const first = await db.prepare(`SELECT min(at) AS at FROM lease_renewal_events WHERE renewal_id = ? AND data->>'saifsys_event' IS NOT NULL`).get(r.id);
+  if (first?.at) return Number(first.at) - 86400;
+  return Math.floor(Date.parse(`${addDays(r.lease.end_date, -150)}T00:00:00Z`) / 1000);
+}
+
+/** The past emails onto the renewal's timeline. Safe to run again: an email already there is skipped. Returns how many came in. */
+async function importPast(r) {
+  const acc = await inbox();
+  if (!acc) throw bad('The Tenant care inbox is not connected.', 409);
+  const tenant = String(r.lease.email || '').trim().toLowerCase();
+  const ours = String(acc.email || '').toLowerCase();
+  const domain = ours.split('@')[1];
+  const have = new Set((await db.prepare('SELECT message_id FROM lease_renewal_events WHERE renewal_id = ? AND message_id IS NOT NULL').all(r.id)).map((x) => x.message_id));
+  const added = [];
+  for (const m of await D.past(acc, tenant, await pastSince(r))) {
+    if (m.messageId && have.has(m.messageId)) continue;
+    const from = String(m.from || '').toLowerCase();
+    const fromTenant = from === tenant;
+    // Ours: the inbox itself or a colleague who copied it in. Anyone else (the tenant's agent, a bank) is left out.
+    if (!fromTenant && !(from === ours || (domain && from.endsWith(`@${domain}`)))) continue;
+    const subject = String(m.subject || '').slice(0, 300);
+    const title = `${fromTenant ? 'Tenant emailed' : 'Emailed the tenant'}${subject ? `: ${subject}` : ''}`.slice(0, 300);
+    const { id } = await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, subject, message_id, raw, status, data, at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+      .run(r.id, fromTenant ? 'in' : 'out', title, tenantWords(m.text).slice(0, 20000), subject, m.messageId, m.raw,
+        fromTenant ? 'read' : 'sent', JSON.stringify({ past: true, from, name: m.name || null, cc: m.cc.filter((x) => x !== tenant && x !== ours) }), m.at || secs());
+    for (const a of m.attachments || []) {
+      const mime = String(a.contentType || '').toLowerCase();
+      if (!FILE_TYPES[mime] || !a.content?.length || a.content.length > MAX_FILE) continue;
+      await keep(r.id, id, { name: a.filename || `file.${FILE_TYPES[mime]}`, mime, buffer: a.content });
+    }
+    if (m.messageId) have.add(m.messageId);
+    added.push(id);
+  }
+  if (!added.length) return 0;
+
+  // Who spoke last, now that the whole conversation is here. The tenant, in an email just
+  // brought in: Reem reads it and it waits for a person. Anyone else: the tenant's older words
+  // were answered, so nothing waits on them. last_out_at is left alone on purpose: set from
+  // an old email, the silence reminders would email the tenant by themselves.
+  const last = await db.prepare(`SELECT id, kind FROM lease_renewal_events WHERE renewal_id = ? AND kind IN ('in', 'out') ORDER BY at DESC, id DESC LIMIT 1`).get(r.id);
+  await db.prepare(`UPDATE lease_renewal_events SET status = 'read' WHERE renewal_id = ? AND kind = 'in' AND status = 'new' AND id <> ?`).run(r.id, last.id);
+  if (last.kind === 'in' && added.includes(last.id)) {
+    await db.prepare(`UPDATE lease_renewal_events SET status = 'new', title = 'Tenant replied' WHERE id = ?`).run(last.id);
+  } else if (last.kind === 'out' && r.waiting === 'reply') {
+    await update(r.id, { waiting: null });
+  }
+  return added.length;
+}
+
+/** "Bring in past emails", for a renewal taken over before Reem did it by itself. */
+export async function bringInPast(user, id) {
+  const r = await getRenewal(id);
+  if (!r) throw bad('Not found', 404);
+  if (r.portal_seen === null || r.portal_seen === undefined) throw bad('Only a renewal taken over from saifsys has past emails to bring in.', 409);
+  const n = await importPast(r);
+  if (n) await readInbound();
+  return { n, renewal: await getRenewal(r.id) };
 }
 
 /** The email a step would send, for the person to read. Nothing is sent or saved. */
@@ -1688,6 +1803,8 @@ leaseRenewalRoutes.get('/saifsys/:leaseId', wrap(async (req, res) => {
 }));
 // Take over: that renewal is Reem's from here. Anyone with Lease renewals may (the user, 2026-11-17).
 leaseRenewalRoutes.post('/saifsys/:leaseId/takeover', wrap(async (req, res) => { res.json(out(await takeover(req.user, req.params.leaseId))); }));
+// The emails written before the takeover, brought in again (a renewal taken over before Reem did it by itself).
+leaseRenewalRoutes.post('/:id/past-emails', wrap(async (req, res) => { const { n, renewal } = await bringInPast(req.user, req.params.id); res.json({ n, renewal: out(renewal) }); }));
 
 leaseRenewalRoutes.get('/:id', wrap(async (req, res) => {
   const r = await getRenewal(req.params.id);

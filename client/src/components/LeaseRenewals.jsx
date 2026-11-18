@@ -883,6 +883,16 @@ function Renewal({ id, onBack, chat = null }) {
     } catch (e) { setError(e.message); }
     setBusy('');
   };
+  // A renewal taken over from saifsys: the emails the staff and the tenant wrote before it, onto the timeline.
+  const bringPast = async () => {
+    setBusy('past'); setError(''); setChecked('');
+    try {
+      const { n } = await api.post(`/lease-renewals/${id}/past-emails`);
+      setR(await api.get(`/lease-renewals/${id}`));
+      setChecked(n ? `${n} email${n > 1 ? 's' : ''} brought in.` : 'No other emails with this tenant in the Tenant care inbox.');
+    } catch (e) { setError(e.message); }
+    setBusy('');
+  };
   // An advisor's box taken off the timeline: only advice, never an email or a step.
   const removeAdvice = async (e) => {
     if (!confirm(`Delete ${e.title}?`)) return;
@@ -1006,6 +1016,12 @@ function Renewal({ id, onBack, chat = null }) {
               <div className="mb-3 flex items-center gap-3 px-1">
                 <p className="flex-1 text-xs font-medium tracking-[0.14em] text-mute">TIMELINE</p>
                 {checked && <span className="text-xs text-mute">{checked}</span>}
+                {rn.portal && (
+                  <button onClick={bringPast} disabled={busy === 'past'} title="The emails the staff and the tenant wrote from the Tenant care inbox before the takeover"
+                    className="flex items-center gap-1.5 rounded-full border border-stroke px-3 py-1.5 text-xs text-mute transition hover:text-txt disabled:opacity-60">
+                    <Mail size={13} className={busy === 'past' ? 'animate-pulse' : ''} /> {busy === 'past' ? 'Bringing in…' : 'Bring in past emails'}
+                  </button>
+                )}
                 {!DONE.includes(s) && (
                   <button onClick={checkNow} disabled={busy === 'check'}
                     className="flex items-center gap-1.5 rounded-full border border-stroke px-3 py-1.5 text-xs text-mute transition hover:text-txt disabled:opacity-60">
@@ -1399,7 +1415,8 @@ function Event({ e, r, newest, busy, onReadAgain }) {
   const ok = papers && e.data?.check?.complete;
   const [tint, Ico] = papers ? [ok ? 'bg-ok/15 text-ok' : 'bg-warn/15 text-warn', ok ? ShieldCheck : ShieldAlert]
     : e.reading?.dispute ? ['bg-bad/15 text-bad', Scale] : DOT[e.kind];
-  const who = e.kind === 'in' ? r.tenant : e.kind === 'team' ? `${e.by || 'Someone'}, from ${e.data?.from || 'their mailbox'}` : e.by || 'Reem';
+  // An email from before a takeover: whoever on the staff wrote it, from the Tenant care inbox or their own.
+  const who = e.kind === 'in' ? r.tenant : e.kind === 'out' && e.data?.past ? (e.data.name || e.data.from || 'Tenant care') : e.kind === 'team' ? `${e.by || 'Someone'}, from ${e.data?.from || 'their mailbox'}` : e.by || 'Reem';
   const sending = e.kind === 'team' && ['pending', 'approved', 'sending'].includes(e.status);
 
   if (e.kind === 'step') {
@@ -1417,7 +1434,7 @@ function Event({ e, r, newest, busy, onReadAgain }) {
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <p className="font-medium leading-snug">{e.title}</p>
-            <p className="text-xs text-mute">{who}{e.data?.via === 'portal' ? ' · in the tenant portal' : ''} · {when(e.at)}{newest ? ' · latest' : ''}</p>
+            <p className="text-xs text-mute">{who}{e.data?.via === 'portal' ? ' · in the tenant portal' : ''}{e.data?.past ? ' · before the takeover' : ''} · {when(e.at)}{newest ? ' · latest' : ''}</p>
           </div>
           {e.kind === 'out' && e.status === 'failed' && <span className="flex items-center gap-1 text-xs text-bad"><Clock size={12} /> Not sent yet</span>}
           {sending && <span className="flex items-center gap-1 text-xs text-mute"><Clock size={12} /> Sending…</span>}
