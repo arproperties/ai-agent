@@ -393,7 +393,11 @@ export async function reportDays(typeId, { days = 30, now = Date.now() } = {}) {
     if (!byDay.has(c.report_date)) byDay.set(c.report_date, { date: c.report_date, check: c, earlier: [] });
     else byDay.get(c.report_date).earlier.push(c);
   }
-  for (let d = from > type.starts_on ? from : type.starts_on; d < today; d = addDays(d, 1)) {
+  // Days with no report are shown from the first report on file, even before Reem was watching
+  // (the boss sees the gap of 14-18 Nov); the buzzes about them only count from starts_on.
+  const first = checks.length ? checks.at(-1).report_date : type.starts_on;
+  const shownFrom = [from, first < type.starts_on ? first : type.starts_on].sort()[1];
+  for (let d = shownFrom; d < today; d = addDays(d, 1)) {
     if (!byDay.has(d) && isWorkDay(type, d)) byDay.set(d, { date: d, missing: true, late: isLate(type, d, now) });
   }
   return { type, days: [...byDay.values()].sort((a, b) => (a.date < b.date ? 1 : -1)) };

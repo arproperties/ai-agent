@@ -68,7 +68,7 @@ function CheckDetail({ check, master, onChanged }) {
       {check.note && (
         <div>
           <p className="mb-1 text-xs uppercase tracking-wide text-mute">Message for the writer {check.note_state === 'sent' && '· sent'}{check.note_state === 'dismissed' && '· dismissed'}{check.note_state === 'replaced' && '· a newer copy came in'}{check.note_state === 'past' && '· from before Reem was watching'}</p>
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} readOnly={!master || !open} rows={Math.min(10, note.split('\n').length + 1)}
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} readOnly={!master || !open} rows={Math.min(20, note.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 80)), 0))}
             className={`${FIELD} resize-y text-sm`} />
         </div>
       )}
@@ -420,7 +420,7 @@ export default function ReportChecks({ onBack, focus = null }) {
       )}>
       {error && <p className="mb-3 text-sm text-bad">{error}</p>}
       {!data ? <Loader2 className="mx-auto mt-10 animate-spin text-mute" /> : (
-        <div className="mx-auto max-w-xl space-y-4 md:max-w-4xl">
+        <div className="mx-auto w-full max-w-xl space-y-4 md:max-w-7xl">
           {data.types.length > 1 && (
             <div className="flex flex-wrap gap-1.5">
               {data.types.map((t) => (
@@ -434,7 +434,7 @@ export default function ReportChecks({ onBack, focus = null }) {
           {!data.types.length && <p className="text-sm text-mute">No reports yet.{master ? ' Tap + to add one.' : ''}</p>}
 
           {type && (
-            <div className="px-1">
+            <div className="px-1 md:hidden">
               <p className="text-lg font-light">{type.name}{!type.active && <span className="ml-2 text-xs text-mute">(paused)</span>}</p>
               <p className="text-xs text-mute">{type.writer ? `${type.writer} · ` : ''}expected {workDays(type.work_days)}, due the next day by {hour(type.due_hour)}</p>
               {type.backfill?.state === 'running' && <p className="mt-1 flex items-center gap-1.5 text-xs text-mute"><Loader2 size={12} className="animate-spin" /> Going through past reports…</p>}
@@ -443,17 +443,26 @@ export default function ReportChecks({ onBack, focus = null }) {
 
           {type && !days && <Loader2 className="mx-auto animate-spin text-mute" />}
           {type && days && (
-            <>
-              <Summary type={type} days={list.filter((d) => d.date >= new Date(Date.now() - 30 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }))} />
-              <div className="space-y-4 md:grid md:grid-cols-2 md:items-start md:gap-4 md:space-y-0">
-              {month && (
-                <Month year={month[0]} month={month[1]} byDay={byDay} today={today} selected={selected} onPick={setSelected}
-                  onPrev={at > 0 ? () => go(months[at - 1]) : null}
-                  onNext={at >= 0 && at < months.length - 1 ? () => go(months[at + 1]) : null} />
-              )}
-              {pickedDay && <DayPanel day={pickedDay} master={master} onChanged={refresh} />}
+            // Phone: one column. Wider: the pattern and the month on the left, the chosen day on the right,
+            // so the whole screen is used and the day's note and buttons fit without scrolling.
+            <div className="space-y-4 md:grid md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] md:items-start md:gap-5 md:space-y-0">
+              <div className="space-y-4">
+                <div className="hidden px-1 md:block">
+                  <p className="text-xl font-light">{type.name}{!type.active && <span className="ml-2 text-xs text-mute">(paused)</span>}</p>
+                  <p className="text-xs text-mute">{type.writer ? `${type.writer} · ` : ''}expected {workDays(type.work_days)}, due the next day by {hour(type.due_hour)}</p>
+                </div>
+                <Summary type={type} days={list.filter((d) => d.date >= new Date(Date.now() - 30 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }))} />
+                {month && (
+                  <Month year={month[0]} month={month[1]} byDay={byDay} today={today} selected={selected} onPick={setSelected}
+                    onPrev={at > 0 ? () => go(months[at - 1]) : null}
+                    onNext={at >= 0 && at < months.length - 1 ? () => go(months[at + 1]) : null} />
+                )}
               </div>
-            </>
+              <div className="md:sticky md:top-0">
+                {pickedDay ? <DayPanel day={pickedDay} master={master} onChanged={refresh} />
+                  : <div className="glass rounded-2xl p-6 text-sm text-mute">Tap a day to see its report.</div>}
+              </div>
+            </div>
           )}
         </div>
       )}
