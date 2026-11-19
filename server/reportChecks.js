@@ -73,15 +73,15 @@ const SEEDS = [{
     'Not material requisition forms (MRF), LPOs, invoices, receipts, QA/QC site diaries or safety notes.',
   work_days: '0123456', // the site works every day (Francis, 2026-11-19); changed on the screen
   items: [
-    'The date the work was done',
-    'Each work done today, with its quantity (m², m³, pieces)',
-    'Running total to date for each work, added up from day one',
-    'Blocks laid today and blocks laid to date',
-    'Waste %: blocks issued compared with blocks needed for the m² done',
-    'Check against the architectural wall schedule: areas behind or not matching',
-    'Materials used, each with its quantity',
-    'Manpower: names and which company',
-    'Approved and signed by the site engineer',
+    'Date — the day the work was done',
+    'Work done — each work today, with its quantity (m², m³, pieces)',
+    'Running totals — total to date for each work, added up from day one',
+    'Blocks — blocks laid today and blocks laid to date',
+    'Waste % — blocks issued compared with blocks needed for the m² done',
+    'Wall schedule — checked against the architectural wall schedule: areas behind or not matching',
+    'Materials — each material used, with its quantity',
+    'Manpower — names and which company',
+    'Signature — approved and signed by the site engineer',
   ],
 }];
 
@@ -156,7 +156,8 @@ export async function draftItems({ name, about }, asker = ask) {
     system: `A property and construction company in Dubai gets this work report from its staff every day.
 List what a complete report of this kind must contain, so a manager can track the work month by month:
 dates, quantities, totals to date, materials with quantities, people, photos, problems - whatever this kind of report needs.
-5 to 12 points, each one thing, at most 15 words, in plain English. Reply with ONLY JSON: {"items": ["<point>", "<point>"]}`,
+5 to 12 points, each one thing, in plain English, written as a short label of 1-3 words, then " — ", then what exactly
+(at most 15 words), e.g. "Waste % — blocks issued compared with blocks needed". Reply with ONLY JSON: {"items": ["<point>", "<point>"]}`,
   });
   try {
     const items = cleanItems(looseJson(out).items);
@@ -252,7 +253,8 @@ const latestBefore = (typeId, day) => db.prepare(`SELECT report_date, facts FROM
 
 // One line per list item: the same item named twice has its two notes joined.
 export function cleanGaps(gaps, items) {
-  const known = new Map(items.map((i) => [i.toLowerCase(), i]));
+  // Word for word, or only its short label (the part before " — "): both are the list's item.
+  const known = new Map(items.flatMap((i) => [[i.split(' — ')[0].toLowerCase(), i], [i.toLowerCase(), i]]));
   const out = new Map();
   for (const g of Array.isArray(gaps) ? gaps : []) {
     const item = known.get(line(g?.item, MAX_ITEM).toLowerCase()) || line(g?.item, MAX_ITEM);
