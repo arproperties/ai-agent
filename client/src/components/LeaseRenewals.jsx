@@ -903,6 +903,7 @@ function Renewal({ id, onBack, chat = null }) {
   useEffect(() => { load(); }, [load]);
 
   const mark = async (what) => {
+    if (what === 'not_renewing_quiet' && !confirm(`Mark this tenant as not renewing without emailing them? They leave when the lease ends (${day(r.end_date)}). saifsys is told too, and no more renewal emails go to the tenant.`)) return;
     if (what === 'close' && !confirm('Take this renewal out of Reem? No more emails or reminders go to the tenant, and you handle it yourself.')) return;
     if (what === 'auto_off' && !confirm('Take over this lease? Reem stops answering the tenant, and you do each step by hand. You can hand it back later.')) return;
     if (what === 'unschedule' && !confirm('Cancel this offer? Nothing has gone to the tenant; you can start it again.')) return;
@@ -941,6 +942,7 @@ function Renewal({ id, onBack, chat = null }) {
     papers_ok: { label: 'Papers OK', icon: ShieldCheck, run: () => mark('papers_ok'), busy: busy === 'papers_ok' },
     convert: { label: 'Renew in saifsys', icon: FileText, run: () => setSheet({ compose: { id, action: 'convert' } }) },
     not_renewing: { label: 'Not renewing', icon: Ban, run: () => setSheet({ compose: { id, action: 'not_renewing' } }) },
+    not_renewing_quiet: { label: 'Not renewing, no email', icon: Ban, run: () => mark('not_renewing_quiet'), busy: busy === 'not_renewing_quiet' },
     close: { label: 'Handle outside Reem', icon: X, run: () => mark('close'), busy: busy === 'close' },
     send_now: { label: 'Send now', icon: Send, run: () => mark('send_now'), busy: busy === 'send_now' },
     unschedule: { label: 'Cancel the offer', icon: X, run: () => mark('unschedule'), busy: busy === 'unschedule' },
@@ -1264,17 +1266,17 @@ const NEXT_TONE = {
 function nextStep(r) {
   const rn = r.renewal;
   const s = rn.status;
-  const end = ['not_renewing', 'close'];
+  const end = ['not_renewing', 'not_renewing_quiet', 'close'];
   if (s === 'scheduled' && (!rn.auto || r.paused)) return { tone: 'you', icon: Send, title: 'The offer is ready: send it', sub: `Reem will not send it by itself. It was due on ${day(rn.sendOn)}.`, main: ['send_now'], more: ['unschedule'] };
   if (s === 'scheduled') return { tone: 'wait', icon: Clock, title: `Reem sends the offer on ${day(rn.sendOn)}`, sub: '120 days before the lease ends. Nothing has gone to the tenant yet.', main: ['send_now'], more: ['unschedule'] };
   if (s === 'converted') return { tone: 'done', icon: Check, title: 'Renewed', sub: 'saifsys has the new lease, and the tenant was told.', main: [], more: [] };
-  if (s === 'not_renewing') return { tone: 'done', icon: Ban, title: 'Not renewing', sub: 'The tenant was told what happens next.', main: [], more: [] };
+  if (s === 'not_renewing') return { tone: 'done', icon: Ban, title: `Not renewing: leaves on ${day(r.end_date)}`, sub: 'The lease runs to its end date as normal, rent and cheques included. No more renewal emails or reminders go to the tenant.', main: [], more: [] };
   if (s === 'closed') return { tone: 'done', icon: X, title: 'Handled outside Reem', sub: 'No more emails or reminders go to the tenant.', main: [], more: [] };
   // A disputing tenant silent for 25 days since our last email: Reem wrote a reminder, a person sends it.
   if (rn.disputeReminder && ['offer_sent', 'negotiating', 'agreed'].includes(s)) {
     return { tone: 'bad', icon: BellRing, title: `No reply to the dispute: reminder ${rn.disputeReminder.n} is ready`,
       sub: `${rn.lastOutAt ? `Our last email went ${when(rn.lastOutAt)}. ` : ''}Nothing goes to the tenant until you tap Send.`,
-      main: ['remind', 'reply'], more: ['not_renewing', 'close'] };
+      main: ['remind', 'reply'], more: end };
   }
   if (s === 'papers_ok') return { tone: 'go', icon: FileText, title: 'Ready to renew in saifsys', sub: 'saifsys makes the new lease and its cheques, then the tenant is told.', main: ['convert'], more: ['reply', ...end] };
   if (s === 'agreed') {
@@ -1284,7 +1286,7 @@ function nextStep(r) {
     return { tone: 'wait', icon: Clock, title: 'Waiting for the papers', sub: rn.auto ? 'The signed agreement and the cheque photos. Reem checks them and asks for fixes; when they match, staff tap Renew in saifsys.' : 'The signed agreement and the cheque photos. Reem checks them when they arrive.', main: ['reply'], more: ['papers_ok', ...end] };
   }
   // offer_sent / negotiating
-  const all = ['accept', 'counter', 'index', 'reply', 'not_renewing', 'close'];
+  const all = ['accept', 'counter', 'index', 'reply', ...end];
   const rest = (main) => all.filter((k) => !main.includes(k));
   if (rn.dispute && rn.waiting === 'reply') {
     const main = ['index', 'reply'];
