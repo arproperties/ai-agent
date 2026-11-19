@@ -19,6 +19,15 @@ No AI is involved. Nothing but the daily summary leaves the PC. The detail is de
 That is all. The person never has to do anything again. Clicking the tray icon shows today's
 totals; right-click has **Send today now** if HR wants a day before 18:30.
 
+## Buddy
+
+Reem's pet sits on the desktop, always on top, and can be dragged anywhere; it remembers its spot.
+It watches the mouse while you work, dozes after three idle minutes, sleeps when the PC is locked,
+waves when the day has gone to Reem, and goes grey if Reem no longer knows the PC. Now and then it
+says a short line from a fixed list, never more than once an hour, and suggests a stretch after two
+hours without a break. Right-click it for the menu: Today, Send today now, Character (Buddy, Jelly,
+Bolt, Miso), and "Buddy talks" to switch the lines off. Click it for today's times. No AI is involved.
+
 ## What HR gets
 
 One email a day at 19:00 Dubai (the time is a Reem setting) with, per person: first and last
