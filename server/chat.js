@@ -577,7 +577,31 @@ export async function pictureTurn({ user, team, convId, text, asked, send, res }
   if (!res.writableEnded) { send('done', { messageId, userMessageId }); res.end(); }
 }
 
+// Replies being written right now, by conversation. A reply keeps going when the person
+// leaves the chat (another page, the phone locked, the tab closed): only Stop ends it.
+// Coming back to the chat asks here whether it is still being written.
+const running = new Map(); // conversationId -> { userId, res, stopped, abort }
+
+export const chatWorking = (userId, convId) => running.get(Number(convId))?.userId === userId;
+
+export function stopChat(userId, convId) {
+  const turn = running.get(Number(convId));
+  if (!turn || turn.userId !== userId) return false;
+  turn.stopped = true;
+  turn.abort?.();
+  return true;
+}
+
 export async function chat(req, res) {
+  try {
+    await runChat(req, res);
+  } finally {
+    const id = res.locals.chatConv;
+    if (id && running.get(id)?.res === res) running.delete(id);
+  }
+}
+
+async function runChat(req, res) {
   const user = req.user;
   const team = await chatAgents(user);
   const byName = await privateAgents(user); // the master's private agents: only when @named
@@ -593,8 +617,13 @@ export async function chat(req, res) {
     ({ id: convId } = await db.prepare('INSERT INTO conversations (user_id, title) VALUES (?, ?) RETURNING id').run(user.id, title));
   }
 
+  const turn = { userId: user.id, res, stopped: false, abort: null };
+  running.set(convId, turn);
+  res.locals.chatConv = convId;
+
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  // Once they have left the chat there is no one to tell: the reply still finishes and is saved.
+  const send = (event, data) => { if (!res.destroyed && !res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
   // A scanned PDF is read a few pages per call, and one call can take minutes with nothing
   // to say. nginx drops a reply silent for 5 minutes and Safari shows "Load failed", so a
   // comment line (ignored by the app) goes out every 15 seconds to show the turn is alive.
@@ -746,7 +775,8 @@ export async function chat(req, res) {
   // A repeat is already the last of the earlier turns: it is not said to the agent twice.
   const convo = [...toClaude(repeat ? prior.slice(0, -1) : prior), { role: 'user', content: [...blocks, { type: 'text', text: text || 'Please review the attached file(s).' }] }];
   const emit = (t) => { reply += t; send('delta', { text: t }); };
-  res.on('close', () => { if (!finished) stream?.abort(); });
+  // Leaving the chat no longer stops the reply; Stop does (stopChat above).
+  turn.abort = () => { if (!finished) stream?.abort(); };
 
   try {
     let prevType = null;
@@ -761,7 +791,8 @@ export async function chat(req, res) {
     if (renewal) system[1].text += `\n\n${renewal}`;
     // A job on a website is many small steps: once the browser is used, the turn gets more rounds.
     let rounds = MAX_ROUNDS;
-    for (let turn = 0; turn < rounds; turn++) {
+    for (let round = 0; round < rounds; round++) {
+      if (turn.stopped) break; // Stop pressed while a tool was running between rounds
       stream = claude.beta.messages.stream({
         model,
         max_tokens: 16000,
@@ -770,8 +801,8 @@ export async function chat(req, res) {
         tools: [webSearch(model), webFetch(model), ...(auto ? [advisor] : []), ...kits.flatMap((k) => k.definitions)],
         // The last round has to be the answer: a case history once spent every round
         // searching and reading, and the person got nothing back at all.
-        ...(turn === rounds - 1 ? { tool_choice: { type: 'none' } } : {}),
-        messages: turn === rounds - 1 ? lastRound(withCacheMark(convo)) : turn ? withCacheMark(convo) : convo,
+        ...(round === rounds - 1 ? { tool_choice: { type: 'none' } } : {}),
+        messages: round === rounds - 1 ? lastRound(withCacheMark(convo)) : round ? withCacheMark(convo) : convo,
       });
       stream.on('streamEvent', (ev) => {
         if (ev.type !== 'content_block_start') return;
@@ -807,9 +838,9 @@ export async function chat(req, res) {
       } catch (e) {
         // The API key was turned down before a word came: ask once more, on the next key
         // (aiKeys.js has already moved this one to the back).
-        if (turn !== 0 || rekeyed || reply || !isKeyError(e) || keysFor('anthropic', user.id).length < 2) throw e;
+        if (round !== 0 || rekeyed || reply || !isKeyError(e) || keysFor('anthropic', user.id).length < 2) throw e;
         rekeyed = true;
-        turn--;
+        round--;
         continue;
       }
       if (msg.stop_reason === 'refusal' && !reply) send('error', { message: "I can't help with that request." });
@@ -822,11 +853,11 @@ export async function chat(req, res) {
         const results = await Promise.all(calls.map((b) => (kitFor(b.name) ?? kits[0]).run(b)));
         calls.forEach((b, i) => { if (!results[i]?.is_error) ran.add(b.name); });
         convo.push({ role: 'user', content: results });
-        if (turn === rounds - 2) cutShort = true; // the next round is the last one (OUT_OF_ROUNDS)
+        if (round === rounds - 2) cutShort = true; // the next round is the last one (OUT_OF_ROUNDS)
         continue;
       }
       // "Draft is ready" with no draft made (claims.js): asked once to do it or say so.
-      const missing = !checked && msg.stop_reason === 'end_turn' && turn < rounds - 1 ? unbacked(reply, ran) : [];
+      const missing = !checked && msg.stop_reason === 'end_turn' && round < rounds - 1 ? unbacked(reply, ran) : [];
       if (missing.length) {
         checked = true;
         convo.push({ role: 'assistant', content: msg.content });

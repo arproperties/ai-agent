@@ -8,7 +8,7 @@ import { spoken, prepare, cachedPath, claim, streamTo, timingsFor } from './tts.
 import { authRoutes, requireUser, requireMaster } from './auth.js';
 import { agentOut, agentIn, agentLinks, setAgentCase } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence, masterReach } from './access.js';
-import { deleteMessage, editReply, chat } from './chat.js';
+import { deleteMessage, editReply, chat, chatWorking, stopChat } from './chat.js';
 import { addMemory, memoryChain, MAX_PINNED } from './knowledge.js';
 import { memoryReviewRoutes } from './memoryReview.js';
 import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument, editDocumentKind, kindFieldsIn } from './files.js';
@@ -345,6 +345,10 @@ app.delete('/api/conversations/:id', wrap(async (req, res) => {
 }));
 
 app.post('/api/chat', upload.array('files', 10), wrap(chat));
+// A reply keeps being written after the person leaves the chat. Coming back asks whether it
+// is still on its way, and Stop is what ends one (closing the page no longer does).
+app.get('/api/conversations/:id/working', (req, res) => res.json({ working: chatWorking(req.user.id, req.params.id) }));
+app.post('/api/chat/stop', (req, res) => res.json({ ok: stopChat(req.user.id, req.body.conversationId) }));
 // One message taken out of a Reem chat, as in WhatsApp: a voice note said wrong, or a reply not worth keeping.
 // Part of a reply taken out (select → Remove): the reply is saved without it.
 app.patch('/api/messages/:id', wrap(async (req, res) => {

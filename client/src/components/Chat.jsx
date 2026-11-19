@@ -105,40 +105,76 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
     if (sent > timedSend.current && focus?.primary) { timedSend.current = sent; timer.start(); }
   }, [sent, focus?.primary]); // eslint-disable-line react-hooks/exhaustive-deps
   const abortRef = useRef();
+  const convRef = useRef(conversationId); // the chat Stop is for, known before React re-renders
+  convRef.current = convId;
+  const watchRef = useRef(); // the timer checking on a reply still being written after a return
   const scrollRef = useRef();
   const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
 
   const toBottom = () => requestAnimationFrame(() => scrollRef.current && (scrollRef.current.scrollTop = scrollRef.current.scrollHeight));
 
+  // The cards a chat put up (drafts, reminders, bookings…): on opening it, and again when a
+  // reply that was still being written on return has finished.
+  const loadCards = (id) => {
+    // Every status, not just the ones still waiting: a sent email that vanishes on
+    // reload leaves no answer to "did I send that?". The card says what became of it.
+    // Oldest first, because the list arrives newest first and these read as chat.
+    api.get(`/email/drafts?conversation=${id}`).then((r) => setDrafts(r.drafts.slice().reverse())).catch(() => {});
+    api.get(`/team-reminders?conversation=${id}`).then(setReminders).catch(() => {});
+    if (user.role === 'master') api.get(`/responsibilities/proposals?conversation=${id}`).then(setDuties).catch(() => {});
+    if (user.role === 'master') api.get(`/address-book/proposals?conversation=${id}`).then(setAddresses).catch(() => {});
+    if (user.role === 'master') api.get(`/lessons/proposals?conversation=${id}`).then(setLessons).catch(() => {});
+    if (user.role === 'master') api.get(`/plans?conversation=${id}`).then(setPlans).catch(() => {});
+    api.get(`/saifsys/ars/bookings?conversation=${id}`).then(setBookings).catch(() => {});
+    api.get(`/inventory/proposals?conversation=${id}`).then(setStock).catch(() => {});
+    if (!user.external) api.get(`/projects/proposals?conversation=${id}`).then(setSite).catch(() => {});
+    if (user.external) api.get(`/cases/proposals?conversation=${id}`).then(setCases).catch(() => {});
+    api.get(`/notices/chat?conversation=${id}`).then(setNotices).catch(() => {});
+    api.get(`/browser/tasks?conversation=${id}`).then(setBrowsing).catch(() => {}); // refused without the Browser module
+    api.get(`/case-focus/${id}`).then(setFocus).catch(() => {}); // refused without the Primary case module
+  };
+
+  // Back in a chat whose reply is still being written (they left mid-reply): the bubble shows
+  // it is coming, and the saved reply replaces it once the server has finished.
+  const watchReply = (id) => {
+    setMessages((m) => [...m, { id: 'working', role: 'assistant', content: '', streaming: true, created_at: Math.floor(Date.now() / 1000) }]);
+    setBusy(true); setOrb('thinking'); setStatus('Still working on the reply…');
+    toBottom();
+    const tick = async () => {
+      const r = await api.get(`/conversations/${id}/working`).catch(() => ({ working: false }));
+      if (r.working) { watchRef.current = setTimeout(tick, 3000); return; }
+      const m = await api.get(`/conversations/${id}/messages`).catch(() => null);
+      setMessages((x) => m || x.filter((y) => y.id !== 'working'));
+      loadCards(id);
+      setBusy(false); setOrb('idle'); setStatus('');
+      setAnswered((n) => n + 1);
+      toBottom();
+    };
+    watchRef.current = setTimeout(tick, 3000);
+  };
+
+  // Stop is the one thing that ends a reply: leaving the chat lets it finish.
+  const stopReply = () => {
+    if (convRef.current) api.post('/chat/stop', { conversationId: convRef.current }).catch(() => {});
+    abortRef.current?.abort();
+  };
+
   useEffect(() => {
     if (conversationId) {
-      api.get(`/conversations/${conversationId}/messages`).then((m) => {
+      Promise.all([api.get(`/conversations/${conversationId}/messages`), api.get(`/conversations/${conversationId}/working`).catch(() => ({}))]).then(([m, w]) => {
         setMessages(m);
         setCarrying([...new Set(m.flatMap((x) => x.carried || []))]);
         toBottom();
+        if (w.working) watchReply(conversationId);
       });
-      // Every status, not just the ones still waiting: a sent email that vanishes on
-      // reload leaves no answer to "did I send that?". The card says what became of it.
-      // Oldest first, because the list arrives newest first and these read as chat.
-      api.get(`/email/drafts?conversation=${conversationId}`).then((r) => setDrafts(r.drafts.slice().reverse())).catch(() => {});
-      api.get(`/team-reminders?conversation=${conversationId}`).then(setReminders).catch(() => {});
-      if (user.role === 'master') api.get(`/responsibilities/proposals?conversation=${conversationId}`).then(setDuties).catch(() => {});
-      if (user.role === 'master') api.get(`/address-book/proposals?conversation=${conversationId}`).then(setAddresses).catch(() => {});
-      if (user.role === 'master') api.get(`/lessons/proposals?conversation=${conversationId}`).then(setLessons).catch(() => {});
-      if (user.role === 'master') api.get(`/plans?conversation=${conversationId}`).then(setPlans).catch(() => {});
-      api.get(`/saifsys/ars/bookings?conversation=${conversationId}`).then(setBookings).catch(() => {});
-      api.get(`/inventory/proposals?conversation=${conversationId}`).then(setStock).catch(() => {});
-      if (!user.external) api.get(`/projects/proposals?conversation=${conversationId}`).then(setSite).catch(() => {});
-      if (user.external) api.get(`/cases/proposals?conversation=${conversationId}`).then(setCases).catch(() => {});
-      api.get(`/notices/chat?conversation=${conversationId}`).then(setNotices).catch(() => {});
-      api.get(`/browser/tasks?conversation=${conversationId}`).then(setBrowsing).catch(() => {}); // refused without the Browser module
-      api.get(`/case-focus/${conversationId}`).then(setFocus).catch(() => {}); // refused without the Primary case module
+      loadCards(conversationId);
     }
     api.get('/imap').then((r) => setMailbox(r.account?.email || null)).catch(() => {});
     // Only on the first screen, where they are shown. The server decides whether it is
     // time for a real look; most of the time this just returns what is already waiting.
     if (!conversationId) api.post('/suggestions/scan').then(setSuggested).catch(() => {});
-    return () => { abortRef.current?.abort(); stopSpeaking(); };
+    // Leaving only stops listening: the server finishes the reply and saves it.
+    return () => { abortRef.current?.abort(); clearTimeout(watchRef.current); stopSpeaking(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -203,7 +239,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
       await streamChat(form, {
         signal: ctrl.signal,
         onEvent: (event, d) => {
-          if (event === 'meta') { setConvId(d.conversationId); onConversation(d.conversationId); }
+          if (event === 'meta') { convRef.current = d.conversationId; setConvId(d.conversationId); onConversation(d.conversationId); }
           else if (event === 'agent') { agentId = d.id; update({ agent_id: d.id, why: d.why }); }
           else if (event === 'files') { // saved attachments: link them so they can be viewed
             setMessages((m) => m.map((x) => (x.id === `u${aid}` ? { ...x, files: x.files.map((f) => ({ ...f, ...d.find((s) => s.name === f.name) })) } : x)));
@@ -588,7 +624,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
         <Composer busy={busy} voiceEnabled={voiceEnabled} carry={carry} draft={draft} onPickChats={() => setPicking(true)}
           quote={quote} onDropQuote={() => setQuote('')}
           onDropChat={(id) => setCarry((c) => c.filter((x) => x.id !== id))}
-          onSend={send} onStop={() => abortRef.current?.abort()}
+          onSend={send} onStop={stopReply}
           onVoiceState={(s) => { stopSpeaking(); setOrb(s); }} onError={flash} />
       </div>
       </div>
