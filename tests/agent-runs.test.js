@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, makeUser, db, closeDb } from './helpers/db.js';
 import { createType, updateType, planAgent, listTypes, watchFiles } from '../server/reportChecks.js';
-import { runWatcher, watchWatchers, slotOf, listRuns, kitsFor, runSafely } from '../server/agentRuns.js';
+import { runWatcher, watchWatchers, slotOf, listRuns, kitsFor, runSafely, costThisMonth } from '../server/agentRuns.js';
 
 test.after(() => closeDb());
 
@@ -72,9 +72,31 @@ test('a run looks things up, keeps what it found, and buzzes the master', async 
   await runWatcher(w, { client: client2, kits: [fakeKit([])], pusher: async (to, m) => sent.push(m), now: at('2026-11-21T09:05:00'), user: boss });
   assert.match(client2.calls[0].messages[0].content, /Last time \(2026-11-20\) you found: .*AC leak/);
   assert.equal(sent.length, 1);
+  await db.prepare("INSERT INTO ai_costs (job, note, provider, model, usd, at) VALUES ('report_checks', ?, 'anthropic', 'm', 0.123, ?)").run(`agent ${w.id}`, Math.floor(at('2026-11-21T09:05:00') / 1000));
+  assert.equal(await costThisMonth(w.id, at('2026-11-25T10:00:00')), 0.12, 'what its runs cost this month');
+  assert.equal(await costThisMonth(w.id, at('2026-12-02T10:00:00')), 0, 'a new month starts at nothing');
   const runs = await listRuns(w.id);
   assert.deepEqual(runs.map((x) => x.nothing_new), [true, false]);
   assert.equal(runs[1].tools_used, 1);
+});
+
+test('the tools stay the same every round, and the last round is told to answer', async () => {
+  await reset();
+  const boss = await master();
+  const w = await watcher();
+  const calls = [];
+  // A model that never stops looking.
+  const client = { messages: { create: async (req) => {
+    calls.push(JSON.parse(JSON.stringify(req)));
+    return calls.length < 6 ? { content: [{ type: 'tool_use', id: `t${calls.length}`, name: 'search_email', input: {} }] }
+      : { content: [{ type: 'text', text: '{"headline":"Done","findings":[],"nothing_new":true}' }] };
+  } } };
+  const r = await runWatcher(w, { client, kits: [fakeKit([])], pusher: async () => {}, user: boss });
+  assert.equal(calls.length, 6);
+  assert.ok(calls.every((c) => c.tools?.length === 1), 'the same tools in every round');
+  assert.match(JSON.stringify(calls[5].messages.at(-1).content.at(-1)), /last step: use no more tools/);
+  assert.deepEqual(calls[5].messages.at(-1).content.at(-1).cache_control, { type: 'ephemeral' }, 'what was read is cached for the next round');
+  assert.equal(r.headline, 'Done');
 });
 
 test('an answer that is not JSON is still kept, and a failure is kept on the page', async () => {

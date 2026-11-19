@@ -343,7 +343,7 @@ function WatcherView({ type, master }) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat value={list.length} text="runs" />
-        <Stat value={found} text="with something to tell you" tone={found ? 'text-warn' : 'text-txt'} />
+        <Stat value={found} text={`with something to tell you · $${(data?.cost ?? 0).toFixed(2)} this month`} tone={found ? 'text-warn' : 'text-txt'} />
         <div className="col-span-2 flex items-center gap-3 rounded-2xl border border-stroke bg-white/[0.04] p-4">
           <div className="min-w-0 flex-1 text-sm">
             <p className="flex flex-wrap items-center gap-1.5">{(type.sources || []).map((x) => { const I = SOURCE_ICONS[x] || Database; return <span key={x} className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-xs"><I size={12} />{SOURCE_NAMES[x] || x}</span>; })}</p>

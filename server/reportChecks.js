@@ -8,7 +8,7 @@ import { isMaster } from './access.js';
 import { FAST_MODEL, ADVISOR_MODEL } from './config.js';
 import { dubaiDate, dubaiHour } from './saifsys/client.js';
 import { monthlyPdf, reportMonths, watchMonthly } from './reportMonthly.js';
-import { runSafely, watchWatchers, listRuns } from './agentRuns.js';
+import { runSafely, watchWatchers, listRuns, costThisMonth } from './agentRuns.js';
 
 // Report checks: the boss's always-on reader of work reports.
 //
@@ -752,7 +752,7 @@ reportCheckRoutes.post('/types', masterOnly, wrap(async (req, res) => res.json(a
 // A watcher's runs, and one run now. The run answers at once and goes on in the background (it can
 // take a minute); the page watches the runs list for it.
 const runningNow = new Set();
-reportCheckRoutes.get('/types/:id/runs', wrap(async (req, res) => res.json({ runs: await listRuns(req.params.id), running: runningNow.has(Number(req.params.id)) })));
+reportCheckRoutes.get('/types/:id/runs', wrap(async (req, res) => res.json({ runs: await listRuns(req.params.id), running: runningNow.has(Number(req.params.id)), cost: await costThisMonth(req.params.id) })));
 reportCheckRoutes.post('/types/:id/run', masterOnly, wrap(async (req, res) => {
   const agent = await getType(req.params.id);
   if (!agent || agent.kind !== 'watch') throw bad('That agent does not run on a schedule', 404);
