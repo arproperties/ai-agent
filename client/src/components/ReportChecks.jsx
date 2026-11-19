@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, Settings as Gear, CalendarRange, Download } from 'lucide-react';
+import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, Settings as Gear, CalendarRange, Download, Radar, AlertTriangle, ArrowLeft } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 import { createPortal } from 'react-dom';
 
-// Settings → Report checks (server/reportChecks.js). Reem reads each work report as it comes
+// Settings → Autonomous Agents (server/reportChecks.js; the code still says report checks, the
+// screen's first name). Not the chat agents: each of these works in the background on one kind of
+// work report. Made from one sentence (NewAgent), which Reem turns into the settings below.
+// Reem reads each work report as it comes
 // in and lists what is missing against the report's own list. Built like Lease renewals: a
 // few numbers, tabs with counts, and a card per day; tapping one slides up its gaps and the
 // note, which the master copies into WhatsApp (nothing is sent from Reem). The list, days and
@@ -116,11 +119,13 @@ function CheckDetail({ check, master, onChanged, target }) {
   );
 }
 
-function TypeForm({ type, onSaved, onCancel, onDeleted }) {
+// `initial`: what Reem set up from the master's sentence, for a new agent opened with Change.
+function TypeForm({ type, initial, onSaved, onCancel, onDeleted }) {
+  const from = type || initial;
   const [t, setT] = useState(() => ({
-    name: type?.name || '', writer: type?.writer || '',
-    items: type?.items?.length ? type.items : [''], due_hour: type?.due_hour ?? 12, work_days: type?.work_days ?? '123456', active: type?.active ?? true,
-    daily_target: type?.daily_target ?? '',
+    name: from?.name || '', writer: from?.writer || '',
+    items: from?.items?.length ? from.items : [''], due_hour: from?.due_hour ?? 12, work_days: from?.work_days ?? '123456', active: from?.active ?? true,
+    daily_target: from?.daily_target ?? '',
   }));
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -137,7 +142,7 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
     e.preventDefault();
     setBusy('save'); setError('');
     try {
-      const body = { ...t, items: t.items.filter((i) => i.trim()), due_hour: Number(t.due_hour), daily_target: Number(t.daily_target) || 0 };
+      const body = { ...t, items: t.items.filter((i) => i.trim()), due_hour: Number(t.due_hour), daily_target: Number(t.daily_target) || 0, ...(!type && initial?.brief && { brief: initial.brief }) };
       onSaved(type ? await api.patch(`/report-checks/types/${type.id}`, body) : await api.post('/report-checks/types', body));
     } catch (err) { setError(err.message); }
     setBusy('');
@@ -232,6 +237,91 @@ function Backfill({ type, onStarted }) {
 }
 
 
+
+const EXAMPLES = [
+  "Watch Umer's AC cleaning reports. He must do 4 units a day. Tell me when he does fewer or leaves things out.",
+  "Check Faisal's daily cleaning reports: location, before and after photos, chemicals used.",
+  'Check every invoice uploaded for the JVC School site: supplier, LPO number, quantities and VAT.',
+];
+
+/**
+ * A new Autonomous Agent from one sentence: Reem sets it up and shows it as a card to Start, or to
+ * Change in the full form first.
+ */
+function NewAgent({ onMade, onCancel }) {
+  const [brief, setBrief] = useState('');
+  const [plan, setPlan] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const setup = async () => {
+    setBusy('plan'); setError('');
+    try { setPlan(await api.post('/report-checks/plan', { brief })); } catch (e) { setError(e.message); }
+    setBusy('');
+  };
+  const start = async () => {
+    setBusy('start'); setError('');
+    try { onMade(await api.post('/report-checks/types', { ...plan, daily_target: plan.daily_target || 0 })); } catch (e) { setError(e.message); setBusy(''); }
+  };
+
+  if (editing) return <TypeForm initial={plan} onSaved={onMade} onCancel={() => setEditing(false)} />;
+  if (plan) {
+    return (
+      <div className="space-y-4 text-sm">
+        <div className="rounded-2xl border border-p1/40 bg-p1/[0.06] p-4">
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-9 place-items-center rounded-full bg-gradient-to-br from-p1 to-p2 text-white"><Radar size={17} /></span>
+            <div className="min-w-0">
+              <p className="truncate text-base font-medium">{plan.name}</p>
+              {plan.writer && <p className="text-xs text-mute">Watches {plan.writer}</p>}
+            </div>
+          </div>
+          {plan.summary && <p className="mt-3">{plan.summary}</p>}
+          <ul className="mt-3 space-y-1.5 border-t border-stroke pt-3">
+            {plan.items.map((i) => (
+              <li key={i} className="flex gap-2"><Check size={14} className="mt-0.5 shrink-0 text-ok" />
+                <span><span className="font-medium">{label(i)}</span>{i.includes(' — ') && <span className="text-mute"> {i.split(' — ').slice(1).join(' — ')}</span>}</span></li>
+            ))}
+          </ul>
+          <p className="mt-3 border-t border-stroke pt-3 text-xs text-mute">
+            Expected {workDays(plan.work_days)}, due the next day by {hour(plan.due_hour)}{plan.daily_target ? ` · target ${plan.daily_target} a day` : ''}
+          </p>
+        </div>
+        {plan.limits && <p className="flex items-start gap-2 rounded-2xl border border-warn/40 px-3.5 py-2.5 text-warn"><AlertTriangle size={15} className="mt-0.5 shrink-0" /> {plan.limits}</p>}
+        {error && <p className="text-bad">{error}</p>}
+        <div className="flex flex-wrap gap-2">
+          <Btn primary busy={busy === 'start'} onClick={start}><Radar size={14} /> Start</Btn>
+          <Btn onClick={() => setEditing(true)}>Change</Btn>
+          <Btn onClick={() => setPlan(null)}><ArrowLeft size={14} /> Back</Btn>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-4 text-sm">
+      <label className="block">
+        <span className="mb-1.5 block text-base">What should this agent do?</span>
+        <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={5} autoFocus
+          placeholder="Say it in your own words: whose reports to watch, what must be in them, and when to tell you."
+          className={`${FIELD} resize-y`} />
+      </label>
+      <div>
+        <p className="mb-1.5 text-xs text-mute">Or start from an example</p>
+        <div className="space-y-1.5">
+          {EXAMPLES.map((e) => (
+            <button key={e} type="button" onClick={() => setBrief(e)} className="block w-full rounded-xl border border-stroke px-3 py-2 text-left text-xs text-mute transition hover:text-txt">{e}</button>
+          ))}
+        </div>
+      </div>
+      {error && <p className="text-bad">{error}</p>}
+      <div className="flex flex-wrap gap-2">
+        <Btn primary busy={busy === 'plan'} disabled={brief.trim().length < 8} onClick={setup}><Sparkles size={14} /> Set it up</Btn>
+        <Btn onClick={onCancel}>Cancel</Btn>
+      </div>
+      <p className="text-xs text-mute">An agent watches the files that reach Reem: uploads, PDFs and WhatsApp photos shared into a chat. It never messages anyone by itself.</p>
+    </div>
+  );
+}
 
 /**
  * A panel that slides in from the right (full screen on a phone), for a day's report and for the
@@ -431,7 +521,7 @@ export default function ReportChecks({ onBack, focus = null }) {
     <div className="flex items-center gap-2">
       {type && <button onClick={() => setMonthly(true)} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><CalendarRange size={14} /><span className="hidden sm:inline">Monthly report</span></button>}
       {master && <>
-      <button onClick={() => setSettings('new')} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><Plus size={14} /><span className="hidden sm:inline">New report</span></button>
+      <button onClick={() => setSettings('new')} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><Plus size={14} /><span className="hidden sm:inline">New agent</span></button>
       {type && (
         <button onClick={() => setSettings(type.id)} aria-label="Settings" title="The list, days and due time"
           className="grid size-9 shrink-0 place-items-center rounded-full border border-stroke text-mute transition hover:text-txt"><Gear size={16} /></button>
@@ -441,7 +531,7 @@ export default function ReportChecks({ onBack, focus = null }) {
   );
 
   return (
-    <Page title="Report checks" onBack={onBack} action={head}>
+    <Page title="Autonomous Agents" onBack={onBack} action={head}>
       {error && <p className="pt-4 text-sm text-bad">{error}</p>}
       {!data ? <div className="grid place-items-center pt-16 text-mute"><Loader2 className="animate-spin" /></div> : (
         <div className="space-y-4 pb-8">
@@ -455,7 +545,7 @@ export default function ReportChecks({ onBack, focus = null }) {
               ))}
             </div>
           )}
-          {!data.types.length && <p className="pt-12 text-center text-sm text-mute">No reports yet.{master ? ' Tap New report to add one.' : ''}</p>}
+          {!data.types.length && <p className="pt-12 text-center text-sm text-mute">No agents yet.{master ? ' Tap New agent and say what it should do.' : ''}</p>}
 
           {type && (
             <p className="text-sm text-mute">
@@ -523,10 +613,17 @@ export default function ReportChecks({ onBack, focus = null }) {
           <Monthly type={type} />
         </SidePanel>
       )}
-      {settings && (
-        <SidePanel title={settings === 'new' ? 'New report' : type?.name} icon={<Gear size={18} className="text-mute" />} onClose={() => setSettings(null)}>
+      {settings === 'new' && (
+        <SidePanel title="New agent" icon={<Radar size={18} className="text-p1" />} onClose={() => setSettings(null)}>
+          <NewAgent onCancel={() => setSettings(null)}
+            onMade={async (t) => { setSettings(null); await loadTypes(); if (t?.id) setTypeId(t.id); await loadDays(t?.id || typeId); }} />
+        </SidePanel>
+      )}
+      {settings && settings !== 'new' && (
+        <SidePanel title={type?.name} icon={<Gear size={18} className="text-mute" />} onClose={() => setSettings(null)}>
           <div className="space-y-4">
-            <TypeForm type={settings === 'new' ? null : type} onCancel={() => setSettings(null)}
+            {type?.brief && <p className="rounded-2xl border border-stroke px-3.5 py-2.5 text-sm text-mute"><span className="block text-xs">You asked</span>{type.brief}</p>}
+            <TypeForm type={type} onCancel={() => setSettings(null)}
               onSaved={async (t) => { setSettings(null); await loadTypes(); if (t?.id) setTypeId(t.id); await loadDays(t?.id || typeId); }}
               onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />
             {settings !== 'new' && type && <div className="rounded-2xl border border-stroke p-4"><Backfill type={type} onStarted={refresh} /></div>}

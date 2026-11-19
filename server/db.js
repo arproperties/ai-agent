@@ -3006,6 +3006,8 @@ await db.exec(`
     UNIQUE (type_id, document_id)
   );
   CREATE INDEX IF NOT EXISTS idx_report_checks_day ON report_checks(type_id, report_date, id);
+  -- An Autonomous Agent made from one sentence keeps the sentence: what the master asked for.
+  ALTER TABLE report_types ADD COLUMN IF NOT EXISTS brief TEXT NOT NULL DEFAULT '';
   CREATE TABLE IF NOT EXISTS report_check_seen (
     document_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
     at BIGINT NOT NULL DEFAULT ${NOW}

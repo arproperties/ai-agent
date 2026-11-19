@@ -117,6 +117,28 @@ test('what a report is gets written in the background, and again when its list c
   assert.equal(await describeType(999, describe), null);
 });
 
+test('an agent from one sentence: Reem fills in the rest, and says what it cannot do', async () => {
+  const { planAgent } = await import('../server/reportChecks.js');
+  let asked = '';
+  const plan = await planAgent('  Watch Umer AC reports, 4 units a day  ', async (prompt) => {
+    asked = prompt;
+    return JSON.stringify({ name: 'AC cleaning report', writer: 'Umer', items: ['Units — how many', ' ', 'Photos — before and after'],
+      work_days: '1234569', due_hour: 30, daily_target: '4', summary: 'It will check each AC report.', limits: '' });
+  });
+  assert.equal(asked, 'Watch Umer AC reports, 4 units a day');
+  assert.deepEqual(plan.items, ['Units — how many', 'Photos — before and after']);
+  assert.equal(plan.work_days, '123456');
+  assert.equal(plan.due_hour, 12, 'an hour that is not one is the default');
+  assert.equal(plan.daily_target, 4);
+  assert.equal(plan.brief, 'Watch Umer AC reports, 4 units a day');
+  await assert.rejects(planAgent('hi', async () => '{}'), /in a sentence/);
+  await assert.rejects(planAgent('watch my email for complaints', async () => 'no'), /could not set this agent up/);
+
+  await reset();
+  const t = await createType({ ...plan, daily_target: 4 });
+  assert.equal(t.brief, 'Watch Umer AC reports, 4 units a day', 'the sentence is kept with the agent');
+});
+
 test('Reem writes a first list from the name', async () => {
   const items = await draftItems({ name: 'Cleaning', about: 'daily' }, async () => '{"items": ["Location", " ", "Chemicals used"]}');
   assert.deepEqual(items, ['Location', 'Chemicals used']);

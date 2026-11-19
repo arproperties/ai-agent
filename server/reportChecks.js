@@ -86,7 +86,7 @@ const SEEDS = [{
   ],
 }];
 
-const TYPE_COLS = 'id, name, writer, about, items, due_hour, work_days, daily_target, active, seed, starts_on, backfill, created_at';
+const TYPE_COLS = 'id, name, writer, about, items, due_hour, work_days, daily_target, active, seed, starts_on, backfill, created_at, brief';
 
 /** Reem's own types, made once. Deleting one later does not bring it back. */
 export async function ensureSeeds(now = Date.now()) {
@@ -162,9 +162,10 @@ const describeLater = (id, describe) => {
 /** describe: write what it is in the background (true for the real model, or an asker in tests). */
 export async function createType(input, now = Date.now(), { describe = false } = {}) {
   const t = cleanType(input);
-  const { id } = await db.prepare(`INSERT INTO report_types (name, writer, about, items, due_hour, work_days, active, daily_target, starts_on, created_at)
-                                   VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?) RETURNING id`)
-    .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, t.daily_target, dubaiDate(now), Math.floor(now / 1000));
+  const { id } = await db.prepare(`INSERT INTO report_types (name, writer, about, items, due_hour, work_days, active, daily_target, starts_on, created_at, brief)
+                                   VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+    .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, t.daily_target, dubaiDate(now), Math.floor(now / 1000),
+      String(input.brief ?? '').trim().slice(0, 2000));
   if (!String(input.about ?? '').trim()) describeLater(id, describe);
   return getType(id);
 }
@@ -186,6 +187,44 @@ export async function updateType(id, input, { describe = false } = {}) {
 export async function deleteType(id) {
   const { changes } = await db.prepare('DELETE FROM report_types WHERE id = ?').run(Number(id) || 0);
   if (!changes) throw bad('That report type is gone', 404);
+}
+
+// ---------- an Autonomous Agent from one sentence ----------
+// The master writes what the agent should do ("watch Umer's AC reports, 4 units a day, tell me
+// when he does fewer"); Reem works out the rest, which the screen shows as a card to Start or
+// Change. Nothing is saved here. What an agent can watch today is files that reach Reem (uploads
+// and pictures shared into a chat), so a brief that needs email or saifsys is told so, not faked.
+
+const PLAN_SYSTEM = `You set up a background agent for the owner of a property and construction company in Dubai.
+The agent watches one kind of work report that reaches Reem as files (uploads, PDFs, scans, WhatsApp photos shared into a chat),
+checks each one for what is missing, and tells the owner. From the owner's sentence, work out:
+- name: a short title for the report it watches, 2-5 words (e.g. "AC cleaning report")
+- writer: the person who sends the report, as named, or ""
+- items: 5-8 points a complete report must have, each "Short label — what exactly" (label 1-3 words, then at most 15 words).
+  Only what this kind of report really needs; fewer is better than a long list nobody fills in.
+- work_days: the weekdays a report is expected, as digits 0-6 (0 = Sunday), default "123456"
+- due_hour: by which hour (0-23) the next day the report is due, default 12
+- daily_target: a number of units a day if the owner gives one, else null
+- summary: one sentence starting "It will" saying what the agent does
+- limits: "" if the agent can do this, else one plain sentence on what it cannot do yet (it cannot read email, saifsys, WhatsApp directly or the web)
+Reply with ONLY JSON: {"name":"","writer":"","items":[],"work_days":"","due_hour":12,"daily_target":null,"summary":"","limits":""}`;
+
+export async function planAgent(brief, asker = ask) {
+  const text = String(brief ?? '').trim().slice(0, 2000);
+  if (text.length < 8) throw bad('Say in a sentence what the agent should do');
+  let p;
+  try { p = looseJson(await asker(text, { system: PLAN_SYSTEM, maxTokens: 3000, model: CHECK_MODEL })); } catch {
+    throw bad('Reem could not set this agent up this time. Try again, or say it another way.', 502);
+  }
+  const items = cleanItems(p.items);
+  if (!items.length || !line(p.name, 120)) throw bad('Reem could not set this agent up this time. Try again, or say it another way.', 502);
+  const days = [...new Set(String(p.work_days ?? '').replace(/[^0-6]/g, ''))].sort().join('') || '123456';
+  const hour = Number.isInteger(Number(p.due_hour)) && p.due_hour >= 0 && p.due_hour <= 23 ? Number(p.due_hour) : 12;
+  const target = Number(p.daily_target) > 0 ? Math.min(1000, Math.round(Number(p.daily_target))) : null;
+  return {
+    brief: text, name: line(p.name, 120), writer: line(p.writer, 120), items, work_days: days, due_hour: hour, daily_target: target,
+    summary: line(p.summary, 400), limits: line(p.limits, 400),
+  };
 }
 
 /** Name + what the report is → what a complete one has. `asker` is swapped in tests. */
@@ -659,6 +698,7 @@ reportCheckRoutes.get('/types/:id/monthly', wrap(async (req, res) => {
 }));
 
 reportCheckRoutes.post('/types', masterOnly, wrap(async (req, res) => res.json(await createType(req.body || {}, Date.now(), { describe: true }))));
+reportCheckRoutes.post('/plan', masterOnly, wrap(async (req, res) => res.json(await planAgent(req.body?.brief))));
 reportCheckRoutes.post('/draft-items', masterOnly, wrap(async (req, res) => res.json({ items: await draftItems(req.body || {}) })));
 reportCheckRoutes.patch('/types/:id', masterOnly, wrap(async (req, res) => res.json(await updateType(req.params.id, req.body || {}, { describe: true }))));
 reportCheckRoutes.delete('/types/:id', masterOnly, wrap(async (req, res) => { await deleteType(req.params.id); res.json({ ok: true }); }));

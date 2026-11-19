@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ClipboardCheck, Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, UsersRound, Activity, FileClock, ChevronRight, Search, NotebookPen, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box, Globe, Monitor } from 'lucide-react';
+import { Radar, Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, UsersRound, Activity, FileClock, ChevronRight, Search, NotebookPen, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box, Globe, Monitor } from 'lucide-react';
 import Icon from './Icon';
 import { CaseTimeSheet } from './CaseRails';
 import { Row, Count } from './NavRow';
@@ -106,7 +106,7 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
             {has('diary') && <Row role="menuitem" icon={<NotebookPen size={17} strokeWidth={1.75} />} label="Diary" active={diaryOpen} onClick={go(onDiary)} />}
             {has('checklists') && <Row role="menuitem" icon={<ListChecks size={17} strokeWidth={1.75} />} label="Checklists" active={checklistsOpen} onClick={go(onChecklists)} />}
             {has('attendance') && <Row role="menuitem" icon={<CalendarCheck size={17} strokeWidth={1.75} />} label="Attendance" active={attendanceOpen} onClick={go(onAttendance)} />}
-            {has('report_checks') && <Row role="menuitem" icon={<ClipboardCheck size={17} strokeWidth={1.75} />} label="Report checks" active={reportChecksOpen} onClick={go(onReportChecks)} />}
+            {has('report_checks') && <Row role="menuitem" icon={<Radar size={17} strokeWidth={1.75} />} label="Autonomous Agents" active={reportChecksOpen} onClick={go(onReportChecks)} />}
             {/* What the case timer in each case chat added up to: their own time only. */}
             {has('case_focus') && <Row role="menuitem" icon={<Timer size={17} strokeWidth={1.75} />} label="Time on cases" onClick={go(() => setTimeOpen(true))} />}
           </Group>
