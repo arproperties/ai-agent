@@ -117,7 +117,12 @@ function cleanType(input, old = {}) {
     active: input.active !== undefined ? !!input.active : old.active ?? true,
   };
   if (!t.name) throw bad('Give the report a name');
-  if (!t.about) throw bad('Say what the report is, so Reem can find it among the files');
+  // What it is, when nobody wrote it: said from the name, the writer and the points, which is
+  // what the file sorting needs to recognise it (the boss found writing it himself hard).
+  if (!t.about) {
+    t.about = `${t.name}${t.writer ? `, written by ${t.writer}` : ''}. A report like this covers: ${t.items.map((i) => i.split(' — ')[0]).join(', ')}. ` +
+      'A photo, a scan or a typed copy of it counts.';
+  }
   if (!t.items?.length) throw bad('Add at least one thing a complete report has');
   if (!Number.isInteger(t.due_hour) || t.due_hour < 0 || t.due_hour > 23) throw bad('The due time is an hour from 0 to 23');
   if (!t.work_days) throw bad('Pick at least one day a report is expected');

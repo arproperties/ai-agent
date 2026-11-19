@@ -73,7 +73,8 @@ test('the school report type is made once, and not again after it is deleted', a
 test('a type needs a name, what it is, and at least one item', async () => {
   await reset();
   await assert.rejects(createType({ name: '', about: 'x', items: ['a'] }), /name/);
-  await assert.rejects(createType({ name: 'x', about: '', items: ['a'] }), /what the report is/);
+  const plain = await createType({ name: 'Cleaning', writer: 'Faisal', about: '', items: ['Photos — before and after', 'Chemicals'] });
+  assert.match(plain.about, /^Cleaning, written by Faisal\. A report like this covers: Photos, Chemicals\./, 'left empty, Reem says what it is');
   await assert.rejects(createType({ name: 'x', about: 'y', items: ['  '] }), /at least one/);
   const t = await createType({ name: 'AC', about: 'AC cleaning', items: ['Units', 'Units', 'Photos'], work_days: '9135x1' });
   assert.deepEqual(t.items, ['Units', 'Photos'], 'repeats are dropped');
