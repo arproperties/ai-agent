@@ -55,6 +55,20 @@ test('a month in numbers: reports, days with none, what was missing, work added 
   assert.match(md, /## In short\n\n- Primer 150\.5 m² done\./);
 });
 
+test('a type with a daily target lists the days under it', async () => {
+  const { type, add } = await setup();
+  await db.prepare('UPDATE report_types SET daily_target = 4 WHERE id = ?').run(type.id);
+  await add('2026-11-02', [], { units_done: 2, short_reason: 'tenant away' });
+  await add('2026-11-03', [], { units_done: 4 });
+  const d = await monthData(type.id, '2026-11', at('2026-11-06T10:00:00'));
+  assert.equal(d.target, 4);
+  assert.equal(d.units, 6);
+  assert.deepEqual(d.underTarget, [{ date: '2026-11-02', done: 2, reason: 'tenant away' }]);
+  const md = monthMarkdown(d, '');
+  assert.match(md, /Units done in the month: \*\*6\*\* \(target 4 a day, 8 for the 2 report days\)/);
+  assert.match(md, /\| Mon 2 Nov \| 2 of 4 \| tenant away \|/);
+});
+
 test('Reem writes the summary once, and again only when the numbers change', async () => {
   const { type, add } = await setup();
   await add('2026-11-02', ['Waste % — blocks']);

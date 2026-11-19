@@ -75,7 +75,7 @@ function addUp(reports, key) {
 /** One month in numbers. Days with no report count from the first report on file or the day watching began. */
 export async function monthData(typeId, month, now = Date.now()) {
   if (!isMonth(month)) throw bad('A month is written YYYY-MM');
-  const type = await db.prepare('SELECT id, name, writer, items, work_days, starts_on FROM report_types WHERE id = ?').get(Number(typeId) || 0);
+  const type = await db.prepare('SELECT id, name, writer, items, work_days, starts_on, daily_target FROM report_types WHERE id = ?').get(Number(typeId) || 0);
   if (!type) throw bad('That report type is gone', 404);
   const first = `${month}-01`;
   const today = dubaiDate(now);
@@ -94,6 +94,7 @@ export async function monthData(typeId, month, now = Date.now()) {
   const often = [...count].map(([item, n]) => ({ item, n })).sort((a, b) => b.n - a.n);
   const people = reports.map((r) => num(r.facts?.people)).filter((n) => n !== null);
   const units = reports.map((r) => num(r.facts?.units_done)).filter((n) => n !== null);
+  const under = type.daily_target ? reports.filter((r) => num(r.facts?.units_done) !== null && num(r.facts.units_done) < type.daily_target) : [];
 
   const prev = prevMonth(month);
   const prevReports = await dayReports(type.id, `${prev}-01`, lastDay(prev));
@@ -112,6 +113,8 @@ export async function monthData(typeId, month, now = Date.now()) {
     materials: addUp(reports, 'materials').slice(0, 20),
     people: people.length ? round(people.reduce((a, b) => a + b, 0) / people.length) : null,
     units: units.length ? units.reduce((a, b) => a + b, 0) : null,
+    target: type.daily_target || null,
+    underTarget: under.map((r) => ({ date: r.report_date, done: num(r.facts.units_done), reason: String(r.facts.short_reason || '').trim() })),
     other: reports.map((r) => String(r.facts?.other || '').trim()).filter(Boolean).slice(0, 40),
     before: prevReports.length ? {
       month: prev, reports: prevReports.length,
@@ -163,6 +166,7 @@ export function monthMarkdown(d, summary) {
       ...(d.before ? [{ label: `With gaps in ${monthName(d.before.month).split(' ')[0]}`, value: `${pct(d.before.withGaps, d.before.reports)}%`,
         note: `now ${pct(d.withGaps, d.reports)}%`, color: pct(d.withGaps, d.reports) <= pct(d.before.withGaps, d.before.reports) ? 'green' : 'red' }] : []),
       ...(d.people !== null ? [{ label: 'People a day (avg)', value: String(d.people), color: 'grey' }] : []),
+      ...(d.target ? [{ label: `Days under ${d.target} a day`, value: String(d.underTarget.length), color: d.underTarget.length ? 'red' : 'green' }] : []),
     ],
     charts: d.often.length ? [{ type: 'bar', title: 'Missing most often (reports)', items: d.often.slice(0, 8).map((o) => ({ label: o.item, value: o.n, color: 'orange' })) }] : [],
   };
@@ -186,7 +190,12 @@ export function monthMarkdown(d, summary) {
     for (const m of d.materials) lines.push(`| ${cell(m.what)} | ${cell(qty(m))} | ${m.days} |`);
     lines.push('');
   }
-  if (d.units !== null) lines.push(`Units done in the month: **${d.units}**`, '');
+  if (d.units !== null) lines.push(`Units done in the month: **${d.units}**${d.target ? ` (target ${d.target} a day, ${d.target * d.reports} for the ${d.reports} report days)` : ''}`, '');
+  if (d.underTarget.length) {
+    lines.push('## Days under the target', '', '| Day | Done | Reason given |', '|---|---|---|');
+    for (const u of d.underTarget) lines.push(`| ${niceDay(u.date)} | ${u.done} of ${d.target} | ${cell(/^not given$/i.test(u.reason) ? '' : u.reason) === '-' ? 'not given' : cell(u.reason)} |`);
+    lines.push('');
+  }
   lines.push('## Day by day', '', '| Day | Report | Missing |', '|---|---|---|');
   const all = [...d.days.map((x) => ({ ...x, had: true })), ...d.missing.map((date) => ({ date, had: false }))].sort((a, b) => (a.date < b.date ? -1 : 1));
   for (const x of all) {

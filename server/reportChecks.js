@@ -114,6 +114,10 @@ function cleanType(input, old = {}) {
     about: String(input.about ?? old.about ?? '').trim().slice(0, 2000),
     items: input.items !== undefined ? cleanItems(input.items) : old.items,
     due_hour: input.due_hour !== undefined ? Number(input.due_hour) : old.due_hour ?? 12,
+    // How many units a day the work should reach (the boss's rule for AC: 4); none for most reports.
+    daily_target: input.daily_target !== undefined
+      ? (Number(input.daily_target) > 0 ? Math.min(1000, Math.round(Number(input.daily_target))) : null)
+      : old.daily_target ?? null,
     work_days: input.work_days !== undefined ? [...new Set(String(input.work_days).replace(/[^0-6]/g, ''))].sort().join('') : old.work_days ?? '123456',
     active: input.active !== undefined ? !!input.active : old.active ?? true,
   };
@@ -158,9 +162,9 @@ const describeLater = (id, describe) => {
 /** describe: write what it is in the background (true for the real model, or an asker in tests). */
 export async function createType(input, now = Date.now(), { describe = false } = {}) {
   const t = cleanType(input);
-  const { id } = await db.prepare(`INSERT INTO report_types (name, writer, about, items, due_hour, work_days, active, starts_on, created_at)
-                                   VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?) RETURNING id`)
-    .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, dubaiDate(now), Math.floor(now / 1000));
+  const { id } = await db.prepare(`INSERT INTO report_types (name, writer, about, items, due_hour, work_days, active, daily_target, starts_on, created_at)
+                                   VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?) RETURNING id`)
+    .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, t.daily_target, dubaiDate(now), Math.floor(now / 1000));
   if (!String(input.about ?? '').trim()) describeLater(id, describe);
   return getType(id);
 }
@@ -173,8 +177,8 @@ export async function updateType(id, input, { describe = false } = {}) {
     || (input.items !== undefined && JSON.stringify(cleanItems(input.items)) !== JSON.stringify(old.items));
   const redo = changed && input.about === undefined;
   const t = cleanType(redo ? { ...input, about: '' } : input, old);
-  await db.prepare('UPDATE report_types SET name = ?, writer = ?, about = ?, items = ?::jsonb, due_hour = ?, work_days = ?, active = ? WHERE id = ?')
-    .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, old.id);
+  await db.prepare('UPDATE report_types SET name = ?, writer = ?, about = ?, items = ?::jsonb, due_hour = ?, work_days = ?, active = ?, daily_target = ? WHERE id = ?')
+    .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, t.daily_target, old.id);
   if (redo) describeLater(old.id, describe);
   return getType(old.id);
 }
@@ -279,7 +283,8 @@ Reply with ONLY JSON:
  "facts": {"work": [{"what": "", "qty": number or null, "unit": ""}],
            "materials": [{"what": "", "qty": number or null, "unit": ""}],
            "people": number or null,
-           "units_done": number or null,
+           "units_done": number or null (units, rooms or jobs finished that day, counted from the report),
+           "short_reason": "only when a daily target is given and units_done is below it: the reason the report gives, or not given",
            "other": "anything else worth tracking month to month, or empty"},
  "note": "a WhatsApp message to the writer asking for the missing parts, or empty when nothing is missing"}
 
@@ -341,6 +346,7 @@ export async function checkReport(type, doc, { asker = ask, pusher = sendPush, q
     'A complete report has:',
     ...type.items.map((i, k) => `${k + 1}. ${i}`),
     '',
+    ...(type.daily_target ? [`Daily target: ${type.daily_target} units a day. Count the units done in this report carefully into units_done.`, ''] : []),
     before ? `The last report before this one (${before.report_date}) gave: ${JSON.stringify(before.facts).slice(0, 3000)}` : 'There is no earlier report on file.',
     '',
     `File: ${doc.title || doc.name} (${doc.name}), dated about ${guess}`,
@@ -379,15 +385,31 @@ export async function checkReport(type, doc, { asker = ask, pusher = sendPush, q
     const title = `${type.name} · ${niceDay(day)}`;
     const url = `/?reportchecks=${id}`;
     const tag = `report-${type.id}-${day}`;
-    if (gaps.length) {
-      const streak = await longestStreak(type.id, day, gaps);
-      const lead = streak.count >= 3 ? `${streak.count} reports in a row without: ${streak.item}. ` : '';
-      await pusher(await masters(), { title, body: `${lead}${gaps.length} missing: ${gaps.map((g) => g.missing || g.item).join('; ')}`, url, tag });
+    const short = shortOf(type, check);
+    if (gaps.length || short) {
+      const streak = gaps.length ? await longestStreak(type.id, day, gaps) : { count: 0 };
+      const parts = [
+        short && `${short.done} of ${short.target} units done${short.reason ? ` (${short.reason})` : ''}.`,
+        streak.count >= 3 && `${streak.count} reports in a row without: ${label(streak.item)}.`,
+        gaps.length && `${gaps.length} missing: ${gaps.map((g) => g.missing || label(g.item)).join('; ')}`,
+      ].filter(Boolean);
+      await pusher(await masters(), { title, body: parts.join(' '), url, tag });
     } else if (earlier?.gaps?.length) {
       await pusher(await masters(), { title, body: 'The new copy is complete: nothing missing now.', url, tag });
     }
   }
   return check;
+}
+
+const label = (item) => String(item).split(' — ')[0];
+
+/** A day below its type's daily target: { done, target, reason }, or null. */
+export function shortOf(type, check) {
+  const done = Number(check?.facts?.units_done);
+  if (!type?.daily_target || check?.facts?.units_done === null || check?.facts?.units_done === undefined || !Number.isFinite(done)) return null;
+  if (done >= type.daily_target) return null;
+  const reason = String(check.facts.short_reason || '').trim();
+  return { done, target: type.daily_target, reason: /^not given$/i.test(reason) ? '' : reason.slice(0, 160) };
 }
 
 /** The gap item missing from the most reports in a row, counting this one. */

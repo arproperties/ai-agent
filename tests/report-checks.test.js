@@ -199,6 +199,36 @@ test('the same gap three reports in a row says so, and a complete new copy clear
   assert.equal(d18.earlier.length, 1);
 });
 
+test('a daily target: fewer units buzzes the master with the reason, enough does not', async () => {
+  await reset();
+  const boss = await master();
+  const u = await makeUser('Boss2');
+  const ac = await createType({ name: 'AC cleaning', writer: 'Umer', items: ['Units — unit numbers done'], daily_target: 4 }, at('2026-11-16T09:00:00'));
+  assert.equal(ac.daily_target, 4);
+  assert.equal((await updateType(ac.id, { daily_target: 0 })).daily_target, null, '0 or empty is no target');
+  await updateType(ac.id, { daily_target: '4' });
+  const typeRow = (await listTypes()).find((t) => t.id === ac.id);
+  const { sent, pusher } = pushes();
+  const run = async (day, facts) => {
+    const id = await file(u, { title: `AC ${day}`, text: 'units', created: `${day}T18:00:00`, date: day });
+    const row = await db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+    const { asker, calls } = fakeAsker({ check: { report_date: day, gaps: [], facts } });
+    await checkReport(typeRow, row, { asker, pusher });
+    return calls[0].prompt;
+  };
+  const prompt = await run('2026-11-17', { units_done: 2, short_reason: 'tenant away in 305' });
+  assert.match(prompt, /Daily target: 4 units a day/);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].to, [boss]);
+  assert.equal(sent[0].body, '2 of 4 units done (tenant away in 305).');
+  await run('2026-11-18', { units_done: 4 });
+  assert.equal(sent.length, 1, 'the target was met');
+  await run('2026-11-19', { units_done: 3, short_reason: 'not given' });
+  assert.equal(sent[1].body, '3 of 4 units done.');
+  const { shortOf } = await import('../server/reportChecks.js');
+  assert.equal(shortOf({ daily_target: 4 }, { facts: { units_done: null } }), null, 'no count, no shortfall');
+});
+
 test('a file that is not such a report is left alone', async () => {
   await reset();
   const u = await makeUser('U');
