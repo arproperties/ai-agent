@@ -102,7 +102,7 @@ function CheckDetail({ check, master, onChanged }) {
 
 function TypeForm({ type, onSaved, onCancel, onDeleted }) {
   const [t, setT] = useState(() => ({
-    name: type?.name || '', writer: type?.writer || '', about: type?.about || '',
+    name: type?.name || '', writer: type?.writer || '',
     items: type?.items?.length ? type.items : [''], due_hour: type?.due_hour ?? 12, work_days: type?.work_days ?? '123456', active: type?.active ?? true,
   }));
   const [busy, setBusy] = useState('');
@@ -113,7 +113,7 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
 
   const draft = async () => {
     setBusy('draft'); setError('');
-    try { set('items', (await api.post('/report-checks/draft-items', { name: t.name, about: t.about })).items); } catch (e) { setError(e.message); }
+    try { set('items', (await api.post('/report-checks/draft-items', { name: t.name, about: t.writer ? `Written by ${t.writer}` : '' })).items); } catch (e) { setError(e.message); }
     setBusy('');
   };
   const save = async (e) => {
@@ -136,11 +136,7 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
         <input value={t.name} onChange={(e) => set('name', e.target.value)} placeholder="Cleaning daily report" className={FIELD} /></label>
       <label className="block"><span className="mb-1 block text-xs text-mute">Who writes it</span>
         <input value={t.writer} onChange={(e) => set('writer', e.target.value)} placeholder="Faisal" className={FIELD} /></label>
-      <label className="block"><span className="mb-1 block text-xs text-mute">What it is <span className="opacity-70">(optional: Reem writes it if you leave it empty)</span></span>
-        <textarea value={t.about} onChange={(e) => set('about', e.target.value)} rows={3} className={`${FIELD} resize-y`}
-          placeholder="Photos of the day's cleaning report from the cleaning team, shared from WhatsApp" /></label>
-
-      <div>
+            <div>
         <div className="mb-1 flex items-center gap-2">
           <span className="flex-1 text-xs text-mute">A complete report has</span>
           <button type="button" onClick={draft} disabled={!!busy || !t.name.trim()} className="flex items-center gap-1 text-xs text-p1 disabled:opacity-50">

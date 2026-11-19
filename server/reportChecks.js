@@ -129,20 +129,52 @@ function cleanType(input, old = {}) {
   return t;
 }
 
-export async function createType(input, now = Date.now()) {
+// What a report is, for the file sorting: written by Reem in the background after a save, from
+// the name, the writer and the points, so nobody has to write it (the boss, 2026-11-19). Until it
+// is back, or if it fails, the plain one from cleanType stands.
+const DESCRIBE_SYSTEM = `A property and construction company in Dubai gets this work report from its staff. Reem has to pick it out
+from hundreds of uploaded files (photos, PDFs, scans, WhatsApp pictures) by their titles and summaries.
+Write 2 or 3 plain sentences saying what this report looks like and contains, who sends it, and which similar files are NOT it
+(for example invoices, requisition forms, receipts or other teams' reports). Reply with the sentences only.`;
+
+export async function describeType(id, asker = ask) {
+  const t = await getType(id);
+  if (!t) return null;
+  const about = String(await asker([
+    `Report: ${t.name}`,
+    `Written by: ${t.writer || 'not known'}`,
+    'A complete one has:',
+    ...t.items.map((i) => `- ${i}`),
+  ].join('\n'), { system: DESCRIBE_SYSTEM, maxTokens: 400, model: MATCH_MODEL })).trim().slice(0, 1500);
+  if (about) await db.prepare('UPDATE report_types SET about = ? WHERE id = ?').run(about, t.id);
+  return about;
+}
+const describeLater = (id, describe) => {
+  if (!describe) return;
+  describeType(id, describe === true ? ask : describe).catch((e) => console.error('[report checks] describing', e.message));
+};
+
+/** describe: write what it is in the background (true for the real model, or an asker in tests). */
+export async function createType(input, now = Date.now(), { describe = false } = {}) {
   const t = cleanType(input);
   const { id } = await db.prepare(`INSERT INTO report_types (name, writer, about, items, due_hour, work_days, active, starts_on, created_at)
                                    VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?) RETURNING id`)
     .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, dubaiDate(now), Math.floor(now / 1000));
+  if (!String(input.about ?? '').trim()) describeLater(id, describe);
   return getType(id);
 }
 
-export async function updateType(id, input) {
+export async function updateType(id, input, { describe = false } = {}) {
   const old = await getType(id);
   if (!old) throw bad('That report type is gone', 404);
-  const t = cleanType(input, old);
+  // A new name, writer or list means a new description, unless one was given.
+  const changed = ['name', 'writer'].some((k) => input[k] !== undefined && line(input[k], 120) !== old[k])
+    || (input.items !== undefined && JSON.stringify(cleanItems(input.items)) !== JSON.stringify(old.items));
+  const redo = changed && input.about === undefined;
+  const t = cleanType(redo ? { ...input, about: '' } : input, old);
   await db.prepare('UPDATE report_types SET name = ?, writer = ?, about = ?, items = ?::jsonb, due_hour = ?, work_days = ?, active = ? WHERE id = ?')
     .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, old.id);
+  if (redo) describeLater(old.id, describe);
   return getType(old.id);
 }
 
@@ -592,9 +624,9 @@ reportCheckRoutes.get('/checks/:id', wrap(async (req, res) => {
   res.json(c);
 }));
 
-reportCheckRoutes.post('/types', masterOnly, wrap(async (req, res) => res.json(await createType(req.body || {}))));
+reportCheckRoutes.post('/types', masterOnly, wrap(async (req, res) => res.json(await createType(req.body || {}, Date.now(), { describe: true }))));
 reportCheckRoutes.post('/draft-items', masterOnly, wrap(async (req, res) => res.json({ items: await draftItems(req.body || {}) })));
-reportCheckRoutes.patch('/types/:id', masterOnly, wrap(async (req, res) => res.json(await updateType(req.params.id, req.body || {}))));
+reportCheckRoutes.patch('/types/:id', masterOnly, wrap(async (req, res) => res.json(await updateType(req.params.id, req.body || {}, { describe: true }))));
 reportCheckRoutes.delete('/types/:id', masterOnly, wrap(async (req, res) => { await deleteType(req.params.id); res.json({ ok: true }); }));
 reportCheckRoutes.post('/types/:id/backfill', masterOnly, wrap(async (req, res) => {
   const type = await getType(req.params.id);

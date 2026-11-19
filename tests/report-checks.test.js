@@ -98,6 +98,25 @@ test('a misread date is mended from the upload day', async () => {
   assert.deepEqual(cleanGaps([{ item: 'Waste %', missing: 'a' }], ['Waste % — blocks issued vs needed']), [{ item: 'Waste % — blocks issued vs needed', missing: 'a' }], 'the short label is the item');
 });
 
+test('what a report is gets written in the background, and again when its list changes', async () => {
+  await reset();
+  const { describeType } = await import('../server/reportChecks.js');
+  const asked = [];
+  const describe = async (prompt) => { asked.push(prompt); return 'Photos of the cleaning report. Not invoices.'; };
+  const t = await createType({ name: 'Cleaning', writer: 'Faisal', items: ['Photos — before and after'] }, Date.now(), { describe });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.match(asked[0], /Report: Cleaning\nWritten by: Faisal/);
+  assert.equal((await listTypes())[0].about, 'Photos of the cleaning report. Not invoices.');
+
+  await updateType(t.id, { due_hour: 9 }, { describe });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(asked.length, 1, 'a new due time does not need a new description');
+  await updateType(t.id, { items: ['Photos — before and after', 'Chemicals'] }, { describe: async () => 'New one.' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await listTypes())[0].about, 'New one.');
+  assert.equal(await describeType(999, describe), null);
+});
+
 test('Reem writes a first list from the name', async () => {
   const items = await draftItems({ name: 'Cleaning', about: 'daily' }, async () => '{"items": ["Location", " ", "Chemicals used"]}');
   assert.deepEqual(items, ['Location', 'Chemicals used']);
