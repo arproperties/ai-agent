@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, Settings as Gear, CalendarRange, Download, Radar, AlertTriangle, ArrowLeft, Play, Mail, Database, FileSignature } from 'lucide-react';
+import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, Settings as Gear, CalendarRange, Download, Radar, AlertTriangle, ArrowLeft, Play, Mail, Database, FileSignature, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 import { createPortal } from 'react-dom';
@@ -658,6 +658,73 @@ function DayCard({ d, onOpen, target }) {
   );
 }
 
+const shiftMonth = (m, n) => {
+  const d = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + n, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+};
+const CELL = {
+  ok: 'bg-ok/15 text-ok border-ok/30', warn: 'bg-warn/15 text-warn border-warn/30', bad: 'bg-bad/15 text-bad border-bad/30',
+  mute: 'bg-white/[0.04] text-mute border-stroke', none: 'border-transparent text-mute/40',
+};
+
+/** One month as a calendar, Monday first: each day coloured by its report; any month can be picked. */
+function MonthCalendar({ month, months, onMonth, days, onOpen }) {
+  const byDay = new Map(days.map((d) => [d.date, d]));
+  const today = dubaiToday();
+  const [y, m] = month.split('-').map(Number);
+  const lead = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7;
+  const count = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const cells = [...Array(lead).fill(null), ...Array.from({ length: count }, (_, i) => `${month}-${String(i + 1).padStart(2, '0')}`)];
+  const now = today.slice(0, 7);
+  const oldest = months.length ? months[months.length - 1] : now;
+  const short = (d) => {
+    if (!d) return '';
+    if (d.missing) return d.late ? 'none' : '';
+    return d.check.gaps.length ? `${d.check.gaps.length} gaps` : '✓';
+  };
+  return (
+    <div className="rounded-2xl border border-stroke bg-white/[0.04] p-4">
+      <div className="flex items-center gap-2">
+        <button onClick={() => onMonth(shiftMonth(month, -1))} disabled={month <= oldest} aria-label="Earlier month"
+          className="grid size-9 place-items-center rounded-full border border-stroke text-mute transition hover:text-txt disabled:opacity-30"><ChevronLeft size={16} /></button>
+        <p className="flex-1 text-center text-base">{monthName(month)}</p>
+        <button onClick={() => onMonth(shiftMonth(month, 1))} disabled={month >= now} aria-label="Later month"
+          className="grid size-9 place-items-center rounded-full border border-stroke text-mute transition hover:text-txt disabled:opacity-30"><ChevronRight size={16} /></button>
+      </div>
+      {months.length > 1 && (
+        <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+          {months.map((mm) => (
+            <button key={mm} onClick={() => onMonth(mm)}
+              className={`rounded-full px-2.5 py-0.5 text-xs transition ${mm === month ? 'bg-white/15 text-txt' : 'text-mute hover:text-txt'}`}>
+              {monthName(mm).replace(` ${now.slice(0, 4)}`, '')}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="mt-4 grid grid-cols-7 gap-1.5">
+        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <span key={d} className="pb-1 text-center text-[11px] text-mute">{d}</span>)}
+        {cells.map((day, i) => {
+          if (!day) return <span key={i} />;
+          const d = byDay.get(day);
+          const t = day > today ? 'none' : d ? chipOf(d)[1] : 'none';
+          return (
+            <button key={day} disabled={!d?.check} onClick={() => onOpen(day)} title={d ? `${niceDay(day)} · ${chipOf(d)[0]}` : niceDay(day)}
+              className={`flex min-h-[52px] flex-col items-start justify-between rounded-xl border p-1.5 text-left transition ${CELL[t]} ${day === today ? 'ring-2 ring-p1/60' : ''} ${d?.check ? 'hover:brightness-110' : 'cursor-default'}`}>
+              <span className="text-xs font-medium tabular-nums">{Number(day.slice(8))}</span>
+              <span className="w-full truncate text-[10px] leading-tight opacity-90">{short(d)}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-[11px] text-mute">
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-[4px] bg-ok/60" />Complete</span>
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-[4px] bg-warn/60" />Gaps</span>
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-[4px] bg-bad/60" />No report</span>
+      </div>
+    </div>
+  );
+}
+
 /** The last 30 days as a strip of small squares: the month at a glance. */
 function Strip({ days, onOpen }) {
   const byDay = new Map(days.map((d) => [d.date, d]));
@@ -701,13 +768,15 @@ export default function ReportChecks({ onBack, focus = null }) {
   const [tab, setTab] = useState(null);
   const [more, setMore] = useState(false); // past the first few cards
   const [opened, setOpened] = useState(null); // a date
+  const [month, setMonth] = useState(() => dubaiToday().slice(0, 7)); // YYYY-MM on the calendar
+  const [months, setMonths] = useState([]);
   const [settings, setSettings] = useState(null); // 'new' | type id
   const [monthly, setMonthly] = useState(false);
   const [error, setError] = useState('');
   const [focusCheck, setFocusCheck] = useState(typeof focus === 'number' ? focus : null);
 
   const loadTypes = useCallback(async () => { const d = await api.get('/report-checks'); setData(d); return d; }, []);
-  const loadDays = useCallback(async (id) => { if (id) setDays(await api.get(`/report-checks/types/${id}/days?days=${SHOWN_DAYS}`)); }, []);
+  const loadDays = useCallback(async (id, m) => { if (id) setDays(await api.get(`/report-checks/types/${id}/days?month=${m}`)); }, []);
 
   useEffect(() => {
     (async () => {
@@ -723,16 +792,22 @@ export default function ReportChecks({ onBack, focus = null }) {
       } catch (e) { setError(e.message); }
     })();
   }, [focus, loadTypes]);
-  useEffect(() => { setDays(null); setTab(null); loadDays(typeId).catch((e) => setError(e.message)); }, [typeId, loadDays]);
+  useEffect(() => { setDays(null); setTab(null); setMore(false); loadDays(typeId, month).catch((e) => setError(e.message)); }, [typeId, month, loadDays]);
+  useEffect(() => {
+    if (!typeId) return;
+    const now = dubaiToday().slice(0, 7);
+    api.get(`/report-checks/types/${typeId}/months`).then((r) => setMonths([...new Set([now, ...r.months])].sort().reverse())).catch(() => setMonths([now]));
+  }, [typeId]);
 
   const type = data?.types.find((t) => t.id === typeId);
   useEffect(() => {
     if (type?.backfill?.state !== 'running') return undefined;
-    const t = setInterval(() => { loadTypes().catch(() => {}); loadDays(typeId).catch(() => {}); }, 4000);
+    const t = setInterval(() => { loadTypes().catch(() => {}); loadDays(typeId, month).catch(() => {}); }, 4000);
     return () => clearInterval(t);
   }, [type?.backfill?.state, typeId, loadTypes, loadDays]);
 
-  const list = (days?.days || []).filter((d) => d.date >= daysAgo(SHOWN_DAYS - 1) && d.date <= dubaiToday());
+  const list = (days?.days || []).filter((d) => d.date <= dubaiToday());
+  const monthWord = monthName(month).split(' ')[0];
   const reports = list.filter((d) => d.check);
   const tabs = [
     ['you', 'Needs you', list.filter(needsYou)],
@@ -758,7 +833,7 @@ export default function ReportChecks({ onBack, focus = null }) {
   const often = [...count].sort((a, b) => b[1] - a[1]).slice(0, 5);
   const withGaps = tabs[1][2].length;
 
-  const refresh = async () => { await Promise.all([loadTypes(), loadDays(typeId)]); };
+  const refresh = async () => { await Promise.all([loadTypes(), loadDays(typeId, month)]); };
   const master = !!data?.master;
   const openDay = opened && list.find((d) => d.date === opened);
 
@@ -810,7 +885,7 @@ export default function ReportChecks({ onBack, focus = null }) {
           {type && type.kind !== 'watch' && days && (
             <>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                <Stat value={reports.length} text="reports in 30 days" />
+                <Stat value={reports.length} text={`reports in ${monthWord}`} />
                 <Stat value={withGaps} text="with something missing" tone={withGaps ? 'text-warn' : 'text-ok'} />
                 <Stat value={tabs[2][2].length} text="days with no report" tone={tabs[2][2].length ? 'text-bad' : 'text-txt'} />
                 <Stat value={tabs[0][2].length} text="notes to send" tone={tabs[0][2].length ? 'text-p1' : 'text-txt'} />
@@ -823,7 +898,9 @@ export default function ReportChecks({ onBack, focus = null }) {
                   ))}
                 </div>
               )}
-              <Strip days={list} onOpen={(d) => d?.check && setOpened(d.date)} />
+              <div className="space-y-4 lg:grid lg:grid-cols-[minmax(320px,400px)_1fr] lg:items-start lg:gap-5 lg:space-y-0">
+              <div className="lg:sticky lg:top-0"><MonthCalendar month={month} months={months} onMonth={setMonth} days={list} onOpen={(date) => setOpened(date)} /></div>
+              <div className="space-y-4">
               <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
                 {tabs.map(([k, text, l]) => (
                   <button key={k} onClick={() => { setTab(k); setMore(false); }}
@@ -848,7 +925,7 @@ export default function ReportChecks({ onBack, focus = null }) {
                       </div>
                     )}
                     {first.length > 0 && (
-                      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+                      <ul className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
                         {first.map((d) => <DayCard key={d.date} d={d} target={type.daily_target} onOpen={() => setOpened(d.date)} />)}
                       </ul>
                     )}
@@ -860,6 +937,8 @@ export default function ReportChecks({ onBack, focus = null }) {
                   </div>
                 );
               })()}
+              </div>
+              </div>
             </>
           )}
         </div>
@@ -889,14 +968,14 @@ export default function ReportChecks({ onBack, focus = null }) {
       {settings === 'new' && (
         <SidePanel title="New agent" icon={<Radar size={18} className="text-p1" />} onClose={() => setSettings(null)}>
           <NewAgent onCancel={() => setSettings(null)}
-            onMade={async (t) => { setSettings(null); await loadTypes(); if (t?.id) setTypeId(t.id); await loadDays(t?.id || typeId); }} />
+            onMade={async (t) => { setSettings(null); await loadTypes(); if (t?.id) setTypeId(t.id); await loadDays(t?.id || typeId, month); }} />
         </SidePanel>
       )}
       {settings && settings !== 'new' && (
         <SidePanel title={type?.name} icon={<Gear size={18} className="text-mute" />} onClose={() => setSettings(null)}>
           <div className="space-y-4">
             {type && <EditAgent key={type.id} type={type} onCancel={() => setSettings(null)}
-              onSaved={async () => { setSettings(null); await loadTypes(); await loadDays(typeId); }}
+              onSaved={async () => { setSettings(null); await loadTypes(); await loadDays(typeId, month); }}
               onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />}
             {settings !== 'new' && type && type.kind !== 'watch' && <div className="rounded-2xl border border-stroke p-4"><Backfill type={type} onStarted={refresh} /></div>}
           </div>

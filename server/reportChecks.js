@@ -531,14 +531,23 @@ export const getCheck = (id) => db.prepare(`SELECT ${CHECK_COLS} FROM report_che
  * The last `days` days of one type, newest first: each day's report (its newest copy, with the
  * earlier ones under it), and the work days with no report at all.
  */
-export async function reportDays(typeId, { days = 30, now = Date.now() } = {}) {
+export async function reportDays(typeId, { days = 30, month, now = Date.now() } = {}) {
   const type = await getType(typeId);
   if (!type) throw bad('That report type is gone', 404);
-  const n = Math.min(Math.max(Number(days) || 30, 1), 120);
   const today = dubaiDate(now);
-  const from = addDays(today, -n);
+  // One month (YYYY-MM), as the screen's calendar asks for, or the last `days` days.
+  let from;
+  let to;
+  if (/^\d{4}-(0[1-9]|1[0-2])$/.test(String(month || ''))) {
+    from = `${month}-01`;
+    const [y, m] = month.split('-').map(Number);
+    to = addDays(`${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}-01`, -1);
+  } else {
+    from = addDays(today, -Math.min(Math.max(Number(days) || 30, 1), 120));
+    to = today;
+  }
   const checks = await db.prepare(`SELECT ${CHECK_COLS} FROM report_checks c LEFT JOIN documents d ON d.id = c.document_id
-    WHERE c.type_id = ? AND c.report_date >= ? ORDER BY c.report_date DESC, c.id DESC`).all(type.id, from);
+    WHERE c.type_id = ? AND c.report_date >= ? AND c.report_date <= ? ORDER BY c.report_date DESC, c.id DESC`).all(type.id, from, to);
   const byDay = new Map();
   for (const c of checks) {
     if (!byDay.has(c.report_date)) byDay.set(c.report_date, { date: c.report_date, check: c, earlier: [] });
@@ -546,12 +555,12 @@ export async function reportDays(typeId, { days = 30, now = Date.now() } = {}) {
   }
   // Days with no report are shown from the first report on file, even before Reem was watching
   // (the boss sees the gap of 14-18 Nov); the buzzes about them only count from starts_on.
-  const first = checks.length ? checks.at(-1).report_date : type.starts_on;
+  const first = (await db.prepare('SELECT min(report_date) d FROM report_checks WHERE type_id = ?').get(type.id))?.d || type.starts_on;
   const shownFrom = [from, first < type.starts_on ? first : type.starts_on].sort()[1];
-  for (let d = shownFrom; d < today; d = addDays(d, 1)) {
+  for (let d = shownFrom; d < today && d <= to; d = addDays(d, 1)) {
     if (!byDay.has(d) && isWorkDay(type, d)) byDay.set(d, { date: d, missing: true, late: isLate(type, d, now) });
   }
-  return { type, days: [...byDay.values()].sort((a, b) => (a.date < b.date ? 1 : -1)) };
+  return { type, from, to, days: [...byDay.values()].sort((a, b) => (a.date < b.date ? 1 : -1)) };
 }
 
 /** The master's answer to a note: sent (copied to WhatsApp), or dismissed. The text can be edited first. */
@@ -731,7 +740,7 @@ reportCheckRoutes.get('/', wrap(async (req, res) => {
   res.json({ master: isMaster(req.user), types: types.map((t) => ({ ...t, waiting: w.get(t.id) || 0 })) });
 }));
 
-reportCheckRoutes.get('/types/:id/days', wrap(async (req, res) => res.json(await reportDays(req.params.id, { days: req.query.days }))));
+reportCheckRoutes.get('/types/:id/days', wrap(async (req, res) => res.json(await reportDays(req.params.id, { days: req.query.days, month: req.query.month }))));
 reportCheckRoutes.get('/checks/:id', wrap(async (req, res) => {
   const c = await getCheck(req.params.id);
   if (!c) throw bad('That report check is gone', 404);

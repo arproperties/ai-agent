@@ -316,6 +316,10 @@ test('a late report buzzes once, from the day the type began, on work days only'
 
   const { days } = await reportDays(type.id, { now: at('2026-11-18T13:00:00') });
   assert.deepEqual(days.map((d) => [d.date, !!d.missing, !!d.late]), [['2026-11-17', true, true], ['2026-11-16', true, true]]);
+  const nov = await reportDays(type.id, { month: '2026-11', now: at('2026-11-18T13:00:00') });
+  assert.deepEqual([nov.from, nov.to], ['2026-11-01', '2026-11-30']);
+  assert.deepEqual(nov.days.map((d) => d.date), ['2026-11-17', '2026-11-16'], 'a month: from the day watching began, up to yesterday');
+  assert.equal((await reportDays(type.id, { month: '2026-10', now: at('2026-11-18T13:00:00') })).days.length, 0, 'nothing before it began');
 });
 
 test('a report that comes whenever there is one is never late', async () => {
