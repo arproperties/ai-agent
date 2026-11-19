@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, Settings as Gear } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
-import Sheet from './Sheet';
+import { createPortal } from 'react-dom';
 
 // Settings → Report checks (server/reportChecks.js). Reem reads each work report as it comes
 // in and lists what is missing against the report's own list. Built like Lease renewals: a
@@ -133,9 +133,9 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
   return (
     <form onSubmit={save} className="space-y-3 text-sm">
       <label className="block"><span className="mb-1 block text-xs text-mute">Report name</span>
-        <input value={t.name} onChange={(e) => set('name', e.target.value)} placeholder="Cleaning daily report" className={FIELD} /></label>
+        <input value={t.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Cleaning daily report" className={FIELD} /></label>
       <label className="block"><span className="mb-1 block text-xs text-mute">Who writes it</span>
-        <input value={t.writer} onChange={(e) => set('writer', e.target.value)} placeholder="Faisal" className={FIELD} /></label>
+        <input value={t.writer} onChange={(e) => set('writer', e.target.value)} placeholder="e.g. Faisal" className={FIELD} /></label>
             <div>
         <div className="mb-1 flex items-center gap-2">
           <span className="flex-1 text-xs text-mute">A complete report has</span>
@@ -167,16 +167,18 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
       <label className="flex items-center gap-2"><span className="text-xs text-mute">Each day&apos;s report is due the next day by</span>
         <input type="number" min={0} max={23} value={t.due_hour} onChange={(e) => set('due_hour', e.target.value)} className="glass w-16 rounded-xl px-2 py-1.5 text-center outline-none" />
         <span className="text-xs text-mute">:00</span></label>
-      <label className="flex items-center gap-2 text-xs text-mute">
-        <input type="checkbox" checked={t.active} onChange={(e) => set('active', e.target.checked)} /> Reem checks this report and buzzes about it
-      </label>
+      <button type="button" role="switch" aria-checked={t.active} onClick={() => set('active', !t.active)}
+        className="flex w-full items-center gap-3 rounded-2xl border border-stroke px-4 py-2.5 text-left">
+        <span className="flex-1">Reem checks this report and buzzes about it</span>
+        <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${t.active ? 'bg-p1' : 'bg-white/15'}`}>
+          <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow transition-all ${t.active ? 'left-[22px]' : 'left-0.5'}`} />
+        </span>
+      </button>
 
       {error && <p className="text-bad">{error}</p>}
       <div className="flex flex-wrap items-center gap-2">
-        <button disabled={!!busy} className="flex items-center gap-1.5 rounded-full border border-p1/50 bg-p1/15 px-4 py-1.5 font-medium hover:bg-p1/25 disabled:opacity-50">
-          {busy === 'save' && <Loader2 size={14} className="animate-spin" />} Save
-        </button>
-        <button type="button" onClick={onCancel} className="rounded-full px-3 py-1.5 text-mute hover:text-txt">Cancel</button>
+        <Btn primary type="submit" busy={busy === 'save'} disabled={!!busy}>Save</Btn>
+        <Btn type="button" onClick={onCancel}>Cancel</Btn>
         {type && <button type="button" onClick={remove} className="ml-auto flex items-center gap-1 rounded-full px-3 py-1.5 text-xs text-mute hover:text-bad"><Trash2 size={13} /> Delete</button>}
       </div>
     </form>
@@ -207,6 +209,40 @@ function Backfill({ type, onStarted }) {
 }
 
 
+
+/**
+ * A panel that slides in from the right (full screen on a phone), for a day's report and for the
+ * settings: the boss wanted these beside the page, not as a box over the middle of it.
+ */
+function SidePanel({ title, icon, onClose, children }) {
+  const [shown, setShown] = useState(false);
+  const closing = useRef(false);
+  useEffect(() => { const f = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(f); }, []);
+  const close = useCallback(() => {
+    if (closing.current) return;
+    closing.current = true;
+    setShown(false);
+    setTimeout(onClose, 220);
+  }, [onClose]);
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && close();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [close]);
+  return createPortal(
+    <div className="fixed inset-0 z-50">
+      <div onClick={close} className={`absolute inset-0 bg-black/40 backdrop-blur-[2px] transition-opacity duration-200 ${shown ? 'opacity-100' : 'opacity-0'}`} />
+      <aside className={`absolute inset-y-0 right-0 flex w-full flex-col border-l border-stroke bg-surface shadow-2xl shadow-black/40 transition-transform duration-200 ease-out sm:w-[560px] ${shown ? 'translate-x-0' : 'translate-x-full'}`}>
+        <header className="flex items-center gap-2.5 border-b border-stroke px-5 pb-3 pt-safe">
+          <div className="flex min-w-0 flex-1 items-center gap-2.5 pt-3">{icon}<h2 className="truncate text-lg font-light">{title}</h2></div>
+          <button onClick={close} aria-label="Close" className="mt-3 grid size-9 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><X size={18} /></button>
+        </header>
+        <div className="flex-1 overflow-y-auto px-5 pb-safe pt-4"><div className="pb-6">{children}</div></div>
+      </aside>
+    </div>,
+    document.body,
+  );
+}
 
 /** One day: its report's state, and what was missing at a glance. */
 function DayCard({ d, onOpen }) {
@@ -408,7 +444,7 @@ export default function ReportChecks({ onBack, focus = null }) {
       )}
 
       {openDay?.check && (
-        <Sheet title={niceDay(openDay.date)} icon={<Chip c={chipOf(openDay)} />} wide="text" onClose={() => setOpened(null)}>
+        <SidePanel title={niceDay(openDay.date)} icon={<Chip c={chipOf(openDay)} />} onClose={() => setOpened(null)}>
           <p className="-mt-1 mb-3 truncate text-xs text-mute">{openDay.check.title}</p>
           <CheckDetail check={openDay.check} master={master} onChanged={refresh} />
           {openDay.earlier.length > 0 && (
@@ -421,17 +457,17 @@ export default function ReportChecks({ onBack, focus = null }) {
               ))}
             </div>
           )}
-        </Sheet>
+        </SidePanel>
       )}
       {settings && (
-        <Sheet title={settings === 'new' ? 'New report' : type?.name} icon={<Gear size={18} className="text-mute" />} wide="text" onClose={() => setSettings(null)}>
+        <SidePanel title={settings === 'new' ? 'New report' : type?.name} icon={<Gear size={18} className="text-mute" />} onClose={() => setSettings(null)}>
           <div className="space-y-4">
             <TypeForm type={settings === 'new' ? null : type} onCancel={() => setSettings(null)}
               onSaved={async (t) => { setSettings(null); await loadTypes(); if (t?.id) setTypeId(t.id); await loadDays(t?.id || typeId); }}
               onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />
             {settings !== 'new' && type && <div className="rounded-2xl border border-stroke p-4"><Backfill type={type} onStarted={refresh} /></div>}
           </div>
-        </Sheet>
+        </SidePanel>
       )}
     </Page>
   );
