@@ -96,6 +96,10 @@ test('sorting keeps only real files and types, each file once', async () => {
   const { asker } = fakeAsker({ matches: [{ file: 1, type: 7 }, { file: 1, type: 7 }, { file: 9, type: 7 }, { file: 2, type: 3 }] });
   const m = await matchReports(docs, types, asker);
   assert.deepEqual(m.map((x) => [x.doc.id, x.type.id]), [[1, 7]]);
+
+  // A long answer cut off in the middle still gives the matches it got to.
+  const cut = await matchReports(docs, types, async () => '{"matches": [{"file": 2, "type": 7}, {"file": 1, "ty');
+  assert.deepEqual(cut.map((x) => x.doc.id), [2]);
 });
 
 test('a report with gaps waits for the master with a note, and the master is buzzed', async () => {

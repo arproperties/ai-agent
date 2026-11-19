@@ -5,7 +5,7 @@ import { looseJson } from './files.js';
 import { billAs } from './billing.js';
 import { sendPush } from './push.js';
 import { isMaster } from './access.js';
-import { AUTO_MODEL, ADVISOR_MODEL } from './config.js';
+import { FAST_MODEL, ADVISOR_MODEL } from './config.js';
 import { dubaiDate, dubaiHour } from './saifsys/client.js';
 
 // Report checks: the boss's always-on reader of work reports.
@@ -25,7 +25,9 @@ import { dubaiDate, dubaiHour } from './saifsys/client.js';
 // What each report says (the work done, materials, people) is kept as facts, for the
 // monthly progress report.
 
-const MATCH_MODEL = AUTO_MODEL; // telling a report from the other files: titles only, the cheap model does it
+// Telling a report from the other files, by titles only. Haiku 4.5, not 5.5: 5.5 thinks first, and on a
+// batch of 80 files the thinking used up the whole reply, leaving it empty (6 of 15 batches on 2026-11-19).
+const MATCH_MODEL = FAST_MODEL;
 const CHECK_MODEL = ADVISOR_MODEL; // reading the report against its list: the careful one
 const TICK_MS = 5 * 60_000;
 const LOOK_BACK_DAYS = 3; // a file uploaded longer ago than this is not "new"
@@ -195,7 +197,7 @@ export async function matchReports(docs, types, asker = ask) {
     'Files:',
     ...docs.map(fileLine),
   ].join('\n'), {
-    maxTokens: 800,
+    maxTokens: 2000,
     model: MATCH_MODEL,
     system: `You sort a company's newly uploaded files. Say which files are one of the report types listed, going by each file's title, name and summary.
 Only a file that IS such a report (the report itself, a photo of it, or a scan) - not a file that only mentions one.
@@ -205,7 +207,10 @@ Most files are none of them: leave those out. Reply with ONLY JSON: {"matches": 
   const byType = new Map(types.map((t) => [t.id, t]));
   const seen = new Set();
   let list;
-  try { list = looseJson(out).matches; } catch { throw new Error('the file sorting came back unreadable'); }
+  try { list = looseJson(out).matches; } catch {
+    // An answer cut off part-way (or with words around it) still names its matches: take each pair it got to.
+    list = [...String(out ?? '').matchAll(/"file"\s*:\s*(\d+)\s*,\s*"type"\s*:\s*(\d+)/g)].map(([, file, type]) => ({ file, type }));
+  }
   return (Array.isArray(list) ? list : []).flatMap((m) => {
     const doc = byDoc.get(Number(m?.file));
     const type = byType.get(Number(m?.type));
@@ -468,7 +473,10 @@ export async function backfill(typeId, { days = 30, asker = ask, now = Date.now(
     state.files = docs.length;
     await save(state);
     const found = [];
-    for (let i = 0; i < docs.length; i += 80) found.push(...await matchReports(docs.slice(i, i + 80), [type], asker));
+    for (let i = 0; i < docs.length; i += 80) {
+      // One batch the model fumbles is skipped, not the whole month.
+      try { found.push(...await matchReports(docs.slice(i, i + 80), [type], asker)); } catch (e) { console.error('[report checks] sorting', e.message); }
+    }
     state.found = found.length;
     await save(state);
     for (const { doc } of found) {
