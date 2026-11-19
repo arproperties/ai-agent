@@ -36,7 +36,7 @@ export const MODULES = [
   { key: 'diary', label: 'Diary', about: 'Their own notebook: write notes and draw with a pen to explain, kept to read back later. Private to them.', company: true },
   { key: 'checklists', label: 'Checklists', about: 'The points of a job, ticked each time it is done.', everyone: true, company: true },
   { key: 'activity_reports', label: 'Activity reports', about: 'What the activity tracker on each employee PC counted: first and last activity, time per program, idle and away, day by day, with a CSV. Only the master pairs PCs and sets the HR email.', company: true },
-  { key: 'report_checks', label: 'Report checks', about: 'Work reports (the school site daily report, and more to come) read by Reem for what is missing, with the message to send the writer, buzzes when a report is late or has gaps, and a 19:00 summary. Only the master changes the lists and answers the notes.', company: true },
+  { key: 'report_checks', label: 'Autonomous Agents', about: 'Agents that work in the background: each watches one kind of work report (the school site, cleaning, AC), finds what is missing, buzzes when one is late or under target, sends a 19:00 summary and a monthly report. Made from one sentence. Only the master makes them and answers their notes. Not the chat agents.', company: true },
   { key: 'attendance', label: 'Attendance', about: 'Who worked which day, read from the teams\' WhatsApp group, sheets and photos, and checked person by person each pay period (26th to 25th).', company: true },
   { key: 'memory', label: 'Memory', about: 'See and remove what Reem remembers about them.', everyone: true },
   { key: 'email', label: 'Email', about: 'Connect their own mailbox and see what Reem has sent from it.', everyone: true },

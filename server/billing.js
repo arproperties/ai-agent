@@ -61,7 +61,7 @@ export const JOBS = {
   attendance: { name: 'Attendance', about: 'Reading the teams\' attendance lists and photos, and sorting them into companies and people' },
   feeds: { name: 'Feeds', about: 'The morning feed: prices, rates and news looked up, and questions about them' },
   project_planner: { name: 'Project planner', about: 'Reading a project file and writing its full plan' },
-  report_checks: { name: 'Report checks', about: 'Finding work reports among the new files and checking them for what is missing' },
+  report_checks: { name: 'Autonomous Agents', about: 'The background agents: finding work reports among the new files, checking them, and their monthly reports' },
   other: { name: 'Other', about: 'Anything else' },
 };
 

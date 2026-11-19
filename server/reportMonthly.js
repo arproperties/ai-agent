@@ -201,7 +201,7 @@ export function monthMarkdown(d, summary) {
   for (const x of all) {
     lines.push(`| ${niceDay(x.date)} | ${x.had ? (x.gaps.length ? '🟠 Gaps' : '🟢 Complete') : '🔴 None'} | ${x.had ? cell(x.gaps.join(', ')) : 'No report came in'} |`);
   }
-  lines.push('', `Made by Reem from the reports checked in Report checks, ${dubaiDate()}.`);
+  lines.push('', `Made by Reem's Autonomous Agents from the reports they checked, ${dubaiDate()}.`);
   return lines.join('\n');
 }
 
