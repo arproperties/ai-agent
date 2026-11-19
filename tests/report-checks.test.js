@@ -84,6 +84,18 @@ test('a type needs a name, what it is, and at least one item', async () => {
   await assert.rejects(updateType(t.id, { due_hour: 25 }), /0 to 23/);
 });
 
+test('a misread date is mended from the upload day', async () => {
+  const { plausibleDay, cleanGaps } = await import('../server/reportChecks.js');
+  assert.equal(plausibleDay('2026-11-13', '2026-11-14'), '2026-11-13');
+  assert.equal(plausibleDay('2010-11-04', '2026-11-06'), '2026-11-04', '"4/11/10" is this year');
+  assert.equal(plausibleDay('2026-12-11', '2026-11-14'), '2026-11-12', '12/11 read as 11 December');
+  assert.equal(plausibleDay('2026-02-11', '2026-11-14'), '2026-11-02', 'day and month the wrong way round');
+  assert.equal(plausibleDay('2026-12-30', '2027-01-02'), '2026-12-30', 'December report uploaded in January');
+  assert.equal(plausibleDay('2028-12-20', '2026-10-25'), null, 'nothing near: the caller takes the day before the upload');
+  assert.equal(plausibleDay('nonsense', '2026-10-25'), null);
+  assert.deepEqual(cleanGaps([{ item: 'Waste %', missing: 'a' }, { item: 'waste %', missing: 'b' }], ['Waste %']), [{ item: 'Waste %', missing: 'a; b' }]);
+});
+
 test('Reem writes a first list from the name', async () => {
   const items = await draftItems({ name: 'Cleaning', about: 'daily' }, async () => '{"items": ["Location", " ", "Chemicals used"]}');
   assert.deepEqual(items, ['Location', 'Chemicals used']);
@@ -272,4 +284,6 @@ test('going through the past checks quietly and only this type', async () => {
   assert.doesNotMatch(calls[0].prompt, /Too old/);
   const saved = (await listTypes())[0].backfill;
   assert.equal(saved.state, 'done');
+  const c = await db.prepare('SELECT note_state FROM report_checks').get();
+  assert.equal(c.note_state, 'past', 'an old report\'s note is kept, not waited on');
 });
