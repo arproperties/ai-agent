@@ -55,7 +55,7 @@ const TABLES = [
   'attendance_reviews', 'attendance_photos', 'attendance_chat_days',
   'feed_days', 'feed_settings', 'feed_videos', 'yt_search_cache', 'yt_history',
   'tracker_settings', 'tracker_devices', 'tracker_days',
-  'report_types', 'report_checks', 'report_check_seen', 'report_check_marks', 'report_monthly',
+  'report_types', 'report_checks', 'report_check_seen', 'report_check_marks', 'report_monthly', 'report_agent_runs',
 ];
 
 /** Empty every table and restart the id sequences, so ids are predictable per test. */

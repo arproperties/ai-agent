@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, Settings as Gear, CalendarRange, Download, Radar, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, Settings as Gear, CalendarRange, Download, Radar, AlertTriangle, ArrowLeft, Play, Mail, Database, FileSignature } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 import { createPortal } from 'react-dom';
@@ -21,6 +21,14 @@ const hour = (h) => `${String(h).padStart(2, '0')}:00`;
 const workDays = (s) => (String(s) === '0123456' ? 'every day' : [...String(s)].map((d) => DAYS[d]).join(', '));
 // When a report is expected, said in words. No days: it comes whenever there is one, and is never late.
 const schedule = (t) => (t.work_days ? `expected ${workDays(t.work_days)}, due the next day by ${hour(t.due_hour)}` : 'whenever one comes, never late');
+// A watcher (server/agentRuns.js): where it looks and when it runs.
+const SOURCE_NAMES = { email: 'your email', saifsys: 'saifsys', leases: 'leases' };
+const SOURCE_ICONS = { email: Mail, saifsys: Database, leases: FileSignature };
+const FULL_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const runs = (t) => (t.cadence === 'weekly' ? `every ${FULL_DAYS[t.run_weekday]} at ${hour(t.run_hour)}`
+  : t.cadence === 'monthly' ? `on the 1st of each month at ${hour(t.run_hour)}` : `every day at ${hour(t.run_hour)}`);
+const looksAt = (t) => (t.sources || []).map((x) => SOURCE_NAMES[x] || x).join(', ');
+const when = (secs) => new Date(secs * 1000).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Dubai' });
 // A list item is written "Short label — what exactly"; the cards show only the label.
 const label = (item) => String(item).split(' — ')[0];
 const dubaiToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
@@ -244,10 +252,141 @@ function Backfill({ type, onStarted }) {
 
 
 
+/** A watcher's settings: its sentence, where it looks and when it runs. */
+function WatcherForm({ type, initial, onSaved, onCancel, onDeleted }) {
+  const from = type || initial;
+  const [t, setT] = useState(() => ({
+    name: from?.name || '', brief: from?.brief || '', sources: from?.sources || [], cadence: from?.cadence || 'daily',
+    run_hour: from?.run_hour ?? 8, run_weekday: from?.run_weekday ?? 0, active: from?.active ?? true,
+  }));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k, v) => setT((o) => ({ ...o, [k]: v }));
+  const flip = (x) => set('sources', t.sources.includes(x) ? t.sources.filter((y) => y !== x) : [...t.sources, x]);
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError('');
+    try {
+      const body = { ...t, kind: 'watch', run_hour: Number(t.run_hour), run_weekday: Number(t.run_weekday) };
+      onSaved(type ? await api.patch(`/report-checks/types/${type.id}`, body) : await api.post('/report-checks/types', body));
+    } catch (err) { setError(err.message); }
+    setBusy(false);
+  };
+  const remove = async () => {
+    if (!window.confirm(`Delete "${type.name}" and everything it found?`)) return;
+    try { await api.del(`/report-checks/types/${type.id}`); onDeleted(); } catch (e) { setError(e.message); }
+  };
+  const chip = (on) => `rounded-full border px-3 py-1 text-xs ${on ? 'border-p1/60 bg-p1/15' : 'border-stroke text-mute'}`;
+  return (
+    <form onSubmit={save} className="space-y-3 text-sm">
+      <label className="block"><span className="mb-1 block text-xs text-mute">Name</span>
+        <input value={t.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Unanswered tenant emails" className={FIELD} /></label>
+      <label className="block"><span className="mb-1 block text-xs text-mute">What it does</span>
+        <textarea value={t.brief} onChange={(e) => set('brief', e.target.value)} rows={4} className={`${FIELD} resize-y`} /></label>
+      <div>
+        <span className="mb-1 block text-xs text-mute">Where it looks (reading only)</span>
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(SOURCE_NAMES).map(([k, n]) => <button type="button" key={k} onClick={() => flip(k)} className={chip(t.sources.includes(k))}>{n}</button>)}
+        </div>
+      </div>
+      <div>
+        <span className="mb-1 block text-xs text-mute">When it runs</span>
+        <div className="flex flex-wrap gap-1.5">
+          {[['daily', 'Every day'], ['weekly', 'Every week'], ['monthly', 'Every month (the 1st)']].map(([k, n]) => (
+            <button type="button" key={k} onClick={() => set('cadence', k)} className={chip(t.cadence === k)}>{n}</button>
+          ))}
+        </div>
+        {t.cadence === 'weekly' && (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {DAYS.map((d, i) => <button type="button" key={d} onClick={() => set('run_weekday', i)} className={chip(Number(t.run_weekday) === i)}>{d}</button>)}
+          </div>
+        )}
+        <label className="mt-2 flex items-center gap-2"><span className="text-xs text-mute">At</span>
+          <input type="number" min={0} max={23} value={t.run_hour} onChange={(e) => set('run_hour', e.target.value)} className="glass w-16 rounded-xl px-2 py-1.5 text-center outline-none" />
+          <span className="text-xs text-mute">:00 Dubai time</span></label>
+      </div>
+      <button type="button" role="switch" aria-checked={t.active} onClick={() => set('active', !t.active)}
+        className="flex w-full items-center gap-3 rounded-2xl border border-stroke px-4 py-2.5 text-left">
+        <span className="flex-1">The agent runs and buzzes when it finds something</span>
+        <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${t.active ? 'bg-p1' : 'bg-white/15'}`}>
+          <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow transition-all ${t.active ? 'left-[22px]' : 'left-0.5'}`} />
+        </span>
+      </button>
+      {error && <p className="text-bad">{error}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <Btn primary type="submit" busy={busy} disabled={busy}>Save</Btn>
+        <Btn type="button" onClick={onCancel}>Cancel</Btn>
+        {type && <button type="button" onClick={remove} className="ml-auto flex items-center gap-1 rounded-full px-3 py-1.5 text-xs text-mute hover:text-bad"><Trash2 size={13} /> Delete</button>}
+      </div>
+    </form>
+  );
+}
+
+/** A watcher's page: when it runs, Run now, and what each run found. */
+function WatcherView({ type, master }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const load = useCallback(() => api.get(`/report-checks/types/${type.id}/runs`).then(setData).catch((e) => setError(e.message)), [type.id]);
+  useEffect(() => { setData(null); load(); }, [load]);
+  useEffect(() => {
+    if (!data?.running) return undefined;
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [data?.running, load]);
+  const runNow = async () => {
+    setError('');
+    try { await api.post(`/report-checks/types/${type.id}/run`); await load(); } catch (e) { setError(e.message); }
+  };
+  const list = data?.runs || [];
+  const found = list.filter((r) => !r.error && !r.nothing_new).length;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat value={list.length} text="runs" />
+        <Stat value={found} text="with something to tell you" tone={found ? 'text-warn' : 'text-txt'} />
+        <div className="col-span-2 flex items-center gap-3 rounded-2xl border border-stroke bg-white/[0.04] p-4">
+          <div className="min-w-0 flex-1 text-sm">
+            <p className="flex flex-wrap items-center gap-1.5">{(type.sources || []).map((x) => { const I = SOURCE_ICONS[x] || Database; return <span key={x} className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-xs"><I size={12} />{SOURCE_NAMES[x] || x}</span>; })}</p>
+            <p className="mt-1 text-xs text-mute">Runs {runs(type)}{list[0] ? ` · last ${when(list[0].ran_at)}` : ''}</p>
+          </div>
+          {master && <Btn primary busy={!!data?.running} onClick={runNow}><Play size={14} /> {data?.running ? 'Running…' : 'Run now'}</Btn>}
+        </div>
+      </div>
+      {error && <p className="text-sm text-bad">{error}</p>}
+      {!data ? <div className="grid place-items-center pt-10 text-mute"><Loader2 className="animate-spin" /></div>
+        : !list.length ? <p className="pt-10 text-center text-sm text-mute">It has not run yet. It runs {runs(type)}{master ? ', or tap Run now' : ''}.</p> : (
+          <ul className="grid items-start gap-3 lg:grid-cols-2">
+            {list.map((r) => (
+              <li key={r.id} className={`rounded-2xl border bg-white/[0.04] p-4 text-sm ${!r.error && !r.nothing_new ? 'border-warn/50' : 'border-stroke'}`}>
+                <div className="flex items-start gap-2">
+                  <p className="min-w-0 flex-1 font-medium">{r.error ? 'The run failed' : r.headline || (r.nothing_new ? 'Nothing new' : 'Findings')}</p>
+                  <Chip c={r.error ? ['Failed', 'bad'] : r.nothing_new ? ['Nothing new', 'mute'] : [`${r.findings.length} found`, 'warn']} />
+                </div>
+                <p className="mt-0.5 text-xs text-mute">{when(r.ran_at)}{r.tools_used ? ` · looked ${r.tools_used} times` : ''}</p>
+                {r.error && <p className="mt-2 text-bad">{r.error}</p>}
+                {r.findings.length > 0 && (
+                  <ul className="mt-3 space-y-2 border-t border-stroke pt-3">
+                    {r.findings.map((f, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span className={`mt-1.5 size-2 shrink-0 rounded-full ${f.level === 'high' ? 'bg-bad' : 'bg-warn'}`} />
+                        <span><span className="font-medium">{f.title}</span>{f.detail && <span className="block text-mute">{f.detail}</span>}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+    </div>
+  );
+}
+
 const EXAMPLES = [
   "Watch Umer's AC cleaning reports. He must do 4 units a day. Tell me when he does fewer or leaves things out.",
+  'Every morning at 9, tell me which emails from tenants or staff have no reply after 24 hours.',
+  'Every Sunday, list the leases ending in the next 60 days that have no renewal started.',
   "Check Faisal's daily cleaning reports: location, before and after photos, chemicals used.",
-  'Check every invoice uploaded for the JVC School site: supplier, LPO number, quantities and VAT.',
 ];
 
 /**
@@ -270,7 +409,8 @@ function NewAgent({ onMade, onCancel }) {
     try { onMade(await api.post('/report-checks/types', { ...plan, daily_target: plan.daily_target || 0 })); } catch (e) { setError(e.message); setBusy(''); }
   };
 
-  if (editing) return <TypeForm initial={plan} onSaved={onMade} onCancel={() => setEditing(false)} />;
+  if (editing) return plan.kind === 'watch' ? <WatcherForm initial={plan} onSaved={onMade} onCancel={() => setEditing(false)} />
+    : <TypeForm initial={plan} onSaved={onMade} onCancel={() => setEditing(false)} />;
   if (plan) {
     return (
       <div className="space-y-4 text-sm">
@@ -279,18 +419,19 @@ function NewAgent({ onMade, onCancel }) {
             <span className="grid size-9 place-items-center rounded-full bg-gradient-to-br from-p1 to-p2 text-white"><Radar size={17} /></span>
             <div className="min-w-0">
               <p className="truncate text-base font-medium">{plan.name}</p>
-              {plan.writer && <p className="text-xs text-mute">Watches {plan.writer}</p>}
+              {plan.kind === 'watch' ? <p className="text-xs text-mute">Looks in {looksAt(plan)}</p> : plan.writer && <p className="text-xs text-mute">Watches {plan.writer}</p>}
             </div>
           </div>
           {plan.summary && <p className="mt-3">{plan.summary}</p>}
-          <ul className="mt-3 space-y-1.5 border-t border-stroke pt-3">
+          {plan.kind !== 'watch' && <ul className="mt-3 space-y-1.5 border-t border-stroke pt-3">
             {plan.items.map((i) => (
               <li key={i} className="flex gap-2"><Check size={14} className="mt-0.5 shrink-0 text-ok" />
                 <span><span className="font-medium">{label(i)}</span>{i.includes(' — ') && <span className="text-mute"> {i.split(' — ').slice(1).join(' — ')}</span>}</span></li>
             ))}
-          </ul>
+          </ul>}
           <p className="mt-3 border-t border-stroke pt-3 text-xs text-mute">
-            {schedule(plan).replace(/^./, (c) => c.toUpperCase())}{plan.daily_target ? ` · target ${plan.daily_target} a day` : ''}
+            {plan.kind === 'watch' ? `Runs ${runs(plan)}. Reads only: it never sends or changes anything.`
+              : <>{schedule(plan).replace(/^./, (c) => c.toUpperCase())}{plan.daily_target ? ` · target ${plan.daily_target} a day` : ''}</>}
           </p>
         </div>
         {plan.limits && <p className="flex items-start gap-2 rounded-2xl border border-warn/40 px-3.5 py-2.5 text-warn"><AlertTriangle size={15} className="mt-0.5 shrink-0" /> {plan.limits}</p>}
@@ -324,7 +465,7 @@ function NewAgent({ onMade, onCancel }) {
         <Btn primary busy={busy === 'plan'} disabled={brief.trim().length < 8} onClick={setup}><Sparkles size={14} /> Set it up</Btn>
         <Btn onClick={onCancel}>Cancel</Btn>
       </div>
-      <p className="text-xs text-mute">An agent watches the files that reach Reem: uploads, PDFs and WhatsApp photos shared into a chat. It never messages anyone by itself.</p>
+      <p className="text-xs text-mute">An agent can watch the files that reach Reem (uploads, PDFs, WhatsApp photos shared into a chat), or look in your email, saifsys and the leases on a schedule. It only reads: it never messages anyone or changes anything by itself.</p>
     </div>
   );
 }
@@ -480,6 +621,9 @@ export default function ReportChecks({ onBack, focus = null }) {
         let pick = d.types[0]?.id ?? null;
         // A buzz about one report opens straight on it.
         if (typeof focus === 'number') pick = (await api.get(`/report-checks/checks/${focus}`).catch(() => null))?.type_id ?? pick;
+        // A watcher's buzz opens on that agent: /?reportchecks=agent-7
+        const agent = /^agent-(\d+)$/.exec(String(focus || ''));
+        if (agent && d.types.some((t) => t.id === Number(agent[1]))) pick = Number(agent[1]);
         setTypeId(pick);
       } catch (e) { setError(e.message); }
     })();
@@ -525,7 +669,7 @@ export default function ReportChecks({ onBack, focus = null }) {
 
   const head = (
     <div className="flex items-center gap-2">
-      {type && <button onClick={() => setMonthly(true)} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><CalendarRange size={14} /><span className="hidden sm:inline">Monthly report</span></button>}
+      {type && type.kind !== 'watch' && <button onClick={() => setMonthly(true)} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><CalendarRange size={14} /><span className="hidden sm:inline">Monthly report</span></button>}
       {master && <>
       <button onClick={() => setSettings('new')} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><Plus size={14} /><span className="hidden sm:inline">New agent</span></button>
       {type && (
@@ -553,7 +697,13 @@ export default function ReportChecks({ onBack, focus = null }) {
           )}
           {!data.types.length && <p className="pt-12 text-center text-sm text-mute">No agents yet.{master ? ' Tap New agent and say what it should do.' : ''}</p>}
 
-          {type && (
+          {type?.kind === 'watch' && (
+            <>
+              <p className="text-sm text-mute"><span className="text-txt">{type.name}</span> · {type.brief}{!type.active && ' · paused'}</p>
+              <WatcherView key={type.id} type={type} master={master} />
+            </>
+          )}
+          {type && type.kind !== 'watch' && (
             <p className="text-sm text-mute">
               <span className="text-txt">{type.name}</span>{type.writer ? ` · ${type.writer}` : ''}{type.daily_target ? ` · target ${type.daily_target} a day` : ''} · {schedule(type)}
               {!type.active && ' · paused'}
@@ -561,8 +711,8 @@ export default function ReportChecks({ onBack, focus = null }) {
             </p>
           )}
 
-          {type && !days && <div className="grid place-items-center pt-10 text-mute"><Loader2 className="animate-spin" /></div>}
-          {type && days && (
+          {type && type.kind !== 'watch' && !days && <div className="grid place-items-center pt-10 text-mute"><Loader2 className="animate-spin" /></div>}
+          {type && type.kind !== 'watch' && days && (
             <>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 <Stat value={reports.length} text="reports in 30 days" />
@@ -628,11 +778,15 @@ export default function ReportChecks({ onBack, focus = null }) {
       {settings && settings !== 'new' && (
         <SidePanel title={type?.name} icon={<Gear size={18} className="text-mute" />} onClose={() => setSettings(null)}>
           <div className="space-y-4">
-            {type?.brief && <p className="rounded-2xl border border-stroke px-3.5 py-2.5 text-sm text-mute"><span className="block text-xs">You asked</span>{type.brief}</p>}
-            <TypeForm type={type} onCancel={() => setSettings(null)}
+            {type?.brief && type.kind !== 'watch' && <p className="rounded-2xl border border-stroke px-3.5 py-2.5 text-sm text-mute"><span className="block text-xs">You asked</span>{type.brief}</p>}
+            {type?.kind === 'watch' ? (
+              <WatcherForm type={type} onCancel={() => setSettings(null)}
+                onSaved={async () => { setSettings(null); await loadTypes(); }}
+                onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />
+            ) : <TypeForm type={type} onCancel={() => setSettings(null)}
               onSaved={async (t) => { setSettings(null); await loadTypes(); if (t?.id) setTypeId(t.id); await loadDays(t?.id || typeId); }}
-              onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />
-            {settings !== 'new' && type && <div className="rounded-2xl border border-stroke p-4"><Backfill type={type} onStarted={refresh} /></div>}
+              onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />}
+            {settings !== 'new' && type && type.kind !== 'watch' && <div className="rounded-2xl border border-stroke p-4"><Backfill type={type} onStarted={refresh} /></div>}
           </div>
         </SidePanel>
       )}

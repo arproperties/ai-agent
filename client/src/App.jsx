@@ -62,7 +62,7 @@ const notifiedDocRenewal = params.get('docrenewals') || null;
 const notifiedProject = Number(params.get('projects')) || null;
 const notifiedFeeds = params.get('feeds') === '1'; // the morning feed buzz
 // a work report has gaps or is late: /?reportchecks=12 opens that report's check, =list the screen
-const notifiedReportCheck = params.get('reportchecks') ? (Number(params.get('reportchecks')) || 'list') : null;
+const notifiedReportCheck = params.get('reportchecks') ? (Number(params.get('reportchecks')) || (/^agent-\d+$/.test(params.get('reportchecks')) ? params.get('reportchecks') : 'list')) : null;
 const notifiedRenewals = params.has('renewals'); // that one, or the list: /?renewals=list
 // a staff job in one of their buildings needs them: /?building=2&job=41
 const notifiedBuilding = Number(params.get('building')) ? { building: Number(params.get('building')), job: Number(params.get('job')) || null } : null;
