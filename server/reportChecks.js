@@ -71,6 +71,7 @@ const SEEDS = [{
   about: 'The daily progress report from the JVC School construction site (basement finishing, blockwork, steel and concrete works), ' +
     'written by the site engineer Tajdar Khan and usually uploaded by Francisca, the store keeper. A handwritten photo of it and the typed PDF both count. ' +
     'Not material requisition forms (MRF), LPOs, invoices, receipts, QA/QC site diaries or safety notes.',
+  work_days: '0123456', // the site works every day (Francis, 2026-11-19); changed on the screen
   items: [
     'The date the work was done',
     'Each work done today, with its quantity (m², m³, pieces)',
@@ -91,9 +92,9 @@ export async function ensureSeeds(now = Date.now()) {
   for (const s of SEEDS) {
     const mark = await db.prepare('INSERT INTO report_check_marks (key) VALUES (?) ON CONFLICT DO NOTHING RETURNING key').get(`seed:${s.seed}`);
     if (!mark) continue;
-    await db.prepare(`INSERT INTO report_types (name, writer, about, items, seed, starts_on, created_at) VALUES (?, ?, ?, ?::jsonb, ?, ?, ?)
+    await db.prepare(`INSERT INTO report_types (name, writer, about, items, work_days, seed, starts_on, created_at) VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?)
                       ON CONFLICT (seed) DO NOTHING`)
-      .run(s.name, s.writer, s.about, JSON.stringify(s.items), s.seed, dubaiDate(now), Math.floor(now / 1000));
+      .run(s.name, s.writer, s.about, JSON.stringify(s.items), s.work_days, s.seed, dubaiDate(now), Math.floor(now / 1000));
   }
 }
 
@@ -249,25 +250,50 @@ as a numbered line, and ask for the updated report today. No sign-off.`;
 const latestBefore = (typeId, day) => db.prepare(`SELECT report_date, facts FROM report_checks
   WHERE type_id = ? AND report_date < ? ORDER BY report_date DESC, id DESC LIMIT 1`).get(typeId, day);
 
-function cleanGaps(gaps, items) {
+// One line per list item: the same item named twice has its two notes joined.
+export function cleanGaps(gaps, items) {
   const known = new Map(items.map((i) => [i.toLowerCase(), i]));
-  return (Array.isArray(gaps) ? gaps : []).map((g) => ({
-    item: known.get(line(g?.item, MAX_ITEM).toLowerCase()) || line(g?.item, MAX_ITEM),
-    missing: line(g?.missing, 200),
-  })).filter((g) => g.item || g.missing).slice(0, MAX_ITEMS);
+  const out = new Map();
+  for (const g of Array.isArray(gaps) ? gaps : []) {
+    const item = known.get(line(g?.item, MAX_ITEM).toLowerCase()) || line(g?.item, MAX_ITEM);
+    const missing = line(g?.missing, 200);
+    if (!item && !missing) continue;
+    const had = out.get(item);
+    out.set(item, { item, missing: had ? line([had.missing, missing].filter(Boolean).join('; '), 400) : missing });
+  }
+  return [...out.values()].slice(0, MAX_ITEMS);
+}
+
+// How far before its upload a report's day can be. Handwriting is misread ("4/11/10" came back as
+// 2010-11-04), so a date outside this is tried with the upload's year, then with day and month
+// swapped, and failing that the day before the upload is taken.
+const DATE_WINDOW_DAYS = 21;
+
+export function plausibleDay(read, uploadDay) {
+  const earliest = addDays(uploadDay, -DATE_WINDOW_DAYS);
+  const ok = (d) => isDay(d) && d >= earliest && d <= uploadDay;
+  const tries = [];
+  if (isDay(read)) {
+    const [, m, d] = read.split('-');
+    const y = uploadDay.slice(0, 4);
+    const prevY = String(Number(y) - 1); // a report from late December uploaded in January
+    tries.push(read, `${y}-${m}-${d}`, `${prevY}-${m}-${d}`, `${read.slice(0, 4)}-${d}-${m}`, `${y}-${d}-${m}`);
+  }
+  return tries.find(ok) || null;
 }
 
 /**
  * Read one file as a report of this type, keep what it found, and tell the master.
  * Returns the check, or null when the file turned out not to be such a report.
- * quiet: no buzz (reports read in bulk from the past).
+ * quiet: no buzz. past: a report from before Reem was watching, whose note is kept but not waited on.
  */
-export async function checkReport(type, doc, { asker = ask, pusher = sendPush, quiet = false } = {}) {
+export async function checkReport(type, doc, { asker = ask, pusher = sendPush, quiet = false, past = false } = {}) {
   const text = (await db.prepare('SELECT text FROM document_texts WHERE document_id = ?').get(doc.id))?.text;
   if (!text) return null;
-  const guess = isDay(doc.doc_date) ? doc.doc_date : dubaiDate(Number(doc.created_at) * 1000);
+  const uploadDay = dubaiDate(Number(doc.created_at) * 1000);
+  const guess = plausibleDay(doc.doc_date, uploadDay) || addDays(uploadDay, -1);
   const before = await latestBefore(type.id, guess);
-  const out = await asker([
+  const prompt = [
     `Report type: ${type.name}`,
     `Written by: ${type.writer || 'not known'}`,
     `What it is: ${type.about}`,
@@ -280,12 +306,17 @@ export async function checkReport(type, doc, { asker = ask, pusher = sendPush, q
     `File: ${doc.title || doc.name} (${doc.name}), dated about ${guess}`,
     '---',
     text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}\n…(cut short)` : text,
-  ].join('\n'), { system: CHECK_SYSTEM, maxTokens: 2500, model: CHECK_MODEL });
-
+  ].join('\n');
+  // Room to spare: a long report's facts, plus the model's thinking, cut a 2,500-token reply short
+  // on 4 of 26 live reports. One more go before giving up.
   let r;
-  try { r = looseJson(out); } catch { throw new Error(`the check of file ${doc.id} came back unreadable`); }
+  for (let tries = 0; !r; tries++) {
+    try { r = looseJson(await asker(prompt, { system: CHECK_SYSTEM, maxTokens: 8000, model: CHECK_MODEL })); } catch (e) {
+      if (tries) throw new Error(`the check of file ${doc.id} came back unreadable`);
+    }
+  }
   if (r.is_report === false) return null;
-  const day = isDay(r.report_date) ? r.report_date : guess;
+  const day = plausibleDay(r.report_date, uploadDay) || guess;
   const gaps = cleanGaps(r.gaps, type.items);
   const note = gaps.length ? String(r.note || '').trim().slice(0, 3000) : '';
   const facts = r.facts && typeof r.facts === 'object' ? r.facts : {};
@@ -299,7 +330,7 @@ export async function checkReport(type, doc, { asker = ask, pusher = sendPush, q
       gaps = EXCLUDED.gaps, facts = EXCLUDED.facts, note = EXCLUDED.note, note_state = EXCLUDED.note_state, checked_at = EXCLUDED.checked_at
     RETURNING id`)
     .run(type.id, doc.id, day, line(doc.title || doc.name, 200), line(r.summary, 600), JSON.stringify(gaps),
-      JSON.stringify(facts).slice(0, 20000), note, gaps.length ? 'waiting' : 'none');
+      JSON.stringify(facts).slice(0, 20000), note, !gaps.length ? 'none' : past ? 'past' : 'waiting');
   await db.prepare(`UPDATE report_checks SET note_state = 'replaced' WHERE type_id = ? AND report_date = ? AND id <> ? AND note_state = 'waiting'`)
     .run(type.id, day, id);
   const check = await getCheck(id);
@@ -480,7 +511,7 @@ export async function backfill(typeId, { days = 30, asker = ask, now = Date.now(
     state.found = found.length;
     await save(state);
     for (const { doc } of found) {
-      try { if (await checkReport(type, doc, { asker, quiet: true })) state.checked++; } catch (e) { console.error('[report checks]', doc.id, e.message); }
+      try { if (await checkReport(type, doc, { asker, quiet: true, past: true })) state.checked++; } catch (e) { console.error('[report checks]', doc.id, e.message); }
       await save(state);
     }
     state.state = 'done';

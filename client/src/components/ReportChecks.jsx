@@ -23,7 +23,7 @@ function dayStatus(d) {
   if (d.missing) return d.late ? <Pill tone="bad">No report</Pill> : <Pill tone="mute">Not due yet</Pill>;
   const n = d.check.gaps.length;
   if (!n) return <Pill tone="ok">Complete</Pill>;
-  const note = { waiting: ' · note to send', sent: ' · note sent', dismissed: '', replaced: '', none: '' }[d.check.note_state] || '';
+  const note = { waiting: ' · note to send', sent: ' · note sent', dismissed: '', replaced: '', past: '', none: '' }[d.check.note_state] || '';
   return <Pill tone="warn">{n} missing{note}</Pill>;
 }
 
@@ -65,7 +65,7 @@ function CheckDetail({ check, master, onChanged }) {
 
       {check.note && (
         <div>
-          <p className="mb-1 text-xs uppercase tracking-wide text-mute">Message for the writer {check.note_state === 'sent' && '· sent'}{check.note_state === 'dismissed' && '· dismissed'}{check.note_state === 'replaced' && '· a newer copy came in'}</p>
+          <p className="mb-1 text-xs uppercase tracking-wide text-mute">Message for the writer {check.note_state === 'sent' && '· sent'}{check.note_state === 'dismissed' && '· dismissed'}{check.note_state === 'replaced' && '· a newer copy came in'}{check.note_state === 'past' && '· from before Reem was watching'}</p>
           <textarea value={note} onChange={(e) => setNote(e.target.value)} readOnly={!master || !open} rows={Math.min(10, note.split('\n').length + 1)}
             className={`${FIELD} resize-y text-sm`} />
         </div>
