@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { claude } from './ai.js';
 import { looseJson } from './files.js';
 import { sendPush } from './push.js';
+import { billAs } from './billing.js';
 import { saifsysKit } from './saifsys/index.js';
 import { leaseKit } from './leases.js';
 import { EMAIL_READ_TOOLS } from './email.js';
@@ -21,8 +22,10 @@ import { dubaiDate, dubaiHour } from './saifsys/client.js';
 // nicely.
 
 const RUN_MODEL = ADVISOR_MODEL;
-const MAX_ROUNDS = 8;
-const MAX_TOOL_TEXT = 20_000; // one tool's answer, so a big mailbox listing does not swamp the run
+const MAX_ROUNDS = 6;
+// One tool's answer, so a big mailbox listing does not swamp the run. Every round re-sends all of
+// it, so this is most of what a run costs.
+const MAX_TOOL_TEXT = 8_000;
 export const SOURCES = ['email', 'saifsys', 'leases'];
 export const CADENCES = ['daily', 'weekly', 'monthly'];
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -65,7 +68,7 @@ background: nobody is reading as you go. You are given your job in the owner's w
 tools that only READ (email, saifsys, leases). Use them to do the job: look things up, read what you need, then stop.
 
 Report only what the owner needs to know now: new things, and things still open from last time. Be specific: names, units,
-dates, amounts, email subjects. Do not invent anything the tools did not show; if a tool failed, say so in one finding.
+dates, amounts, email subjects. Write dates and times in Dubai time (UTC+4), e.g. "18 Nov 16:35". Do not invent anything the tools did not show; if a tool failed, say so in one finding.
 When you are done, reply with ONLY JSON:
 {"headline": "one short line for a phone notification, at most 100 characters",
  "findings": [{"title": "at most 10 words", "detail": "one or two sentences", "level": "high" | "normal"}],
@@ -74,11 +77,30 @@ When you are done, reply with ONLY JSON:
 
 const text = (res) => res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
 
+// Each round re-sends the whole run; marking its newest tool answers lets the next round read all
+// of that back from the cache at a tenth of the price (as chat.js withCacheMark does). The first
+// live run without it cost about $0.40 for 8 rounds. Not on the first round, and never on an
+// assistant turn, whose last block can be thinking.
+function cacheMarked(convo) {
+  const last = convo.at(-1);
+  if (last?.role !== 'user' || !Array.isArray(last.content) || !last.content.length) return convo;
+  const content = [...last.content];
+  content[content.length - 1] = { ...content.at(-1), cache_control: { type: 'ephemeral' } };
+  return [...convo.slice(0, -1), { ...last, content }];
+}
+
 /**
  * One run of a watcher: the tool loop, its answer kept in report_agent_runs, and a buzz when
  * there is something. `client` is swapped in tests.
  */
-export async function runWatcher(agent, { client = claude, pusher = sendPush, now = Date.now(), user, quiet = false, kits: given } = {}) {
+// Its cost is noted against the agent ("agent 7"), so its page can say what it cost this month.
+export const costNote = (id) => `agent ${id}`;
+
+export function runWatcher(agent, opts = {}) {
+  return billAs({ job: 'report_checks', note: costNote(agent.id) }, () => run(agent, opts));
+}
+
+async function run(agent, { client = claude, pusher = sendPush, now = Date.now(), user, quiet = false, kits: given } = {}) {
   const who = user || await masterUser();
   if (!who) throw new Error('There is no master to work for');
   const { kits, missing } = given ? { kits: given, missing: [] } : await kitsFor(agent.sources || [], who);
@@ -100,11 +122,15 @@ export async function runWatcher(agent, { client = claude, pusher = sendPush, no
   let used = 0;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const final = round === MAX_ROUNDS - 1;
+    // The tools stay the same every round: the model's thinking is tied to the tools it was given,
+    // and the API refuses a later round with a different list (seen on live, 2026-11-19). The last
+    // round is told in words to answer instead.
+    if (final && round > 0) convo.at(-1).content.push({ type: 'text', text: 'This is your last step: use no more tools. Reply with the JSON now, with what you have.' });
     const res = await client.messages.create({
-      model: RUN_MODEL, max_tokens: 6000, system: RUN_SYSTEM,
-      // The last round has no tools, so it has to answer with what it has.
-      ...(tools.length && !final ? { tools } : {}),
-      messages: convo,
+      model: RUN_MODEL, max_tokens: 6000,
+      system: [{ type: 'text', text: RUN_SYSTEM, cache_control: { type: 'ephemeral' } }],
+      ...(tools.length ? { tools } : {}),
+      messages: cacheMarked(convo),
     });
     const calls = res.content.filter((b) => b.type === 'tool_use');
     if (!calls.length || final) { answer = text(res); break; }
@@ -171,6 +197,13 @@ export async function watchWatchers({ now = Date.now(), run = runWatcher } = {})
     }
   }
   return done;
+}
+
+/** What this agent's runs cost since the 1st of this month, in dollars. */
+export async function costThisMonth(typeId, now = Date.now()) {
+  const first = Math.floor(Date.parse(`${dubaiDate(now).slice(0, 7)}-01T00:00:00+04:00`) / 1000);
+  const r = await db.prepare('SELECT coalesce(sum(usd), 0) usd FROM ai_costs WHERE note = ? AND at >= ?').get(costNote(Number(typeId) || 0), first);
+  return Math.round(Number(r.usd) * 100) / 100;
 }
 
 export const listRuns = (typeId, limit = 30) => db.prepare(`SELECT id, ran_at, headline, findings, nothing_new, tools_used, error
