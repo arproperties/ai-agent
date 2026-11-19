@@ -94,6 +94,7 @@ test('a misread date is mended from the upload day', async () => {
   assert.equal(plausibleDay('2028-12-20', '2026-10-25'), null, 'nothing near: the caller takes the day before the upload');
   assert.equal(plausibleDay('nonsense', '2026-10-25'), null);
   assert.deepEqual(cleanGaps([{ item: 'Waste %', missing: 'a' }, { item: 'waste %', missing: 'b' }], ['Waste %']), [{ item: 'Waste %', missing: 'a; b' }]);
+  assert.deepEqual(cleanGaps([{ item: 'Waste %', missing: 'a' }], ['Waste % — blocks issued vs needed']), [{ item: 'Waste % — blocks issued vs needed', missing: 'a' }], 'the short label is the item');
 });
 
 test('Reem writes a first list from the name', async () => {

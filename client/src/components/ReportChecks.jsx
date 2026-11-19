@@ -1,32 +1,47 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
+import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, Settings as Gear } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 import Sheet from './Sheet';
 
 // Settings → Report checks (server/reportChecks.js). Reem reads each work report as it comes
-// in and lists what is missing against the report's own list. The screen leads with the
-// pattern (what the writer keeps leaving out), then a month of coloured days: tap one for its
-// gaps and the note, which the master copies into WhatsApp (nothing is sent from Reem). The
-// list, days and due time sit behind the gear. Anyone else with the module only reads.
+// in and lists what is missing against the report's own list. Built like Lease renewals: a
+// few numbers, tabs with counts, and a card per day; tapping one slides up its gaps and the
+// note, which the master copies into WhatsApp (nothing is sent from Reem). The list, days and
+// due time sit behind the gear. Anyone else with the module only reads.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const SHOWN_DAYS = 30;
 const niceDay = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 const hour = (h) => `${String(h).padStart(2, '0')}:00`;
 const workDays = (s) => (String(s) === '0123456' ? 'every day' : [...String(s)].map((d) => DAYS[d]).join(', '));
+// A list item is written "Short label — what exactly"; the cards show only the label.
+const label = (item) => String(item).split(' — ')[0];
+const dubaiToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
+const daysAgo = (n) => new Date(Date.now() - n * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
 
-function Pill({ tone, children }) {
-  const tones = { ok: 'bg-ok/20 text-ok', warn: 'bg-warn/20 text-warn', bad: 'bg-bad/20 text-bad', mute: 'bg-white/[0.06] text-mute' };
-  return <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs ${tones[tone]}`}>{children}</span>;
-}
+// The same chips as Lease renewals.
+const CHIP = { warn: 'bg-warn/15 text-warn', p1: 'bg-p1/20 text-txt', bad: 'bg-bad/15 text-bad', ok: 'bg-ok/15 text-ok', mute: 'bg-white/10 text-mute' };
+const Chip = ({ c: [text, tone] }) => <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs ${CHIP[tone]}`}>{text}</span>;
 
-function dayStatus(d) {
-  if (d.missing) return d.late ? <Pill tone="bad">No report</Pill> : <Pill tone="mute">Not due yet</Pill>;
+const Btn = ({ primary, busy, children, className = '', ...p }) => (
+  <button {...p} disabled={busy || p.disabled}
+    className={`${primary
+      ? 'bg-gradient-to-br from-p1 to-p2 font-medium text-white shadow-lg shadow-p1/25'
+      : 'border border-stroke text-mute hover:text-txt'} flex items-center gap-1.5 rounded-full px-4 py-2 text-sm transition active:scale-[0.98] disabled:opacity-40 ${className}`}>
+    {busy && <Loader2 size={14} className="animate-spin" />} {children}
+  </button>
+);
+
+const needsYou = (d) => d.check?.note_state === 'waiting';
+function chipOf(d) {
+  if (d.missing) return d.late ? ['No report', 'bad'] : ['Not due yet', 'mute'];
   const n = d.check.gaps.length;
-  if (!n) return <Pill tone="ok">Complete</Pill>;
-  const note = { waiting: ' · note to send', sent: ' · note sent', dismissed: '', replaced: '', past: '', none: '' }[d.check.note_state] || '';
-  return <Pill tone="warn">{n} missing{note}</Pill>;
+  if (!n) return ['Complete', 'ok'];
+  if (needsYou(d)) return [`${n} missing · note to send`, 'warn'];
+  if (d.check.note_state === 'sent') return [`${n} missing · note sent`, 'p1'];
+  return [`${n} missing`, 'warn'];
 }
 
 function CheckDetail({ check, master, onChanged }) {
@@ -51,51 +66,35 @@ function CheckDetail({ check, master, onChanged }) {
   const open = check.note_state === 'waiting';
 
   return (
-    <div className="space-y-3 px-4 pb-4 text-sm">
+    <div className="space-y-4 text-sm">
       {check.summary && <p className="text-mute">{check.summary}</p>}
       {check.gaps.length > 0 ? (
-        <div>
-          <p className="mb-1 text-xs uppercase tracking-wide text-mute">Missing</p>
-          <ul className="space-y-1.5">
-            {check.gaps.map((g, i) => (
-              <li key={i} className="flex gap-2"><X size={15} className="mt-0.5 shrink-0 text-warn" />
-                <span><span className="font-medium">{g.item}</span>{g.missing && <span className="text-mute"> - {g.missing}</span>}</span></li>
-            ))}
-          </ul>
-        </div>
+        <ul className="divide-y divide-stroke rounded-2xl border border-stroke">
+          {check.gaps.map((g, i) => (
+            <li key={i} className="flex gap-2.5 px-3.5 py-2.5"><X size={15} className="mt-0.5 shrink-0 text-warn" />
+              <span><span className="font-medium">{label(g.item)}</span>{g.missing && <span className="block text-mute">{g.missing}</span>}</span></li>
+          ))}
+        </ul>
       ) : <p className="flex items-center gap-2 text-ok"><Check size={15} /> Everything on the list is there.</p>}
 
       {check.note && (
         <div>
-          <p className="mb-1 text-xs uppercase tracking-wide text-mute">Message for the writer {check.note_state === 'sent' && '· sent'}{check.note_state === 'dismissed' && '· dismissed'}{check.note_state === 'replaced' && '· a newer copy came in'}{check.note_state === 'past' && '· from before Reem was watching'}</p>
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} readOnly={!master || !open} rows={Math.min(20, note.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 80)), 0))}
+          <p className="mb-1.5 text-xs text-mute">Message for the writer{check.note_state === 'sent' && ' · sent'}{check.note_state === 'dismissed' && ' · dismissed'}{check.note_state === 'replaced' && ' · a newer copy came in'}{check.note_state === 'past' && ' · from before Reem was watching'}</p>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} readOnly={!master || !open}
+            rows={Math.min(16, note.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 70)), 0))}
             className={`${FIELD} resize-y text-sm`} />
         </div>
       )}
 
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className="flex flex-wrap gap-2">
-        {master && check.note && (
-          <button onClick={copy} disabled={!!busy}
-            className="flex items-center gap-1.5 rounded-full border border-p1/50 bg-p1/15 px-3.5 py-1.5 text-sm font-medium hover:bg-p1/25 disabled:opacity-50">
-            {busy === 'copy' ? <Loader2 size={14} className="animate-spin" /> : copied ? <Check size={14} /> : <Copy size={14} />} Copy for WhatsApp
-          </button>
-        )}
-        {master && open && (
-          <button onClick={dismiss} disabled={!!busy} className="rounded-full border border-stroke px-3.5 py-1.5 text-sm text-mute hover:text-txt disabled:opacity-50">
-            {busy === 'dismiss' ? <Loader2 size={14} className="animate-spin" /> : 'Dismiss'}
-          </button>
-        )}
+        {master && check.note && <Btn primary busy={busy === 'copy'} onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />} Copy for WhatsApp</Btn>}
+        {master && open && <Btn busy={busy === 'dismiss'} onClick={dismiss}>Dismiss</Btn>}
         {check.document_id && (
           <a href={`/api/documents/${check.document_id}/file`} target="_blank" rel="noreferrer"
-            className="flex items-center gap-1.5 rounded-full border border-stroke px-3.5 py-1.5 text-sm text-mute hover:text-txt"><FileText size={14} /> Open the report</a>
+            className="flex items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><FileText size={14} /> Open the report</a>
         )}
-        {master && check.document_id && (
-          <button onClick={recheck} disabled={!!busy} title="Read it again against the list as it is now"
-            className="flex items-center gap-1.5 rounded-full border border-stroke px-3.5 py-1.5 text-sm text-mute hover:text-txt disabled:opacity-50">
-            {busy === 'recheck' ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />} Check again
-          </button>
-        )}
+        {master && check.document_id && <Btn busy={busy === 'recheck'} onClick={recheck} title="Read it again against the list as it is now"><RotateCw size={14} /> Check again</Btn>}
       </div>
     </div>
   );
@@ -212,158 +211,83 @@ function Backfill({ type, onStarted }) {
 }
 
 
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const RANGE_DAYS = 90;
 
-// How a day's square looks: green complete, amber gaps, red no report, faint when nothing is expected.
-function tone(d) {
-  if (!d) return 'none';
-  if (d.missing) return d.late ? 'bad' : 'wait';
-  return d.check.gaps.length ? 'warn' : 'ok';
-}
-const SQUARE = {
-  ok: 'bg-ok/30 text-ok', warn: 'bg-warn/30 text-warn', bad: 'bg-bad/30 text-bad',
-  wait: 'border border-dashed border-stroke text-mute', none: 'text-mute/40',
-};
-
-/** The pattern: how many reports had gaps, and the items missing most often. */
-function Summary({ type, days }) {
-  const reports = days.filter((d) => d.check);
-  const late = days.filter((d) => d.missing && d.late).length;
-  const withGaps = reports.filter((d) => d.check.gaps.length).length;
-  const count = new Map();
-  for (const d of reports) for (const g of d.check.gaps) count.set(g.item, (count.get(g.item) || 0) + 1);
-  const top = [...count].sort((a, b) => b[1] - a[1]).slice(0, 4);
-  const waiting = type.waiting || 0;
-
+/** One day: its report's state, and what was missing at a glance. */
+function DayCard({ d, onOpen }) {
+  const gaps = d.check?.gaps || [];
   return (
-    <div className="glass space-y-3 rounded-2xl p-4">
-      {!reports.length && !late ? (
-        <p className="text-sm text-mute">No reports yet. Each one is checked as it arrives.</p>
-      ) : (
-        <div className="flex flex-wrap gap-x-6 gap-y-2">
-          <Stat value={`${withGaps} of ${reports.length}`} label="reports incomplete" tone={withGaps ? 'text-warn' : 'text-ok'} />
-          <Stat value={late} label={late === 1 ? 'day with no report' : 'days with no report'} tone={late ? 'text-bad' : 'text-mute'} />
-          {waiting > 0 && <Stat value={waiting} label={waiting === 1 ? 'note to send' : 'notes to send'} tone="text-p1" />}
+    <li>
+      <button onClick={onOpen} disabled={!d.check}
+        className={`flex h-full w-full flex-col gap-2 rounded-2xl border bg-white/[0.04] p-4 text-left transition hover:bg-white/[0.07] disabled:cursor-default ${needsYou(d) ? 'border-warn/50' : 'border-stroke'}`}>
+        <div className="flex w-full items-start gap-2">
+          <p className="min-w-0 flex-1 font-medium">{niceDay(d.date)}</p>
+          <Chip c={chipOf(d)} />
         </div>
-      )}
-      {top.length > 0 && (
-        <div>
-          <p className="mb-1.5 text-xs text-mute">Missing most often</p>
-          <ul className="space-y-1.5 text-sm">
-            {top.map(([item, n]) => (
-              <li key={item} className="flex items-center gap-3">
-                <span className="flex-1">{item}</span>
-                <span className="h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-white/10">
-                  <span className="block h-full rounded-full bg-warn" style={{ width: `${Math.round((n / reports.length) * 100)}%` }} />
-                </span>
-                <span className="shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-mute">{n} of {reports.length}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
+        {d.check ? (
+          <>
+            {gaps.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {gaps.slice(0, 3).map((g) => <span key={g.item} className="rounded-full bg-white/10 px-2 py-0.5 text-xs text-mute">{label(g.item)}</span>)}
+                {gaps.length > 3 && <span className="rounded-full px-1 py-0.5 text-xs text-mute">+{gaps.length - 3}</span>}
+              </div>
+            )}
+            {!gaps.length && d.check.summary && <p className="line-clamp-2 text-sm text-mute">{d.check.summary}</p>}
+            <p className="mt-auto truncate border-t border-stroke pt-2 text-xs text-mute">{d.check.title}</p>
+          </>
+        ) : <p className="mt-auto border-t border-stroke pt-2 text-xs text-mute">{d.late ? 'Nothing came in for this day' : 'Due the next day'}</p>}
+      </button>
+    </li>
   );
 }
 
-function Stat({ value, label, tone: t }) {
-  return <p><span className={`block text-2xl font-light tabular-nums ${t}`}>{value}</span><span className="text-xs text-mute">{label}</span></p>;
-}
-
-/** One month, Monday first. Days outside the data are blank; a day with nothing expected is faint. */
-function Month({ year, month, byDay, today, selected, onPick, onPrev, onNext }) {
-  const first = new Date(Date.UTC(year, month, 1));
-  const lead = (first.getUTCDay() + 6) % 7;
-  const count = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  const cells = [...Array(lead).fill(null), ...Array.from({ length: count }, (_, i) => `${year}-${String(month + 1).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`)];
-
+/** The last 30 days as a strip of small squares: the month at a glance. */
+function Strip({ days, onOpen }) {
+  const byDay = new Map(days.map((d) => [d.date, d]));
+  const cells = Array.from({ length: SHOWN_DAYS }, (_, i) => daysAgo(SHOWN_DAYS - 1 - i));
+  const tone = { ok: 'bg-ok/70', warn: 'bg-warn/70', bad: 'bg-bad/70', mute: 'bg-white/15', p1: 'bg-p1/70' };
   return (
-    <div className="glass rounded-2xl p-4">
-      <div className="mb-3 flex items-center">
-        <button onClick={onPrev} disabled={!onPrev} aria-label="Earlier month" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 disabled:opacity-30"><ChevronLeft size={17} /></button>
-        <p className="flex-1 text-center text-sm">{MONTHS[month]} {year}</p>
-        <button onClick={onNext} disabled={!onNext} aria-label="Later month" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 disabled:opacity-30"><ChevronRight size={17} /></button>
+    <div className="rounded-2xl border border-stroke bg-white/[0.04] p-4">
+      <div className="mb-2 flex items-center justify-between text-xs text-mute">
+        <span>Last 30 days</span>
+        <span className="flex gap-3">
+          <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-ok/70" />Complete</span>
+          <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-warn/70" />Gaps</span>
+          <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-bad/70" />No report</span>
+        </span>
       </div>
-      <div className="grid grid-cols-7 gap-1.5 text-center">
-        {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => <span key={i} className="pb-1 text-[11px] text-mute">{d}</span>)}
-        {cells.map((day, i) => {
-          if (!day) return <span key={i} />;
+      <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${SHOWN_DAYS}, minmax(0, 1fr))` }}>
+        {cells.map((day) => {
           const d = byDay.get(day);
-          const t = day > today ? 'none' : tone(d);
-          const pickable = !!d;
+          const t = d ? chipOf(d)[1] : null;
           return (
-            <button key={day} disabled={!pickable} onClick={() => onPick(day)} aria-label={day}
-              className={`aspect-square rounded-xl text-xs tabular-nums transition ${SQUARE[t]} ${selected === day ? 'ring-2 ring-p1' : ''} ${pickable ? 'hover:brightness-125' : 'cursor-default'}`}>
-              {Number(day.slice(8))}
-            </button>
+            <button key={day} title={`${niceDay(day)}${d ? ` · ${chipOf(d)[0]}` : ''}`} disabled={!d?.check} onClick={() => onOpen(d)}
+              className={`h-7 rounded-[5px] transition ${t ? tone[t] : 'bg-white/[0.06]'} ${d?.check ? 'hover:brightness-125' : 'cursor-default'}`} />
           );
         })}
       </div>
-      <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-[11px] text-mute">
-        <Legend cls={SQUARE.ok} label="Complete" /><Legend cls={SQUARE.warn} label="Gaps" /><Legend cls={SQUARE.bad} label="No report" />
-      </div>
-    </div>
-  );
-}
-const Legend = ({ cls, label }) => <span className="flex items-center gap-1.5"><span className={`size-2.5 rounded-[4px] ${cls}`} />{label}</span>;
-
-function DayPanel({ day, master, onChanged }) {
-  if (day.missing) {
-    return (
-      <div className="glass rounded-2xl p-4 text-sm">
-        <p className="text-base">{niceDay(day.date)}</p>
-        <p className="mt-1 text-mute">{day.late ? 'No report came in for this day.' : 'Not due yet.'}</p>
-      </div>
-    );
-  }
-  return (
-    <div className="glass overflow-hidden rounded-2xl">
-      <div className="flex items-start gap-3 px-4 pb-2 pt-4">
-        <div className="min-w-0 flex-1">
-          <p className="text-base">{niceDay(day.date)}</p>
-          <p className="truncate text-xs text-mute">{day.check.title}</p>
-        </div>
-        {dayStatus(day)}
-      </div>
-      <CheckDetail check={day.check} master={master} onChanged={onChanged} />
-      {day.earlier.length > 0 && (
-        <div className="border-t border-stroke px-4 py-2.5 text-xs text-mute">
-          <span className="flex items-center gap-1.5"><History size={13} /> Earlier copies of this day</span>
-          {day.earlier.map((e) => (
-            <a key={e.id} href={e.document_id ? `/api/documents/${e.document_id}/file` : undefined} target="_blank" rel="noreferrer" className="ml-5 mt-1 block truncate hover:text-txt">
-              {e.title} · {e.gaps.length ? `${e.gaps.length} missing` : 'complete'}
-            </a>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-function TypeSettings({ type, onClose, onSaved, onDeleted, onBackfill }) {
-  return (
-    <Sheet title={type ? type.name : 'New report'} onClose={onClose}>
-      <div className="space-y-4">
-        <TypeForm type={type} onCancel={onClose} onSaved={onSaved} onDeleted={onDeleted} />
-        {type && <div className="rounded-2xl border border-stroke p-4"><Backfill type={type} onStarted={onBackfill} /></div>}
-      </div>
-    </Sheet>
-  );
-}
+const Stat = ({ value, text, tone = 'text-txt' }) => (
+  <div className="rounded-2xl border border-stroke bg-white/[0.04] p-4">
+    <p className={`text-2xl font-light tabular-nums ${tone}`}>{value}</p>
+    <p className="text-xs text-mute">{text}</p>
+  </div>
+);
 
 export default function ReportChecks({ onBack, focus = null }) {
   const [data, setData] = useState(null);
   const [typeId, setTypeId] = useState(null);
   const [days, setDays] = useState(null);
-  const [selected, setSelected] = useState(null); // a date
-  const [month, setMonth] = useState(null); // [year, monthIndex]
+  const [tab, setTab] = useState(null);
+  const [opened, setOpened] = useState(null); // a date
   const [settings, setSettings] = useState(null); // 'new' | type id
   const [error, setError] = useState('');
   const [focusCheck, setFocusCheck] = useState(typeof focus === 'number' ? focus : null);
 
   const loadTypes = useCallback(async () => { const d = await api.get('/report-checks'); setData(d); return d; }, []);
-  const loadDays = useCallback(async (id) => { if (id) setDays(await api.get(`/report-checks/types/${id}/days?days=${RANGE_DAYS}`)); }, []);
+  const loadDays = useCallback(async (id) => { if (id) setDays(await api.get(`/report-checks/types/${id}/days?days=${SHOWN_DAYS}`)); }, []);
 
   useEffect(() => {
     (async () => {
@@ -376,7 +300,7 @@ export default function ReportChecks({ onBack, focus = null }) {
       } catch (e) { setError(e.message); }
     })();
   }, [focus, loadTypes]);
-  useEffect(() => { setDays(null); setSelected(null); setMonth(null); loadDays(typeId).catch((e) => setError(e.message)); }, [typeId, loadDays]);
+  useEffect(() => { setDays(null); setTab(null); loadDays(typeId).catch((e) => setError(e.message)); }, [typeId, loadDays]);
 
   const type = data?.types.find((t) => t.id === typeId);
   useEffect(() => {
@@ -385,91 +309,133 @@ export default function ReportChecks({ onBack, focus = null }) {
     return () => clearInterval(t);
   }, [type?.backfill?.state, typeId, loadTypes, loadDays]);
 
-  const list = days?.days || [];
-  const byDay = new Map(list.map((d) => [d.date, d]));
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
+  const list = (days?.days || []).filter((d) => d.date >= daysAgo(SHOWN_DAYS - 1) && d.date <= dubaiToday());
+  const reports = list.filter((d) => d.check);
+  const tabs = [
+    ['you', 'Needs you', list.filter(needsYou)],
+    ['gaps', 'Gaps', reports.filter((d) => d.check.gaps.length)],
+    ['none', 'No report', list.filter((d) => d.missing && d.late)],
+    ['ok', 'Complete', reports.filter((d) => !d.check.gaps.length)],
+    ['all', 'All', list],
+  ];
+  // First look: what needs the boss, else everything.
+  const current = tab || (tabs[0][2].length ? 'you' : 'all');
+  const shown = (tabs.find((t) => t[0] === current) || tabs[4])[2];
 
-  // First look: the day a buzz was about, else the newest day with something on it.
+  // A buzz about one report opens its sheet.
   useEffect(() => {
-    if (!days || selected) return;
-    const hit = focusCheck && list.find((d) => d.check?.id === focusCheck || d.earlier?.some((e) => e.id === focusCheck));
-    const pick = hit || list[0];
-    if (hit) setFocusCheck(null);
-    const date = pick?.date || today;
-    setSelected(pick?.date || null);
-    setMonth([Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1]);
+    if (!days || !focusCheck) return;
+    const hit = list.find((d) => d.check?.id === focusCheck || d.earlier?.some((e) => e.id === focusCheck));
+    if (hit) setOpened(hit.date);
+    setFocusCheck(null);
   }, [days]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const count = new Map();
+  for (const d of reports) for (const g of d.check.gaps) count.set(label(g.item), (count.get(label(g.item)) || 0) + 1);
+  const often = [...count].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const withGaps = tabs[1][2].length;
 
   const refresh = async () => { await Promise.all([loadTypes(), loadDays(typeId)]); };
   const master = !!data?.master;
+  const openDay = opened && list.find((d) => d.date === opened);
 
-  // Months with data, so the arrows stop where the data does.
-  const months = [...new Set(list.map((d) => d.date.slice(0, 7)))].sort();
-  const key = month && `${month[0]}-${String(month[1] + 1).padStart(2, '0')}`;
-  const at = months.indexOf(key);
-  const go = (k) => setMonth([Number(k.slice(0, 4)), Number(k.slice(5, 7)) - 1]);
-  const pickedDay = selected && byDay.get(selected);
+  const head = master && (
+    <div className="flex items-center gap-2">
+      <button onClick={() => setSettings('new')} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><Plus size={14} /> New report</button>
+      {type && (
+        <button onClick={() => setSettings(type.id)} aria-label="Settings" title="The list, days and due time"
+          className="grid size-9 shrink-0 place-items-center rounded-full border border-stroke text-mute transition hover:text-txt"><Gear size={16} /></button>
+      )}
+    </div>
+  );
 
   return (
-    <Page title="Report checks" onBack={onBack}
-      action={master && (
-        <div className="flex items-center gap-1">
-          <button onClick={() => setSettings('new')} aria-label="New report" title="New report" className="grid size-10 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Plus size={19} /></button>
-          {type && <button onClick={() => setSettings(type.id)} aria-label="Settings" title="The list, days and due time" className="grid size-10 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Settings2 size={18} /></button>}
-        </div>
-      )}>
-      {error && <p className="mb-3 text-sm text-bad">{error}</p>}
-      {!data ? <Loader2 className="mx-auto mt-10 animate-spin text-mute" /> : (
-        <div className="mx-auto w-full max-w-xl space-y-4 md:max-w-7xl">
+    <Page title="Report checks" onBack={onBack} action={head}>
+      {error && <p className="pt-4 text-sm text-bad">{error}</p>}
+      {!data ? <div className="grid place-items-center pt-16 text-mute"><Loader2 className="animate-spin" /></div> : (
+        <div className="space-y-4 pb-8">
           {data.types.length > 1 && (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
               {data.types.map((t) => (
                 <button key={t.id} onClick={() => setTypeId(t.id)}
-                  className={`flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm ${t.id === typeId ? 'border-p1/60 bg-p1/15' : 'border-stroke text-mute hover:text-txt'}`}>
-                  {t.name}{t.waiting > 0 && <span className="rounded-full bg-warn px-1.5 text-[11px] font-semibold text-ink">{t.waiting}</span>}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm transition ${t.id === typeId ? 'bg-white/15 text-txt' : 'text-mute hover:text-txt'}`}>
+                  {t.name}{t.waiting > 0 && <span className="rounded-full bg-warn/20 px-1.5 text-xs text-warn">{t.waiting}</span>}
                 </button>
               ))}
             </div>
           )}
-          {!data.types.length && <p className="text-sm text-mute">No reports yet.{master ? ' Tap + to add one.' : ''}</p>}
+          {!data.types.length && <p className="pt-12 text-center text-sm text-mute">No reports yet.{master ? ' Tap New report to add one.' : ''}</p>}
 
           {type && (
-            <div className="px-1 md:hidden">
-              <p className="text-lg font-light">{type.name}{!type.active && <span className="ml-2 text-xs text-mute">(paused)</span>}</p>
-              <p className="text-xs text-mute">{type.writer ? `${type.writer} · ` : ''}expected {workDays(type.work_days)}, due the next day by {hour(type.due_hour)}</p>
-              {type.backfill?.state === 'running' && <p className="mt-1 flex items-center gap-1.5 text-xs text-mute"><Loader2 size={12} className="animate-spin" /> Going through past reports…</p>}
-            </div>
+            <p className="text-sm text-mute">
+              <span className="text-txt">{type.name}</span>{type.writer ? ` · ${type.writer}` : ''} · expected {workDays(type.work_days)}, due the next day by {hour(type.due_hour)}
+              {!type.active && ' · paused'}
+              {type.backfill?.state === 'running' && <span className="ml-2 inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> going through past reports</span>}
+            </p>
           )}
 
-          {type && !days && <Loader2 className="mx-auto animate-spin text-mute" />}
+          {type && !days && <div className="grid place-items-center pt-10 text-mute"><Loader2 className="animate-spin" /></div>}
           {type && days && (
-            // Phone: one column. Wider: the pattern and the month on the left, the chosen day on the right,
-            // so the whole screen is used and the day's note and buttons fit without scrolling.
-            <div className="space-y-4 md:grid md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] md:items-start md:gap-5 md:space-y-0">
-              <div className="space-y-4">
-                <div className="hidden px-1 md:block">
-                  <p className="text-xl font-light">{type.name}{!type.active && <span className="ml-2 text-xs text-mute">(paused)</span>}</p>
-                  <p className="text-xs text-mute">{type.writer ? `${type.writer} · ` : ''}expected {workDays(type.work_days)}, due the next day by {hour(type.due_hour)}</p>
+            <>
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <Stat value={reports.length} text="reports in 30 days" />
+                <Stat value={withGaps} text="with something missing" tone={withGaps ? 'text-warn' : 'text-ok'} />
+                <Stat value={tabs[2][2].length} text="days with no report" tone={tabs[2][2].length ? 'text-bad' : 'text-txt'} />
+                <Stat value={tabs[0][2].length} text="notes to send" tone={tabs[0][2].length ? 'text-p1' : 'text-txt'} />
+              </div>
+              {often.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 text-sm">
+                  <span className="mr-1 text-xs text-mute">Missing most often</span>
+                  {often.map(([item, n]) => (
+                    <span key={item} className="rounded-full bg-warn/15 px-2.5 py-0.5 text-xs text-warn">{item} <span className="opacity-70">{n}/{reports.length}</span></span>
+                  ))}
                 </div>
-                <Summary type={type} days={list.filter((d) => d.date >= new Date(Date.now() - 30 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }))} />
-                {month && (
-                  <Month year={month[0]} month={month[1]} byDay={byDay} today={today} selected={selected} onPick={setSelected}
-                    onPrev={at > 0 ? () => go(months[at - 1]) : null}
-                    onNext={at >= 0 && at < months.length - 1 ? () => go(months[at + 1]) : null} />
-                )}
+              )}
+              <Strip days={list} onOpen={(d) => d?.check && setOpened(d.date)} />
+              <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+                {tabs.map(([k, text, l]) => (
+                  <button key={k} onClick={() => setTab(k)}
+                    className={`flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm transition ${current === k ? 'bg-white/15 text-txt' : 'text-mute hover:text-txt'}`}>
+                    {text}
+                    <span className={`rounded-full px-1.5 text-xs ${k === 'you' && l.length ? 'bg-warn/20 text-warn' : 'bg-white/10'}`}>{l.length}</span>
+                  </button>
+                ))}
               </div>
-              <div className="md:sticky md:top-0">
-                {pickedDay ? <DayPanel day={pickedDay} master={master} onChanged={refresh} />
-                  : <div className="glass rounded-2xl p-6 text-sm text-mute">Tap a day to see its report.</div>}
-              </div>
-            </div>
+              {shown.length === 0 ? <p className="pt-10 text-center text-sm text-mute">Nothing here.</p> : (
+                <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+                  {shown.map((d) => <DayCard key={d.date} d={d} onOpen={() => setOpened(d.date)} />)}
+                </ul>
+              )}
+            </>
           )}
         </div>
       )}
+
+      {openDay?.check && (
+        <Sheet title={niceDay(openDay.date)} icon={<Chip c={chipOf(openDay)} />} wide="text" onClose={() => setOpened(null)}>
+          <p className="-mt-1 mb-3 truncate text-xs text-mute">{openDay.check.title}</p>
+          <CheckDetail check={openDay.check} master={master} onChanged={refresh} />
+          {openDay.earlier.length > 0 && (
+            <div className="mt-4 border-t border-stroke pt-3 text-xs text-mute">
+              <span className="flex items-center gap-1.5"><History size={13} /> Earlier copies of this day</span>
+              {openDay.earlier.map((e) => (
+                <a key={e.id} href={e.document_id ? `/api/documents/${e.document_id}/file` : undefined} target="_blank" rel="noreferrer" className="ml-5 mt-1 block truncate hover:text-txt">
+                  {e.title} · {e.gaps.length ? `${e.gaps.length} missing` : 'complete'}
+                </a>
+              ))}
+            </div>
+          )}
+        </Sheet>
+      )}
       {settings && (
-        <TypeSettings type={settings === 'new' ? null : type} onClose={() => setSettings(null)} onBackfill={refresh}
-          onSaved={async (t) => { setSettings(null); await loadTypes(); if (t?.id) setTypeId(t.id); await loadDays(t?.id || typeId); }}
-          onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />
+        <Sheet title={settings === 'new' ? 'New report' : type?.name} icon={<Gear size={18} className="text-mute" />} wide="text" onClose={() => setSettings(null)}>
+          <div className="space-y-4">
+            <TypeForm type={settings === 'new' ? null : type} onCancel={() => setSettings(null)}
+              onSaved={async (t) => { setSettings(null); await loadTypes(); if (t?.id) setTypeId(t.id); await loadDays(t?.id || typeId); }}
+              onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />
+            {settings !== 'new' && type && <div className="rounded-2xl border border-stroke p-4"><Backfill type={type} onStarted={refresh} /></div>}
+          </div>
+        </Sheet>
       )}
     </Page>
   );
