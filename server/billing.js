@@ -61,6 +61,7 @@ export const JOBS = {
   attendance: { name: 'Attendance', about: 'Reading the teams\' attendance lists and photos, and sorting them into companies and people' },
   feeds: { name: 'Feeds', about: 'The morning feed: prices, rates and news looked up, and questions about them' },
   project_planner: { name: 'Project planner', about: 'Reading a project file and writing its full plan' },
+  report_checks: { name: 'Report checks', about: 'Finding work reports among the new files and checking them for what is missing' },
   other: { name: 'Other', about: 'Anything else' },
 };
 
@@ -80,6 +81,7 @@ const PATHS = [
   [/^\/(buildings|inventory)\b/, 'buildings'],
   [/^\/checklists\b/, 'checklists'],
   [/^\/attendance\b/, 'attendance'],
+  [/^\/report-checks\b/, 'report_checks'],
   [/^\/notices\b/, 'notices'],
   [/^\/feeds\b/, 'feeds'],
   [/^\/(agents|admin|modules)\b/, 'setup'],
