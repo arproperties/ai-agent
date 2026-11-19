@@ -122,21 +122,26 @@ export async function monthData(typeId, month, now = Date.now()) {
 
 const SUMMARY_SYSTEM = `You write the top of a monthly progress report for the owner of a property and construction company in Dubai.
 You are given one month of a work report's numbers: how many reports came in, the days with none, what was missing and how often,
-the work and materials the reports added up to, and last month's numbers. Write 4 to 6 short bullet points in plain English:
-what got done (with the figures), how complete the reporting was and whether it is better or worse than last month,
-what the writer keeps leaving out, and one or two things the owner should ask for next month.
+the work and materials the reports added up to, and last month's numbers. Write exactly 5 bullet points in plain English, each ONE sentence of at most 30 words, no lists inside a bullet:
+1. what got done, with the two or three biggest figures;
+2. how complete the reporting was (reports in, days with none);
+3. better or worse than last month, or that there is no last month to compare;
+4. what the writer keeps leaving out;
+5. the one thing the owner should ask for next month.
 Use only the numbers given; say "the reports did not give" rather than guessing. Each bullet starts with "- ". No heading, no sign-off.`;
+// Bumped when the instructions change, so a kept summary is written again in the new way.
+const SUMMARY_VERSION = 2;
 
 /** Reem's lines for the month, kept until the numbers change. */
 export async function monthSummary(data, asker = ask) {
   if (!data.reports && !data.missing.length) return '';
-  const hash = createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 32);
+  const hash = createHash('sha256').update(`${SUMMARY_VERSION}:${JSON.stringify(data)}`).digest('hex').slice(0, 32);
   const kept = await db.prepare('SELECT summary FROM report_monthly WHERE type_id = ? AND month = ? AND hash = ?').get(data.type.id, data.month, hash);
   if (kept) return kept.summary;
   const out = String(await asker(JSON.stringify({ ...data, type: { name: data.type.name, writer: data.type.writer } }).slice(0, 30000), {
     system: SUMMARY_SYSTEM, maxTokens: 4000, model: SUMMARY_MODEL,
   })).trim();
-  const summary = out.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).join('\n').slice(0, 4000);
+  const summary = out.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).slice(0, 6).join('\n').slice(0, 3000);
   await db.prepare(`INSERT INTO report_monthly (type_id, month, hash, summary) VALUES (?, ?, ?, ?)
     ON CONFLICT (type_id, month) DO UPDATE SET hash = EXCLUDED.hash, summary = EXCLUDED.summary, made_at = EXCLUDED.made_at`)
     .run(data.type.id, data.month, hash, summary);
