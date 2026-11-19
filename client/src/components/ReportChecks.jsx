@@ -35,6 +35,14 @@ const Btn = ({ primary, busy, children, className = '', ...p }) => (
 );
 
 const needsYou = (d) => d.check?.note_state === 'waiting';
+// A day below the type's daily target: { done, target, reason }, as the server says it.
+function shortOf(target, check) {
+  const raw = check?.facts?.units_done;
+  const done = Number(raw);
+  if (!target || raw === null || raw === undefined || !Number.isFinite(done) || done >= target) return null;
+  const reason = String(check.facts.short_reason || '').trim();
+  return { done, target, reason: /^not given$/i.test(reason) ? '' : reason };
+}
 function chipOf(d) {
   if (d.missing) return d.late ? ['No report', 'bad'] : ['Not due yet', 'mute'];
   const n = d.check.gaps.length;
@@ -44,7 +52,7 @@ function chipOf(d) {
   return [`${n} missing`, 'warn'];
 }
 
-function CheckDetail({ check, master, onChanged }) {
+function CheckDetail({ check, master, onChanged, target }) {
   const [note, setNote] = useState(check.note);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -68,6 +76,14 @@ function CheckDetail({ check, master, onChanged }) {
   return (
     <div className="space-y-4 text-sm">
       {check.summary && <p className="text-mute">{check.summary}</p>}
+      {target > 0 && check.facts?.units_done != null && (() => {
+        const short = shortOf(target, check);
+        return (
+          <p className={`rounded-2xl border px-3.5 py-2.5 ${short ? 'border-bad/40 text-bad' : 'border-stroke text-ok'}`}>
+            {check.facts.units_done} of {target} units done{short ? (short.reason ? `: ${short.reason}` : ': no reason given') : ''}
+          </p>
+        );
+      })()}
       {check.gaps.length > 0 ? (
         <ul className="divide-y divide-stroke rounded-2xl border border-stroke">
           {check.gaps.map((g, i) => (
@@ -104,6 +120,7 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
   const [t, setT] = useState(() => ({
     name: type?.name || '', writer: type?.writer || '',
     items: type?.items?.length ? type.items : [''], due_hour: type?.due_hour ?? 12, work_days: type?.work_days ?? '123456', active: type?.active ?? true,
+    daily_target: type?.daily_target ?? '',
   }));
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -120,7 +137,7 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
     e.preventDefault();
     setBusy('save'); setError('');
     try {
-      const body = { ...t, items: t.items.filter((i) => i.trim()), due_hour: Number(t.due_hour) };
+      const body = { ...t, items: t.items.filter((i) => i.trim()), due_hour: Number(t.due_hour), daily_target: Number(t.daily_target) || 0 };
       onSaved(type ? await api.patch(`/report-checks/types/${type.id}`, body) : await api.post('/report-checks/types', body));
     } catch (err) { setError(err.message); }
     setBusy('');
@@ -167,6 +184,12 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
       <label className="flex items-center gap-2"><span className="text-xs text-mute">Each day&apos;s report is due the next day by</span>
         <input type="number" min={0} max={23} value={t.due_hour} onChange={(e) => set('due_hour', e.target.value)} className="glass w-16 rounded-xl px-2 py-1.5 text-center outline-none" />
         <span className="text-xs text-mute">:00</span></label>
+      <label className="block"><span className="mb-1 block text-xs text-mute">Daily target <span className="opacity-70">(optional)</span></span>
+        <span className="flex items-center gap-2">
+          <input type="number" min={0} max={1000} value={t.daily_target} onChange={(e) => set('daily_target', e.target.value)} placeholder="e.g. 4" className="glass w-20 rounded-xl px-2 py-1.5 text-center outline-none" />
+          <span className="text-xs text-mute">units a day</span>
+        </span>
+        <span className="mt-1 block text-xs text-mute">Reem buzzes when a report has fewer. Leave empty if there is no target.</span></label>
       <button type="button" role="switch" aria-checked={t.active} onClick={() => set('active', !t.active)}
         className="flex w-full items-center gap-3 rounded-2xl border border-stroke px-4 py-2.5 text-left">
         <span className="flex-1">Reem checks this report and buzzes about it</span>
@@ -275,8 +298,9 @@ function Monthly({ type }) {
 }
 
 /** One day: its report's state, and what was missing at a glance. */
-function DayCard({ d, onOpen }) {
+function DayCard({ d, onOpen, target }) {
   const gaps = d.check?.gaps || [];
+  const short = shortOf(target, d.check);
   return (
     <li>
       <button onClick={onOpen} disabled={!d.check}
@@ -287,6 +311,7 @@ function DayCard({ d, onOpen }) {
         </div>
         {d.check ? (
           <>
+            {short && <span className="w-fit rounded-full bg-bad/15 px-2 py-0.5 text-xs text-bad">{short.done} of {short.target} units</span>}
             {gaps.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {gaps.slice(0, 3).map((g) => <span key={g.item} className="rounded-full bg-white/10 px-2 py-0.5 text-xs text-mute">{label(g.item)}</span>)}
@@ -434,7 +459,7 @@ export default function ReportChecks({ onBack, focus = null }) {
 
           {type && (
             <p className="text-sm text-mute">
-              <span className="text-txt">{type.name}</span>{type.writer ? ` · ${type.writer}` : ''} · expected {workDays(type.work_days)}, due the next day by {hour(type.due_hour)}
+              <span className="text-txt">{type.name}</span>{type.writer ? ` · ${type.writer}` : ''}{type.daily_target ? ` · target ${type.daily_target} a day` : ''} · expected {workDays(type.work_days)}, due the next day by {hour(type.due_hour)}
               {!type.active && ' · paused'}
               {type.backfill?.state === 'running' && <span className="ml-2 inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> going through past reports</span>}
             </p>
@@ -469,7 +494,7 @@ export default function ReportChecks({ onBack, focus = null }) {
               </div>
               {shown.length === 0 ? <p className="pt-10 text-center text-sm text-mute">Nothing here.</p> : (
                 <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-                  {shown.map((d) => <DayCard key={d.date} d={d} onOpen={() => setOpened(d.date)} />)}
+                  {shown.map((d) => <DayCard key={d.date} d={d} target={type.daily_target} onOpen={() => setOpened(d.date)} />)}
                 </ul>
               )}
             </>
@@ -480,7 +505,7 @@ export default function ReportChecks({ onBack, focus = null }) {
       {openDay?.check && (
         <SidePanel title={niceDay(openDay.date)} icon={<Chip c={chipOf(openDay)} />} onClose={() => setOpened(null)}>
           <p className="-mt-1 mb-3 truncate text-xs text-mute">{openDay.check.title}</p>
-          <CheckDetail check={openDay.check} master={master} onChanged={refresh} />
+          <CheckDetail check={openDay.check} master={master} onChanged={refresh} target={type?.daily_target} />
           {openDay.earlier.length > 0 && (
             <div className="mt-4 border-t border-stroke pt-3 text-xs text-mute">
               <span className="flex items-center gap-1.5"><History size={13} /> Earlier copies of this day</span>
