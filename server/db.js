@@ -3014,4 +3014,13 @@ await db.exec(`
     key TEXT PRIMARY KEY,
     at BIGINT NOT NULL DEFAULT ${NOW}
   );
+  -- Reem's lines on top of a monthly report (server/reportMonthly.js), kept while the month's numbers (hash) stay the same.
+  CREATE TABLE IF NOT EXISTS report_monthly (
+    type_id INTEGER NOT NULL REFERENCES report_types(id) ON DELETE CASCADE,
+    month TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    made_at BIGINT NOT NULL DEFAULT ${NOW},
+    PRIMARY KEY (type_id, month)
+  );
 `);
