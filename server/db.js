@@ -2962,3 +2962,56 @@ await db.exec(`
     PRIMARY KEY (device_id, date)
   );
 `);
+
+// Report checks (server/reportChecks.js): work reports, such as the school site's daily
+// progress report, read by Reem for what is missing, so the master hears about a gap or a
+// late report before having to ask.
+//   report_types: one kind of report. items is what a complete one has; a day's report is
+//     due by due_hour (Dubai) the next day, on the weekdays in work_days (JS getDay digits,
+//     0 = Sunday); starts_on is the first day a missing one counts, so a new type does not
+//     complain about the weeks before it existed. seed names the type Reem made itself.
+//   report_checks: one file read as one report. Several files can be the same day's report
+//     (a handwritten photo, then the typed PDF): the newest one is the day's. note is the
+//     message for the writer, which waits for the master (note_state).
+//   report_check_seen: files already looked at, so each one is judged once.
+//   report_check_marks: things done once, by key - an alert sent, a type seeded.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS report_types (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    writer TEXT NOT NULL DEFAULT '',
+    about TEXT NOT NULL DEFAULT '',
+    items JSONB NOT NULL DEFAULT '[]',
+    due_hour INTEGER NOT NULL DEFAULT 12,
+    work_days TEXT NOT NULL DEFAULT '123456',
+    daily_target INTEGER,
+    active BOOLEAN NOT NULL DEFAULT true,
+    seed TEXT UNIQUE,
+    starts_on TEXT NOT NULL,
+    backfill JSONB,
+    created_at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS report_checks (
+    id SERIAL PRIMARY KEY,
+    type_id INTEGER NOT NULL REFERENCES report_types(id) ON DELETE CASCADE,
+    document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    report_date TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    gaps JSONB NOT NULL DEFAULT '[]',
+    facts JSONB NOT NULL DEFAULT '{}',
+    note TEXT NOT NULL DEFAULT '',
+    note_state TEXT NOT NULL DEFAULT 'none',
+    checked_at BIGINT NOT NULL DEFAULT ${NOW},
+    UNIQUE (type_id, document_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_report_checks_day ON report_checks(type_id, report_date, id);
+  CREATE TABLE IF NOT EXISTS report_check_seen (
+    document_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+  CREATE TABLE IF NOT EXISTS report_check_marks (
+    key TEXT PRIMARY KEY,
+    at BIGINT NOT NULL DEFAULT ${NOW}
+  );
+`);

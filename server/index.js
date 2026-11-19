@@ -27,6 +27,7 @@ import { responsibilityRoutes } from './responsibilities.js';
 import { addressRoutes } from './addressBook.js';
 import { lessonRoutes } from './lessons.js';
 import { checklistRoutes } from './checklists.js';
+import { reportCheckRoutes, startReportChecks } from './reportChecks.js';
 import { diaryRoutes } from './diary.js';
 import { hrLinkRoutes } from './hrLinks.js';
 import { fileAccessRoutes } from './fileAccess.js';
@@ -165,6 +166,7 @@ app.use('/api/address-book', addressRoutes); // company mailboxes the master add
 app.use('/api/lessons', lessonRoutes); // rules the master taught agents from chat, shown as Rules (master only)
 app.use('/api/responsibilities', responsibilityRoutes); // who looks after what; written by the master, read by each person
 app.use('/api/diary', needsModule('diary'), diaryRoutes); // their own notes and pen drawings, private to them
+app.use('/api/report-checks', needsModule('report_checks'), reportCheckRoutes); // work reports checked for what is missing; the master answers the notes
 app.use('/api/checklists', needsModule('checklists'), checklistRoutes); // the points of a job, ticked each time; the master sees everyone's progress
 app.use('/api/attendance', needsModule('attendance'), attendanceRoutes); // who worked which day, read from the teams' lists and checked each pay period
 app.use('/api/buildings', buildingRoutes); // who runs each building, and the staff jobs in it
@@ -673,6 +675,9 @@ app.listen(PORT, '0.0.0.0', () => {
   // The morning feed: searched at 6, the master's phone buzzed at the time they chose. Same rule: a
   // local copy of the live database would buzz the master's real phone and pay for a search every morning.
   if (sending) startFeeds();
+  // Work reports checked as they come in, and the master buzzed about gaps, late reports and at 19:00.
+  // Same rule: a local copy of the live database holds the master's real phone.
+  if (sending) startReportChecks();
   if (sending) startTracker(); // the 19:00 activity digest to HR: a real mailbox, so the same rule
   if (sending) startBackupReminder(); // a buzz to the master when nobody has downloaded a backup for a week
   // The 5 pm "today's manpower not sent" push to a project's store keeper. Live only unless asked

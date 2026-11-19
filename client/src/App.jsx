@@ -34,6 +34,7 @@ import ResponsibilitiesPage from './components/Responsibilities';
 import ChecklistsPage from './components/Checklists';
 import DiaryPage from './components/Diary';
 import AttendancePage from './components/Attendance';
+import ReportChecksPage from './components/ReportChecks';
 import BuildingsPage from './components/Buildings';
 import InventoryPage from './components/Inventory';
 import Buildings3DPage from './components/Buildings3D';
@@ -60,14 +61,16 @@ const notifiedDocRenewal = params.get('docrenewals') || null;
 // Old phone alerts still open /?projects=3 (the Projects screen is gone): just clear it away.
 const notifiedProject = Number(params.get('projects')) || null;
 const notifiedFeeds = params.get('feeds') === '1'; // the morning feed buzz
+// a work report has gaps or is late: /?reportchecks=12 opens that report's check, =list the screen
+const notifiedReportCheck = params.get('reportchecks') ? (Number(params.get('reportchecks')) || 'list') : null;
 const notifiedRenewals = params.has('renewals'); // that one, or the list: /?renewals=list
 // a staff job in one of their buildings needs them: /?building=2&job=41
 const notifiedBuilding = Number(params.get('building')) ? { building: Number(params.get('building')), job: Number(params.get('job')) || null } : null;
-if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedMailRouting || notifiedSharedInbox || notifiedDuties || notifiedRenewals || notifiedProject || notifiedBuilding || notifiedFeeds) window.history.replaceState(null, '', '/');
+if (outlookReturn || notifiedChat || notifiedTodos || notifiedTenantCare || notifiedMailRouting || notifiedSharedInbox || notifiedDuties || notifiedRenewals || notifiedProject || notifiedBuilding || notifiedFeeds || notifiedReportCheck) window.history.replaceState(null, '', '/');
 
 // The module (server/modules.js) each screen belongs to. A screen not listed has its own rule.
 const PANEL_MODULE = { files: 'shelf', todos: 'todos', translate: 'translate', meetings: 'meetings', transcribe: 'transcribe',
-  duties: 'duties', diary: 'diary', checklists: 'checklists', attendance: 'attendance', tracker: 'activity_reports', memory: 'memory', email: 'email', claudemail: 'claude_mail', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', case: 'case_focus' };
+  duties: 'duties', diary: 'diary', checklists: 'checklists', attendance: 'attendance', reportchecks: 'report_checks', tracker: 'activity_reports', memory: 'memory', email: 'email', claudemail: 'claude_mail', renewals: 'renewals', buildings3d: 'buildings_3d', docrenewals: 'document_renewals', case: 'case_focus' };
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out
@@ -91,7 +94,7 @@ export default function App() {
   const openMenu = () => { if (window.matchMedia('(min-width: 768px)').matches) toggleRail(false); else setDrawer(true); };
   const [editing, setEditing] = useState(null); // agent being edited, or {} for a new one
   const [caseKey, setCaseKey] = useState(null); // the case Case Home shows
-  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewals ? 'renewals' : notifiedDocRenewal ? 'docrenewals' : notifiedBuilding ? 'buildings' : notifiedFeeds ? 'feeds' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
+  const [panel, setPanel] = useState(outlookReturn ? 'email' : notifiedChat ? 'messages' : notifiedTodos ? 'todos' : notifiedTenantCare ? 'tenantcare' : notifiedMailRouting ? 'mailrouting' : notifiedSharedInbox ? 'sharedinbox' : notifiedDuties ? 'duties' : notifiedRenewals ? 'renewals' : notifiedDocRenewal ? 'docrenewals' : notifiedBuilding ? 'buildings' : notifiedFeeds ? 'feeds' : notifiedReportCheck ? 'reportchecks' : null); // 'files' | 'memory' | 'email' | 'people' | 'messages' | 'todos' | 'meetings' | 'transcribe' | 'translate' | 'tenantcare' | 'duties' | 'checklists' | 'buildings'
   const [feedsView, setFeedsView] = useState(notifiedFeeds ? 'feeds' : null); // which Feeds tab the chat header's icon (or the morning buzz) asked for
   const [jumpToChat, setJumpToChat] = useState(notifiedChat); // a team chat a notification asked for
   const [jumpToRenewal, setJumpToRenewal] = useState(notifiedRenewal); // a lease renewal a notification asked for
@@ -279,6 +282,7 @@ export default function App() {
           checklistsOpen={panel === 'checklists'} onChecklists={() => { setPanel('checklists'); setDrawer(false); }}
           diaryOpen={panel === 'diary'} onDiary={() => { setPanel('diary'); setDrawer(false); }}
           attendanceOpen={panel === 'attendance'} onAttendance={() => { setPanel('attendance'); setDrawer(false); }}
+          reportChecksOpen={panel === 'reportchecks'} onReportChecks={() => { setPanel('reportchecks'); setDrawer(false); }}
           hasBuildings={hasBuildings} buildingsOpen={panel === 'buildings'} onBuildings={() => { setJumpToBuilding(null); setPanel('buildings'); setDrawer(false); }}
           inventoryOpen={panel === 'inventory'} onInventory={() => { setPanel('inventory'); setDrawer(false); }}
           buildings3dOpen={panel === 'buildings3d'} onBuildings3d={() => { setPanel('buildings3d'); setDrawer(false); }}
@@ -347,6 +351,7 @@ export default function App() {
         {panel === 'checklists' && <ChecklistsPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'diary' && <DiaryPage onBack={() => setPanel(null)} />}
         {panel === 'attendance' && <AttendancePage onBack={() => setPanel(null)} />}
+        {panel === 'reportchecks' && <ReportChecksPage focus={notifiedReportCheck} onBack={() => setPanel(null)} />}
         {panel === 'buildings' && <BuildingsPage me={me} start={jumpToBuilding} onBack={() => setPanel(null)} />}
         {panel === 'inventory' && <InventoryPage me={me} onBack={() => setPanel(null)} />}
         {panel === 'buildings3d' && <Buildings3DPage onBack={() => setPanel(null)} />}
