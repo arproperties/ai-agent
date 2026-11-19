@@ -140,24 +140,11 @@ function TypeForm({ type, initial, onSaved, onCancel, onDeleted }) {
   }));
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const [change, setChange] = useState('');
-  const [changed, setChanged] = useState(false);
   const set = (k, v) => setT((o) => ({ ...o, [k]: v }));
   const setItem = (i, v) => set('items', t.items.map((x, k) => (k === i ? v : x)));
   // A point is "Short label — what exactly": shown as the two parts, kept as one line.
   const partsOf = (item) => { const at = item.indexOf(' — '); return at < 0 ? [item, ''] : [item.slice(0, at), item.slice(at + 3)]; };
   const setPart = (i, which, v) => { const [l, d] = partsOf(t.items[i]); const n = which === 0 ? [v, d] : [l, v]; setItem(i, n[1] ? `${n[0]} — ${n[1]}` : n[0]); };
-  // The change in words: Reem rewrites the settings below, which are saved only with Save.
-  const rework = async () => {
-    setBusy('change'); setError('');
-    try {
-      const p = await api.post('/report-checks/plan', { brief: change, current: { ...t, brief: from?.brief } });
-      setT((o) => ({ ...o, name: p.name || o.name, writer: p.writer ?? o.writer, items: p.items?.length ? p.items : o.items,
-        work_days: p.work_days ?? o.work_days, due_hour: p.due_hour ?? o.due_hour, daily_target: p.daily_target ?? '' }));
-      setChange(''); setChanged(true);
-    } catch (e) { setError(e.message); }
-    setBusy('');
-  };
   const flipDay = (d) => set('work_days', t.work_days.includes(d) ? t.work_days.replace(d, '') : [...t.work_days, d].sort().join(''));
 
   const draft = async () => {
@@ -181,17 +168,6 @@ function TypeForm({ type, initial, onSaved, onCancel, onDeleted }) {
 
   return (
     <form onSubmit={save} className="space-y-4 text-sm">
-      {type && (
-        <div className="rounded-2xl border border-p1/40 bg-p1/[0.06] p-3.5">
-          <span className="mb-1.5 block font-medium">Change it in your own words</span>
-          <textarea value={change} onChange={(e) => setChange(e.target.value)} rows={2} placeholder="e.g. also check photos of each wall, and drop the signature"
-            className={`${FIELD} resize-y`} />
-          <div className="mt-2 flex items-center gap-2">
-            <Btn primary type="button" busy={busy === 'change'} disabled={!!busy || change.trim().length < 4} onClick={rework}><Sparkles size={14} /> Update with Reem</Btn>
-            {changed && <span className="text-xs text-ok">Updated below. Check it, then Save.</span>}
-          </div>
-        </div>
-      )}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block"><span className="mb-1 block text-xs text-mute">Agent name</span>
           <input value={t.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Cleaning Agent" className={FIELD} /></label>
@@ -426,6 +402,32 @@ const EXAMPLES = [
   "Check Faisal's daily cleaning reports: location, before and after photos, chemicals used.",
 ];
 
+/** What an agent is and does, as a card: for a new one before Start, and for one being changed. */
+function AgentCard({ plan, muted = false }) {
+  return (
+        <div className={`rounded-2xl border p-4 ${muted ? 'border-stroke bg-white/[0.04]' : 'border-p1/40 bg-p1/[0.06]'}`}>
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-9 place-items-center rounded-full bg-gradient-to-br from-p1 to-p2 text-white"><Radar size={17} /></span>
+            <div className="min-w-0">
+              <p className="truncate text-base font-medium">{plan.name}</p>
+              {plan.kind === 'watch' ? <p className="text-xs text-mute">Looks in {looksAt(plan)}</p> : plan.writer && <p className="text-xs text-mute">Watches {plan.writer}</p>}
+            </div>
+          </div>
+          {plan.summary && <p className="mt-3">{plan.summary}</p>}
+          {plan.kind !== 'watch' && <ul className="mt-3 space-y-1.5 border-t border-stroke pt-3">
+            {plan.items.map((i) => (
+              <li key={i} className="flex gap-2"><Check size={14} className="mt-0.5 shrink-0 text-ok" />
+                <span><span className="font-medium">{label(i)}</span>{i.includes(' — ') && <span className="text-mute"> {i.split(' — ').slice(1).join(' — ')}</span>}</span></li>
+            ))}
+          </ul>}
+          <p className="mt-3 border-t border-stroke pt-3 text-xs text-mute">
+            {plan.kind === 'watch' ? `Runs ${runs(plan)}. Reads only: it never sends or changes anything.`
+              : <>{schedule(plan).replace(/^./, (c) => c.toUpperCase())}{plan.daily_target ? ` · target ${plan.daily_target} a day` : ''}</>}
+          </p>
+        </div>
+  );
+}
+
 /**
  * A new Autonomous Agent from one sentence: Reem sets it up and shows it as a card to Start, or to
  * Change in the full form first.
@@ -451,26 +453,7 @@ function NewAgent({ onMade, onCancel }) {
   if (plan) {
     return (
       <div className="space-y-4 text-sm">
-        <div className="rounded-2xl border border-p1/40 bg-p1/[0.06] p-4">
-          <div className="flex items-center gap-2.5">
-            <span className="grid size-9 place-items-center rounded-full bg-gradient-to-br from-p1 to-p2 text-white"><Radar size={17} /></span>
-            <div className="min-w-0">
-              <p className="truncate text-base font-medium">{plan.name}</p>
-              {plan.kind === 'watch' ? <p className="text-xs text-mute">Looks in {looksAt(plan)}</p> : plan.writer && <p className="text-xs text-mute">Watches {plan.writer}</p>}
-            </div>
-          </div>
-          {plan.summary && <p className="mt-3">{plan.summary}</p>}
-          {plan.kind !== 'watch' && <ul className="mt-3 space-y-1.5 border-t border-stroke pt-3">
-            {plan.items.map((i) => (
-              <li key={i} className="flex gap-2"><Check size={14} className="mt-0.5 shrink-0 text-ok" />
-                <span><span className="font-medium">{label(i)}</span>{i.includes(' — ') && <span className="text-mute"> {i.split(' — ').slice(1).join(' — ')}</span>}</span></li>
-            ))}
-          </ul>}
-          <p className="mt-3 border-t border-stroke pt-3 text-xs text-mute">
-            {plan.kind === 'watch' ? `Runs ${runs(plan)}. Reads only: it never sends or changes anything.`
-              : <>{schedule(plan).replace(/^./, (c) => c.toUpperCase())}{plan.daily_target ? ` · target ${plan.daily_target} a day` : ''}</>}
-          </p>
-        </div>
+        <AgentCard plan={plan} />
         {plan.limits && <p className="flex items-start gap-2 rounded-2xl border border-warn/40 px-3.5 py-2.5 text-warn"><AlertTriangle size={15} className="mt-0.5 shrink-0" /> {plan.limits}</p>}
         {error && <p className="text-bad">{error}</p>}
         <div className="flex flex-wrap gap-2">
@@ -503,6 +486,80 @@ function NewAgent({ onMade, onCancel }) {
         <Btn onClick={onCancel}>Cancel</Btn>
       </div>
       <p className="text-xs text-mute">An agent can watch the files that reach Reem (uploads, PDFs, WhatsApp photos shared into a chat), or look in your email, saifsys and the leases on a schedule. It only reads: it never messages anyone or changes anything by itself.</p>
+    </div>
+  );
+}
+
+/** What an agent does, in words, for one made before it had a sentence. */
+const sentenceOf = (t) => t.brief || (t.kind === 'watch' ? '' :
+  `Check ${t.writer ? `${t.writer}'s ` : ''}${t.name.replace(/\s*(daily\s+)?(report|agent)$/i, '')} reports: ${(t.items || []).map(label).join(', ')}.` +
+  `${t.daily_target ? ` Target ${t.daily_target} units a day.` : ''} ${t.work_days ? `Expected ${workDays(t.work_days)}, due the next day by ${hour(t.due_hour)}.` : 'They come whenever there is one.'}`);
+const asPlan = (t) => ({ ...t, summary: '', limits: '' });
+
+/**
+ * Changing an agent the way it was made: its sentence in the big box, the card of what it does now
+ * under it, and Update with Reem to see the new card before Save. The full settings are behind
+ * Fine-tune, for whoever wants them.
+ */
+function EditAgent({ type, onSaved, onDeleted, onCancel }) {
+  const start = sentenceOf(type);
+  const [brief, setBrief] = useState(start);
+  const [plan, setPlan] = useState(null);
+  const [fine, setFine] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const update = async () => {
+    setBusy('plan'); setError('');
+    try { setPlan(await api.post('/report-checks/plan', { brief, current: type })); } catch (e) { setError(e.message); }
+    setBusy('');
+  };
+  const save = async () => {
+    setBusy('save'); setError('');
+    try {
+      const body = type.kind === 'watch'
+        ? { kind: 'watch', name: plan.name, brief, sources: plan.sources, cadence: plan.cadence, run_hour: plan.run_hour, run_weekday: plan.run_weekday }
+        : { name: plan.name, writer: plan.writer, items: plan.items, work_days: plan.work_days, due_hour: plan.due_hour, daily_target: plan.daily_target || 0, brief };
+      onSaved(await api.patch(`/report-checks/types/${type.id}`, body));
+    } catch (e) { setError(e.message); setBusy(''); }
+  };
+  const remove = async () => {
+    if (!window.confirm(`Delete "${type.name}" and everything it found?`)) return;
+    try { await api.del(`/report-checks/types/${type.id}`); onDeleted(); } catch (e) { setError(e.message); }
+  };
+
+  if (fine) {
+    return type.kind === 'watch'
+      ? <WatcherForm type={type} onSaved={onSaved} onCancel={() => setFine(false)} onDeleted={onDeleted} />
+      : <TypeForm type={type} onSaved={onSaved} onCancel={() => setFine(false)} onDeleted={onDeleted} />;
+  }
+  return (
+    <div className="space-y-4 text-sm">
+      <label className="block">
+        <span className="mb-1.5 block text-base">What should this agent do?</span>
+        <textarea value={brief} onChange={(e) => { setBrief(e.target.value); setPlan(null); }} rows={5}
+          placeholder="Say it in your own words." className={`${FIELD} resize-y`} />
+      </label>
+      {plan ? (
+        <>
+          <p className="text-xs text-mute">After the change:</p>
+          <AgentCard plan={plan} />
+          {plan.limits && <p className="flex items-start gap-2 rounded-2xl border border-warn/40 px-3.5 py-2.5 text-warn"><AlertTriangle size={15} className="mt-0.5 shrink-0" /> {plan.limits}</p>}
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-mute">What it does now:</p>
+          <AgentCard plan={asPlan(type)} muted />
+        </>
+      )}
+      {error && <p className="text-bad">{error}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        {plan ? <Btn primary busy={busy === 'save'} onClick={save}><Check size={14} /> Save</Btn>
+          : <Btn primary busy={busy === 'plan'} disabled={brief.trim().length < 8 || brief.trim() === start.trim()} onClick={update}><Sparkles size={14} /> Update with Reem</Btn>}
+        {plan && <Btn onClick={() => setPlan(null)}><ArrowLeft size={14} /> Back</Btn>}
+        <Btn onClick={() => setFine(true)}>Fine-tune</Btn>
+        <Btn onClick={onCancel}>Cancel</Btn>
+        <button type="button" onClick={remove} className="ml-auto flex items-center gap-1 rounded-full px-3 py-1.5 text-xs text-mute hover:text-bad"><Trash2 size={13} /> Delete</button>
+      </div>
     </div>
   );
 }
@@ -838,13 +895,8 @@ export default function ReportChecks({ onBack, focus = null }) {
       {settings && settings !== 'new' && (
         <SidePanel title={type?.name} icon={<Gear size={18} className="text-mute" />} onClose={() => setSettings(null)}>
           <div className="space-y-4">
-            {type?.brief && type.kind !== 'watch' && <p className="rounded-2xl border border-stroke px-3.5 py-2.5 text-sm text-mute"><span className="block text-xs">You asked</span>{type.brief}</p>}
-            {type?.kind === 'watch' ? (
-              <WatcherForm type={type} onCancel={() => setSettings(null)}
-                onSaved={async () => { setSettings(null); await loadTypes(); }}
-                onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />
-            ) : <TypeForm type={type} onCancel={() => setSettings(null)}
-              onSaved={async (t) => { setSettings(null); await loadTypes(); if (t?.id) setTypeId(t.id); await loadDays(t?.id || typeId); }}
+            {type && <EditAgent key={type.id} type={type} onCancel={() => setSettings(null)}
+              onSaved={async () => { setSettings(null); await loadTypes(); await loadDays(typeId); }}
               onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />}
             {settings !== 'new' && type && type.kind !== 'watch' && <div className="rounded-2xl border border-stroke p-4"><Backfill type={type} onStarted={refresh} /></div>}
           </div>
