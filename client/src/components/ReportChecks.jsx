@@ -16,6 +16,7 @@ import { createPortal } from 'react-dom';
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SHOWN_DAYS = 30;
+const CARDS_SHOWN = 8; // the newest; the rest behind "Show more"
 const niceDay = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 const hour = (h) => `${String(h).padStart(2, '0')}:00`;
 const workDays = (s) => (String(s) === '0123456' ? 'every day' : [...String(s)].map((d) => DAYS[d]).join(', '));
@@ -594,9 +595,9 @@ function Strip({ days, onOpen }) {
 }
 
 const Stat = ({ value, text, tone = 'text-txt' }) => (
-  <div className="rounded-2xl border border-stroke bg-white/[0.04] p-4">
-    <p className={`text-2xl font-light tabular-nums ${tone}`}>{value}</p>
-    <p className="text-xs text-mute">{text}</p>
+  <div className="flex items-baseline gap-2 rounded-2xl border border-stroke bg-white/[0.04] px-4 py-2.5">
+    <span className={`text-xl font-light tabular-nums ${tone}`}>{value}</span>
+    <span className="text-xs text-mute">{text}</span>
   </div>
 );
 
@@ -605,6 +606,7 @@ export default function ReportChecks({ onBack, focus = null }) {
   const [typeId, setTypeId] = useState(null);
   const [days, setDays] = useState(null);
   const [tab, setTab] = useState(null);
+  const [more, setMore] = useState(false); // past the first few cards
   const [opened, setOpened] = useState(null); // a date
   const [settings, setSettings] = useState(null); // 'new' | type id
   const [monthly, setMonthly] = useState(false);
@@ -647,7 +649,7 @@ export default function ReportChecks({ onBack, focus = null }) {
     ['all', 'All', list],
   ];
   // First look: what needs the boss, else everything.
-  const current = tab || (tabs[0][2].length ? 'you' : 'all');
+  const current = tab || (tabs[0][2].length ? 'you' : tabs[1][2].length ? 'gaps' : 'all');
   const shown = (tabs.find((t) => t[0] === current) || tabs[4])[2];
 
   // A buzz about one report opens its sheet.
@@ -731,18 +733,40 @@ export default function ReportChecks({ onBack, focus = null }) {
               <Strip days={list} onOpen={(d) => d?.check && setOpened(d.date)} />
               <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
                 {tabs.map(([k, text, l]) => (
-                  <button key={k} onClick={() => setTab(k)}
+                  <button key={k} onClick={() => { setTab(k); setMore(false); }}
                     className={`flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm transition ${current === k ? 'bg-white/15 text-txt' : 'text-mute hover:text-txt'}`}>
                     {text}
                     <span className={`rounded-full px-1.5 text-xs ${k === 'you' && l.length ? 'bg-warn/20 text-warn' : 'bg-white/10'}`}>{l.length}</span>
                   </button>
                 ))}
               </div>
-              {shown.length === 0 ? <p className="pt-10 text-center text-sm text-mute">Nothing here.</p> : (
-                <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-                  {shown.map((d) => <DayCard key={d.date} d={d} target={type.daily_target} onOpen={() => setOpened(d.date)} />)}
-                </ul>
-              )}
+              {(() => {
+                // A day with no report has nothing to open: the dates are enough, in one line.
+                const none = shown.filter((d) => d.missing);
+                const cards = shown.filter((d) => !d.missing);
+                const first = more ? cards : cards.slice(0, CARDS_SHOWN);
+                if (!shown.length) return <p className="pt-10 text-center text-sm text-mute">Nothing here.</p>;
+                return (
+                  <div className="space-y-3">
+                    {none.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-stroke bg-white/[0.04] px-4 py-2.5 text-xs">
+                        <span className="mr-1 text-bad">No report on {none.length} day{none.length === 1 ? '' : 's'}:</span>
+                        {[...none].reverse().map((d) => <span key={d.date} className={`rounded-full px-2 py-0.5 ${d.late ? 'bg-bad/15 text-bad' : 'bg-white/10 text-mute'}`}>{niceDay(d.date)}</span>)}
+                      </div>
+                    )}
+                    {first.length > 0 && (
+                      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+                        {first.map((d) => <DayCard key={d.date} d={d} target={type.daily_target} onOpen={() => setOpened(d.date)} />)}
+                      </ul>
+                    )}
+                    {cards.length > CARDS_SHOWN && (
+                      <button onClick={() => setMore(!more)} className="mx-auto block rounded-full border border-stroke px-4 py-2 text-sm text-mute hover:text-txt">
+                        {more ? 'Show fewer' : `Show ${cards.length - CARDS_SHOWN} more`}
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
             </>
           )}
         </div>
