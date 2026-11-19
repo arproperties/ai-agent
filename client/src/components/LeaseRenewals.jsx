@@ -40,14 +40,18 @@ function chipOf(l) {
   if (r?.dispute && !DONE.includes(r.status)) return ['Dispute', 'bad'];
   if (r?.waiting) return WAITING[r.waiting];
   if (r?.status === 'scheduled') return [`Sends ${day(r.sendOn)}`, 'p1'];
+  if (movingOut(l)) return [l.days_left === 0 ? 'Leaves today' : `Leaves in ${l.days_left} day${l.days_left === 1 ? '' : 's'}`, l.days_left <= 30 ? 'bad' : 'warn'];
   if (r) return STATUS[r.status];
   if (l.expired) return [l.move_out_date ? `Moved out ${day(l.move_out_date)}` : `Ended ${-l.days_left} day${l.days_left === -1 ? '' : 's'} ago`, 'bad'];
   if (l.saifsys_renewal) return [`saifsys: ${l.saifsys_renewal.replace(/_/g, ' ')}`, 'mute'];
   if (l.saifsys_rejected) return ['Rejected in saifsys', 'mute'];
   return [l.days_left < 0 ? 'Ended' : l.days_left === 0 ? 'Ends today' : `${l.days_left} days`, l.days_left <= 30 ? 'bad' : l.days_left <= 90 ? 'warn' : 'mute'];
 }
-// Not renewing: the tenant said so in Reem, or the staff rejected the renewal in saifsys.
-const rejected = (l) => l.renewal?.status === 'not_renewing' || (!l.renewal && l.saifsys_rejected);
+// Moving out: the tenant said no in Reem and the lease is still running; they leave on its end
+// date. Once it ends saifsys drops it from this list and it shows under Expired.
+function movingOut(l) { return !l.expired && l.renewal?.status === 'not_renewing'; }
+// Rejected: the staff rejected the renewal in saifsys, and Reem has none.
+const rejected = (l) => !l.renewal && l.saifsys_rejected;
 // A renewal the staff ran in saifsys, with no renewal of Reem's: tapping it shows what they did there.
 const inSaifsys = (l) => !l.renewal && !!(l.saifsys_renewal || l.saifsys_rejected || l.saifsys_last);
 const needsYou = (l) => !!(l.renewal?.waiting || (l.renewal?.dispute && !DONE.includes(l.renewal.status)) || l.renewal?.status === 'papers_ok');
@@ -127,7 +131,9 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
     ['you', 'Needs you', leases.filter(needsYou)],
     ['going', 'In progress', leases.filter((l) => l.renewal && !DONE.includes(l.renewal.status))],
     ['new', 'Not started', leases.filter((l) => !l.renewal && !l.saifsys_renewal && !l.saifsys_rejected)],
-    ['done', 'Done', leases.filter((l) => l.renewal && DONE.includes(l.renewal.status) && !rejected(l))],
+    ['done', 'Done', leases.filter((l) => l.renewal && DONE.includes(l.renewal.status) && !movingOut(l))],
+    // Soonest move-out first: the inspection and the keys to arrange.
+    ['moving', 'Moving out', leases.filter(movingOut).sort((a, b) => a.days_left - b.days_left)],
     ['rejected', 'Rejected', leases.filter(rejected)],
     // Staff started these in saifsys themselves; Reem only shows where they are.
     ['saifsys', 'Initiated in saifsys', leases.filter((l) => !l.renewal && l.saifsys_renewal)],
@@ -226,7 +232,7 @@ function LeaseCard({ l, onOpen }) {
           {live ? (
             <span className="text-sm"><span className="text-mute line-through">{aed(l.annual_rent)}</span> <span className="text-base font-medium">{aed(r.agreed ?? r.offer)}</span></span>
           ) : <span className="text-base font-medium">{aed(l.annual_rent)}</span>}
-          <span className="text-xs text-mute">{l.days_left < 0 ? 'ended' : 'ends'} {day(l.end_date)}</span>
+          <span className="text-xs text-mute">{movingOut(l) ? 'leaves' : l.days_left < 0 ? 'ended' : 'ends'} {day(l.end_date)}</span>
         </div>
         {r?.dispute && live && <p className="flex items-start gap-1.5 text-xs text-bad"><Scale size={13} className="mt-0.5 shrink-0" /> {r.dispute}</p>}
         {!r && (l.premises_number || l.ejari) && (
