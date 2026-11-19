@@ -559,7 +559,7 @@ const ACTIONS = {
   counter: { from: ['offer_sent', 'negotiating'], title: (rent) => `Counter-offer · ${aed(rent)}` },
   index: { from: ['offer_sent', 'negotiating'], title: (rent) => `RERA index rent offered · ${aed(rent)}` },
   accept: { from: ['offer_sent', 'negotiating'], title: (rent) => `Agreed · ${aed(rent)}` },
-  not_renewing: { from: ['offer_sent', 'negotiating', 'agreed', 'papers_ok'], title: () => 'Not renewing' },
+  not_renewing: { from: ['offer_sent', 'negotiating', 'agreed', 'papers_ok'], title: () => 'Not renewing: leaves when the lease ends' },
   reply: { from: OPEN, title: () => 'Reply sent' },
   remind: { from: ['offer_sent', 'negotiating', 'agreed'], title: () => 'Dispute reminder sent' },
   fix: { from: ['agreed'], title: () => 'Asked to fix the papers' },
@@ -1002,7 +1002,7 @@ export async function send(user, body) {
   }
 
   if (body.action === 'not_renewing') {
-    await saifsys('status', { workflow_id: r.workflow_id, status: 'rejected', note: 'The tenant is not renewing' });
+    await saifsys('status', { workflow_id: r.workflow_id, status: 'rejected', note: `The tenant is not renewing: they leave when the lease ends, ${longDate(r.lease.end_date)}` });
     r = await update(r.id, { status: 'not_renewing', waiting: null });
     await mail(r, { title, text, user });
     return getRenewal(r.id);
@@ -1077,6 +1077,14 @@ export async function mark(user, id, what) {
     if (on && r.dispute) throw bad('The tenant disputes this renewal, so Reem does not email them by itself any more. Staff answer it by hand.', 409);
     await step(r, on ? 'Handed back to Reem' : 'Taken over: staff run it by hand', { user });
     return update(r.id, { auto: on, ...(on ? { error: null } : {}) });
+  }
+  // The tenant already knows (told by phone, or an email sent outside Reem): the same as
+  // Not renewing, saifsys too, but nothing is emailed.
+  if (what === 'not_renewing_quiet') {
+    if (!ACTIONS.not_renewing.from.includes(r.status)) throw bad('This renewal is already finished.', 409);
+    await saifsys('status', { workflow_id: r.workflow_id, status: 'rejected', note: `The tenant is not renewing: they leave when the lease ends, ${longDate(r.lease.end_date)}` });
+    await step(r, `Not renewing: leaves when the lease ends, ${longDate(r.lease.end_date)} (no email sent, the tenant already knew)`, { user });
+    return update(r.id, { status: 'not_renewing', waiting: null });
   }
   if (what === 'close') {
     if (!OPEN.includes(r.status) && r.status !== 'scheduled') throw bad('This renewal is already finished.', 409);
