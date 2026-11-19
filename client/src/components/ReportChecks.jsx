@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Plus, Pencil, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
+import Sheet from './Sheet';
 
 // Settings → Report checks (server/reportChecks.js). Reem reads each work report as it comes
-// in and lists what is missing against the report's own list. Here the master sees every
-// day's report, copies the note for the writer into WhatsApp (nothing is sent from Reem),
-// and changes the lists. Anyone else with the module only reads.
+// in and lists what is missing against the report's own list. The screen leads with the
+// pattern (what the writer keeps leaving out), then a month of coloured days: tap one for its
+// gaps and the note, which the master copies into WhatsApp (nothing is sent from Reem). The
+// list, days and due time sit behind the gear. Anyone else with the module only reads.
 
 const FIELD = 'glass w-full rounded-xl px-3.5 py-2.5 outline-none focus:border-p1/70';
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -99,34 +101,6 @@ function CheckDetail({ check, master, onChanged }) {
   );
 }
 
-function DayRow({ day, master, openId, onOpen, onChanged }) {
-  const id = day.check?.id;
-  const open = !!id && openId === id;
-  return (
-    <li className="glass overflow-hidden rounded-2xl">
-      <button disabled={!id} onClick={() => onOpen(open ? null : id)} className="flex w-full items-center gap-3 px-4 py-3 text-left disabled:cursor-default">
-        {id ? (open ? <ChevronDown size={16} className="shrink-0 text-mute" /> : <ChevronRight size={16} className="shrink-0 text-mute" />) : <span className="w-4 shrink-0" />}
-        <span className="flex-1">
-          <span className="block">{niceDay(day.date)}</span>
-          {day.check && <span className="block truncate text-xs text-mute">{day.check.title}</span>}
-        </span>
-        {dayStatus(day)}
-      </button>
-      {open && <CheckDetail check={day.check} master={master} onChanged={onChanged} />}
-      {open && day.earlier.length > 0 && (
-        <div className="border-t border-stroke px-4 py-2 text-xs text-mute">
-          <span className="flex items-center gap-1.5"><History size={13} /> Earlier copies of this day:</span>
-          {day.earlier.map((e) => (
-            <a key={e.id} href={e.document_id ? `/api/documents/${e.document_id}/file` : undefined} target="_blank" rel="noreferrer" className="ml-5 block truncate hover:text-txt">
-              {e.title} · {e.gaps.length ? `${e.gaps.length} missing` : 'complete'}
-            </a>
-          ))}
-        </div>
-      )}
-    </li>
-  );
-}
-
 function TypeForm({ type, onSaved, onCancel, onDeleted }) {
   const [t, setT] = useState(() => ({
     name: type?.name || '', writer: type?.writer || '', about: type?.about || '',
@@ -158,7 +132,7 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
   };
 
   return (
-    <form onSubmit={save} className="glass space-y-3 rounded-2xl p-4 text-sm">
+    <form onSubmit={save} className="space-y-3 text-sm">
       <label className="block"><span className="mb-1 block text-xs text-mute">Report name</span>
         <input value={t.name} onChange={(e) => set('name', e.target.value)} placeholder="Cleaning daily report" className={FIELD} /></label>
       <label className="block"><span className="mb-1 block text-xs text-mute">Who writes it</span>
@@ -177,7 +151,7 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
         <div className="space-y-1.5">
           {t.items.map((item, i) => (
             <div key={i} className="flex gap-1.5">
-              <input value={item} onChange={(e) => setItem(i, e.target.value)} className={FIELD} />
+              <textarea value={item} onChange={(e) => setItem(i, e.target.value)} rows={Math.max(1, Math.ceil(item.length / 40))} className={`${FIELD} resize-none`} />
               <button type="button" aria-label="Remove" onClick={() => set('items', t.items.filter((_, k) => k !== i))}
                 className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={15} /></button>
             </div>
@@ -237,20 +211,159 @@ function Backfill({ type, onStarted }) {
   );
 }
 
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const RANGE_DAYS = 90;
+
+// How a day's square looks: green complete, amber gaps, red no report, faint when nothing is expected.
+function tone(d) {
+  if (!d) return 'none';
+  if (d.missing) return d.late ? 'bad' : 'wait';
+  return d.check.gaps.length ? 'warn' : 'ok';
+}
+const SQUARE = {
+  ok: 'bg-ok/30 text-ok', warn: 'bg-warn/30 text-warn', bad: 'bg-bad/30 text-bad',
+  wait: 'border border-dashed border-stroke text-mute', none: 'text-mute/40',
+};
+
+/** The pattern: how many reports had gaps, and the items missing most often. */
+function Summary({ type, days }) {
+  const reports = days.filter((d) => d.check);
+  const late = days.filter((d) => d.missing && d.late).length;
+  const withGaps = reports.filter((d) => d.check.gaps.length).length;
+  const count = new Map();
+  for (const d of reports) for (const g of d.check.gaps) count.set(g.item, (count.get(g.item) || 0) + 1);
+  const top = [...count].sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const waiting = type.waiting || 0;
+
+  return (
+    <div className="glass space-y-3 rounded-2xl p-4">
+      {!reports.length && !late ? (
+        <p className="text-sm text-mute">No reports yet. Each one is checked as it arrives.</p>
+      ) : (
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <Stat value={`${withGaps} of ${reports.length}`} label="reports incomplete" tone={withGaps ? 'text-warn' : 'text-ok'} />
+          <Stat value={late} label={late === 1 ? 'day with no report' : 'days with no report'} tone={late ? 'text-bad' : 'text-mute'} />
+          {waiting > 0 && <Stat value={waiting} label={waiting === 1 ? 'note to send' : 'notes to send'} tone="text-p1" />}
+        </div>
+      )}
+      {top.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-xs text-mute">Missing most often</p>
+          <ul className="space-y-1.5 text-sm">
+            {top.map(([item, n]) => (
+              <li key={item} className="flex items-center gap-3">
+                <span className="flex-1">{item}</span>
+                <span className="h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-white/10">
+                  <span className="block h-full rounded-full bg-warn" style={{ width: `${Math.round((n / reports.length) * 100)}%` }} />
+                </span>
+                <span className="shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-mute">{n} of {reports.length}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ value, label, tone: t }) {
+  return <p><span className={`block text-2xl font-light tabular-nums ${t}`}>{value}</span><span className="text-xs text-mute">{label}</span></p>;
+}
+
+/** One month, Monday first. Days outside the data are blank; a day with nothing expected is faint. */
+function Month({ year, month, byDay, today, selected, onPick, onPrev, onNext }) {
+  const first = new Date(Date.UTC(year, month, 1));
+  const lead = (first.getUTCDay() + 6) % 7;
+  const count = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const cells = [...Array(lead).fill(null), ...Array.from({ length: count }, (_, i) => `${year}-${String(month + 1).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`)];
+
+  return (
+    <div className="glass rounded-2xl p-4">
+      <div className="mb-3 flex items-center">
+        <button onClick={onPrev} disabled={!onPrev} aria-label="Earlier month" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 disabled:opacity-30"><ChevronLeft size={17} /></button>
+        <p className="flex-1 text-center text-sm">{MONTHS[month]} {year}</p>
+        <button onClick={onNext} disabled={!onNext} aria-label="Later month" className="grid size-8 place-items-center rounded-full text-mute hover:bg-white/10 disabled:opacity-30"><ChevronRight size={17} /></button>
+      </div>
+      <div className="grid grid-cols-7 gap-1.5 text-center">
+        {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => <span key={i} className="pb-1 text-[11px] text-mute">{d}</span>)}
+        {cells.map((day, i) => {
+          if (!day) return <span key={i} />;
+          const d = byDay.get(day);
+          const t = day > today ? 'none' : tone(d);
+          const pickable = !!d;
+          return (
+            <button key={day} disabled={!pickable} onClick={() => onPick(day)} aria-label={day}
+              className={`aspect-square rounded-xl text-xs tabular-nums transition ${SQUARE[t]} ${selected === day ? 'ring-2 ring-p1' : ''} ${pickable ? 'hover:brightness-125' : 'cursor-default'}`}>
+              {Number(day.slice(8))}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-[11px] text-mute">
+        <Legend cls={SQUARE.ok} label="Complete" /><Legend cls={SQUARE.warn} label="Gaps" /><Legend cls={SQUARE.bad} label="No report" />
+      </div>
+    </div>
+  );
+}
+const Legend = ({ cls, label }) => <span className="flex items-center gap-1.5"><span className={`size-2.5 rounded-[4px] ${cls}`} />{label}</span>;
+
+function DayPanel({ day, master, onChanged }) {
+  if (day.missing) {
+    return (
+      <div className="glass rounded-2xl p-4 text-sm">
+        <p className="text-base">{niceDay(day.date)}</p>
+        <p className="mt-1 text-mute">{day.late ? 'No report came in for this day.' : 'Not due yet.'}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="glass overflow-hidden rounded-2xl">
+      <div className="flex items-start gap-3 px-4 pb-2 pt-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-base">{niceDay(day.date)}</p>
+          <p className="truncate text-xs text-mute">{day.check.title}</p>
+        </div>
+        {dayStatus(day)}
+      </div>
+      <CheckDetail check={day.check} master={master} onChanged={onChanged} />
+      {day.earlier.length > 0 && (
+        <div className="border-t border-stroke px-4 py-2.5 text-xs text-mute">
+          <span className="flex items-center gap-1.5"><History size={13} /> Earlier copies of this day</span>
+          {day.earlier.map((e) => (
+            <a key={e.id} href={e.document_id ? `/api/documents/${e.document_id}/file` : undefined} target="_blank" rel="noreferrer" className="ml-5 mt-1 block truncate hover:text-txt">
+              {e.title} · {e.gaps.length ? `${e.gaps.length} missing` : 'complete'}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TypeSettings({ type, onClose, onSaved, onDeleted, onBackfill }) {
+  return (
+    <Sheet title={type ? type.name : 'New report'} onClose={onClose}>
+      <div className="space-y-4">
+        <TypeForm type={type} onCancel={onClose} onSaved={onSaved} onDeleted={onDeleted} />
+        {type && <div className="rounded-2xl border border-stroke p-4"><Backfill type={type} onStarted={onBackfill} /></div>}
+      </div>
+    </Sheet>
+  );
+}
+
 export default function ReportChecks({ onBack, focus = null }) {
   const [data, setData] = useState(null);
   const [typeId, setTypeId] = useState(null);
   const [days, setDays] = useState(null);
-  const [openId, setOpenId] = useState(typeof focus === 'number' ? focus : null);
-  const [editing, setEditing] = useState(null); // 'new' | type id
+  const [selected, setSelected] = useState(null); // a date
+  const [month, setMonth] = useState(null); // [year, monthIndex]
+  const [settings, setSettings] = useState(null); // 'new' | type id
   const [error, setError] = useState('');
+  const [focusCheck, setFocusCheck] = useState(typeof focus === 'number' ? focus : null);
 
-  const loadTypes = useCallback(async () => {
-    const d = await api.get('/report-checks');
-    setData(d);
-    return d;
-  }, []);
-  const loadDays = useCallback(async (id) => { if (id) setDays(await api.get(`/report-checks/types/${id}/days?days=30`)); }, []);
+  const loadTypes = useCallback(async () => { const d = await api.get('/report-checks'); setData(d); return d; }, []);
+  const loadDays = useCallback(async (id) => { if (id) setDays(await api.get(`/report-checks/types/${id}/days?days=${RANGE_DAYS}`)); }, []);
 
   useEffect(() => {
     (async () => {
@@ -263,69 +376,91 @@ export default function ReportChecks({ onBack, focus = null }) {
       } catch (e) { setError(e.message); }
     })();
   }, [focus, loadTypes]);
-  useEffect(() => { setDays(null); loadDays(typeId).catch((e) => setError(e.message)); }, [typeId, loadDays]);
+  useEffect(() => { setDays(null); setSelected(null); setMonth(null); loadDays(typeId).catch((e) => setError(e.message)); }, [typeId, loadDays]);
 
   const type = data?.types.find((t) => t.id === typeId);
-  // While the past is being gone through, the counts on screen follow it.
   useEffect(() => {
     if (type?.backfill?.state !== 'running') return undefined;
     const t = setInterval(() => { loadTypes().catch(() => {}); loadDays(typeId).catch(() => {}); }, 4000);
     return () => clearInterval(t);
   }, [type?.backfill?.state, typeId, loadTypes, loadDays]);
 
+  const list = days?.days || [];
+  const byDay = new Map(list.map((d) => [d.date, d]));
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
+
+  // First look: the day a buzz was about, else the newest day with something on it.
+  useEffect(() => {
+    if (!days || selected) return;
+    const hit = focusCheck && list.find((d) => d.check?.id === focusCheck || d.earlier?.some((e) => e.id === focusCheck));
+    const pick = hit || list[0];
+    if (hit) setFocusCheck(null);
+    const date = pick?.date || today;
+    setSelected(pick?.date || null);
+    setMonth([Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1]);
+  }, [days]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const refresh = async () => { await Promise.all([loadTypes(), loadDays(typeId)]); };
   const master = !!data?.master;
 
+  // Months with data, so the arrows stop where the data does.
+  const months = [...new Set(list.map((d) => d.date.slice(0, 7)))].sort();
+  const key = month && `${month[0]}-${String(month[1] + 1).padStart(2, '0')}`;
+  const at = months.indexOf(key);
+  const go = (k) => setMonth([Number(k.slice(0, 4)), Number(k.slice(5, 7)) - 1]);
+  const pickedDay = selected && byDay.get(selected);
+
   return (
     <Page title="Report checks" onBack={onBack}
-      action={master && <button onClick={() => setEditing('new')} className="flex items-center gap-1 rounded-full border border-stroke px-3 py-1.5 text-sm text-mute hover:text-txt"><Plus size={15} /> New report</button>}>
+      action={master && (
+        <div className="flex items-center gap-1">
+          <button onClick={() => setSettings('new')} aria-label="New report" title="New report" className="grid size-10 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Plus size={19} /></button>
+          {type && <button onClick={() => setSettings(type.id)} aria-label="Settings" title="The list, days and due time" className="grid size-10 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Settings2 size={18} /></button>}
+        </div>
+      )}>
       {error && <p className="mb-3 text-sm text-bad">{error}</p>}
       {!data ? <Loader2 className="mx-auto mt-10 animate-spin text-mute" /> : (
-        <div className="mx-auto max-w-2xl space-y-4">
-          {editing === 'new' && (
-            <TypeForm onCancel={() => setEditing(null)} onDeleted={() => {}}
-              onSaved={async (t) => { setEditing(null); await loadTypes(); setTypeId(t.id); }} />
-          )}
+        <div className="mx-auto max-w-xl space-y-4 md:max-w-4xl">
           {data.types.length > 1 && (
             <div className="flex flex-wrap gap-1.5">
               {data.types.map((t) => (
-                <button key={t.id} onClick={() => { setTypeId(t.id); setOpenId(null); setEditing(null); }}
+                <button key={t.id} onClick={() => setTypeId(t.id)}
                   className={`flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm ${t.id === typeId ? 'border-p1/60 bg-p1/15' : 'border-stroke text-mute hover:text-txt'}`}>
                   {t.name}{t.waiting > 0 && <span className="rounded-full bg-warn px-1.5 text-[11px] font-semibold text-ink">{t.waiting}</span>}
                 </button>
               ))}
             </div>
           )}
-          {!data.types.length && editing !== 'new' && <p className="text-sm text-mute">No reports yet. {master ? 'Tap New report to add one.' : ''}</p>}
+          {!data.types.length && <p className="text-sm text-mute">No reports yet.{master ? ' Tap + to add one.' : ''}</p>}
 
-          {type && (editing === type.id ? (
-            <TypeForm type={type} onCancel={() => setEditing(null)}
-              onDeleted={async () => { setEditing(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }}
-              onSaved={async () => { setEditing(null); await refresh(); }} />
-          ) : (
-            <div className="glass space-y-2 rounded-2xl p-4 text-sm">
-              <div className="flex items-start gap-2">
-                <div className="flex-1">
-                  <p className="text-base">{type.name}{!type.active && <span className="ml-2 text-xs text-mute">(paused)</span>}</p>
-                  <p className="text-xs text-mute">{type.writer ? `By ${type.writer} · ` : ''}expected {workDays(type.work_days)}, due the next day by {hour(type.due_hour)}</p>
-                </div>
-                {master && <button onClick={() => setEditing(type.id)} aria-label="Edit" className="grid size-9 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-txt"><Pencil size={15} /></button>}
-              </div>
-              <details className="text-xs text-mute">
-                <summary className="cursor-pointer hover:text-txt">What a complete report has ({type.items.length})</summary>
-                <ol className="mt-1 list-decimal space-y-0.5 pl-5">{type.items.map((i) => <li key={i}>{i}</li>)}</ol>
-              </details>
-              {master && <Backfill type={type} onStarted={refresh} />}
+          {type && (
+            <div className="px-1">
+              <p className="text-lg font-light">{type.name}{!type.active && <span className="ml-2 text-xs text-mute">(paused)</span>}</p>
+              <p className="text-xs text-mute">{type.writer ? `${type.writer} · ` : ''}expected {workDays(type.work_days)}, due the next day by {hour(type.due_hour)}</p>
+              {type.backfill?.state === 'running' && <p className="mt-1 flex items-center gap-1.5 text-xs text-mute"><Loader2 size={12} className="animate-spin" /> Going through past reports…</p>}
             </div>
-          ))}
+          )}
 
           {type && !days && <Loader2 className="mx-auto animate-spin text-mute" />}
-          {type && days && (days.days.length ? (
-            <ul className="space-y-2">
-              {days.days.map((d) => <DayRow key={d.date} day={d} master={master} openId={openId} onOpen={setOpenId} onChanged={refresh} />)}
-            </ul>
-          ) : <p className="text-sm text-mute">Nothing in the last 30 days yet. Reports are checked as they arrive{master ? ', or check the past ones above' : ''}.</p>)}
+          {type && days && (
+            <>
+              <Summary type={type} days={list.filter((d) => d.date >= new Date(Date.now() - 30 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }))} />
+              <div className="space-y-4 md:grid md:grid-cols-2 md:items-start md:gap-4 md:space-y-0">
+              {month && (
+                <Month year={month[0]} month={month[1]} byDay={byDay} today={today} selected={selected} onPick={setSelected}
+                  onPrev={at > 0 ? () => go(months[at - 1]) : null}
+                  onNext={at >= 0 && at < months.length - 1 ? () => go(months[at + 1]) : null} />
+              )}
+              {pickedDay && <DayPanel day={pickedDay} master={master} onChanged={refresh} />}
+              </div>
+            </>
+          )}
         </div>
+      )}
+      {settings && (
+        <TypeSettings type={settings === 'new' ? null : type} onClose={() => setSettings(null)} onBackfill={refresh}
+          onSaved={async (t) => { setSettings(null); await loadTypes(); if (t?.id) setTypeId(t.id); await loadDays(t?.id || typeId); }}
+          onDeleted={async () => { setSettings(null); const d = await loadTypes(); setTypeId(d.types[0]?.id ?? null); }} />
       )}
     </Page>
   );
