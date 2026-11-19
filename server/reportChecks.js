@@ -761,7 +761,15 @@ reportCheckRoutes.post('/types/:id/run', masterOnly, wrap(async (req, res) => {
   runSafely(agent, { user: req.user }).finally(() => runningNow.delete(agent.id));
   res.json({ ok: true });
 }));
-reportCheckRoutes.post('/plan', masterOnly, wrap(async (req, res) => res.json(await planAgent(req.body?.brief))));
+// With `current` (the agent as it is) the brief is a change to it: "also check photos, drop the signature".
+reportCheckRoutes.post('/plan', masterOnly, wrap(async (req, res) => {
+  const { brief, current } = req.body || {};
+  if (!current) return res.json(await planAgent(brief));
+  const now = JSON.stringify({ name: current.name, writer: current.writer, items: current.items, work_days: current.work_days,
+    due_hour: current.due_hour, daily_target: current.daily_target }).slice(0, 6000);
+  const plan = await planAgent(`This agent already exists: ${now}\nChange it like this, and keep everything else as it is: ${String(brief || '').trim()}`);
+  res.json({ ...plan, brief: current.brief || '' });
+}));
 reportCheckRoutes.post('/draft-items', masterOnly, wrap(async (req, res) => res.json({ items: await draftItems(req.body || {}) })));
 reportCheckRoutes.patch('/types/:id', masterOnly, wrap(async (req, res) => res.json(await updateType(req.params.id, req.body || {}, { describe: true }))));
 reportCheckRoutes.delete('/types/:id', masterOnly, wrap(async (req, res) => { await deleteType(req.params.id); res.json({ ok: true }); }));
