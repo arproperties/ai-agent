@@ -140,8 +140,24 @@ function TypeForm({ type, initial, onSaved, onCancel, onDeleted }) {
   }));
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [change, setChange] = useState('');
+  const [changed, setChanged] = useState(false);
   const set = (k, v) => setT((o) => ({ ...o, [k]: v }));
   const setItem = (i, v) => set('items', t.items.map((x, k) => (k === i ? v : x)));
+  // A point is "Short label — what exactly": shown as the two parts, kept as one line.
+  const partsOf = (item) => { const at = item.indexOf(' — '); return at < 0 ? [item, ''] : [item.slice(0, at), item.slice(at + 3)]; };
+  const setPart = (i, which, v) => { const [l, d] = partsOf(t.items[i]); const n = which === 0 ? [v, d] : [l, v]; setItem(i, n[1] ? `${n[0]} — ${n[1]}` : n[0]); };
+  // The change in words: Reem rewrites the settings below, which are saved only with Save.
+  const rework = async () => {
+    setBusy('change'); setError('');
+    try {
+      const p = await api.post('/report-checks/plan', { brief: change, current: { ...t, brief: from?.brief } });
+      setT((o) => ({ ...o, name: p.name || o.name, writer: p.writer ?? o.writer, items: p.items?.length ? p.items : o.items,
+        work_days: p.work_days ?? o.work_days, due_hour: p.due_hour ?? o.due_hour, daily_target: p.daily_target ?? '' }));
+      setChange(''); setChanged(true);
+    } catch (e) { setError(e.message); }
+    setBusy('');
+  };
   const flipDay = (d) => set('work_days', t.work_days.includes(d) ? t.work_days.replace(d, '') : [...t.work_days, d].sort().join(''));
 
   const draft = async () => {
@@ -164,26 +180,46 @@ function TypeForm({ type, initial, onSaved, onCancel, onDeleted }) {
   };
 
   return (
-    <form onSubmit={save} className="space-y-3 text-sm">
-      <label className="block"><span className="mb-1 block text-xs text-mute">Report name</span>
-        <input value={t.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Cleaning daily report" className={FIELD} /></label>
-      <label className="block"><span className="mb-1 block text-xs text-mute">Who writes it</span>
-        <input value={t.writer} onChange={(e) => set('writer', e.target.value)} placeholder="e.g. Faisal" className={FIELD} /></label>
+    <form onSubmit={save} className="space-y-4 text-sm">
+      {type && (
+        <div className="rounded-2xl border border-p1/40 bg-p1/[0.06] p-3.5">
+          <span className="mb-1.5 block font-medium">Change it in your own words</span>
+          <textarea value={change} onChange={(e) => setChange(e.target.value)} rows={2} placeholder="e.g. also check photos of each wall, and drop the signature"
+            className={`${FIELD} resize-y`} />
+          <div className="mt-2 flex items-center gap-2">
+            <Btn primary type="button" busy={busy === 'change'} disabled={!!busy || change.trim().length < 4} onClick={rework}><Sparkles size={14} /> Update with Reem</Btn>
+            {changed && <span className="text-xs text-ok">Updated below. Check it, then Save.</span>}
+          </div>
+        </div>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block"><span className="mb-1 block text-xs text-mute">Agent name</span>
+          <input value={t.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Cleaning Agent" className={FIELD} /></label>
+        <label className="block"><span className="mb-1 block text-xs text-mute">Watches (who sends the report)</span>
+          <input value={t.writer} onChange={(e) => set('writer', e.target.value)} placeholder="e.g. Faisal" className={FIELD} /></label>
+      </div>
             <div>
         <div className="mb-1 flex items-center gap-2">
-          <span className="flex-1 text-xs text-mute">A complete report has</span>
+          <span className="flex-1 text-xs text-mute">What it checks in each report</span>
           <button type="button" onClick={draft} disabled={!!busy || !t.name.trim()} className="flex items-center gap-1 text-xs text-p1 disabled:opacity-50">
             {busy === 'draft' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Let Reem write it
           </button>
         </div>
         <div className="space-y-1.5">
-          {t.items.map((item, i) => (
-            <div key={i} className="flex gap-1.5">
-              <textarea value={item} onChange={(e) => setItem(i, e.target.value)} rows={Math.max(1, Math.ceil(item.length / 40))} className={`${FIELD} resize-none`} />
-              <button type="button" aria-label="Remove" onClick={() => set('items', t.items.filter((_, k) => k !== i))}
-                className="grid size-10 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={15} /></button>
-            </div>
-          ))}
+          {t.items.map((item, i) => {
+            const [l, d] = partsOf(item);
+            return (
+              <div key={i} className="flex items-start gap-1.5 rounded-xl border border-stroke bg-white/[0.04] px-3 py-1.5">
+                <Check size={14} className="mt-1.5 shrink-0 text-ok" />
+                <div className="min-w-0 flex-1">
+                  <input value={l} onChange={(e) => setPart(i, 0, e.target.value)} placeholder="Short name, e.g. Photos" className="w-full bg-transparent font-medium outline-none" />
+                  <input value={d} onChange={(e) => setPart(i, 1, e.target.value)} placeholder="What exactly (optional)" className="w-full bg-transparent text-xs text-mute outline-none" />
+                </div>
+                <button type="button" aria-label="Remove" onClick={() => set('items', t.items.filter((_, k) => k !== i))}
+                  className="grid size-8 shrink-0 place-items-center rounded-full text-mute hover:bg-white/10 hover:text-bad"><X size={14} /></button>
+              </div>
+            );
+          })}
           <button type="button" onClick={() => set('items', [...t.items, ''])} className="flex items-center gap-1 text-xs text-mute hover:text-txt"><Plus size={13} /> Add a point</button>
         </div>
       </div>
