@@ -131,6 +131,8 @@ test('an agent from one sentence: Reem fills in the rest, and says what it canno
   assert.equal(plan.due_hour, 12, 'an hour that is not one is the default');
   assert.equal(plan.daily_target, 4);
   assert.equal(plan.brief, 'Watch Umer AC reports, 4 units a day');
+  const invoices = await planAgent('Check every invoice uploaded', async () => JSON.stringify({ name: 'Invoice check', items: ['VAT — 5%'], work_days: '' }));
+  assert.equal(invoices.work_days, '', 'invoices come whenever there is one');
   await assert.rejects(planAgent('hi', async () => '{}'), /in a sentence/);
   await assert.rejects(planAgent('watch my email for complaints', async () => 'no'), /could not set this agent up/);
 
@@ -314,6 +316,18 @@ test('a late report buzzes once, from the day the type began, on work days only'
 
   const { days } = await reportDays(type.id, { now: at('2026-11-18T13:00:00') });
   assert.deepEqual(days.map((d) => [d.date, !!d.missing, !!d.late]), [['2026-11-17', true, true], ['2026-11-16', true, true]]);
+});
+
+test('a report that comes whenever there is one is never late', async () => {
+  await reset();
+  await master();
+  const t = await createType({ name: 'Invoices', about: 'x', items: ['VAT — 5%'], work_days: '' }, at('2026-11-16T09:00:00'));
+  assert.equal(t.work_days, '');
+  const { sent, pusher } = pushes();
+  await watchAlerts({ now: at('2026-11-20T12:00:00'), pusher });
+  assert.equal(sent.length, 0);
+  const { days } = await reportDays(t.id, { now: at('2026-11-20T12:00:00') });
+  assert.equal(days.length, 0);
 });
 
 test('the 19:00 summary goes once, and only when there is something to say', async () => {

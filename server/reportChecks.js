@@ -130,7 +130,8 @@ function cleanType(input, old = {}) {
   }
   if (!t.items?.length) throw bad('Add at least one thing a complete report has');
   if (!Number.isInteger(t.due_hour) || t.due_hour < 0 || t.due_hour > 23) throw bad('The due time is an hour from 0 to 23');
-  if (!t.work_days) throw bad('Pick at least one day a report is expected');
+  // No days at all: the report comes whenever there is one (an invoice, an incident), so a day
+  // without one is never late and never buzzed about.
   return t;
 }
 
@@ -202,7 +203,8 @@ checks each one for what is missing, and tells the owner. From the owner's sente
 - writer: the person who sends the report, as named, or ""
 - items: 5-8 points a complete report must have, each "Short label — what exactly" (label 1-3 words, then at most 15 words).
   Only what this kind of report really needs; fewer is better than a long list nobody fills in.
-- work_days: the weekdays a report is expected, as digits 0-6 (0 = Sunday), default "123456"
+- work_days: the weekdays a report is expected, as digits 0-6 (0 = Sunday), default "123456";
+  "" when it comes whenever there is one rather than daily (invoices, delivery notes, incident reports)
 - due_hour: by which hour (0-23) the next day the report is due, default 12
 - daily_target: a number of units a day if the owner gives one, else null
 - summary: one sentence starting "It will" saying what the agent does
@@ -218,7 +220,7 @@ export async function planAgent(brief, asker = ask) {
   }
   const items = cleanItems(p.items);
   if (!items.length || !line(p.name, 120)) throw bad('Reem could not set this agent up this time. Try again, or say it another way.', 502);
-  const days = [...new Set(String(p.work_days ?? '').replace(/[^0-6]/g, ''))].sort().join('') || '123456';
+  const days = p.work_days === '' ? '' : [...new Set(String(p.work_days ?? '').replace(/[^0-6]/g, ''))].sort().join('') || '123456';
   const hour = Number.isInteger(Number(p.due_hour)) && p.due_hour >= 0 && p.due_hour <= 23 ? Number(p.due_hour) : 12;
   const target = Number(p.daily_target) > 0 ? Math.min(1000, Math.round(Number(p.daily_target))) : null;
   return {

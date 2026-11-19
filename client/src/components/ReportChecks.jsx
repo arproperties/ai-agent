@@ -19,6 +19,8 @@ const SHOWN_DAYS = 30;
 const niceDay = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 const hour = (h) => `${String(h).padStart(2, '0')}:00`;
 const workDays = (s) => (String(s) === '0123456' ? 'every day' : [...String(s)].map((d) => DAYS[d]).join(', '));
+// When a report is expected, said in words. No days: it comes whenever there is one, and is never late.
+const schedule = (t) => (t.work_days ? `expected ${workDays(t.work_days)}, due the next day by ${hour(t.due_hour)}` : 'whenever one comes, never late');
 // A list item is written "Short label — what exactly"; the cards show only the label.
 const label = (item) => String(item).split(' — ')[0];
 const dubaiToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
@@ -180,15 +182,19 @@ function TypeForm({ type, initial, onSaved, onCancel, onDeleted }) {
       <div>
         <span className="mb-1 block text-xs text-mute">A report is expected on</span>
         <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={() => set('work_days', t.work_days ? '' : '123456')}
+            className={`rounded-full border px-3 py-1 text-xs ${!t.work_days ? 'border-p1/60 bg-p1/15' : 'border-stroke text-mute'}`}>Whenever one comes</button>
           {DAYS.map((d, i) => (
             <button type="button" key={d} onClick={() => flipDay(String(i))}
               className={`rounded-full border px-3 py-1 text-xs ${t.work_days.includes(String(i)) ? 'border-p1/60 bg-p1/15' : 'border-stroke text-mute'}`}>{d}</button>
           ))}
         </div>
       </div>
-      <label className="flex items-center gap-2"><span className="text-xs text-mute">Each day&apos;s report is due the next day by</span>
-        <input type="number" min={0} max={23} value={t.due_hour} onChange={(e) => set('due_hour', e.target.value)} className="glass w-16 rounded-xl px-2 py-1.5 text-center outline-none" />
-        <span className="text-xs text-mute">:00</span></label>
+      {t.work_days && (
+        <label className="flex items-center gap-2"><span className="text-xs text-mute">Each day&apos;s report is due the next day by</span>
+          <input type="number" min={0} max={23} value={t.due_hour} onChange={(e) => set('due_hour', e.target.value)} className="glass w-16 rounded-xl px-2 py-1.5 text-center outline-none" />
+          <span className="text-xs text-mute">:00</span></label>
+      )}
       <label className="block"><span className="mb-1 block text-xs text-mute">Daily target <span className="opacity-70">(optional)</span></span>
         <span className="flex items-center gap-2">
           <input type="number" min={0} max={1000} value={t.daily_target} onChange={(e) => set('daily_target', e.target.value)} placeholder="e.g. 4" className="glass w-20 rounded-xl px-2 py-1.5 text-center outline-none" />
@@ -284,7 +290,7 @@ function NewAgent({ onMade, onCancel }) {
             ))}
           </ul>
           <p className="mt-3 border-t border-stroke pt-3 text-xs text-mute">
-            Expected {workDays(plan.work_days)}, due the next day by {hour(plan.due_hour)}{plan.daily_target ? ` · target ${plan.daily_target} a day` : ''}
+            {schedule(plan).replace(/^./, (c) => c.toUpperCase())}{plan.daily_target ? ` · target ${plan.daily_target} a day` : ''}
           </p>
         </div>
         {plan.limits && <p className="flex items-start gap-2 rounded-2xl border border-warn/40 px-3.5 py-2.5 text-warn"><AlertTriangle size={15} className="mt-0.5 shrink-0" /> {plan.limits}</p>}
@@ -549,7 +555,7 @@ export default function ReportChecks({ onBack, focus = null }) {
 
           {type && (
             <p className="text-sm text-mute">
-              <span className="text-txt">{type.name}</span>{type.writer ? ` · ${type.writer}` : ''}{type.daily_target ? ` · target ${type.daily_target} a day` : ''} · expected {workDays(type.work_days)}, due the next day by {hour(type.due_hour)}
+              <span className="text-txt">{type.name}</span>{type.writer ? ` · ${type.writer}` : ''}{type.daily_target ? ` · target ${type.daily_target} a day` : ''} · {schedule(type)}
               {!type.active && ' · paused'}
               {type.backfill?.state === 'running' && <span className="ml-2 inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> going through past reports</span>}
             </p>
