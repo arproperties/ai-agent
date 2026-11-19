@@ -7,6 +7,7 @@ import { sendPush } from './push.js';
 import { isMaster } from './access.js';
 import { FAST_MODEL, ADVISOR_MODEL } from './config.js';
 import { dubaiDate, dubaiHour } from './saifsys/client.js';
+import { monthlyPdf, reportMonths, watchMonthly } from './reportMonthly.js';
 
 // Report checks: the boss's always-on reader of work reports.
 //
@@ -595,6 +596,7 @@ export function startReportChecks() {
       await ensureSeeds();
       await watchFiles();
       await watchAlerts();
+      await watchMonthly();
     }).catch((e) => console.error('[report checks]', e.message)).finally(() => { busy = false; });
   };
   timer = setInterval(run, TICK_MS);
@@ -622,6 +624,16 @@ reportCheckRoutes.get('/checks/:id', wrap(async (req, res) => {
   const c = await getCheck(req.params.id);
   if (!c) throw bad('That report check is gone', 404);
   res.json(c);
+}));
+
+// The monthly progress report: the months on file, and one month's PDF (this month so far, too).
+reportCheckRoutes.get('/types/:id/months', wrap(async (req, res) => res.json({ months: await reportMonths(req.params.id) })));
+reportCheckRoutes.get('/types/:id/monthly', wrap(async (req, res) => {
+  const month = String(req.query.month || dubaiDate().slice(0, 7));
+  const { bytes, name } = await monthlyPdf(req.params.id, month);
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${name.replace(/"/g, '')}"`);
+  res.send(bytes);
 }));
 
 reportCheckRoutes.post('/types', masterOnly, wrap(async (req, res) => res.json(await createType(req.body || {}, Date.now(), { describe: true }))));

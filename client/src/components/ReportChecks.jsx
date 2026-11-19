@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, Settings as Gear } from 'lucide-react';
+import { Loader2, Plus, Copy, Check, X, RotateCw, FileText, History, Sparkles, Trash2, Settings as Gear, CalendarRange, Download } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
 import { createPortal } from 'react-dom';
@@ -244,6 +244,36 @@ function SidePanel({ title, icon, onClose, children }) {
   );
 }
 
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const monthName = (m) => `${MONTHS[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
+
+/** The monthly progress reports of one type: a PDF per month, this one so far included. */
+function Monthly({ type }) {
+  const [months, setMonths] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => { api.get(`/report-checks/types/${type.id}/months`).then((r) => setMonths(r.months)).catch((e) => setError(e.message)); }, [type.id]);
+  const now = dubaiToday().slice(0, 7);
+  const list = months ? [...new Set([now, ...months])].sort().reverse() : [];
+  const url = (m, dl) => `/api/report-checks/types/${type.id}/monthly?month=${m}${dl ? '&download=1' : ''}`;
+  return (
+    <div className="space-y-4 text-sm">
+      <p className="text-mute">Each month in one PDF: how many reports came in, the days with none, what was missing most, the work and materials added up, and how it compares with the month before. The boss gets last month's on his phone on the 1st.</p>
+      {error && <p className="text-bad">{error}</p>}
+      {!months && !error && <Loader2 className="mx-auto animate-spin text-mute" />}
+      <ul className="space-y-2">
+        {list.map((m) => (
+          <li key={m} className="flex items-center gap-3 rounded-2xl border border-stroke bg-white/[0.04] px-4 py-3">
+            <span className="flex-1"><span className="font-medium">{monthName(m)}</span>{m === now && <span className="text-mute"> · so far</span>}</span>
+            <a href={url(m)} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 rounded-full bg-gradient-to-br from-p1 to-p2 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-p1/25"><FileText size={14} /> Open</a>
+            <a href={url(m, true)} aria-label="Download" title="Download" className="grid size-9 place-items-center rounded-full border border-stroke text-mute hover:text-txt"><Download size={15} /></a>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-mute">Opening a month the first time takes a few seconds while Reem writes its summary.</p>
+    </div>
+  );
+}
+
 /** One day: its report's state, and what was missing at a glance. */
 function DayCard({ d, onOpen }) {
   const gaps = d.check?.gaps || [];
@@ -315,6 +345,7 @@ export default function ReportChecks({ onBack, focus = null }) {
   const [tab, setTab] = useState(null);
   const [opened, setOpened] = useState(null); // a date
   const [settings, setSettings] = useState(null); // 'new' | type id
+  const [monthly, setMonthly] = useState(false);
   const [error, setError] = useState('');
   const [focusCheck, setFocusCheck] = useState(typeof focus === 'number' ? focus : null);
 
@@ -371,13 +402,16 @@ export default function ReportChecks({ onBack, focus = null }) {
   const master = !!data?.master;
   const openDay = opened && list.find((d) => d.date === opened);
 
-  const head = master && (
+  const head = (
     <div className="flex items-center gap-2">
-      <button onClick={() => setSettings('new')} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><Plus size={14} /> New report</button>
+      {type && <button onClick={() => setMonthly(true)} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><CalendarRange size={14} /><span className="hidden sm:inline">Monthly report</span></button>}
+      {master && <>
+      <button onClick={() => setSettings('new')} className="flex shrink-0 items-center gap-1.5 rounded-full border border-stroke px-4 py-2 text-sm text-mute transition hover:text-txt"><Plus size={14} /><span className="hidden sm:inline">New report</span></button>
       {type && (
         <button onClick={() => setSettings(type.id)} aria-label="Settings" title="The list, days and due time"
           className="grid size-9 shrink-0 place-items-center rounded-full border border-stroke text-mute transition hover:text-txt"><Gear size={16} /></button>
       )}
+      </>}
     </div>
   );
 
@@ -457,6 +491,11 @@ export default function ReportChecks({ onBack, focus = null }) {
               ))}
             </div>
           )}
+        </SidePanel>
+      )}
+      {monthly && type && (
+        <SidePanel title={`Monthly report · ${type.name}`} icon={<CalendarRange size={18} className="text-mute" />} onClose={() => setMonthly(false)}>
+          <Monthly type={type} />
         </SidePanel>
       )}
       {settings && (
