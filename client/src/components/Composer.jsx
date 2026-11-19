@@ -17,7 +17,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', d
   const [text, setText] = useState(draft); // draft: "New chat on this case" starts with the case number typed
   const [files, setFiles] = useState([]);
   const [rec, setRec] = useState(null); // null | 'recording' | 'transcribing'
-  const [queued, setQueued] = useState(null); // spoken while a reply was still arriving
+  const [queued, setQueued] = useState(null); // { text, files }: sent while a reply was still arriving
   const fileRef = useRef();
   const areaRef = useRef();
   // Read when the words come back, not when the mic was tapped: a reply can start or end
@@ -31,20 +31,25 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', d
 
   const submit = (e) => {
     e?.preventDefault();
-    if (busy || (!text.trim() && !files.length && !quote)) return;
+    if (!text.trim() && !files.length && !quote) return;
     unlockAudio();
-    onSend(withQuote(quote, text.trim()), files);
+    // A reply still on its way: this one waits in line and goes the moment it finishes,
+    // so the next question can be typed and sent without watching the dots.
+    if (busy) {
+      if (queued) return; // one in line at a time: it can be taken back and added to
+      setQueued({ text: withQuote(quote, text.trim()), files });
+    } else onSend(withQuote(quote, text.trim()), files);
     onDropQuote?.();
     setText('');
     setFiles([]);
     if (areaRef.current) areaRef.current.style.height = 'auto';
   };
 
-  // Spoken while a reply is still streaming: held back rather than sent on top
+  // Typed or spoken while a reply is still streaming: held back rather than sent on top
   // of it, and sent by itself the moment that reply finishes.
   useEffect(() => {
     if (!queued || busy) return;
-    onSend(queued, []);
+    onSend(queued.text, queued.files);
     setQueued(null);
   }, [queued, busy]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -63,7 +68,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', d
       if (said) {
         const whole = withQuote(quote, [text, said].filter(Boolean).join(' '));
         onDropQuote?.();
-        if (busyNow.current) setQueued(whole); // a reply is still coming; wait for it
+        if (busyNow.current) setQueued({ text: whole, files }); // a reply is still coming; wait for it
         else onSend(whole, files, { voice: true });
         setText('');
         setFiles([]);
@@ -120,6 +125,19 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', d
             className="grid size-7 shrink-0 place-items-center rounded-full hover:bg-white/10"><Icon name="x" size={13} /></button>
         </div>
       )}
+      {queued && (
+        <div className="mb-2 flex items-start gap-2 rounded-2xl border border-p1/40 bg-p1/10 py-2 pl-3 pr-1 text-[13px]">
+          <Icon name="history" size={14} className="mt-0.5 shrink-0 text-p1" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] font-medium text-p1">Sends when this reply finishes</span>
+            <span className="line-clamp-2 text-mute">{queued.text || queued.files.map((f) => f.name).join(', ')}</span>
+          </span>
+          {/* Taken back into the box, to change it or send it later */}
+          <button type="button" onClick={() => { setText(queued.text); setFiles(queued.files); setQueued(null); }}
+            aria-label="Take it back to edit" title="Take it back to edit"
+            className="grid size-7 shrink-0 place-items-center rounded-full hover:bg-white/10"><Icon name="x" size={13} /></button>
+        </div>
+      )}
       {files.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-1.5">
           {files.map((f, i) => (
@@ -148,7 +166,6 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', d
           onChange={(e) => { setText(e.target.value); grow(e.target); }}
           placeholder={rec === 'recording' ? 'Listening… tap ■ to send'
             : rec ? 'Transcribing…'
-            : queued ? 'Waiting for the reply, then sending…'
             : quote ? 'What should the reply say? (or just send)'
             : 'Message'}
           className="max-h-40 min-h-10 flex-1 resize-none bg-transparent px-1 py-2 leading-6 outline-none placeholder:text-mute/70" />
@@ -169,7 +186,7 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', d
             <Icon name={rec === 'recording' ? 'stop' : 'mic'} size={22} />
           </button>
         )}
-        {busy ? (
+        {busy && (queued || (!text.trim() && !files.length && !quote)) ? (
           <button type="button" onClick={onStop} aria-label="Stop"
             className="grid size-10 shrink-0 place-items-center rounded-full bg-white/15 text-hi"><Icon name="stop" size={18} /></button>
         ) : (
