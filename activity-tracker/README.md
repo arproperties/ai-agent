@@ -44,19 +44,22 @@ under 1% CPU and about 100 MB of memory in the tray; `npm run perf` measures it 
 
 ## Measured
 
-`npm run perf` on Francis's laptop (12 GB, i7-1065G7), version 0.1.0, ten minutes in the tray, 2026-11-15:
+`npm run perf` on Francis's laptop (12 GB, i7-1065G7), version 0.2.0 with Buddy on screen, ten minutes, 2026-11-19:
 
 | | Result | Budget |
 |---|---|---|
-| CPU, 10-minute average | 0.02% of the machine (0.14% of one core) | under 1% |
-| Memory, private working set (Task Manager's "Memory" column) | 49 MB average, 50 MB peak | target 100 MB, fail at 150 MB |
-| Memory, total working set (shared Chromium pages counted once per process) | 215 MB average, 219 MB peak | guard at 250 MB |
-| Processes | 3: main, network helper, and a hidden 1×1 window whose only job is to hear Windows shutting down | |
+| CPU, 10-minute average | 0.56% of the machine (4.4% of one core) | under 1% |
+| Memory, private working set (Task Manager's "Memory" column) | 56 MB average, 66 MB peak | target 100 MB, fail at 150 MB |
+| Memory, total working set (shared Chromium pages counted once per process) | 290 MB average, 296 MB peak, flat from the first sample | guard at 300 MB |
+| Processes | 3: main, network helper, Buddy's window | |
 
-The private figure is what the laptop actually gives up and what Task Manager shows; the total
-counts the same shared DLLs three times. The hidden window exists because Windows tells a
-window, not the app, that the session is ending; without it the day would never be sent at
-shutdown or sign-out. It costs about 15 MB private.
+Buddy's window is transparent, and Windows re-composites a transparent window on every frame
+anything in it moves, software or GPU alike: with Reem's looping animations it cost half a core
+(5.5% of the machine). So on the desktop Buddy is still almost all the time and moves in short
+bursts, a bob every twelve seconds or so and a blink every five, which brings it to the figure
+above. The private figure is what the laptop gives up; the total counts the same shared DLLs
+three times and sits flat at about 290 MB, so the guard is at 300 MB to catch a leak or a fourth
+process rather than this baseline.
 
 ## For developers
 
