@@ -136,7 +136,7 @@ function TypeForm({ type, onSaved, onCancel, onDeleted }) {
         <input value={t.name} onChange={(e) => set('name', e.target.value)} placeholder="Cleaning daily report" className={FIELD} /></label>
       <label className="block"><span className="mb-1 block text-xs text-mute">Who writes it</span>
         <input value={t.writer} onChange={(e) => set('writer', e.target.value)} placeholder="Faisal" className={FIELD} /></label>
-      <label className="block"><span className="mb-1 block text-xs text-mute">What it is (so Reem can find it among the files)</span>
+      <label className="block"><span className="mb-1 block text-xs text-mute">What it is <span className="opacity-70">(optional: Reem writes it if you leave it empty)</span></span>
         <textarea value={t.about} onChange={(e) => set('about', e.target.value)} rows={3} className={`${FIELD} resize-y`}
           placeholder="Photos of the day's cleaning report from the cleaning team, shared from WhatsApp" /></label>
 
