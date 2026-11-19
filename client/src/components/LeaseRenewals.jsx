@@ -40,6 +40,7 @@ function chipOf(l) {
   if (r?.dispute && !DONE.includes(r.status)) return ['Dispute', 'bad'];
   if (r?.waiting) return WAITING[r.waiting];
   if (r?.status === 'scheduled') return [`Sends ${day(r.sendOn)}`, 'p1'];
+  if (leftAsAgreed(l)) return [`Closed · left ${day(l.end_date)}`, 'mute'];
   if (movingOut(l)) return [l.days_left === 0 ? 'Leaves today' : `Leaves in ${l.days_left} day${l.days_left === 1 ? '' : 's'}`, l.days_left <= 30 ? 'bad' : 'warn'];
   if (r) return STATUS[r.status];
   if (l.expired) return [l.move_out_date ? `Moved out ${day(l.move_out_date)}` : `Ended ${-l.days_left} day${l.days_left === -1 ? '' : 's'} ago`, 'bad'];
@@ -49,7 +50,9 @@ function chipOf(l) {
 }
 // Moving out: the tenant said no in Reem and the lease is still running; they leave on its end
 // date. Once it ends saifsys drops it from this list and it shows under Expired.
-function movingOut(l) { return !l.expired && l.renewal?.status === 'not_renewing'; }
+function movingOut(l) { return !l.expired && l.renewal?.status === 'not_renewing' && l.days_left >= 0; }
+// Closed: the end date passed and the tenant left as agreed. Shown under Done, not Expired.
+function leftAsAgreed(l) { return l.renewal?.status === 'not_renewing' && l.days_left < 0; }
 // Rejected: the staff rejected the renewal in saifsys, and Reem has none.
 const rejected = (l) => !l.renewal && l.saifsys_rejected;
 // A renewal the staff ran in saifsys, with no renewal of Reem's: tapping it shows what they did there.
@@ -126,8 +129,10 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
   const narrow = (l) => (!building || l.building === building)
     && (!want || [l.building, l.unit, l.tenant, l.premises_number, l.ejari].join(' ').toLowerCase().includes(want));
   const leases = all.filter(narrow);
+  const closed = new Set(leases.filter(leftAsAgreed).map((l) => `${l.lease_id}:${l.end_date}`));
   const tabs = [
-    ['all', 'All', leases],
+    // A month after they left, a closed one is only under Done.
+    ['all', 'All', leases.filter((l) => !leftAsAgreed(l) || l.days_left >= -30)],
     ['you', 'Needs you', leases.filter(needsYou)],
     ['going', 'In progress', leases.filter((l) => l.renewal && !DONE.includes(l.renewal.status))],
     ['new', 'Not started', leases.filter((l) => !l.renewal && !l.saifsys_renewal && !l.saifsys_rejected)],
@@ -137,7 +142,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
     ['rejected', 'Rejected', leases.filter(rejected)],
     // Staff started these in saifsys themselves; Reem only shows where they are.
     ['saifsys', 'Initiated in saifsys', leases.filter((l) => !l.renewal && l.saifsys_renewal)],
-    ['expired', 'Expired', (expired || []).filter(narrow)],
+    ['expired', 'Expired', (expired || []).filter((l) => narrow(l) && !closed.has(`${l.lease_id}:${l.end_date}`))],
   ];
   const shown = (tabs.find((t) => t[0] === tab) || tabs[0])[2];
   const dld = (
@@ -232,7 +237,7 @@ function LeaseCard({ l, onOpen }) {
           {live ? (
             <span className="text-sm"><span className="text-mute line-through">{aed(l.annual_rent)}</span> <span className="text-base font-medium">{aed(r.agreed ?? r.offer)}</span></span>
           ) : <span className="text-base font-medium">{aed(l.annual_rent)}</span>}
-          <span className="text-xs text-mute">{movingOut(l) ? 'leaves' : l.days_left < 0 ? 'ended' : 'ends'} {day(l.end_date)}</span>
+          <span className="text-xs text-mute">{movingOut(l) ? 'leaves' : leftAsAgreed(l) ? 'left' : l.days_left < 0 ? 'ended' : 'ends'} {day(l.end_date)}</span>
         </div>
         {r?.dispute && live && <p className="flex items-start gap-1.5 text-xs text-bad"><Scale size={13} className="mt-0.5 shrink-0" /> {r.dispute}</p>}
         {!r && (l.premises_number || l.ejari) && (
@@ -1276,6 +1281,7 @@ function nextStep(r) {
   if (s === 'scheduled' && (!rn.auto || r.paused)) return { tone: 'you', icon: Send, title: 'The offer is ready: send it', sub: `Reem will not send it by itself. It was due on ${day(rn.sendOn)}.`, main: ['send_now'], more: ['unschedule'] };
   if (s === 'scheduled') return { tone: 'wait', icon: Clock, title: `Reem sends the offer on ${day(rn.sendOn)}`, sub: '120 days before the lease ends. Nothing has gone to the tenant yet.', main: ['send_now'], more: ['unschedule'] };
   if (s === 'converted') return { tone: 'done', icon: Check, title: 'Renewed', sub: 'saifsys has the new lease, and the tenant was told.', main: [], more: [] };
+  if (s === 'not_renewing' && r.days_left < 0) return { tone: 'done', icon: X, title: `Closed: the tenant left on ${day(r.end_date)}`, sub: 'They did not renew, as agreed. Nothing more goes to the tenant.', main: [], more: [] };
   if (s === 'not_renewing') return { tone: 'done', icon: Ban, title: `Not renewing: leaves on ${day(r.end_date)}`, sub: 'The lease runs to its end date as normal, rent and cheques included. No more renewal emails or reminders go to the tenant.', main: [], more: [] };
   if (s === 'closed') return { tone: 'done', icon: X, title: 'Handled outside Reem', sub: 'No more emails or reminders go to the tenant.', main: [], more: [] };
   // A disputing tenant silent for 25 days since our last email: Reem wrote a reminder, a person sends it.

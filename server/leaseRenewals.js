@@ -1816,7 +1816,9 @@ leaseRenewalRoutes.get('/expired', wrap(async (req, res) => {
 
 leaseRenewalRoutes.get('/', wrap(async (req, res) => {
   const leases = saifsysConfigured() ? await dueLeases() : [];
-  const rows = (await db.prepare(`SELECT * FROM lease_renewals WHERE status IN ('scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok')
+  // Not renewing stays for good: after the end date it shows as Closed (the tenant left as
+  // agreed), never under Expired with the leases that ran out with nothing done.
+  const rows = (await db.prepare(`SELECT * FROM lease_renewals WHERE status IN ('scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'not_renewing')
     OR updated_at > ${NOW} - 30 * 86400`).all()).map(ROW);
   const byLease = new Map(rows.map((r) => [`${r.lease_id}:${r.end_date}`, r]));
   const list = leases.map((l) => { const k = `${l.lease_id}:${l.end_date}`; const r = byLease.get(k); byLease.delete(k); return card(l, r); });
