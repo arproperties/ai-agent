@@ -767,7 +767,8 @@ reportCheckRoutes.post('/plan', masterOnly, wrap(async (req, res) => {
   if (!current) return res.json(await planAgent(brief));
   const now = JSON.stringify({ name: current.name, writer: current.writer, items: current.items, work_days: current.work_days,
     due_hour: current.due_hour, daily_target: current.daily_target }).slice(0, 6000);
-  const plan = await planAgent(`This agent already exists: ${now}\nChange it like this, and keep everything else as it is: ${String(brief || '').trim()}`);
+  const plan = await planAgent(`This agent already exists: ${now}\nChange it like this, and keep everything else as it is: ${String(brief || '').trim()}\n` +
+    'Keep every point the change does not mention word for word, and do not merge points: the 5-8 points rule is for new agents only.');
   res.json({ ...plan, brief: current.brief || '' });
 }));
 reportCheckRoutes.post('/draft-items', masterOnly, wrap(async (req, res) => res.json({ items: await draftItems(req.body || {}) })));
