@@ -26,7 +26,7 @@ const perfRun = process.env.TRACKER_PERF === '1'; // scripts/perf.js: measure th
 // its data, and a pairing key to use without typing. Neither is set on an employee PC.
 if (process.env.TRACKER_DATA_DIR) app.setPath('userData', process.env.TRACKER_DATA_DIR);
 
-app.disableHardwareAcceleration(); // nothing here needs the GPU
+app.disableHardwareAcceleration(); // nothing here needs the GPU (a transparent window costs the same either way; see buddy.html)
 app.commandLine.appendSwitch('in-process-gpu'); // and the software compositor can live in the main process: one process fewer in the tray
 if (!app.requestSingleInstanceLock()) app.quit();
 

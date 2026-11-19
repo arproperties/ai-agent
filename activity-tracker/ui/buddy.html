@@ -14,6 +14,19 @@
   #bubble.on { display: block; animation: pet-pop .3s cubic-bezier(.3, 1.5, .5, 1); }
   #pet { position: absolute; left: 50%; bottom: 10px; width: 96px; height: 96px; margin-left: -48px; cursor: grab; }
   #pet:active { cursor: grabbing; }
+  /* A transparent window is re-composited by Windows on every animation frame, which costs half a
+     core while anything moves, software or GPU alike. So Buddy is still almost all the time: the
+     looping animations from Reem's pet.css are off here, and short bursts (a bob, a blink, a breath)
+     are started from JavaScript every few seconds. The average stays under one percent. */
+  .pet .body-g, .pet.working .body-g, .pet.sleep .body-g, .pet.listen .body-g, .pet.think .body-g, .pet.talk .body-g { animation: none; }
+  .pet .lids { animation: none; transform: scaleY(0); }
+  .pet.sleep .lids { transform: scaleY(1); }
+  .pet.sleep .pet-zz { animation: none; }
+  .pet.beat .body-g { animation: pet-bob .7s ease-in-out 1; }
+  .pet.sleep.beat .body-g { animation: pet-breathe 1.6s ease-in-out 1; }
+  .pet.sleep.beat .pet-zz { animation: pet-zz 1.6s ease-out 1; }
+  .pet.blink .lids { animation: pet-blink .25s 1; }
+  @keyframes pet-blink { 0%, 100% { transform: scaleY(0); } 50% { transform: scaleY(1); } }
   .pet.alert svg { filter: grayscale(.8) brightness(.9); }
   .pet.think svg { filter: grayscale(.5); }
   @media (prefers-reduced-motion: reduce) { .pet .body-g, .pet .lids { animation: none !important; } }
@@ -31,7 +44,8 @@
 
   function paint(s) {
     if (s.character !== last.character || s.mood !== last.mood) {
-      pet.innerHTML = `<span class="pet-zz">z</span><svg viewBox="0 0 96 96">${charSvg(s.character, s.mood)}</svg>`;
+      // The SVG's own tail-wag loops (SMIL animateTransform) would move every frame: stripped here.
+      pet.innerHTML = `<span class="pet-zz">z</span><svg viewBox="0 0 96 96">${charSvg(s.character, s.mood).replace(/<animateTransform[^>]*>(<\/animateTransform>)?/g, '')}</svg>`;
       pet.className = `pet ${s.mood}`;
       last = { character: s.character, mood: s.mood };
     }
@@ -56,6 +70,12 @@
     down = null;
   });
   document.addEventListener('contextmenu', (e) => { e.preventDefault(); window.tracker.buddyMenu(); });
+
+  // Short bursts of life: a bob (or a breath when dozing) every 12 s or so, a blink every 5 s or so.
+  const burst = (cls, ms) => { pet.classList.add(cls); setTimeout(() => pet.classList.remove(cls), ms); };
+  const every = (fn, base) => { const tick = () => { fn(); setTimeout(tick, base * (0.7 + Math.random() * 0.6)); }; setTimeout(tick, base); };
+  every(() => burst('beat', pet.classList.contains('sleep') ? 1700 : 800), 12_000);
+  every(() => { if (!pet.classList.contains('sleep')) burst('blink', 300); }, 5_000);
 
   window.tracker.onBuddy(paint);
   window.tracker.buddyState().then(paint);
