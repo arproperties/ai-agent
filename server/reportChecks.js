@@ -8,6 +8,7 @@ import { isMaster } from './access.js';
 import { FAST_MODEL, ADVISOR_MODEL } from './config.js';
 import { dubaiDate, dubaiHour } from './saifsys/client.js';
 import { monthlyPdf, reportMonths, watchMonthly } from './reportMonthly.js';
+import { runSafely, watchWatchers, listRuns } from './agentRuns.js';
 
 // Report checks: the boss's always-on reader of work reports.
 //
@@ -86,7 +87,7 @@ const SEEDS = [{
   ],
 }];
 
-const TYPE_COLS = 'id, name, writer, about, items, due_hour, work_days, daily_target, active, seed, starts_on, backfill, created_at, brief';
+const TYPE_COLS = 'id, name, writer, about, items, due_hour, work_days, daily_target, active, seed, starts_on, backfill, created_at, brief, kind, sources, cadence, run_hour, run_weekday';
 
 /** Reem's own types, made once. Deleting one later does not bring it back. */
 export async function ensureSeeds(now = Date.now()) {
@@ -107,12 +108,17 @@ function cleanItems(items) {
   return [...new Set(out)].slice(0, MAX_ITEMS);
 }
 
+const SOURCES = ['email', 'saifsys', 'leases'];
+const CADENCES = ['daily', 'weekly', 'monthly'];
+
 function cleanType(input, old = {}) {
+  const kind = (input.kind ?? old.kind) === 'watch' ? 'watch' : 'reports';
   const t = {
+    kind,
     name: line(input.name ?? old.name, 120),
     writer: line(input.writer ?? old.writer, 120),
     about: String(input.about ?? old.about ?? '').trim().slice(0, 2000),
-    items: input.items !== undefined ? cleanItems(input.items) : old.items,
+    items: input.items !== undefined ? cleanItems(input.items) : old.items || [],
     due_hour: input.due_hour !== undefined ? Number(input.due_hour) : old.due_hour ?? 12,
     // How many units a day the work should reach (the boss's rule for AC: 4); none for most reports.
     daily_target: input.daily_target !== undefined
@@ -120,15 +126,29 @@ function cleanType(input, old = {}) {
       : old.daily_target ?? null,
     work_days: input.work_days !== undefined ? [...new Set(String(input.work_days).replace(/[^0-6]/g, ''))].sort().join('') : old.work_days ?? '123456',
     active: input.active !== undefined ? !!input.active : old.active ?? true,
+    // A watcher's: where it looks, and when it runs (server/agentRuns.js).
+    brief: String(input.brief ?? old.brief ?? '').trim().slice(0, 2000),
+    sources: input.sources !== undefined ? SOURCES.filter((x) => [].concat(input.sources).includes(x)) : old.sources || [],
+    cadence: CADENCES.includes(input.cadence) ? input.cadence : old.cadence || 'daily',
+    run_hour: input.run_hour !== undefined ? Number(input.run_hour) : old.run_hour ?? 8,
+    run_weekday: input.run_weekday !== undefined ? Number(input.run_weekday) : old.run_weekday ?? 0,
   };
-  if (!t.name) throw bad('Give the report a name');
+  if (!t.name) throw bad('Give the agent a name');
+  if (kind === 'watch') {
+    if (t.brief.length < 8) throw bad('Say in a sentence what the agent should do');
+    if (!t.sources.length) throw bad('Pick at least one place for the agent to look');
+    if (!Number.isInteger(t.run_hour) || t.run_hour < 0 || t.run_hour > 23) throw bad('The run time is an hour from 0 to 23');
+    if (!Number.isInteger(t.run_weekday) || t.run_weekday < 0 || t.run_weekday > 6) throw bad('Pick the day of the week it runs');
+    t.about = t.brief; // a watcher's job is its sentence
+    return t;
+  }
+  if (!t.items.length) throw bad('Add at least one thing a complete report has');
   // What it is, when nobody wrote it: said from the name, the writer and the points, which is
   // what the file sorting needs to recognise it (the boss found writing it himself hard).
   if (!t.about) {
     t.about = `${t.name}${t.writer ? `, written by ${t.writer}` : ''}. A report like this covers: ${t.items.map((i) => i.split(' — ')[0]).join(', ')}. ` +
       'A photo, a scan or a typed copy of it counts.';
   }
-  if (!t.items?.length) throw bad('Add at least one thing a complete report has');
   if (!Number.isInteger(t.due_hour) || t.due_hour < 0 || t.due_hour > 23) throw bad('The due time is an hour from 0 to 23');
   // No days at all: the report comes whenever there is one (an invoice, an incident), so a day
   // without one is never late and never buzzed about.
@@ -163,11 +183,12 @@ const describeLater = (id, describe) => {
 /** describe: write what it is in the background (true for the real model, or an asker in tests). */
 export async function createType(input, now = Date.now(), { describe = false } = {}) {
   const t = cleanType(input);
-  const { id } = await db.prepare(`INSERT INTO report_types (name, writer, about, items, due_hour, work_days, active, daily_target, starts_on, created_at, brief)
-                                   VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+  const { id } = await db.prepare(`INSERT INTO report_types (name, writer, about, items, due_hour, work_days, active, daily_target, starts_on, created_at, brief,
+                                     kind, sources, cadence, run_hour, run_weekday)
+                                   VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?) RETURNING id`)
     .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, t.daily_target, dubaiDate(now), Math.floor(now / 1000),
-      String(input.brief ?? '').trim().slice(0, 2000));
-  if (!String(input.about ?? '').trim()) describeLater(id, describe);
+      t.brief, t.kind, JSON.stringify(t.sources), t.cadence, t.run_hour, t.run_weekday);
+  if (t.kind === 'reports' && !String(input.about ?? '').trim()) describeLater(id, describe);
   return getType(id);
 }
 
@@ -175,12 +196,14 @@ export async function updateType(id, input, { describe = false } = {}) {
   const old = await getType(id);
   if (!old) throw bad('That report type is gone', 404);
   // A new name, writer or list means a new description, unless one was given.
-  const changed = ['name', 'writer'].some((k) => input[k] !== undefined && line(input[k], 120) !== old[k])
+  const changed = old.kind !== 'watch' && ['name', 'writer'].some((k) => input[k] !== undefined && line(input[k], 120) !== old[k])
     || (input.items !== undefined && JSON.stringify(cleanItems(input.items)) !== JSON.stringify(old.items));
   const redo = changed && input.about === undefined;
   const t = cleanType(redo ? { ...input, about: '' } : input, old);
-  await db.prepare('UPDATE report_types SET name = ?, writer = ?, about = ?, items = ?::jsonb, due_hour = ?, work_days = ?, active = ?, daily_target = ? WHERE id = ?')
-    .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, t.daily_target, old.id);
+  await db.prepare(`UPDATE report_types SET name = ?, writer = ?, about = ?, items = ?::jsonb, due_hour = ?, work_days = ?, active = ?, daily_target = ?,
+      brief = ?, sources = ?::jsonb, cadence = ?, run_hour = ?, run_weekday = ? WHERE id = ?`)
+    .run(t.name, t.writer, t.about, JSON.stringify(t.items), t.due_hour, t.work_days, t.active, t.daily_target,
+      t.brief, JSON.stringify(t.sources), t.cadence, t.run_hour, t.run_weekday, old.id);
   if (redo) describeLater(old.id, describe);
   return getType(old.id);
 }
@@ -196,10 +219,23 @@ export async function deleteType(id) {
 // Change. Nothing is saved here. What an agent can watch today is files that reach Reem (uploads
 // and pictures shared into a chat), so a brief that needs email or saifsys is told so, not faked.
 
-const PLAN_SYSTEM = `You set up a background agent for the owner of a property and construction company in Dubai.
-The agent watches one kind of work report that reaches Reem as files (uploads, PDFs, scans, WhatsApp photos shared into a chat),
-checks each one for what is missing, and tells the owner. From the owner's sentence, work out:
-- name: a short title for the report it watches, 2-5 words (e.g. "AC cleaning report")
+const PLAN_SYSTEM = `You set up a background agent for the owner of a property and construction company in Dubai. There are two kinds:
+
+"reports": it watches one kind of work report that reaches Reem as files (uploads, PDFs, scans, WhatsApp photos shared into a chat),
+checks each one for what is missing, and tells the owner. Use it when the job is about reports or documents people send.
+
+"watch": it runs on a schedule and looks things up itself, reading only, in these sources:
+  email   - the owner's own mailbox (find, read, see what was answered)
+  saifsys - the company system: buildings, units, staff jobs, HR, bookings and the rest
+  leases  - the tenancy contracts in saifsys
+Use it when the job is about the inbox, saifsys data, leases, or a regular summary ("every Sunday tell me...").
+
+From the owner's sentence, work out:
+- kind: "reports" or "watch"
+- name: a short title, 2-5 words (e.g. "AC cleaning report", "Unanswered tenant emails")
+- summary: one sentence starting "It will" saying what the agent does
+- limits: "" if it can do this, else one plain sentence on what it cannot do (neither kind can read WhatsApp, the web or send anything)
+For "reports" also:
 - writer: the person who sends the report, as named, or ""
 - items: 5-8 points a complete report must have, each "Short label — what exactly" (label 1-3 words, then at most 15 words).
   Only what this kind of report really needs; fewer is better than a long list nobody fills in.
@@ -207,26 +243,38 @@ checks each one for what is missing, and tells the owner. From the owner's sente
   "" when it comes whenever there is one rather than daily (invoices, delivery notes, incident reports)
 - due_hour: by which hour (0-23) the next day the report is due, default 12
 - daily_target: a number of units a day if the owner gives one, else null
-- summary: one sentence starting "It will" saying what the agent does
-- limits: "" if the agent can do this, else one plain sentence on what it cannot do yet (it cannot read email, saifsys, WhatsApp directly or the web)
-Reply with ONLY JSON: {"name":"","writer":"","items":[],"work_days":"","due_hour":12,"daily_target":null,"summary":"","limits":""}`;
+For "watch" also:
+- sources: the ones it needs, from ["email","saifsys","leases"]
+- cadence: "daily", "weekly" or "monthly" (monthly runs on the 1st)
+- run_hour: the hour (0-23, Dubai) it runs, default 8
+- run_weekday: for weekly, the day it runs as 0-6 (0 = Sunday), default 0
+Reply with ONLY JSON: {"kind":"","name":"","summary":"","limits":"","writer":"","items":[],"work_days":"","due_hour":12,"daily_target":null,
+"sources":[],"cadence":"daily","run_hour":8,"run_weekday":0}`;
+
+const hourOr = (v, d) => (Number.isInteger(Number(v)) && v !== null && v !== '' && Number(v) >= 0 && Number(v) <= 23 ? Number(v) : d);
 
 export async function planAgent(brief, asker = ask) {
   const text = String(brief ?? '').trim().slice(0, 2000);
   if (text.length < 8) throw bad('Say in a sentence what the agent should do');
+  const fail = () => bad('Reem could not set this agent up this time. Try again, or say it another way.', 502);
   let p;
-  try { p = looseJson(await asker(text, { system: PLAN_SYSTEM, maxTokens: 3000, model: CHECK_MODEL })); } catch {
-    throw bad('Reem could not set this agent up this time. Try again, or say it another way.', 502);
+  try { p = looseJson(await asker(text, { system: PLAN_SYSTEM, maxTokens: 3000, model: CHECK_MODEL })); } catch { throw fail(); }
+  const name = line(p.name, 120);
+  const common = { brief: text, name, summary: line(p.summary, 400), limits: line(p.limits, 400) };
+  if (p.kind === 'watch') {
+    const sources = SOURCES.filter((x) => [].concat(p.sources || []).includes(x));
+    if (!name || !sources.length) throw fail();
+    const wd = Number(p.run_weekday);
+    return {
+      ...common, kind: 'watch', sources, cadence: CADENCES.includes(p.cadence) ? p.cadence : 'daily',
+      run_hour: hourOr(p.run_hour, 8), run_weekday: Number.isInteger(wd) && wd >= 0 && wd <= 6 ? wd : 0,
+    };
   }
   const items = cleanItems(p.items);
-  if (!items.length || !line(p.name, 120)) throw bad('Reem could not set this agent up this time. Try again, or say it another way.', 502);
+  if (!items.length || !name) throw fail();
   const days = p.work_days === '' ? '' : [...new Set(String(p.work_days ?? '').replace(/[^0-6]/g, ''))].sort().join('') || '123456';
-  const hour = Number.isInteger(Number(p.due_hour)) && p.due_hour >= 0 && p.due_hour <= 23 ? Number(p.due_hour) : 12;
   const target = Number(p.daily_target) > 0 ? Math.min(1000, Math.round(Number(p.daily_target))) : null;
-  return {
-    brief: text, name: line(p.name, 120), writer: line(p.writer, 120), items, work_days: days, due_hour: hour, daily_target: target,
-    summary: line(p.summary, 400), limits: line(p.limits, 400),
-  };
+  return { ...common, kind: 'reports', writer: line(p.writer, 120), items, work_days: days, due_hour: hourOr(p.due_hour, 12), daily_target: target };
 }
 
 /** Name + what the report is → what a complete one has. `asker` is swapped in tests. */
@@ -524,7 +572,7 @@ async function markOnce(key) {
 
 /** New files: find the reports and check them. */
 export async function watchFiles({ now = Date.now(), asker = ask, pusher = sendPush } = {}) {
-  const types = (await listTypes()).filter((t) => t.active);
+  const types = (await listTypes()).filter((t) => t.active && t.kind !== 'watch');
   const docs = await newFiles(types, now);
   if (!docs.length) return [];
   const already = new Set((await db.prepare('SELECT type_id, document_id FROM report_checks WHERE document_id = ANY(?::int[])')
@@ -556,7 +604,7 @@ const missingDays = async (type, now) => {
 
 /** The buzzes nobody asked for: a late report (once per day), and the 19:00 summary (once a day). */
 export async function watchAlerts({ now = Date.now(), pusher = sendPush } = {}) {
-  const types = (await listTypes()).filter((t) => t.active);
+  const types = (await listTypes()).filter((t) => t.active && t.kind !== 'watch');
   const to = await masters();
   const sent = [];
   for (const type of types) {
@@ -660,6 +708,7 @@ export function startReportChecks() {
       await watchFiles();
       await watchAlerts();
       await watchMonthly();
+      await watchWatchers();
     }).catch((e) => console.error('[report checks]', e.message)).finally(() => { busy = false; });
   };
   timer = setInterval(run, TICK_MS);
@@ -700,6 +749,18 @@ reportCheckRoutes.get('/types/:id/monthly', wrap(async (req, res) => {
 }));
 
 reportCheckRoutes.post('/types', masterOnly, wrap(async (req, res) => res.json(await createType(req.body || {}, Date.now(), { describe: true }))));
+// A watcher's runs, and one run now. The run answers at once and goes on in the background (it can
+// take a minute); the page watches the runs list for it.
+const runningNow = new Set();
+reportCheckRoutes.get('/types/:id/runs', wrap(async (req, res) => res.json({ runs: await listRuns(req.params.id), running: runningNow.has(Number(req.params.id)) })));
+reportCheckRoutes.post('/types/:id/run', masterOnly, wrap(async (req, res) => {
+  const agent = await getType(req.params.id);
+  if (!agent || agent.kind !== 'watch') throw bad('That agent does not run on a schedule', 404);
+  if (runningNow.has(agent.id)) throw bad('It is already running');
+  runningNow.add(agent.id);
+  runSafely(agent, { user: req.user }).finally(() => runningNow.delete(agent.id));
+  res.json({ ok: true });
+}));
 reportCheckRoutes.post('/plan', masterOnly, wrap(async (req, res) => res.json(await planAgent(req.body?.brief))));
 reportCheckRoutes.post('/draft-items', masterOnly, wrap(async (req, res) => res.json({ items: await draftItems(req.body || {}) })));
 reportCheckRoutes.patch('/types/:id', masterOnly, wrap(async (req, res) => res.json(await updateType(req.params.id, req.body || {}, { describe: true }))));

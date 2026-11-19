@@ -221,7 +221,7 @@ export async function watchMonthly({ now = Date.now(), asker = ask, pusher = sen
   const today = dubaiDate(now);
   if (today.slice(8) !== '01' || dubaiHour(now) < SEND_HOUR) return [];
   const month = prevMonth(today.slice(0, 7));
-  const types = await db.prepare('SELECT id, name FROM report_types WHERE active ORDER BY id').all();
+  const types = await db.prepare("SELECT id, name FROM report_types WHERE active AND kind <> 'watch' ORDER BY id").all();
   const to = (await db.prepare("SELECT id FROM users WHERE role = 'master' AND NOT disabled").all()).map((u) => u.id);
   const sent = [];
   for (const t of types) {

@@ -3008,6 +3008,25 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_report_checks_day ON report_checks(type_id, report_date, id);
   -- An Autonomous Agent made from one sentence keeps the sentence: what the master asked for.
   ALTER TABLE report_types ADD COLUMN IF NOT EXISTS brief TEXT NOT NULL DEFAULT '';
+  -- kind: 'reports' reads work reports as they come in; 'watch' runs on a schedule (cadence at
+  -- run_hour, run_weekday for weekly) and looks things up itself in its sources (server/agentRuns.js).
+  ALTER TABLE report_types ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'reports';
+  ALTER TABLE report_types ADD COLUMN IF NOT EXISTS sources JSONB NOT NULL DEFAULT '[]';
+  ALTER TABLE report_types ADD COLUMN IF NOT EXISTS cadence TEXT NOT NULL DEFAULT 'daily';
+  ALTER TABLE report_types ADD COLUMN IF NOT EXISTS run_hour INTEGER NOT NULL DEFAULT 8;
+  ALTER TABLE report_types ADD COLUMN IF NOT EXISTS run_weekday INTEGER NOT NULL DEFAULT 0;
+  -- Each run of a watcher: what it found, or why it failed.
+  CREATE TABLE IF NOT EXISTS report_agent_runs (
+    id SERIAL PRIMARY KEY,
+    type_id INTEGER NOT NULL REFERENCES report_types(id) ON DELETE CASCADE,
+    ran_at BIGINT NOT NULL,
+    headline TEXT NOT NULL DEFAULT '',
+    findings JSONB NOT NULL DEFAULT '[]',
+    nothing_new BOOLEAN NOT NULL DEFAULT false,
+    tools_used INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_report_agent_runs ON report_agent_runs(type_id, id);
   CREATE TABLE IF NOT EXISTS report_check_seen (
     document_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
     at BIGINT NOT NULL DEFAULT ${NOW}
