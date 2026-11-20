@@ -53,6 +53,14 @@ const numOrNull = { type: ['number', 'null'] };
 
 const num = (v) => (v === null || v === undefined || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
 
+// Every email to the tenant that lists cheques follows saifsys's layout, given in the facts.
+// Without this the AI split the VAT over every cheque and made up a "balance" line, so the
+// email said one thing and the contract another.
+const CHEQUES = `- Cheques: never make up a split, a "balance" or a line of your own. With the figures on offer, copy the cheque lines in the facts
+  exactly. With other figures agreed in the emails (a new rent or fee), work the cheques out only by the layout in the facts: ALL the
+  VAT, every fee and the Ejari fee in cheque 1; the others rent and chiller only, no VAT. Check that the cheques add up to the total.
+  If the facts say the layout is not known, do not list cheque amounts: say the exact cheques will be in the renewal contract.`;
+
 // ---------- the tenant's email ----------
 
 const REPLY = `You read a tenant's email in a lease renewal conversation for a Dubai landlord and say what it means. The email may be in any language.
@@ -73,7 +81,8 @@ Answer by filling in the answer tool:
   dispute_note: one line on what they are claiming. null when dispute is false.
 - suggested_reply: a short, polite reply in English that a person could send: only the body, no greeting ("Dear ...")
   and no sign-off, as both are added, using ONLY the facts given (no promises,
-  no new figures, no legal threats). For a question, answer it if the facts do; otherwise null.`;
+  no new figures, no legal threats). For a question, answer it if the facts do; otherwise null.
+${CHEQUES}`;
 
 /** What a tenant's email means, given the renewal's facts and the conversation so far. */
 export async function readReply({ facts, history, text }) {
@@ -158,7 +167,8 @@ Answer by filling in the answer tool: {"view": string, "reply": string}
 Rules you never break:
 - Never say whether the rent increase is legal or allowed. If the tenant raises it, say the team should check the unit on DLD's Rental Index calculator and offer what it allows.
 - Never file, or tell the team to file, a case. Never threaten the tenant with one.
-- Never present a figure, date or promise as already agreed when it is not in the facts.`;
+- Never present a figure, date or promise as already agreed when it is not in the facts.
+${CHEQUES}`;
 
 /** One advisor's answer to what a person asked about a renewal, in its own persona. agent: { name, persona }. */
 export async function advise({ agent, facts, thread, dispute, ask, earlier }) {
@@ -224,7 +234,8 @@ Answer by filling in the answer tool: {"reply": string}
   details (figures, terms) from the tenant's emails and the facts. Keep it simple and short.
 - Professional and warm, never cold or pushy; short paragraphs; plain English; no slang, no emojis.
 - No new figures, dates, discounts or promises that are not in the facts or the draft.
-- Never say whether a rent increase is legal or allowed, and never threaten the tenant with a case.`;
+- Never say whether a rent increase is legal or allowed, and never threaten the tenant with a case.
+${CHEQUES}`;
 
 // An email to someone in the company about one renewal (accounts, legal, a colleague), never
 // to the tenant. The reason says what the email asks for; the figures come from the renewal.
