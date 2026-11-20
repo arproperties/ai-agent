@@ -301,7 +301,7 @@ dates, quantities, totals to date, materials with quantities, people, photos, pr
 
 // ---------- finding the reports among the files ----------
 
-const DOC_COLS = 'd.id, d.user_id, d.name, d.title, d.folder, d.summary, d.doc_date, d.created_at';
+const DOC_COLS = 'd.id, d.user_id, d.name, d.title, d.folder, d.summary, d.doc_date, d.created_at, d.conversation_id';
 
 // Files with text that a report could be. External people's files are their own business,
 // and the notes Reem saves as facts are not reports.
@@ -318,7 +318,71 @@ export async function newFiles(types, now = Date.now()) {
                      ORDER BY d.id LIMIT 80`).all(since);
 }
 
-const fileLine = (d) => `[${d.id}] ${line(d.title || d.name, 140)} | file: ${line(d.name, 80)} | ${d.folder || ''} | ${line(d.summary, 240)}`;
+// ---------- photos sent together ----------
+// Faisal's and Umer's reports come as WhatsApp photos the boss sends into a Reem chat, several in
+// one message. Each photo is filed as its own file, but together they are one report, and the words
+// typed with them ("Faisal cleaning report") say what it is. So the files of one chat message are
+// sorted and checked as one: the first file stands for the lot.
+
+// How long the rest of a message's photos are waited for while Reem is still reading them.
+const BUNDLE_WAIT_SECS = 30 * 60;
+
+/** The chat message a file was sent with: { words, ids } (every file in it), or null. */
+async function messageOf(doc) {
+  if (!doc.conversation_id) return null;
+  // A message row whose files are not JSON must not stop the watch: the file is then read alone.
+  const m = await db.prepare(`SELECT content, files FROM messages WHERE conversation_id = ? AND role = 'user'
+      AND files::jsonb @> ?::jsonb ORDER BY id LIMIT 1`).get(doc.conversation_id, JSON.stringify([{ docId: doc.id }])).catch(() => null);
+  if (!m) return null;
+  let files = [];
+  try { files = JSON.parse(m.files || '[]'); } catch { /* an old row */ }
+  const ids = [...new Set(files.map((f) => Number(f?.docId)).filter(Number.isInteger))].sort((a, b) => a - b);
+  return { words: String(m.content || '').trim(), ids: ids.length ? ids : [doc.id] };
+}
+
+/**
+ * The file as a report: alone, or with the other files of its chat message as `parts`, and the
+ * words typed with them. `wait` is true while some of them are still being read (not given up on).
+ */
+export async function bundleOf(doc, now = Date.now()) {
+  const msg = await messageOf(doc);
+  if (!msg) return { doc, wait: false };
+  const rows = await db.prepare(`SELECT ${DOC_COLS}, d.status, EXISTS (SELECT 1 FROM document_texts t WHERE t.document_id = d.id) has_text
+    FROM documents d WHERE d.id = ANY(?::int[]) ORDER BY d.id`).all(msg.ids);
+  const young = (r) => Math.floor(now / 1000) - Number(r.created_at) < BUNDLE_WAIT_SECS;
+  const wait = rows.some((r) => r.status !== 'error' && !r.has_text && young(r));
+  const parts = rows.filter((r) => r.has_text && r.status === 'ready').map(({ status, has_text, ...r }) => r);
+  if (!parts.length) return { doc, wait };
+  if (parts.length === 1 && !msg.words) return { doc: parts[0], wait };
+  return { doc: { ...parts[0], parts, words: msg.words.slice(0, 600) }, wait };
+}
+
+/**
+ * New files as reports: each chat message's files joined into one. Files whose message is still
+ * being read are held back (`waiting`) and looked at on a later round.
+ */
+export async function groupFiles(docs, now = Date.now()) {
+  const used = new Set();
+  const out = [];
+  const waiting = [];
+  for (const d of docs) {
+    if (used.has(d.id)) continue;
+    const { doc, wait } = await bundleOf(d, now);
+    const ids = doc.parts ? doc.parts.map((x) => x.id) : [d.id];
+    for (const id of [d.id, ...ids]) used.add(id);
+    if (wait) { waiting.push(d.id, ...ids); continue; }
+    out.push(doc);
+  }
+  return { reports: out, waiting: new Set(waiting) };
+}
+
+/** Every file a report was made of. */
+const idsOf = (doc) => (doc.parts ? doc.parts.map((p) => p.id) : [doc.id]);
+
+const fileLine = (d) => (d.parts
+  ? `[${d.id}] ${d.parts.length} file(s) sent together in a chat${d.words ? `, with the words: "${line(d.words, 200)}"` : ''} | `
+    + d.parts.map((p) => `${line(p.title || p.name, 80)}: ${line(p.summary, 120)}`).join(' ; ').slice(0, 900)
+  : `[${d.id}] ${line(d.title || d.name, 140)} | file: ${line(d.name, 80)} | ${d.folder || ''} | ${line(d.summary, 240)}`);
 
 /** Which of these files is which report: [{ doc, type }]. One cheap call for the lot. */
 export async function matchReports(docs, types, asker = ask) {
@@ -334,6 +398,7 @@ export async function matchReports(docs, types, asker = ask) {
     model: MATCH_MODEL,
     system: `You sort a company's newly uploaded files. Say which files are one of the report types listed, going by each file's title, name and summary.
 Only a file that IS such a report (the report itself, a photo of it, or a scan) - not a file that only mentions one.
+Files sent together in a chat are one report: the words typed with them often say what they are ("Faisal cleaning report"), and photos of the work done are the report.
 Most files are none of them: leave those out. Reply with ONLY JSON: {"matches": [{"file": <file id>, "type": <type id>}]}`,
   });
   const byDoc = new Map(docs.map((d) => [d.id, d]));
@@ -380,6 +445,14 @@ Reply with ONLY JSON:
 The note: short, polite, plain English. Start "Salam <first name>," then name the report and its date, list each missing part
 as a numbered line, and ask for the updated report today. No sign-off.`;
 
+/** The text of a report: one file's, or each part's under its own heading. */
+async function textOf(doc) {
+  const rows = await db.prepare('SELECT document_id, text FROM document_texts WHERE document_id = ANY(?::int[])').all(idsOf(doc));
+  if (!doc.parts) return rows[0]?.text || '';
+  const by = new Map(rows.map((r) => [r.document_id, r.text]));
+  return doc.parts.map((p, k) => (by.get(p.id) ? `=== File ${k + 1}: ${p.title || p.name} ===\n${by.get(p.id)}` : '')).filter(Boolean).join('\n\n');
+}
+
 const latestBefore = (typeId, day) => db.prepare(`SELECT report_date, facts FROM report_checks
   WHERE type_id = ? AND report_date < ? ORDER BY report_date DESC, id DESC LIMIT 1`).get(typeId, day);
 
@@ -422,7 +495,7 @@ export function plausibleDay(read, uploadDay) {
  * quiet: no buzz. past: a report from before Reem was watching, whose note is kept but not waited on.
  */
 export async function checkReport(type, doc, { asker = ask, pusher = sendPush, quiet = false, past = false } = {}) {
-  const text = (await db.prepare('SELECT text FROM document_texts WHERE document_id = ?').get(doc.id))?.text;
+  const text = await textOf(doc);
   if (!text) return null;
   const uploadDay = dubaiDate(Number(doc.created_at) * 1000);
   const guess = plausibleDay(doc.doc_date, uploadDay) || addDays(uploadDay, -1);
@@ -438,7 +511,9 @@ export async function checkReport(type, doc, { asker = ask, pusher = sendPush, q
     ...(type.daily_target ? [`Daily target: ${type.daily_target} units a day. Count the units done in this report carefully into units_done.`, ''] : []),
     before ? `The last report before this one (${before.report_date}) gave: ${JSON.stringify(before.facts).slice(0, 3000)}` : 'There is no earlier report on file.',
     '',
-    `File: ${doc.title || doc.name} (${doc.name}), dated about ${guess}`,
+    doc.parts
+      ? `${doc.parts.length} file(s) sent together in a chat, dated about ${guess}.${doc.words ? ` The words sent with them: "${doc.words}"` : ''}\nTogether they are one report: each photo is part of it.`
+      : `File: ${doc.title || doc.name} (${doc.name}), dated about ${guess}`,
     '---',
     text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}\n…(cut short)` : text,
   ].join('\n');
@@ -582,13 +657,17 @@ async function markOnce(key) {
 /** New files: find the reports and check them. */
 export async function watchFiles({ now = Date.now(), asker = ask, pusher = sendPush } = {}) {
   const types = (await listTypes()).filter((t) => t.active && t.kind !== 'watch');
-  const docs = await newFiles(types, now);
+  const fresh = await newFiles(types, now);
+  if (!fresh.length) return [];
+  const { reports: docs, waiting } = await groupFiles(fresh, now);
   if (!docs.length) return [];
   const already = new Set((await db.prepare('SELECT type_id, document_id FROM report_checks WHERE document_id = ANY(?::int[])')
     .all(docs.map((d) => d.id))).map((r) => `${r.type_id}:${r.document_id}`));
   const matches = (await matchReports(docs, types, asker)).filter((m) => !already.has(`${m.type.id}:${m.doc.id}`));
   // Seen once the sorting is done: a check that fails is tried again from the screen, not every five minutes.
-  await db.prepare('INSERT INTO report_check_seen (document_id) SELECT unnest(?::int[]) ON CONFLICT DO NOTHING').run(docs.map((d) => d.id));
+  // A message whose photos are still being read is left for a later round, all of it.
+  const seen = docs.flatMap(idsOf).filter((id) => !waiting.has(id));
+  await db.prepare('INSERT INTO report_check_seen (document_id) SELECT unnest(?::int[]) ON CONFLICT DO NOTHING').run(seen);
   const done = [];
   for (const { doc, type } of matches) {
     try {
@@ -665,8 +744,12 @@ export async function backfill(typeId, { days = 30, asker = ask, now = Date.now(
     const since = Math.floor(now / 1000) - n * 86400;
     const docs = await db.prepare(`SELECT ${DOC_COLS} ${FILES} AND d.created_at >= ?
       AND NOT EXISTS (SELECT 1 FROM report_checks c WHERE c.type_id = ? AND c.document_id = d.id) ORDER BY d.id`).all(since, type.id);
+    // A photo already checked as part of another's message is not a report of its own.
     state.files = docs.length;
     await save(state);
+    const { reports } = await groupFiles(docs, now);
+    docs.length = 0;
+    docs.push(...reports);
     const found = [];
     for (let i = 0; i < docs.length; i += 80) {
       // One batch the model fumbles is skipped, not the whole month.
@@ -696,7 +779,7 @@ export async function recheck(id, { asker = ask } = {}) {
   if (!c) throw bad('That report check is gone', 404);
   if (!c.document_id) throw bad('The file of this report was deleted');
   const [type, doc] = await Promise.all([getType(c.type_id), db.prepare(`SELECT ${DOC_COLS} FROM documents d WHERE d.id = ?`).get(c.document_id)]);
-  const again = await checkReport(type, doc, { asker, quiet: true });
+  const again = await checkReport(type, (await bundleOf(doc)).doc, { asker, quiet: true });
   if (!again) {
     await db.prepare('DELETE FROM report_checks WHERE id = ?').run(c.id);
     return null;
