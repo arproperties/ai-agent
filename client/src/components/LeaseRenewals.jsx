@@ -27,7 +27,7 @@ const when = (secs) => {
 };
 
 const STATUS = {
-  scheduled: ['Offer ready', 'p1'], offer_sent: ['Offer sent', 'p1'], negotiating: ['Negotiating', 'p1'], agreed: ['Waiting for papers', 'p1'], papers_ok: ['Ready to convert', 'ok'],
+  draft: ['Draft', 'warn'], scheduled: ['Offer ready', 'p1'], offer_sent: ['Offer sent', 'p1'], negotiating: ['Negotiating', 'p1'], agreed: ['Waiting for papers', 'p1'], papers_ok: ['Ready to convert', 'ok'],
   converted: ['Renewed', 'ok'], not_renewing: ['Not renewing', 'mute'], closed: ['Closed', 'mute'],
 };
 const WAITING = { reply: ['Tenant replied', 'warn'], papers: ['Papers to check', 'warn'], no_answer: ['No answer', 'bad'], error: ['Problem', 'bad'] };
@@ -57,7 +57,7 @@ function leftAsAgreed(l) { return l.renewal?.status === 'not_renewing' && l.days
 const rejected = (l) => !l.renewal && l.saifsys_rejected;
 // A renewal the staff ran in saifsys, with no renewal of Reem's: tapping it shows what they did there.
 const inSaifsys = (l) => !l.renewal && !!(l.saifsys_renewal || l.saifsys_rejected || l.saifsys_last);
-const needsYou = (l) => !!(l.renewal?.waiting || (l.renewal?.dispute && !DONE.includes(l.renewal.status)) || l.renewal?.status === 'papers_ok');
+const needsYou = (l) => !!(l.renewal?.waiting || (l.renewal?.dispute && !DONE.includes(l.renewal.status)) || l.renewal?.status === 'papers_ok' || l.renewal?.status === 'draft');
 
 const Chip = ({ c: [label, tone] }) => <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs ${CHIP[tone]}`}>{label}</span>;
 
@@ -702,6 +702,12 @@ function Compose({ ask, onClose, onSent }) {
     try { setText((await api.post(`/lease-renewals/${ask.id}/rewrite`, { text, ask: idea || wish })).text); setWish(''); } catch (e) { setError(e.message); }
     setRewriting(false);
   };
+  // The first offer, kept to finish later: nothing goes to the tenant or saifsys.
+  const [drafting, setDrafting] = useState(false);
+  const saveDraft = async () => {
+    setDrafting(true); setError('');
+    try { onSent(await api.post('/lease-renewals/offer-draft', { ...ask, text })); } catch (e) { setError(e.message); setDrafting(false); }
+  };
   const send = async () => {
     setBusy(true); setError(''); sending.current = true;
     try { onSent(await api.post('/lease-renewals/send', { ...ask, text })); } catch (e) { sending.current = false; setError(e.message); setBusy(false); }
@@ -802,6 +808,8 @@ function Compose({ ask, onClose, onSent }) {
             </p>
           </div>
 
+          {d.draftKept && <p className="flex items-start gap-1.5 text-xs text-mute"><FileText size={13} className="mt-px shrink-0" /> Your saved draft. saifsys's figures are the same as when you saved it.</p>}
+          {d.draftChanged && <p className="flex items-start gap-1.5 text-xs text-warn"><AlertTriangle size={13} className="mt-px shrink-0" /> saifsys's figures changed since you saved the draft, so Reem wrote the email again with the new figures. Your own changes to the words were not kept: check it before you send.</p>}
           {d.sendOn && <p className="flex items-start gap-1.5 text-xs text-mute"><Clock size={13} className="mt-px shrink-0" /> It is too early for the offer: Reem sends it by itself on {day(d.sendOn)}, 120 days before the lease ends.</p>}
           {ask.action === 'convert' && <p className="text-xs text-mute">saifsys makes the new lease and its cheques now, then this email goes to the tenant.</p>}
           <Problem text={error} />
@@ -814,7 +822,8 @@ function Compose({ ask, onClose, onSent }) {
           <div className="sticky bottom-0 -mx-5 flex flex-wrap justify-end gap-2 border-t border-stroke bg-surface px-5 pb-1 pt-3">
             {ask.action === 'reply' && <Btn busy={rewriting} disabled={!text.trim() || busy} onClick={() => rewrite()}><Sparkles size={14} /> Rewrite with Reem</Btn>}
             <Btn onClick={onClose}>Cancel</Btn>
-            <Btn primary busy={busy} disabled={!text.trim() || rewriting} onClick={send}>{d.sendOn ? <><Clock size={14} /> Send on {day(d.sendOn)}</> : <><Send size={14} /> Send</>}</Btn>
+            {ask.action === 'start' && <Btn busy={drafting} disabled={!text.trim() || busy} onClick={saveDraft}><FileText size={14} /> Save as draft</Btn>}
+            <Btn primary busy={busy} disabled={!text.trim() || rewriting || drafting} onClick={send}>{d.sendOn ? <><Clock size={14} /> Send on {day(d.sendOn)}</> : <><Send size={14} /> Send</>}</Btn>
           </div>
         </div>
       )}
@@ -1045,11 +1054,12 @@ function Renewal({ id, onBack, chat = null }) {
     if (what === 'not_renewing_quiet' && !confirm(`Mark this tenant as not renewing without emailing them? They leave when the lease ends (${day(r.end_date)}). saifsys is told too, and no more renewal emails go to the tenant.`)) return;
     if (what === 'close' && !confirm('Take this renewal out of Reem? No more emails or reminders go to the tenant, and you handle it yourself.')) return;
     if (what === 'auto_off' && !confirm('Take over this lease? Reem stops answering the tenant, and you do each step by hand. You can hand it back later.')) return;
+    if (what === 'delete_draft' && !confirm('Delete this draft? Nothing has gone to the tenant; the lease goes back to not started.')) return;
     if (what === 'unschedule' && !confirm('Cancel this offer? Nothing has gone to the tenant; you can start it again.')) return;
     setBusy(what);
     try {
       await api.post(`/lease-renewals/${id}/mark`, { what });
-      if (what === 'unschedule') { onBack(); return; }
+      if (what === 'unschedule' || what === 'delete_draft') { onBack(); return; }
       await load();
     } catch (e) { setError(e.message); }
     setBusy('');
@@ -1085,6 +1095,8 @@ function Renewal({ id, onBack, chat = null }) {
     close: { label: 'Handle outside Reem', icon: X, run: () => mark('close'), busy: busy === 'close' },
     send_now: { label: 'Send now', icon: Send, run: () => mark('send_now'), busy: busy === 'send_now' },
     unschedule: { label: 'Cancel the offer', icon: X, run: () => mark('unschedule'), busy: busy === 'unschedule' },
+    continue_draft: { label: 'Continue the offer', icon: Mail, run: () => rn.draft?.ask && setSheet({ compose: rn.draft.ask }) },
+    delete_draft: { label: 'Delete draft', icon: X, run: () => mark('delete_draft'), busy: busy === 'delete_draft' },
   };
   const step = nextStep(r);
   const rise = rn.offer && r.annual_rent ? ((Number(rn.agreed ?? rn.offer) - r.annual_rent) / r.annual_rent) * 100 : null;
@@ -1406,6 +1418,7 @@ function nextStep(r) {
   const rn = r.renewal;
   const s = rn.status;
   const end = ['not_renewing', 'not_renewing_quiet', 'close'];
+  if (s === 'draft') return { tone: 'you', icon: FileText, title: 'The offer is saved as a draft', sub: 'Nothing has gone to the tenant or saifsys, and Reem will not send it by itself.', main: ['continue_draft'], more: ['delete_draft'] };
   if (s === 'scheduled' && (!rn.auto || r.paused)) return { tone: 'you', icon: Send, title: 'The offer is ready: send it', sub: `Reem will not send it by itself. It was due on ${day(rn.sendOn)}.`, main: ['send_now'], more: ['unschedule'] };
   if (s === 'scheduled') return { tone: 'wait', icon: Clock, title: `Reem sends the offer on ${day(rn.sendOn)}`, sub: '120 days before the lease ends. Nothing has gone to the tenant yet.', main: ['send_now'], more: ['unschedule'] };
   if (s === 'converted') return { tone: 'done', icon: Check, title: 'Renewed', sub: 'saifsys has the new lease, and the tenant was told.', main: [], more: [] };

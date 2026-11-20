@@ -647,6 +647,52 @@ test('reply ideas: made once per tenant email, none before the tenant wrote', as
   assert.equal(asked, 1, 'reopening asks the AI nothing');
 });
 
+test('offer saved as a draft: nothing sent, nothing in saifsys; continued later and sent as the same renewal', async () => {
+  const boss = await setup();
+  stub();
+  const ask = { action: 'start', lease_id: LEASE.lease_id, rent: 39600 };
+  const first = await R.draft(boss, ask);
+  let r = await R.saveOfferDraft(boss, { ...ask, text: first.text.replace('we would be glad to renew it.', 'we would be very glad to renew it.') });
+  assert.equal(r.status, 'draft');
+  assert.equal(world.sent.length, 0, 'nothing to the tenant');
+  assert.ok(!world.acts.some((a) => a.action === 'start'), 'nothing made in saifsys');
+  assert.equal(await R.claim({ uid: 900, from: LEASE.email, subject: 'hello', text: 'hi', at: 1 }, 1), false, 'a draft never takes the tenant\'s emails');
+
+  // Saved again: still one draft, overwritten.
+  r = await R.saveOfferDraft(boss, { ...ask, text: first.text.replace('we would be glad to renew it.', 'we would be very glad to renew it.') });
+  const d = await R.draft(boss, ask);
+  assert.deepEqual([d.draftKept, d.draftChanged], [true, false]);
+  assert.match(d.text, /we would be very glad to renew it\./, 'the saved words');
+
+  const sent = await R.send(boss, { ...ask, text: d.text });
+  assert.deepEqual([sent.id, sent.status], [r.id, 'offer_sent'], 'the same renewal');
+  assert.match(lastMail(), /we would be very glad to renew it\./);
+  assert.ok(world.acts.some((a) => a.action === 'start'));
+});
+
+test('offer draft: changed saifsys figures write the email again; a failed send leaves the draft; delete frees the lease', async () => {
+  const boss = await setup();
+  stub();
+  const ask = { action: 'start', lease_id: LEASE.lease_id, rent: 39600 };
+  const r = await R.saveOfferDraft(boss, { ...ask, text: 'Dear Mohamed Saeed,\n\nMy own words AED 39,600.' });
+  // saifsys now prices it differently (a new admin fee): the old words are not reused.
+  R.useForTests({ act: async (m, action, body) => {
+    world.acts.push({ action, ...body });
+    if (action === 'quote') return { quote: { ...quoteOf(body.rent), grand_total: body.rent + 2000 * 1.05 + 300, fees: { admin: 2000, chiller: 0, chiller_shown: false } } };
+    if (action === 'start') throw new Error('saifsys is down');
+    return { renewal: {} };
+  } });
+  const d = await R.draft(boss, ask);
+  assert.deepEqual([d.draftKept, d.draftChanged], [false, true]);
+  assert.doesNotMatch(d.text, /My own words/);
+  await assert.rejects(R.send(boss, { ...ask, text: d.text }), /saifsys is down/);
+  assert.equal((await R.getRenewal(r.id)).status, 'draft', 'still the draft');
+  assert.equal(await R.mark(boss, r.id, 'delete_draft'), null);
+  assert.ok(!(await R.getRenewal(r.id)), 'gone');
+  stub();
+  assert.equal((await start(boss)).status, 'offer_sent', 'the lease starts as normal');
+});
+
 test('send test: the Agree email with the previewed contract goes only to the typed address, and nothing else moves', async () => {
   const boss = await setup();
   stub();
