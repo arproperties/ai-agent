@@ -1335,23 +1335,25 @@ async function handle(r, e) {
   } else if (reading.dispute && r.auto) {
     await stopAuto(r, `the tenant disputes the renewal, so Reem will not email them by itself`);
   } else {
-    await tell(r, `${reading.dispute ? '⚠️ Dispute: ' : ''}${title}${r.auto && !s.paused ? ' (needs you)' : ''}`);
+    const ready = reading.intent === 'accept' && !reading.dispute ? '. The contract email is ready: tap Agree, check it, then Send' : '';
+    await tell(r, `${reading.dispute ? '⚠️ Dispute: ' : ''}${title}${ready}${r.auto && !s.paused && !ready ? ' (needs you)' : ''}`);
   }
   // Advisors answer only when a person asks them something (the user, 2026-11-03).
   return null;
 }
 
 /**
- * What Reem answers by itself, on an automatic renewal: an acceptance of the rent on offer
- * gets the contract; a counter or a request for less gets the RERA index rent, once (never
- * a counter-offer of Reem's own). Anything else is for a person: null.
+ * What Reem answers by itself, on an automatic renewal: a counter or a request for less gets
+ * the RERA index rent, once (never a counter-offer of Reem's own). Anything else is for a
+ * person: null. An acceptance too: the contract never goes by itself (the user, 2026-11-20).
+ * A person opens Agree, reads the email and the figures Reem has ready, and taps Send.
  * A tenant who disputes it (RDC, a lawyer, "illegal") never gets an email from Reem by
  * itself again, on this renewal: a person answers every step (the user, 2026-11-02).
  */
 export function autoAnswer(r, reading) {
   if (!r.auto || !['offer_sent', 'negotiating'].includes(r.status)) return null;
   if (reading.dispute || r.dispute) return null;
-  if (reading.intent === 'accept') return { ask: { action: 'accept', rent: r.offer }, did: `agreed at ${aed(r.offer)} and sent the contract` };
+  if (reading.intent === 'accept') return null;
   const pushback = reading.intent === 'counter' || reading.asksLess;
   if (pushback && r.rent_source?.kind === 'manual' && r.rera_pct !== null) {
     const index = indexRentFrom(r.lease.annual_rent, r.rera_pct);
