@@ -635,7 +635,7 @@ test('charges: each extra listed, VAT taken from saifsys\'s own total, shown as 
 
 const autoStart = (boss, rent = 42000, rera = 5) => R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent, rera_pct: rera });
 
-test('automatic: asking for less gets the RERA index rent, an acceptance the contract, papers are sent back, then staff renew', async () => {
+test('automatic: asking for less gets the RERA index rent, an acceptance waits for a person to send the contract, papers are sent back, then staff renew', async () => {
   const boss = await setup();
   const cheques = quoteOf(37800).cheques;
   const photo = (name) => ({ contentType: 'image/jpeg', filename: name, content: Buffer.from(name) });
@@ -659,9 +659,17 @@ test('automatic: asking for less gets the RERA index rent, an acceptance the con
   assert.match(lastMail(), /RERA Rental Index/);
   assert.match(world.pushes.at(-1), /Reem offered the RERA index rent, AED 37,800/);
 
+  // The tenant accepts: Reem sends nothing by itself and asks a person, who sends the contract.
+  const before = world.sent.length;
+  world.acts = [];
   await arrives({ text: 'OK agreed' });
   await R.readInbound();
   r = await R.getRenewal(r.id);
+  assert.deepEqual([r.status, r.agreed, r.waiting, r.auto], ['negotiating', null, 'reply', true]);
+  assert.equal(world.sent.length, before, 'no contract by itself');
+  assert.ok(!world.acts.some((a) => ['contract', 'status', 'rent', 'charges'].includes(a.action)), 'saifsys untouched');
+  assert.match(world.pushes.at(-1), /The contract email is ready: tap Agree, check it, then Send/);
+  r = await R.send(boss, { id: r.id, action: 'accept' });
   assert.deepEqual([r.status, r.agreed], ['agreed', 37800]);
   assert.match(lastMail(), /Tenancy contract - PARK PLACE 610\.pdf/);
 
@@ -922,10 +930,10 @@ test('handled outside Reem: a reply on the old thread is kept, but not read, ans
 
 test('when something breaks Reem stops on that lease and tells staff', async () => {
   const boss = await setup();
-  stub({ replies: [{ intent: 'accept', summary: 'Accepts', dispute: false }] });
+  stub({ replies: [{ intent: 'counter', amount: 36000, summary: 'Asks for 36,000', asksLess: true, dispute: false }] });
   let r = await autoStart(boss);
-  R.useForTests({ act: async (m, action) => { if (action === 'contract') throw new Error('saifsys is down'); return { renewal: {} }; } });
-  await arrives({ text: 'I accept' });
+  R.useForTests({ act: async () => { throw new Error('saifsys is down'); } });
+  await arrives({ text: 'Can you do 36,000?' });
   await R.readInbound();
   r = await R.getRenewal(r.id);
   assert.deepEqual([r.auto, r.waiting], [false, 'reply']);
@@ -940,6 +948,7 @@ test('papers still wrong after three tries: Reem stops', async () => {
   let r = await autoStart(boss);
   await arrives({ text: 'I accept' });
   await R.readInbound();
+  await R.send(boss, { id: r.id, action: 'accept' }); // a person sends the contract
   R.useForTests({ fetch: async () => ({ attachments: [{ contentType: 'image/jpeg', filename: 'x.jpg', content: Buffer.from('x') }] }) });
   for (let i = 0; i < 4; i++) { await arrives({ text: `try ${i}` }); await R.readInbound(); }
   r = await R.getRenewal(r.id);
