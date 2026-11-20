@@ -536,7 +536,10 @@ function chillerWorld({ chargesTotal = null, oldSaifsys = false } = {}) {
       const admin = oldSaifsys && body.admin_fees === 0 ? 1500 : (body.admin_fees ?? 1500);
       const chiller = body.chiller_charges ?? 8000;
       const total = priced(body.rent, admin, chiller);
-      return { quote: { ...quoteOf(body.rent), grand_total: total, cheques_total: total, fees: { admin, chiller, chiller_shown: true, pest: 0 } } };
+      // Laid out as saifsys lays Reem's renewals out: VAT, fees and Ejari in cheque 1.
+      const per = Math.floor(body.rent / 4) + Math.floor(chiller / 4);
+      const cheques = quoteOf(body.rent).cheques.map((c, i) => ({ ...c, amount: i === 0 ? Math.round((total - per * 3) * 100) / 100 : per }));
+      return { quote: { ...quoteOf(body.rent), cheques, grand_total: total, cheques_total: total, fees: { admin, chiller, chiller_shown: true, pest: 0 } } };
     }
     if (action === 'charges') {
       if (oldSaifsys) throw new Error('Unknown action.');
@@ -550,6 +553,31 @@ function chillerWorld({ chargesTotal = null, oldSaifsys = false } = {}) {
     return { renewal: { workflow_id: body.workflow_id } };
   } });
 }
+
+test('the AI writing to the tenant gets saifsys\'s cheque layout: all the VAT in cheque 1, never split', async () => {
+  const boss = await setup();
+  stub();
+  chillerWorld();
+  const r = await start(boss, 59400);
+  const asked = [];
+  R.useForTests({ rewriteReply: async (x) => { asked.push(x); return 'Confirmed.'; } });
+  await R.rewrite(r.id, 'Dear Mohamed Saeed,\n\nok\n\nKind regards,\nTenant Care Team', 'confirm chiller 6,000 and admin waived');
+  const f = asked[0].facts;
+  assert.match(f, /AED 19,125 \(rent AED 14,850 \+ chiller AED 2,000 \+ chiller VAT AED 400 \+ admin fee with VAT AED 1,575 \+ Ejari fee AED 300\)/);
+  assert.match(f, /2\. .*: AED 16,850 \(rent AED 14,850 \+ chiller AED 2,000\)/);
+  assert.match(f, /ALL the VAT, every other fee and the Ejari fee/);
+  assert.match(f, /VAT is never split over the cheques/);
+});
+
+test('a renewal whose cheques are not laid out Reem\'s way: the AI is told not to work cheques out', async () => {
+  const boss = await setup();
+  stub();
+  const r = await start(boss, 42000);
+  const asked = [];
+  R.useForTests({ rewriteReply: async (x) => { asked.push(x); return 'ok'; } });
+  await R.rewrite(r.id, 'Dear Mohamed Saeed,\n\nhello\n\nKind regards,\nTenant Care Team');
+  assert.match(asked[0].facts, /Cheque layout: not known for this renewal\. Never work cheque amounts out/);
+});
 
 test('send test: the Agree email with the previewed contract goes only to the typed address, and nothing else moves', async () => {
   const boss = await setup();

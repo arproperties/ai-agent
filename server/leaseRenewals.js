@@ -1244,11 +1244,29 @@ const factsOf = (r, s) => [
   r.quote ? `Renewal on offer: ${aed(r.agreed ?? r.offer)} a year from ${longDate(r.quote.start_date)} to ${longDate(r.quote.end_date)}, ${r.quote.cheques.length} cheques: ${r.quote.cheques.map((ch) => `${longDate(ch.date)} ${aed(ch.amount)}`).join('; ')}.` : '',
   r.quote ? offerCharges(r.quote) : '',
   r.quote?.rera ? `Ejari fee: ${aed(r.quote.rera)}.` : '',
+  r.quote ? chequeLayout(r.quote, r.agreed ?? r.offer) : '',
   s.payee ? `Cheques are payable to ${s.payee}.` : '',
   ['agreed', 'papers_ok'].includes(r.status) ? `The rent is agreed at ${aed(r.agreed)}; the tenant still has to send the signed agreement${r.lease.payment_method === 'cheque' ? ' and photos of the cheques' : ''}.` : '',
   r.quote?.terms_text ? `Terms: ${r.quote.terms_text.replace(/\n/g, ' ')}` : '',
   r.quote?.required_documents_text ? `Documents needed: ${r.quote.required_documents_text.replace(/\n/g, '; ')}` : '',
 ].filter(Boolean).join('\n');
+
+/**
+ * How saifsys lays the cheques out, for the AI writing to the tenant: the offer's cheques with
+ * what each is made of, and the rule, so a reply with new figures (a lower chiller agreed in
+ * the emails) follows it instead of splitting the VAT over every cheque. Only for renewals
+ * whose cheques are laid out Reem's way; for others the AI is told not to work them out.
+ */
+function chequeLayout(q, rent) {
+  const parts = rent ? chequeParts(q, rent) : null;
+  if (!parts) return 'Cheque layout: not known for this renewal. Never work cheque amounts out: say the exact cheques will be in the renewal contract.';
+  return [
+    'The cheques on offer, and what each is made of:', ...parts,
+    'saifsys always lays the cheques out this way, whatever the figures: cheque 1 is its share of the rent and of the chiller plus ALL the VAT, every other fee and the Ejari fee;'
+      + ' each other cheque is only the rent divided by the number of cheques, rounded down to the dirham, plus the chiller divided the same way, with no VAT.'
+      + ' Cheque 1 takes what the rounding leaves. VAT is never split over the cheques.',
+  ].join('\n');
+}
 
 /** The charges in the offer, each with its VAT: what the tenant was asked to pay besides the rent. */
 function offerCharges(q) {
