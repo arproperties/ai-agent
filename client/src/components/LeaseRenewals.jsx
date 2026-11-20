@@ -655,6 +655,17 @@ function Compose({ ask, onClose, onSent }) {
     setBusy(true); setError('');
     try { onSent(await api.post('/lease-renewals/send', { ...ask, text })); } catch (e) { setError(e.message); setBusy(false); }
   };
+  // "Send test": the same email to an address the person types (their own to begin with).
+  // Nothing else happens: saifsys, the renewal and the tenant are left as they are.
+  const [testTo, setTestTo] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [tested, setTested] = useState('');
+  useEffect(() => { api.get('/auth/me').then((x) => setTestTo((t) => t || x?.user?.email || '')).catch(() => {}); }, []);
+  const sendTest = async () => {
+    setTesting(true); setError(''); setTested('');
+    try { setTested((await api.post('/lease-renewals/send-test', { ...ask, text, test_to: testTo.trim() })).to); } catch (e) { setError(e.message); }
+    setTesting(false);
+  };
   const offer = d?.rent && ask.action !== 'convert';
   return (
     <Sheet title={TITLES[ask.action]} onClose={onClose} wide="text">
@@ -714,6 +725,19 @@ function Compose({ ask, onClose, onSent }) {
               <Btn primary busy={rewriting} disabled={!wish.trim() || busy}>Write</Btn>
             </form>
           )}
+          <div className="rounded-2xl border border-dashed border-stroke px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm">Send test to</span>
+              <input value={testTo} onChange={(e) => { setTestTo(e.target.value); setTested(''); }} type="email" inputMode="email" aria-label="Send the test to"
+                placeholder="you@company.com" className="min-w-0 flex-1 rounded-full border border-stroke bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-p1/60" />
+              <Btn busy={testing} disabled={!testTo.trim() || !text.trim() || busy} onClick={sendTest}><Send size={14} /> Send test</Btn>
+            </div>
+            <p className="mt-1.5 text-xs text-mute">
+              {tested ? <span className="text-txt">Test sent to {tested}. Nothing went to the tenant and nothing changed.</span>
+                : 'The same email, with the contract if there is one, marked [TEST]. The tenant gets nothing and saifsys does not change.'}
+            </p>
+          </div>
+
           {d.sendOn && <p className="flex items-start gap-1.5 text-xs text-mute"><Clock size={13} className="mt-px shrink-0" /> It is too early for the offer: Reem sends it by itself on {day(d.sendOn)}, 120 days before the lease ends.</p>}
           {ask.action === 'convert' && <p className="text-xs text-mute">saifsys makes the new lease and its cheques now, then this email goes to the tenant.</p>}
           <Problem text={error} />

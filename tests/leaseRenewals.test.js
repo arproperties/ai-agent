@@ -543,10 +543,55 @@ function chillerWorld({ chargesTotal = null, oldSaifsys = false } = {}) {
       return { renewal: { workflow_id: body.workflow_id, grand_total: chargesTotal ?? priced(body.rent, body.admin_fees, body.chiller_charges), admin: body.admin_fees, chiller: body.chiller_charges } };
     }
     if (action === 'contract') return { contract: { name: 'c.pdf', data: Buffer.from('%PDF-c').toString('base64') } };
+    if (action === 'contract_preview') {
+      return { grand_total: priced(body.rent, body.admin_fees ?? 1500, body.chiller_charges ?? 8000), contract: { name: 'p.pdf', data: Buffer.from('%PDF-preview').toString('base64') } };
+    }
     if (action === 'start') return { renewal: { workflow_id: 117, status: 'notice_sent', notice: { name: 'n.pdf', data: Buffer.from('%PDF-n').toString('base64') } } };
     return { renewal: { workflow_id: body.workflow_id } };
   } });
 }
+
+test('send test: the Agree email with the previewed contract goes only to the typed address, and nothing else moves', async () => {
+  const boss = await setup();
+  stub();
+  chillerWorld();
+  const r = await start(boss, 59400);
+  const sentBefore = world.sent.length;
+  const events = (await timeline(r.id)).length;
+  world.acts = [];
+  const ask = { id: r.id, action: 'accept', rent: 59400, admin_fees: 0, chiller_charges: 6000 };
+  const out = await R.sendTest(boss, { ...ask, text: 'Dear Mohamed Saeed,\n\nConfirmed.', test_to: ' Me@Company.com ' });
+  assert.equal(out.to, 'me@company.com');
+  assert.deepEqual(world.acts.map((a) => a.action), ['quote', 'contract_preview'], 'no charges, no status, no real contract');
+  assert.equal(world.sent.length, sentBefore + 1);
+  const m = world.sent.at(-1);
+  assert.deepEqual(m.envelope.to, ['me@company.com'], 'not the tenant, no Cc, no Bcc');
+  const raw = m.raw.toString();
+  assert.match(raw, /Subject: \[TEST\] Lease renewal: PARK PLACE, Unit 610/);
+  assert.match(raw, /Test: this was not sent to the tenant \(tenant@mail\.com\)/);
+  assert.ok(raw.includes(Buffer.from('%PDF-preview').toString('base64')), 'the contract at the new fees');
+  const now = await R.getRenewal(r.id);
+  assert.deepEqual([now.status, now.quote.grand_total, now.quote.fees.admin], ['offer_sent', 69675, 1500], 'the renewal is as it was');
+  assert.equal((await timeline(r.id)).length, events, 'nothing on the timeline');
+});
+
+test('send test: same figures print the draft lease as it is; a reply has no attachment; the tenant\'s address is refused', async () => {
+  const boss = await setup();
+  stub();
+  chillerWorld();
+  const r = await start(boss, 59400);
+  world.acts = [];
+  await R.sendTest(boss, { id: r.id, action: 'accept', rent: 59400, text: 'x', test_to: 'me@company.com' });
+  assert.deepEqual(world.acts.map((a) => a.action), ['contract']);
+  world.acts = [];
+  await R.sendTest(boss, { id: r.id, action: 'reply', text: 'Dear Mohamed Saeed,\n\nHello.', test_to: 'me@company.com' });
+  assert.deepEqual(world.acts, [], 'a reply asks nothing of saifsys');
+  assert.doesNotMatch(world.sent.at(-1).raw.toString(), /application\/pdf/);
+  const n = world.sent.length;
+  await assert.rejects(R.sendTest(boss, { id: r.id, action: 'reply', text: 'x', test_to: 'TENANT@mail.com' }), /never goes to the tenant/);
+  await assert.rejects(R.sendTest(boss, { id: r.id, action: 'reply', text: 'x', test_to: 'not an email' }), /Type the email address/);
+  assert.equal(world.sent.length, n);
+});
 
 test('agree with other fees: saifsys gets the new chiller and the waived admin fee before the contract is made', async () => {
   const boss = await setup();
