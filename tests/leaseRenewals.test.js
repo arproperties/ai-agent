@@ -136,7 +136,7 @@ test('Start: the admin fee the person types goes to saifsys and into the offer; 
   assert.deepEqual(await R.startFees(LEASE.lease_id), { admin: 1500, chiller: 0, chiller_shown: false, vat_rate: 5, rera: 300 }, 'the old lease\'s, for the Start box');
   const r = await R.send(boss, { action: 'start', lease_id: LEASE.lease_id, rent: 45000, admin_fees: 2000 });
   assert.equal(world.acts.find((a) => a.action === 'start').admin_fees, 2000);
-  assert.match(lastMail(), /Admin fee: AED 2,000 \+ 5% VAT AED 100 = AED 2,100\n- Total VAT: AED 100\n- Ejari fee: AED 300\n- Total: AED 47,400\n/);
+  assert.match(lastMail(), /Admin fee: AED 2,000 \+ 5% VAT AED 100 = AED 2,100\n- Ejari fee: AED 300\n- Total: AED 47,400\n/);
   await R.draft(boss, { id: r.id, action: 'counter', rent: 44000 });
   assert.equal(world.acts.at(-1).admin_fees, 2000, 'a counter-offer is priced with the same fee');
   assert.equal(world.acts.at(-1).pest_fee, 0, 'a renewal started without pest control gets none, not the old lease\'s');
@@ -595,6 +595,7 @@ test('ask Reem with agreed terms: the figures and cheques are saifsys\'s, never 
   assert.match(text, /^Dear Mohamed Saeed,\n\nWe are pleased to accept your proposal\.\n\n- Period: /);
   assert.match(text, /- Chiller fee: AED 6,000 \+ 5% VAT AED 300 = AED 6,300/);
   assert.doesNotMatch(text, /Admin fee/, 'waived: not charged');
+  assert.doesNotMatch(text, /Total VAT/, 'one charge with VAT: its own line shows it');
   assert.match(text, /- Total: AED 66,000/);
   assert.match(text, /1\. 1 November 2026: AED 16,950 \(rent AED 14,850 \+ chiller AED 1,500 \+ chiller VAT AED 300 \+ Ejari fee AED 300\)/);
   assert.match(text, /2\. .*: AED 16,350 \(rent AED 14,850 \+ chiller AED 1,500\)/);
