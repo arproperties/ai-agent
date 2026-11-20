@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buddy</title>
+<link rel="stylesheet" href="buddy.css">
+<style>
+  /* Reem's pet.css expects these colour tokens; Buddy on the desktop has no theme to inherit. */
+  :root { --color-p1: #a78bfa; --color-p2: #f472b6; --color-mute: #8d8aa3; --color-stroke: #e4e2ee; --color-surface: #fff; --color-surface-2: #f3f1fa; --color-txt: #1d1b2e; --glow: 167 139 250; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font: 13px/1.35 -apple-system, "Segoe UI", sans-serif; color: var(--color-txt); user-select: none; }
+  /* The whole window drags Buddy around; the bubble's close cross is the one thing that does not. */
+  #stage { position: absolute; inset: 0; -webkit-app-region: drag; }
+  #bubble { position: absolute; left: 8px; right: 8px; top: 8px; display: none; padding: 8px 10px; background: var(--color-surface); border: 1px solid var(--color-stroke); border-radius: 14px 14px 14px 4px; box-shadow: 0 6px 20px rgba(0,0,0,.18); -webkit-app-region: no-drag; }
+  #bubble.on { display: block; animation: pet-pop .3s cubic-bezier(.3, 1.5, .5, 1); }
+  #pet { position: absolute; left: 50%; bottom: 10px; width: 96px; height: 96px; margin-left: -48px; cursor: grab; }
+  #pet:active { cursor: grabbing; }
+  /* A transparent window is re-composited by Windows on every animation frame, which costs half a
+     core while anything moves, software or GPU alike. So Buddy is still almost all the time: the
+     looping animations from Reem's pet.css are off here, and short bursts (a bob, a blink, a breath)
+     are started from JavaScript every few seconds. The average stays under one percent. */
+  .pet .body-g, .pet.working .body-g, .pet.sleep .body-g, .pet.listen .body-g, .pet.think .body-g, .pet.talk .body-g { animation: none; }
+  .pet .lids { animation: none; transform: scaleY(0); }
+  .pet.sleep .lids { transform: scaleY(1); }
+  .pet.sleep .pet-zz { animation: none; }
+  .pet.beat .body-g { animation: pet-bob .7s ease-in-out 1; }
+  .pet.sleep.beat .body-g { animation: pet-breathe 1.6s ease-in-out 1; }
+  .pet.sleep.beat .pet-zz { animation: pet-zz 1.6s ease-out 1; }
+  .pet.blink .lids { animation: pet-blink .25s 1; }
+  @keyframes pet-blink { 0%, 100% { transform: scaleY(0); } 50% { transform: scaleY(1); } }
+  .pet.alert svg { filter: grayscale(.8) brightness(.9); }
+  .pet.think svg { filter: grayscale(.5); }
+  @media (prefers-reduced-motion: reduce) { .pet .body-g, .pet .lids { animation: none !important; } }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="bubble" role="status"></div>
+    <div id="pet" class="pet" title="Buddy: click for today, right-click for the menu"><span class="pet-zz">z</span></div>
+  </div>
+<script type="module">
+  import { charSvg } from './characters.js';
+  const pet = document.getElementById('pet'), bubble = document.getElementById('bubble');
+  let last = { character: '', mood: '' }, hideAt = 0;
+
+  function paint(s) {
+    if (s.character !== last.character || s.mood !== last.mood) {
+      // The SVG's own tail-wag loops (SMIL animateTransform) would move every frame: stripped here.
+      pet.innerHTML = `<span class="pet-zz">z</span><svg viewBox="0 0 96 96">${charSvg(s.character, s.mood).replace(/<animateTransform[^>]*>(<\/animateTransform>)?/g, '')}</svg>`;
+      pet.className = `pet ${s.mood}`;
+      last = { character: s.character, mood: s.mood };
+    }
+    if (s.line) { bubble.textContent = s.line; bubble.classList.add('on'); hideAt = Date.now() + 12_000; }
+    if (bubble.classList.contains('on') && Date.now() > hideAt) bubble.classList.remove('on');
+  }
+
+  // The pupils follow the pointer, as in Reem; cheap: one transform on two small groups.
+  document.addEventListener('mousemove', (e) => {
+    const r = pet.getBoundingClientRect();
+    const dx = Math.max(-1, Math.min(1, (e.clientX - (r.left + r.width / 2)) / 200));
+    const dy = Math.max(-1, Math.min(1, (e.clientY - (r.top + r.height / 2)) / 200));
+    for (const p of pet.querySelectorAll('.pupil')) p.style.transform = `translate(${dx * 2.5}px, ${dy * 2}px)`;
+  });
+
+  // A click (not a drag) opens today's sheet; the right button opens the menu in the main process.
+  let down = null;
+  pet.addEventListener('mousedown', (e) => { down = { x: e.screenX, y: e.screenY, t: Date.now() }; });
+  pet.addEventListener('mouseup', (e) => {
+    if (e.button === 2) return;
+    if (down && Math.hypot(e.screenX - down.x, e.screenY - down.y) < 4 && Date.now() - down.t < 500) window.tracker.buddyClick();
+    down = null;
+  });
+  document.addEventListener('contextmenu', (e) => { e.preventDefault(); window.tracker.buddyMenu(); });
+
+  // Short bursts of life: a bob (or a breath when dozing) every 12 s or so, a blink every 5 s or so.
+  const burst = (cls, ms) => { pet.classList.add(cls); setTimeout(() => pet.classList.remove(cls), ms); };
+  const every = (fn, base) => { const tick = () => { fn(); setTimeout(tick, base * (0.7 + Math.random() * 0.6)); }; setTimeout(tick, base); };
+  every(() => burst('beat', pet.classList.contains('sleep') ? 1700 : 800), 12_000);
+  every(() => { if (!pet.classList.contains('sleep')) burst('blink', 300); }, 5_000);
+
+  window.tracker.onBuddy(paint);
+  window.tracker.buddyState().then(paint);
+  setInterval(() => window.tracker.buddyState().then(paint), 5_000);
+</script>
+</body>
+</html>

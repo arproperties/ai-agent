@@ -26,7 +26,7 @@ const STEP_MS = 10_000;
 const CPU_LIMIT = 1; // % of the whole machine, Task Manager style
 const RSS_FAIL_MB = 150;
 const RSS_TARGET_MB = 100;
-const TOTAL_WS_FAIL_MB = 250;
+const TOTAL_WS_FAIL_MB = 300; // with Buddy's window the flat baseline is ~290 MB (three processes); the guard catches a fourth process or a leak
 
 const dataDir = mkdtempSync(join(tmpdir(), 'tracker-perf-'));
 const electron = join(here, '..', 'node_modules', 'electron', 'dist', 'electron.exe');

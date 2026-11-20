@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, powerMonitor, safeStorage, ipcMain } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, powerMonitor, safeStorage, ipcMain, screen } from 'electron';
 import { setPriority } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,7 @@ import { summarise, dubaiDate, dubaiTime } from './summary.js';
 import { openStore } from './store.js';
 import { shouldSend, yesterdayUnsent } from './dayEnd.js';
 import { hello, sendDay, PairingError } from './reem.js';
+import { moodFor, lineFor, nudgeDue, clampToScreen, LINES } from './mood.js';
 
 // The tray app. Everything that decides something lives in the modules above and is tested;
 // this file only wires Electron's clock, events and windows to them.
@@ -25,13 +26,17 @@ const perfRun = process.env.TRACKER_PERF === '1'; // scripts/perf.js: measure th
 // its data, and a pairing key to use without typing. Neither is set on an employee PC.
 if (process.env.TRACKER_DATA_DIR) app.setPath('userData', process.env.TRACKER_DATA_DIR);
 
-app.disableHardwareAcceleration(); // nothing here needs the GPU
+app.disableHardwareAcceleration(); // nothing here needs the GPU (a transparent window costs the same either way; see buddy.html)
 app.commandLine.appendSwitch('in-process-gpu'); // and the software compositor can live in the main process: one process fewer in the tray
 if (!app.requestSingleInstanceLock()) app.quit();
 
 const now = () => Math.floor(Date.now() / 1000);
 let store, tray, book, locked = false, pairError = '', sheet = null, lastTry = null, pollTimer, flushTimer, dayTimer, runningFrom = null;
-let shutdownWindow = null, lastDate = null;
+let lastDate = null;
+// Buddy on the desktop: the small always-on-top window with Reem's pet in it. It is also the
+// window that hears Windows shutting down (session-end), so it exists from the first start.
+let buddy = null, lastIdle = 0, activeSince = null, lastNudgeAt = null, lastLineAt = 0, lastAlertAt = 0, lastSentAt = 0;
+const BUDDY_SIZE = { width: 190, height: 200 };
 
 // ---------- settings on disk ----------
 
@@ -50,6 +55,10 @@ async function glance() {
   try {
     const w = await activeWindow();
     const idle = powerMonitor.getSystemIdleTime();
+    lastIdle = idle;
+    // A break (three idle minutes, or a locked screen) ends the stretch Buddy counts for its nudge.
+    if (locked || idle >= 180) activeSince = null;
+    else if (activeSince == null) activeSince = now();
     const closed = book.observe({ at: now(), app: w?.owner?.name || null, title: w?.title || '', idleSeconds: idle, locked });
     if (closed) pendingSpans.push(closed);
   } catch (e) {
@@ -104,6 +113,8 @@ async function send(date) {
     pairError = '';
     store.set('pair_error', '');
     lastTry = null;
+    lastSentAt = now();
+    pushBuddy();
     return true;
   } catch (e) {
     lastTry = now();
@@ -114,6 +125,7 @@ async function send(date) {
       store.set('pair_error', pairError);
       store.set('device_key', '');
       setTray(false);
+      pushBuddy();
     }
     console.error('[send]', e.message);
     return false;
@@ -139,6 +151,78 @@ async function sendOldDays() {
   for (const date of yesterdayUnsent(store, dubaiDate(now()))) {
     if (!(await send(date))) break;
   }
+}
+
+// ---------- Buddy on the desktop ----------
+
+const workAreas = () => screen.getAllDisplays().map((d) => d.workArea);
+
+/** What Buddy shows right now: mood, character, and a line if one is due. */
+function buddyState() {
+  const t = now();
+  const recording = !!pollTimer && !!store.get('device_key');
+  const mood = moodFor({ idleSeconds: lastIdle, locked, pairError, recording, justSent: t - lastSentAt < 90 });
+  const bubbles = store.get('buddy_bubbles') !== false;
+  let line = null;
+  if (bubbles && mood === 'working' && nudgeDue({ activeSince, now: t, lastNudgeAt })) {
+    lastNudgeAt = t;
+    line = LINES.stretch[Math.floor(Math.random() * LINES.stretch.length)];
+  } else if (mood === 'alert') {
+    // Unpaired is the one thing the person must act on, but once every ten minutes is enough.
+    if (bubbles && t - lastAlertAt >= 600) { lastAlertAt = t; line = lineFor('alert', { now: t, bubbles }); }
+  } else {
+    line = lineFor(mood, { now: t, lastLineAt, bubbles });
+    if (line) lastLineAt = t;
+  }
+  return { mood, character: store.get('buddy_character') || 'buddy', bubbles, line, name: store.get('person_name') || '' };
+}
+
+const pushBuddy = () => { if (buddy && !buddy.isDestroyed()) buddy.webContents.send('buddy', buddyState()); };
+
+function openBuddy() {
+  const pos = clampToScreen(store.get('buddy_pos'), BUDDY_SIZE, workAreas());
+  buddy = new BrowserWindow({
+    ...BUDDY_SIZE, x: pos.x, y: pos.y, show: false,
+    frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true, resizable: false, minimizable: false, maximizable: false, fullscreenable: false, hasShadow: false,
+    title: 'Buddy', webPreferences: { preload: join(here, 'preload.js'), contextIsolation: true, sandbox: true, backgroundThrottling: false },
+  });
+  buddy.setAlwaysOnTop(true, 'floating');
+  buddy.setMenu(null);
+  buddy.loadFile(join(here, '..', 'ui', 'buddy.html'));
+  buddy.once('ready-to-show', () => buddy.show());
+  // For checking the drawing without a person at the screen: TRACKER_SHOT=<file.png> saves Buddy as rendered.
+  if (process.env.TRACKER_SHOT) setTimeout(() => buddy?.capturePage().then((img) => import('node:fs').then((fs) => fs.writeFileSync(process.env.TRACKER_SHOT, img.toPNG()))).catch(() => {}), 8_000);
+  // Dragged somewhere: remember it, pulled back inside a screen if it strayed.
+  buddy.on('moved', () => {
+    const [x, y] = buddy.getPosition();
+    const c = clampToScreen({ x, y }, BUDDY_SIZE, workAreas());
+    if (c.x !== x || c.y !== y) buddy.setPosition(c.x, c.y);
+    store.set('buddy_pos', c);
+  });
+  // Windows is shutting down, restarting or signing the person out: this is the end of the day.
+  // Windows says so to a window, not to the app (powerMonitor's 'shutdown' is Linux and macOS
+  // only), which is one more reason Buddy is always there. The session cannot be held back, so
+  // everything here is quick: the store writes are synchronous and land; the send gets a few
+  // seconds and no more, and anything missed is sent when the PC is next on.
+  buddy.on('session-end', () => {
+    stopTracking();
+    Promise.race([dayEndCheck(true), new Promise((r) => setTimeout(r, 4_000))]).finally(() => app.exit(0));
+  });
+  // No way to close it from the frame; if it ever goes (a crash of the page), bring it back.
+  buddy.on('closed', () => { buddy = null; if (!app.isQuitting) setTimeout(openBuddy, 1000); });
+  screen.on('display-metrics-changed', () => { if (buddy) { const [x, y] = buddy.getPosition(); const c = clampToScreen({ x, y }, BUDDY_SIZE, workAreas()); buddy.setPosition(c.x, c.y); } });
+}
+
+const CHARACTERS = [['buddy', 'Buddy the dog'], ['jelly', 'Jelly'], ['bolt', 'Bolt the robot'], ['miso', 'Miso the cat']];
+function buddyMenu() {
+  const current = store.get('buddy_character') || 'buddy';
+  Menu.buildFromTemplate([
+    { label: 'Today', click: openSheet },
+    { label: 'Send today now', click: () => send(dubaiDate(now())).then(() => sheet?.webContents.send('refresh')) },
+    { type: 'separator' },
+    { label: 'Character', submenu: CHARACTERS.map(([id, label]) => ({ label, type: 'radio', checked: id === current, click: () => { store.set('buddy_character', id); pushBuddy(); } })) },
+    { label: 'Buddy talks', type: 'checkbox', checked: store.get('buddy_bubbles') !== false, click: (item) => { store.set('buddy_bubbles', item.checked); pushBuddy(); } },
+  ]).popup({ window: buddy });
 }
 
 // ---------- tray and windows ----------
@@ -214,12 +298,17 @@ async function pair(key) {
     if (!pollTimer) startTracking(); // first pairing
     else { setTray(true); sendOldDays().catch(() => {}); } // paired again after "not paired": counting never stopped
     firstRun?.close();
+    pushBuddy();
     return { ok: true };
   } catch (e) {
     return { error: e.message };
   }
 }
 ipcMain.handle('pair', async (_e, key) => { const r = await pair(key); if (r.ok) openSheet(); return r; });
+
+ipcMain.handle('buddy-state', () => buddyState());
+ipcMain.on('buddy-click', () => openSheet());
+ipcMain.on('buddy-menu', () => buddyMenu());
 
 // ---------- lifecycle ----------
 
@@ -232,17 +321,7 @@ app.whenReady().then(() => {
   powerMonitor.on('unlock-screen', () => { locked = false; });
   powerMonitor.on('suspend', () => { locked = true; });
   powerMonitor.on('resume', () => { locked = false; });
-  // Windows is shutting down, restarting or signing the person out: this is the end of the day.
-  // Windows says so to a window, not to the app (powerMonitor's 'shutdown' is Linux and macOS
-  // only), so a hidden 1×1 window exists for this one purpose. The session cannot be held back,
-  // so everything here is quick: the store writes are synchronous and land; the send gets a few
-  // seconds and no more, and anything missed is sent when the PC is next on.
-  shutdownWindow = new BrowserWindow({ show: false, width: 1, height: 1, skipTaskbar: true, webPreferences: { sandbox: true, backgroundThrottling: true } });
-  shutdownWindow.loadURL('about:blank');
-  shutdownWindow.on('session-end', () => {
-    stopTracking();
-    Promise.race([dayEndCheck(true), new Promise((r) => setTimeout(r, 4_000))]).finally(() => app.exit(0));
-  });
+  openBuddy();
 
   pairError = store.get('pair_error') || '';
   if (store.get('consented_at')) startTracking();
@@ -252,4 +331,5 @@ app.whenReady().then(() => {
 
 app.on('second-instance', openSheet);
 app.on('window-all-closed', () => { /* stay in the tray */ });
+app.on('before-quit', () => { app.isQuitting = true; });
 app.on('before-quit', () => { try { stopTracking(); store?.close(); } catch { /* quitting anyway */ } });

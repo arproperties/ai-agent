@@ -378,3 +378,35 @@ test('going through the past checks quietly and only this type', async () => {
   const c = await db.prepare('SELECT note_state FROM report_checks').get();
   assert.equal(c.note_state, 'past', 'an old report\'s note is kept, not waited on');
 });
+
+test('photos sent in one chat message are one report, with the words typed with them', async () => {
+  await reset();
+  await master();
+  const u = await makeUser('Boss2');
+  const type = await createType({ name: 'Cleaning Agent', writer: 'Faisal', about: 'Cleaning report as WhatsApp photos',
+    items: ['Before and after photos'] }, at('2026-11-16T09:00:00'));
+  const { id: conv } = await db.prepare("INSERT INTO conversations (user_id, title) VALUES (?, 'x') RETURNING id").run(u);
+  const p1 = await file(u, { title: 'Toilet before', text: 'dirty toilet', created: '2026-11-18T09:00:00' });
+  const p2 = await file(u, { title: 'Toilet after', text: 'clean toilet', created: '2026-11-18T09:00:00' });
+  const p3 = await file(u, { title: 'Still reading', created: '2026-11-18T09:00:00' });
+  await db.prepare("INSERT INTO messages (conversation_id, role, content, files) VALUES (?, 'user', 'Faisal cleaning report', ?)")
+    .run(conv, JSON.stringify([p1, p2, p3].map((docId) => ({ kind: 'image', docId }))));
+  for (const id of [p1, p2, p3]) await db.prepare('UPDATE documents SET conversation_id = ? WHERE id = ?').run(conv, id);
+
+  const { asker, calls } = fakeAsker({ matches: [{ file: p1, type: type.id }], check: { report_date: '2026-11-17', gaps: [] } });
+  // The third photo is still being read: the whole message waits.
+  assert.deepEqual(await watchFiles({ now: at('2026-11-18T09:05:00'), asker, pusher: async () => 0 }), []);
+  assert.equal(calls.length, 0);
+
+  // Read now: one report of all three.
+  await db.prepare("INSERT INTO document_texts (document_id, text) VALUES (?, 'mop bucket')").run(p3);
+  const done = await watchFiles({ now: at('2026-11-18T09:10:00'), asker, pusher: async () => 0 });
+  assert.equal(done.length, 1);
+  assert.equal(done[0].document_id, p1);
+  assert.match(calls[0].prompt, /3 file\(s\) sent together in a chat, with the words: "Faisal cleaning report"/);
+  assert.match(calls[1].prompt, /dirty toilet[\s\S]*clean toilet[\s\S]*mop bucket/);
+  assert.match(calls[1].prompt, /The words sent with them: "Faisal cleaning report"/);
+  calls.length = 0;
+  assert.deepEqual(await watchFiles({ now: at('2026-11-18T09:15:00'), asker, pusher: async () => 0 }), []);
+  assert.equal(calls.length, 0, 'every photo of it is seen');
+});

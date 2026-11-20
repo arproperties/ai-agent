@@ -9,7 +9,8 @@ server at all: it ships as a Windows installer that Francis runs on each employe
 
 ## What this is
 
-A Windows **tray app** that counts how the workday is spent on one PC (which program and window
+A Windows **tray app with Buddy, Reem's pet, on the desktop** (since 0.2.0, plan
+`docs/superpowers/plans/2026-11-19-buddy-desktop.md`) that counts how the workday is spent on one PC (which program and window
 is in front, idle, locked) and, at the end of the day, sends one small summary to Reem.
 Reem's side is `server/tracker.js` (the door `/api/from-tracker/*`, the master's Settings →
 Activity reports page, and the 19:00 email to HR). **There is no AI anywhere**: Francis wanted
@@ -25,7 +26,11 @@ contract: `docs/superpowers/plans/2026-11-15-activity-tracker.md`.
 - `src/store.js` — the PC's SQLite file (`node:sqlite`, built into Electron's Node: nothing to compile).
 - `src/dayEnd.js` — when to send (18:30 Dubai, or a shutdown after 15:00, or at next start). Pure.
 - `src/reem.js` — `hello` and `sendDay` to Reem's door; a 401 is a `PairingError`.
-- `src/main.js` — Electron: tray, timers, windows, IPC. Wiring only; decisions live above.
+- `src/mood.js` — Buddy's moods, lines, stretch nudge and screen clamping. Pure; no AI, a fixed list of lines.
+- `src/main.js` — Electron: tray, timers, windows, IPC, Buddy's window and menu. Wiring only; decisions live above.
+- `ui/buddy.html` — Buddy on the desktop: frameless, transparent, always on top, draggable; it is also the
+  window that hears Windows shutting down (`session-end`). `ui/characters.js` and `ui/buddy.css` are copies
+  of Reem's `client/src/components/Pet.jsx` characters and `pet.css`: change Reem first, then copy.
 - `ui/firstrun.html` — consent text + the pairing key. `ui/sheet.html` — today's totals and "Send today now".
 - `scripts/make-icons.js` — draws the two tray icons as PNG with plain Node. `scripts/perf.js` — the budget gate.
 - `package.json` `build.npmRebuild: false` — electron-builder must not try to compile anything: `get-windows`
@@ -53,7 +58,8 @@ npm run dist         # the installer: dist/Activity Tracker Setup x.y.z.exe (uns
 ```
 
 Running against a local Reem without typing: `REEM_URL=http://localhost:3001 TRACKER_DATA_DIR=<folder> TRACKER_PAIR_KEY=<key> npm start`.
-Neither variable exists on an employee PC. From a shell that sets `ELECTRON_RUN_AS_NODE=1` (Claude Code's
+`TRACKER_SHOT=<file.png>` saves Buddy as rendered eight seconds after start, for checking the drawing without a
+person at the screen. None of these variables exists on an employee PC. From a shell that sets `ELECTRON_RUN_AS_NODE=1` (Claude Code's
 does), prefix the start with `env -u ELECTRON_RUN_AS_NODE`, or Electron runs as plain Node and
 fails on the first `import` with "does not provide an export named 'BrowserWindow'".
 
