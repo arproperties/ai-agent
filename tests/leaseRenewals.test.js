@@ -525,6 +525,102 @@ test('ask Reem: what the person wants said goes to the AI, even with an empty bo
   assert.equal(out.text, 'Dear Mohamed Saeed,\n\nWe are pleased to agree to your offer.\n\nKind regards,\nTenant Care Team');
 });
 
+// Park Place-like: a chiller shown, admin 1,500 and chiller 8,000 as offered. saifsys's quote
+// and its charges step price exactly the fees given, VAT 5% on them, Ejari 300.
+function chillerWorld({ chargesTotal = null, oldSaifsys = false } = {}) {
+  const priced = (rent, admin, chiller) => rent + Math.round((admin + chiller) * 1.05 * 100) / 100 + 300;
+  R.useForTests({ act: async (module, action, body) => {
+    world.acts.push({ action, ...body });
+    if (action === 'quote') {
+      // An older saifsys reads an admin fee of 0 as "keep the old one".
+      const admin = oldSaifsys && body.admin_fees === 0 ? 1500 : (body.admin_fees ?? 1500);
+      const chiller = body.chiller_charges ?? 8000;
+      const total = priced(body.rent, admin, chiller);
+      return { quote: { ...quoteOf(body.rent), grand_total: total, cheques_total: total, fees: { admin, chiller, chiller_shown: true, pest: 0 } } };
+    }
+    if (action === 'charges') {
+      if (oldSaifsys) throw new Error('Unknown action.');
+      return { renewal: { workflow_id: body.workflow_id, grand_total: chargesTotal ?? priced(body.rent, body.admin_fees, body.chiller_charges), admin: body.admin_fees, chiller: body.chiller_charges } };
+    }
+    if (action === 'contract') return { contract: { name: 'c.pdf', data: Buffer.from('%PDF-c').toString('base64') } };
+    if (action === 'start') return { renewal: { workflow_id: 117, status: 'notice_sent', notice: { name: 'n.pdf', data: Buffer.from('%PDF-n').toString('base64') } } };
+    return { renewal: { workflow_id: body.workflow_id } };
+  } });
+}
+
+test('agree with other fees: saifsys gets the new chiller and the waived admin fee before the contract is made', async () => {
+  const boss = await setup();
+  stub();
+  chillerWorld();
+  let r = await start(boss, 59400);
+  assert.deepEqual(r.quote.fees, { admin: 1500, chiller: 8000, chiller_shown: true, pest: 0 });
+  assert.equal(r.quote.grand_total, 69675);
+  const sentBefore = world.sent.length;
+
+  const ask = { id: r.id, action: 'accept', rent: 59400, admin_fees: 0, chiller_charges: 6000 };
+  const d = await R.draft(boss, ask);
+  assert.equal(d.total, 66000, 'what the person reads before Send is the new total');
+  assert.deepEqual(d.charges.items.map((x) => [x.key, x.amount, x.vat]), [['chiller', 6000, 300]]);
+  assert.equal(world.sent.length, sentBefore, 'a draft sends nothing');
+
+  world.acts = [];
+  r = await R.send(boss, ask);
+  assert.deepEqual(world.acts.map((a) => a.action), ['quote', 'charges', 'contract', 'status'], 'the fees change first, the contract after');
+  const ch = world.acts.find((a) => a.action === 'charges');
+  assert.deepEqual([ch.rent, ch.cheques, ch.admin_fees, ch.chiller_charges], [59400, 4, 0, 6000]);
+  assert.deepEqual([r.status, r.agreed, r.quote.grand_total, r.quote.fees.admin, r.quote.fees.chiller], ['agreed', 59400, 66000, 0, 6000]);
+  assert.equal(world.sent.length, sentBefore + 1);
+});
+
+test('agree with the same fees: nothing new asked of saifsys', async () => {
+  const boss = await setup();
+  stub();
+  chillerWorld();
+  const r = await start(boss, 59400);
+  world.acts = [];
+  await R.send(boss, { id: r.id, action: 'accept', rent: 59400, admin_fees: 1500, chiller_charges: 8000 });
+  assert.deepEqual(world.acts.map((a) => a.action), ['contract', 'status']);
+});
+
+test('other fees: when saifsys ends at another total, nothing is emailed and the renewal stays as it was', async () => {
+  const boss = await setup();
+  stub();
+  chillerWorld({ chargesTotal: 69675 });
+  const r = await start(boss, 59400);
+  const sentBefore = world.sent.length;
+  world.acts = [];
+  await assert.rejects(R.send(boss, { id: r.id, action: 'accept', rent: 59400, admin_fees: 0, chiller_charges: 6000 }), /not the AED 66,000 in this email, so nothing was sent/);
+  assert.equal(world.sent.length, sentBefore);
+  assert.ok(!world.acts.some((a) => a.action === 'contract' || a.action === 'status'), 'no contract, no status change');
+  const now = await R.getRenewal(r.id);
+  assert.deepEqual([now.status, now.quote.grand_total], ['offer_sent', 69675]);
+});
+
+test('other fees on a saifsys without the update: stopped at the draft, nothing sent', async () => {
+  const boss = await setup();
+  stub();
+  chillerWorld({ oldSaifsys: true });
+  const r = await start(boss, 59400);
+  const sentBefore = world.sent.length;
+  await assert.rejects(R.draft(boss, { id: r.id, action: 'accept', rent: 59400, admin_fees: 0, chiller_charges: 6000 }), /saifsys needs its update/);
+  await assert.rejects(R.send(boss, { id: r.id, action: 'accept', rent: 59400, admin_fees: 0, chiller_charges: 6000 }), /saifsys needs its update/);
+  // Only the chiller changed: the quote prices it, but the charges step is unknown, so still nothing goes.
+  await assert.rejects(R.send(boss, { id: r.id, action: 'accept', rent: 59400, chiller_charges: 6000 }), /Unknown action/);
+  assert.equal(world.sent.length, sentBefore);
+  assert.equal((await R.getRenewal(r.id)).status, 'offer_sent');
+});
+
+test('a counter-offer with other fees sets them in saifsys in place of the rent alone', async () => {
+  const boss = await setup();
+  stub();
+  chillerWorld();
+  let r = await start(boss, 59400);
+  world.acts = [];
+  r = await R.send(boss, { id: r.id, action: 'counter', rent: 58000, admin_fees: 1000, chiller_charges: 7000 });
+  assert.deepEqual(world.acts.map((a) => a.action), ['quote', 'charges', 'status']);
+  assert.deepEqual([r.status, r.offer, r.quote.fees.admin, r.quote.fees.chiller], ['negotiating', 58000, 1000, 7000]);
+});
+
 test('charges: each extra listed, VAT taken from saifsys\'s own total, shown as 5% on the charges', () => {
   const q = { proposed_rent: 249375, rera: 300, grand_total: 249375 + 1500 + 2000 + 175 + 300, fees: { admin: 1500, chiller: 0, parking: 2000, small_store: 0, big_store: 0 } };
   const c = R.chargesOf(q);

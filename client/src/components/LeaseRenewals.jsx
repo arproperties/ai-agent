@@ -835,9 +835,16 @@ function AskFigure({ r, action, onClose, onNext }) {
   const current = Number(r.annual_rent);
   const index = action === 'index';
   const preview = index && mode === 'pct' && value !== '' ? Math.max(current, Math.floor((current * (1 + Number(value) / 100)) / 100) * 100) : null;
+  // Agree and Counter can change the admin and chiller fees, e.g. the tenant agreed to a lower
+  // chiller with the admin fee waived. They start as the renewal has them.
+  const f = !index && r.renewal.fees;
+  const [admin, setAdmin] = useState(f ? String(f.admin) : '');
+  const [chiller, setChiller] = useState(f ? String(f.chiller) : '');
+  const feesAsk = f ? { admin_fees: admin === '' ? null : Number(admin), ...(f.chillerShown ? { chiller_charges: chiller === '' ? null : Number(chiller) } : {}) } : {};
+  const feesMoved = f && ((admin !== '' && Number(admin) !== f.admin) || (f.chillerShown && chiller !== '' && Number(chiller) !== f.chiller));
   const ask = index
     ? (mode === 'pct' ? { id: r.renewal.id, action, pct: Number(value) } : { id: r.renewal.id, action, rent: Number(value) })
-    : { id: r.renewal.id, action, rent: Number(value) };
+    : { id: r.renewal.id, action, rent: Number(value), ...feesAsk };
   return (
     <Sheet title={TITLES[action]} onClose={onClose}>
       <div className="space-y-4">
@@ -865,6 +872,21 @@ function AskFigure({ r, action, onClose, onNext }) {
           </label>
         )}
         {preview !== null && <p className="text-sm">The offer will be <b>{aed(preview)}</b> a year.</p>}
+        {f && (
+          <div className="grid grid-cols-2 gap-3">
+            {f.chillerShown && (
+              <label className="block space-y-1.5 text-sm">
+                <span>Chiller fee <span className="text-mute">(before VAT)</span></span>
+                <Money value={chiller} onChange={setChiller} />
+              </label>
+            )}
+            <label className="block space-y-1.5 text-sm">
+              <span>Admin fee <span className="text-mute">(0 = waived)</span></span>
+              <Money value={admin} onChange={setAdmin} />
+            </label>
+          </div>
+        )}
+        {feesMoved && <p className="text-xs text-mute">saifsys's renewal and the contract change to these fees when you tap Send. The next screen shows the new total and cheques first.</p>}
         <div className="flex justify-end"><Btn primary disabled={value === ''} onClick={() => onNext(ask)}><Mail size={14} /> Write the email</Btn></div>
       </div>
     </Sheet>
