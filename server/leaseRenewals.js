@@ -1457,8 +1457,42 @@ export async function rewrite(id, text, ask) {
   const words = lines.slice(start, signAt > start ? signAt : undefined).join('\n').trim();
   const wish = String(ask || '').trim().slice(0, 2000);
   if (!words && !wish) throw bad('Write a few words first, then Reem can write them again.');
-  const body = await D.rewriteReply({ facts: factsOf(r, await settings()), thread: await thread(r.id), draft: words, ask: wish });
-  return { text: replyText(r, body) };
+  const s = await settings();
+  const got = await D.rewriteReply({ facts: factsOf(r, s), thread: await thread(r.id), draft: words, ask: wish });
+  const { reply, terms } = typeof got === 'string' ? { reply: got, terms: null } : got;
+  if (!terms) return { text: replyText(r, noFigures(reply).replace(FIGURES, '').trim()) };
+  return { text: replyText(r, await withFigures(r, reply, terms, s)) };
+}
+
+// Where the AI wants the terms in a reply; Reem puts saifsys's figures there.
+const FIGURES = /^[ \t]*\{\{FIGURES\}\}[ \t]*$/m;
+
+/**
+ * Any figures list the AI wrote anyway: a bullet or a numbered line with an amount in it
+ * ("- Total: AED 66,000", "1. 25 February 2027: AED 16,800"). Taken out, because its sums
+ * were wrong even with the rule in front of it; saifsys's own block goes in instead.
+ */
+const noFigures = (text) => String(text).split('\n').filter((l) => !/^\s*(?:[-•*]|\d{1,2}[.)])\s.*\bAED\b/.test(l)).join('\n').replace(/\n{3,}/g, '\n\n');
+
+/**
+ * The terms a reply states, as saifsys prices them: the rent, each charge with its VAT, the
+ * Ejari fee, the total and every cheque with what it is made of (the offer's own block). A
+ * quote saves nothing in saifsys. saifsys must take the fees asked for, or nothing is written.
+ */
+async function withFigures(r, reply, terms, s) {
+  if (!r.quote?.fees) throw bad('This renewal has no figures from saifsys yet, so Reem cannot write them. Write the reply without them.', 409);
+  const fee = (v) => (v === null || v === undefined || !(Number(v) >= 0) ? null : Math.round(Number(v) * 100) / 100);
+  const rent = terms.rent > 0 ? Math.round(terms.rent) : (r.agreed ?? r.offer);
+  const fees = { pest: 0, ...r.quote.fees };
+  if (fee(terms.admin) !== null) fees.admin = fee(terms.admin);
+  if (fees.chiller_shown && fee(terms.chiller) !== null) fees.chiller = fee(terms.chiller);
+  const q = await quoteFor(r.lease, rent, r.cheques || r.lease.cheques || 4, fees);
+  if (round2(q.fees?.admin) !== round2(fees.admin) || round2(q.fees?.chiller) !== round2(fees.chiller)) {
+    throw bad(`saifsys priced the admin fee at ${aed(q.fees?.admin || 0)} and the chiller at ${aed(q.fees?.chiller || 0)}, not ${aed(fees.admin)} and ${aed(fees.chiller)}, so Reem did not write the figures.`, 409);
+  }
+  const block = [...offerLines(q, rent), ...(s.payee ? [`- Cheques payable to ${s.payee}`] : [])].join('\n');
+  const words = noFigures(reply);
+  return FIGURES.test(words) ? words.replace(FIGURES, block) : `${words.trim()}\n\n${block}`;
 }
 
 // ---------- the advisors ----------

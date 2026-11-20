@@ -579,6 +579,43 @@ test('a renewal whose cheques are not laid out Reem\'s way: the AI is told not t
   assert.match(asked[0].facts, /Cheque layout: not known for this renewal\. Never work cheque amounts out/);
 });
 
+test('ask Reem with agreed terms: the figures and cheques are saifsys\'s, never the AI\'s', async () => {
+  const boss = await setup();
+  stub();
+  chillerWorld();
+  const r = await start(boss, 59400);
+  world.acts = [];
+  R.useForTests({ rewriteReply: async () => ({
+    // The AI's own cheque line (wrong sums) must not survive; the marker gets saifsys's block.
+    reply: 'We are pleased to accept your proposal.\n\n{{FIGURES}}\n\n1. 25 February 2027: AED 16,800 (rent AED 14,850 + chiller AED 1,500)\n\nPlease reply "I accept".',
+    terms: { rent: null, admin: 0, chiller: 6000 },
+  }) });
+  const { text } = await R.rewrite(r.id, '', 'accept her proposal: chiller 6,000, admin waived');
+  assert.deepEqual(world.acts.map((a) => [a.action, a.admin_fees, a.chiller_charges]), [['quote', 0, 6000]], 'a quote only: saifsys keeps its figures');
+  assert.match(text, /^Dear Mohamed Saeed,\n\nWe are pleased to accept your proposal\.\n\n- Period: /);
+  assert.match(text, /- Chiller fee: AED 6,000 \+ 5% VAT AED 300 = AED 6,300/);
+  assert.doesNotMatch(text, /Admin fee/, 'waived: not charged');
+  assert.match(text, /- Total: AED 66,000/);
+  assert.match(text, /1\. 1 November 2026: AED 16,950 \(rent AED 14,850 \+ chiller AED 1,500 \+ chiller VAT AED 300 \+ Ejari fee AED 300\)/);
+  assert.match(text, /2\. .*: AED 16,350 \(rent AED 14,850 \+ chiller AED 1,500\)/);
+  assert.match(text, /- Cheques payable to Saif Holding LLC/);
+  assert.doesNotMatch(text, /16,800/, 'the AI\'s sum is gone');
+  assert.match(text, /Please reply "I accept"\.\n\nKind regards,\nTenant Care Team$/);
+  assert.equal((await R.getRenewal(r.id)).quote.grand_total, 69675, 'the renewal is as it was');
+});
+
+test('ask Reem: figures the AI writes without terms are taken out; a saifsys that will not price the fees writes nothing', async () => {
+  const boss = await setup();
+  stub();
+  chillerWorld();
+  const r = await start(boss, 59400);
+  R.useForTests({ rewriteReply: async () => ({ reply: 'Thank you.\n- Total: AED 1\n2. 25 May 2027: AED 5 (rent AED 2 + chiller AED 2)', terms: null }) });
+  assert.equal((await R.rewrite(r.id, '', 'thank her')).text, 'Dear Mohamed Saeed,\n\nThank you.\n\nKind regards,\nTenant Care Team');
+  chillerWorld({ oldSaifsys: true });
+  R.useForTests({ rewriteReply: async () => ({ reply: 'Accepted.\n\n{{FIGURES}}', terms: { rent: null, admin: 0, chiller: null } }) });
+  await assert.rejects(R.rewrite(r.id, '', 'waive the admin fee'), /Reem did not write the figures/);
+});
+
 test('send test: the Agree email with the previewed contract goes only to the typed address, and nothing else moves', async () => {
   const boss = await setup();
   stub();

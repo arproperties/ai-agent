@@ -634,6 +634,36 @@ const TITLES = {
   reply: 'Reply', fix: 'What to fix', convert: 'Renew in saifsys', remind: 'Dispute reminder',
 };
 
+/**
+ * Sums in an email that do not add up, for a warning above Send: a cheque whose amount is not
+ * what its own parts make ("AED 16,800 (rent AED 14,850 + chiller AED 1,500 + ...)"), and
+ * cheques that do not add up to the Total line. Typed or pasted figures are checked too.
+ */
+export function figureProblems(text) {
+  const n = (x) => Number(String(x).replace(/,/g, ''));
+  const out = [];
+  const cheques = [];
+  for (const line of String(text || '').split('\n')) {
+    const ch = line.match(/^\s*(\d{1,2})[.)]\s.*?:\s*AED\s?([\d,]+(?:\.\d+)?)(.*)$/);
+    if (!ch) continue;
+    const amount = n(ch[2]);
+    cheques.push(amount);
+    const inside = ch[3].match(/\(([^)]*)\)/);
+    const parts = inside ? [...inside[1].matchAll(/AED\s?([\d,]+(?:\.\d+)?)/g)].map((m) => n(m[1])) : [];
+    if (parts.length > 1) {
+      const sum = Math.round(parts.reduce((t, x) => t + x, 0) * 100) / 100;
+      if (Math.abs(sum - amount) > 0.01) out.push(`Cheque ${ch[1]} says ${aed(amount)}, but its parts add up to ${aed(sum)}.`);
+    }
+  }
+  const totals = [...String(text || '').matchAll(/^\s*[-•*]?\s*Total[^:\n]*:\s*AED\s?([\d,]+(?:\.\d+)?)/gim)].map((m) => n(m[1]));
+  if (cheques.length > 1 && totals.length) {
+    const sum = Math.round(cheques.reduce((t, x) => t + x, 0) * 100) / 100;
+    const total = totals[totals.length - 1];
+    if (Math.abs(sum - total) > 0.01) out.push(`The cheques add up to ${aed(sum)}, but the total says ${aed(total)}.`);
+  }
+  return out;
+}
+
 /** The email a step sends, written by Reem, read (and changed if need be) by the person, then sent. */
 function Compose({ ask, onClose, onSent }) {
   const [d, setD] = useState(null);
@@ -741,6 +771,12 @@ function Compose({ ask, onClose, onSent }) {
           {d.sendOn && <p className="flex items-start gap-1.5 text-xs text-mute"><Clock size={13} className="mt-px shrink-0" /> It is too early for the offer: Reem sends it by itself on {day(d.sendOn)}, 120 days before the lease ends.</p>}
           {ask.action === 'convert' && <p className="text-xs text-mute">saifsys makes the new lease and its cheques now, then this email goes to the tenant.</p>}
           <Problem text={error} />
+          {figureProblems(text).length > 0 && (
+            <div role="alert" className="rounded-2xl border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
+              <p className="font-medium">The figures in this email do not add up. Check them before you send:</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5">{figureProblems(text).map((p) => <li key={p}>{p}</li>)}</ul>
+            </div>
+          )}
           <div className="sticky bottom-0 -mx-5 flex flex-wrap justify-end gap-2 border-t border-stroke bg-surface px-5 pb-1 pt-3">
             {ask.action === 'reply' && <Btn busy={rewriting} disabled={!text.trim() || busy} onClick={rewrite}><Sparkles size={14} /> Rewrite with Reem</Btn>}
             <Btn onClick={onClose}>Cancel</Btn>

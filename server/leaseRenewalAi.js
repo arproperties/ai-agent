@@ -56,10 +56,11 @@ const num = (v) => (v === null || v === undefined || v === '' || Number.isNaN(Nu
 // Every email to the tenant that lists cheques follows saifsys's layout, given in the facts.
 // Without this the AI split the VAT over every cheque and made up a "balance" line, so the
 // email said one thing and the contract another.
-const CHEQUES = `- Cheques: never make up a split, a "balance" or a line of your own. With the figures on offer, copy the cheque lines in the facts
-  exactly. With other figures agreed in the emails (a new rent or fee), work the cheques out only by the layout in the facts: ALL the
-  VAT, every fee and the Ejari fee in cheque 1; the others rent and chiller only, no VAT. Check that the cheques add up to the total.
-  If the facts say the layout is not known, do not list cheque amounts: say the exact cheques will be in the renewal contract.`;
+// The AI got the sums wrong even with the layout given, so it writes no figures block at all:
+// the cheques come from saifsys (Reem fills them in on a rewrite, the contract carries them).
+const CHEQUES = `- Never list cheques, cheque amounts, a total or a breakdown of the charges and VAT: you may name the rent or a fee in a
+  sentence, but every figures list comes from saifsys. Where the tenant needs the cheques, say they will be in the renewal
+  contract (or, for the team, that "Tell Reem what to say" writes the email with saifsys's figures).`;
 
 // ---------- the tenant's email ----------
 
@@ -227,15 +228,21 @@ export async function caseSummary({ facts, story }) {
 
 const REWRITE = `You are the building management team of a Dubai landlord, writing to a tenant about the renewal of their lease.
 Rewrite the draft reply you are given into a clear, professional, courteous email from the building management team.
-Answer by filling in the answer tool: {"reply": string}
+Answer by filling in the answer tool:
+{"reply": string, "has_terms": boolean, "rent": number|null, "admin_fee": number|null, "chiller_fee": number|null}
 - reply: only the body: no greeting ("Dear ...") and no sign-off, as both are added.
+- Never write figures yourself: no cheques, no cheque amounts, no total, no list of the rent, charges, VAT or Ejari. When the
+  email states the renewal terms (confirming what was agreed, or an offer), put the line {{FIGURES}} on its own where they belong,
+  and set has_terms true. Reem puts there the rent, each charge with its VAT, the Ejari fee, the total and every cheque, exactly
+  as saifsys works them out. Otherwise has_terms is false and there is no {{FIGURES}}.
+- rent, admin_fee, chiller_fee: with has_terms, what this email agrees, in AED a year before VAT (a waived fee is 0). null for
+  one that stays as in the facts. Take them from what the team asked and the tenant's emails; never guess a figure.
 - Keep what the draft is trying to say. Answer what the tenant last asked, using ONLY the facts given.
 - When the team says what they want the reply to say, that comes first: write the reply that says it, taking the
   details (figures, terms) from the tenant's emails and the facts. Keep it simple and short.
 - Professional and warm, never cold or pushy; short paragraphs; plain English; no slang, no emojis.
 - No new figures, dates, discounts or promises that are not in the facts or the draft.
-- Never say whether a rent increase is legal or allowed, and never threaten the tenant with a case.
-${CHEQUES}`;
+- Never say whether a rent increase is legal or allowed, and never threaten the tenant with a case.`;
 
 // An email to someone in the company about one renewal (accounts, legal, a colleague), never
 // to the tenant. The reason says what the email asks for; the figures come from the renewal.
@@ -274,8 +281,10 @@ export async function rewriteReply({ facts, thread, draft, ask }) {
     `The emails, oldest first:\n${thread || '(none yet)'}`,
     `The draft reply${ask ? ' so far' : ' to rewrite'}:\n"""\n${String(draft || '').slice(0, 6000) || '(empty)'}\n"""`,
     ask ? `What the team wants this reply to say:\n"""\n${String(ask).slice(0, 2000)}\n"""` : '',
-  ].filter(Boolean).join('\n\n') }], S({ reply: str }));
+  ].filter(Boolean).join('\n\n') }], S({ reply: str, has_terms: { type: 'boolean' }, rent: numOrNull, admin_fee: numOrNull, chiller_fee: numOrNull }));
   const reply = String(out.reply || '').trim();
   if (!reply) throw new Error('Reem could not rewrite that. Try again.');
-  return reply.slice(0, 4000);
+  const terms = out.has_terms || reply.includes('{{FIGURES}}')
+    ? { rent: num(out.rent), admin: num(out.admin_fee), chiller: num(out.chiller_fee) } : null;
+  return { reply: reply.slice(0, 4000), terms };
 }
