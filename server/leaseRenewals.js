@@ -1089,6 +1089,47 @@ export async function send(user, body) {
   return getRenewal(r.id);
 }
 
+/**
+ * "Send test": the email a step would send, as the tenant would get it (the words, the
+ * contract, the thread quoted underneath), to an address the person types instead. Nothing
+ * else happens: saifsys keeps its figures, the renewal does not move, no one is copied, and
+ * nothing goes on the timeline or the thread. The tenant's own address is refused.
+ */
+export async function sendTest(user, body) {
+  const to = String(body.test_to || '').trim().toLowerCase();
+  if (!EMAIL.test(to)) throw bad('Type the email address the test goes to.');
+  const p = await prepare(body);
+  if (to === String(p.r.lease.email || '').trim().toLowerCase()) throw bad('That is the tenant\'s own address. A test never goes to the tenant: use Send for the real email.');
+  const text = String(body.text || '').trim() || p.text;
+  if (!String(text || '').trim()) throw bad('Write the email first.');
+  const acc = await inbox();
+  if (!acc) throw bad('The Tenant care inbox is not connected, so the test cannot go.', 409);
+  const attachments = [];
+  if (body.action === 'accept') {
+    // The contract as the real Send would make it. New figures are previewed in saifsys and
+    // undone there; the same figures print the draft lease as it is.
+    const changed = p.feesChanged || p.amount !== p.r.offer || p.cheques !== p.r.cheques;
+    const got = changed
+      ? await saifsys('contract_preview', {
+        workflow_id: p.r.workflow_id, rent: p.amount, cheques: p.cheques,
+        admin_fees: p.feesChanged ? p.fees.admin : null, chiller_charges: p.feesChanged && p.fees.chiller_shown ? p.fees.chiller : null,
+      })
+      : await saifsys('contract', { workflow_id: p.r.workflow_id });
+    if (!got?.contract?.data) throw bad('saifsys did not send the tenancy contract PDF, so the test was not sent.', 502);
+    if (changed && Math.abs(round2(got.grand_total) - round2(p.quote?.grand_total)) > 0.05) {
+      throw bad(`saifsys would make the renewal ${aed(got.grand_total || 0)} in all, not the ${aed(p.quote?.grand_total || 0)} in this email. The test was not sent: check the renewal in saifsys.`, 409);
+    }
+    attachments.push({ filename: contractName(p.r), contentType: 'application/pdf', content: got.contract.data });
+  }
+  const { quote } = p.r.id ? await onThread(p.r, acc, []) : { quote: null };
+  const m = await compose({
+    from: { name: 'Tenant Care', address: acc.email }, to: [to], subject: `[TEST] ${subjectOf(p.r)}`,
+    text: `Test: this was not sent to the tenant (${p.r.lease.email}).\n\n${text}`, attachments, quote,
+  });
+  try { await D.send(acc, decrypt(acc.password_enc), m); } catch (e) { throw bad(`The test could not be sent: ${friendlySmtp(e, acc.smtp_host)}`, 502); }
+  return { to };
+}
+
 /** "Read again": a tenant's email Reem could not read goes back to be read, now. */
 export async function reread(id, eventId) {
   const { changes } = await db.prepare(`UPDATE lease_renewal_events SET status = 'new', error = NULL WHERE id = ? AND renewal_id = ? AND kind = 'in' AND status = 'error'`)
@@ -1948,6 +1989,7 @@ leaseRenewalRoutes.get('/:id/files/:file', wrap(async (req, res) => {
 leaseRenewalRoutes.get('/fees/:leaseId', wrap(async (req, res) => { res.json(await startFees(req.params.leaseId)); }));
 leaseRenewalRoutes.post('/draft', wrap(async (req, res) => { res.json(await draft(req.user, req.body || {})); }));
 leaseRenewalRoutes.post('/send', wrap(async (req, res) => { res.json(out(await send(req.user, req.body || {}))); }));
+leaseRenewalRoutes.post('/send-test', wrap(async (req, res) => { res.json(await sendTest(req.user, req.body || {})); }));
 // "Check for replies": the Tenant care inbox now, then any new email read, instead of waiting for the clock.
 leaseRenewalRoutes.post('/check', wrap(async (req, res) => {
   await D.checkMail();
