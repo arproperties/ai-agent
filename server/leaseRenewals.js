@@ -601,7 +601,8 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera
     if (lease.saifsys_renewal) throw bad(`The staff already have a renewal for this lease in saifsys (${lease.saifsys_renewal}).`, 409);
     if (lease.saifsys_rejected) throw bad('The staff rejected this renewal in saifsys. Open it and tap Take over to carry it on here.', 409);
     if (!String(lease.email || '').includes('@')) throw bad('saifsys has no email for this tenant. Add it in saifsys first.', 409);
-    if (await db.prepare('SELECT 1 FROM lease_renewals WHERE lease_id = ? AND end_date = ?').get(lease.lease_id, lease.end_date)) throw bad('This renewal has already started.', 409);
+    // A saved draft of the offer is no start: it is finished from here.
+    if (await db.prepare(`SELECT 1 FROM lease_renewals WHERE lease_id = ? AND end_date = ? AND status <> 'draft'`).get(lease.lease_id, lease.end_date)) throw bad('This renewal has already started.', 409);
     r = { id: null, lease, status: null };
   } else {
     r = await getRenewal(id);
@@ -939,6 +940,18 @@ export async function bringInPast(user, id) {
 /** The email a step would send, for the person to read. Nothing is sent or saved. */
 export async function draft(user, body) {
   const p = await prepare(body);
+  // A first offer saved as a draft: its words again, if saifsys's figures are still the same
+  // (the reply-by date moves to two weeks from today). If they changed, the email is written
+  // afresh with the new figures and the person is told: old figures are never sent.
+  let draftKept = false;
+  let draftChanged = false;
+  if (body.action === 'start') {
+    const dr = await db.prepare(`SELECT plan FROM lease_renewals WHERE lease_id = ? AND end_date = ? AND status = 'draft'`).get(p.r.lease.lease_id, p.r.lease.end_date);
+    if (dr?.plan?.text) {
+      const now = (t) => String(t || '').split(dr.plan.by || '\u0000').join(replyBy());
+      if (now(dr.plan.base) === p.text) { p.text = now(dr.plan.text); draftKept = true; } else draftChanged = true;
+    }
+  }
   // A reply: the person's own draft when they started one, else Reem's suggestion.
   let saved = false;
   if (body.action === 'reply' && !body.words) {
@@ -952,7 +965,7 @@ export async function draft(user, body) {
     schedule: p.quote?.cheques || null, total: p.quote?.cheques_total ?? null,
     fees: p.quote?.fees || null, charges: p.quote ? chargesOf(p.quote) : null,
     attachments: body.action === 'accept' ? [contractName(p.r)] : [],
-    sendOn: p.sendOn, saved,
+    sendOn: p.sendOn, saved, draftKept, draftChanged,
   };
 }
 
@@ -1034,27 +1047,28 @@ export async function send(user, body) {
   if (body.action === 'start') {
     // Reem runs it from here when the person gave the RERA index; without it, a person does.
     const auto = p.rera !== null && body.auto !== false;
+    // A saved draft becomes the renewal itself (same id); if the offer then fails, it is a draft again.
+    const draft = await db.prepare(`SELECT id, plan FROM lease_renewals WHERE lease_id = ? AND end_date = ? AND status = 'draft'`).get(r.lease.lease_id, r.lease.end_date);
+    const plan = p.sendOn ? JSON.stringify({ text, fees: p.fees, by: replyBy() }) : null;
+    const args = [JSON.stringify(r.lease), p.amount, p.cheques, JSON.stringify(p.source), JSON.stringify(p.quote), user?.id || null, p.rera, auto, plan];
+    const made = draft
+      ? await db.prepare(`UPDATE lease_renewals SET lease = ?, status = 'scheduled', offer = ?, cheques = ?, rent_source = ?, quote = ?, started_by = ?, rera_pct = ?, auto = ?, plan = ?
+          WHERE id = ? AND status = 'draft' RETURNING id`).get(...args, draft.id)
+      : await db.prepare(`INSERT INTO lease_renewals (lease_id, end_date, lease, status, offer, cheques, rent_source, quote, started_by, rera_pct, auto, plan)
+          VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (lease_id, end_date) DO NOTHING RETURNING id`).get(r.lease.lease_id, r.lease.end_date, ...args);
+    if (!made) throw bad('This renewal has already started.', 409);
     if (p.sendOn) {
       // Too early for the offer: kept, with its words, and sent by Reem on the day.
-      const made = await db.prepare(`INSERT INTO lease_renewals (lease_id, end_date, lease, status, offer, cheques, rent_source, quote, started_by, rera_pct, auto, plan)
-        VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (lease_id, end_date) DO NOTHING RETURNING id`)
-        .get(r.lease.lease_id, r.lease.end_date, JSON.stringify(r.lease), p.amount, p.cheques, JSON.stringify(p.source), JSON.stringify(p.quote),
-          user?.id || null, p.rera, auto, JSON.stringify({ text, fees: p.fees, by: replyBy() }));
-      if (!made) throw bad('This renewal has already started.', 409);
       r = await getRenewal(made.id);
       await step(r, `Offer ready: Reem sends it on ${longDate(p.sendOn)}`, { user });
       return r;
     }
-    const made = await db.prepare(`INSERT INTO lease_renewals (lease_id, end_date, lease, status, offer, cheques, rent_source, quote, started_by, rera_pct, auto)
-      VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (lease_id, end_date) DO NOTHING RETURNING id`)
-      .get(r.lease.lease_id, r.lease.end_date, JSON.stringify(r.lease), p.amount, p.cheques, JSON.stringify(p.source), JSON.stringify(p.quote),
-        user?.id || null, p.rera, auto);
-    if (!made) throw bad('This renewal has already started.', 409);
     try {
       return await sendOffer(await getRenewal(made.id), { text, fees: p.fees, user });
     } catch (e) {
-      // Nothing went: the lease is free to start again.
-      await db.prepare(`DELETE FROM lease_renewals WHERE id = ? AND status = 'scheduled'`).run(made.id);
+      // Nothing went: the lease is free to start again, or back to the draft it was.
+      if (draft) await db.prepare(`UPDATE lease_renewals SET status = 'draft', plan = ? WHERE id = ? AND status = 'scheduled'`).run(JSON.stringify(draft.plan), made.id);
+      else await db.prepare(`DELETE FROM lease_renewals WHERE id = ? AND status = 'scheduled'`).run(made.id);
       throw e;
     }
   }
@@ -1163,6 +1177,26 @@ export async function sendTest(user, body) {
   return { to };
 }
 
+/**
+ * "Save as draft" on the first offer: its words and what was typed (rent, cheques, fees) kept
+ * to finish later. Nothing goes to the tenant or saifsys, and Reem never sends it by itself.
+ * Saved again, it is overwritten. Sending it later prices it in saifsys afresh.
+ */
+export async function saveOfferDraft(user, body) {
+  const p = await prepare({ ...body, action: 'start' });
+  const text = String(body.text || '').trim() || p.text;
+  const { text: _t, test_to: _x, draftText: _d, ...ask } = body;
+  const made = await db.prepare(`INSERT INTO lease_renewals (lease_id, end_date, lease, status, offer, cheques, rent_source, quote, started_by, rera_pct, auto, plan)
+    VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, false, ?)
+    ON CONFLICT (lease_id, end_date) DO UPDATE SET lease = EXCLUDED.lease, offer = EXCLUDED.offer, cheques = EXCLUDED.cheques, rent_source = EXCLUDED.rent_source,
+      quote = EXCLUDED.quote, started_by = EXCLUDED.started_by, rera_pct = EXCLUDED.rera_pct, plan = EXCLUDED.plan
+      WHERE lease_renewals.status = 'draft' RETURNING id`)
+    .get(p.r.lease.lease_id, p.r.lease.end_date, JSON.stringify(p.r.lease), p.amount, p.cheques, JSON.stringify(p.source), JSON.stringify(p.quote),
+      user?.id || null, p.rera, JSON.stringify({ text, base: p.text, by: replyBy(), ask: { ...ask, action: 'start' } }));
+  if (!made) throw bad('This renewal has already started.', 409);
+  return getRenewal(made.id);
+}
+
 /** "Read again": a tenant's email Reem could not read goes back to be read, now. */
 export async function reread(id, eventId) {
   const { changes } = await db.prepare(`UPDATE lease_renewal_events SET status = 'new', error = NULL WHERE id = ? AND renewal_id = ? AND kind = 'in' AND status = 'error'`)
@@ -1188,6 +1222,11 @@ export async function mark(user, id, what) {
   if (what === 'send_now') {
     if (r.status !== 'scheduled') throw bad('The offer has already gone.', 409);
     return sendPlanned(r, user);
+  }
+  if (what === 'delete_draft') {
+    if (r.status !== 'draft') throw bad('This is no longer a draft: the offer has gone.', 409);
+    await db.prepare(`DELETE FROM lease_renewals WHERE id = ? AND status = 'draft'`).run(r.id);
+    return null;
   }
   if (what === 'unschedule') {
     if (r.status !== 'scheduled') throw bad('The offer has already gone: use Handle outside Reem instead.', 409);
@@ -1808,6 +1847,8 @@ const out = (r) => r && {
   disputeReminder: r.dispute_reminder ? { n: r.dispute_reminder.n, readyAt: Number(r.dispute_reminder.created_at) } : null, lastOutAt: r.last_out_at, lastInAt: r.last_in_at, updatedAt: r.updated_at,
   auto: r.auto, reraPct: r.rera_pct, indexRent: r.rera_pct !== null ? indexRentFrom(r.lease.annual_rent, r.rera_pct) : null,
   sendOn: r.status === 'scheduled' ? sendDate(r.lease) : null,
+  // A saved first offer: what was typed and its words, to carry on from.
+  draft: r.status === 'draft' ? { ask: r.plan?.ask || null } : null,
 };
 
 const daysLeft = (end) => daysBetween(today(), end);
@@ -2002,7 +2043,7 @@ leaseRenewalRoutes.get('/', wrap(async (req, res) => {
   const leases = saifsysConfigured() ? await dueLeases() : [];
   // Not renewing stays for good: after the end date it shows as Closed (the tenant left as
   // agreed), never under Expired with the leases that ran out with nothing done.
-  const rows = (await db.prepare(`SELECT * FROM lease_renewals WHERE status IN ('scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'not_renewing')
+  const rows = (await db.prepare(`SELECT * FROM lease_renewals WHERE status IN ('draft', 'scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'not_renewing')
     OR updated_at > ${NOW} - 30 * 86400`).all()).map(ROW);
   const byLease = new Map(rows.map((r) => [`${r.lease_id}:${r.end_date}`, r]));
   const list = leases.map((l) => { const k = `${l.lease_id}:${l.end_date}`; const r = byLease.get(k); byLease.delete(k); return card(l, r); });
@@ -2074,6 +2115,7 @@ leaseRenewalRoutes.get('/:id/files/:file', wrap(async (req, res) => {
 leaseRenewalRoutes.get('/fees/:leaseId', wrap(async (req, res) => { res.json(await startFees(req.params.leaseId)); }));
 leaseRenewalRoutes.post('/draft', wrap(async (req, res) => { res.json(await draft(req.user, req.body || {})); }));
 leaseRenewalRoutes.post('/send', wrap(async (req, res) => { res.json(out(await send(req.user, req.body || {}))); }));
+leaseRenewalRoutes.post('/offer-draft', wrap(async (req, res) => { res.json(out(await saveOfferDraft(req.user, req.body || {}))); }));
 leaseRenewalRoutes.post('/send-test', wrap(async (req, res) => { res.json(await sendTest(req.user, req.body || {})); }));
 // "Check for replies": the Tenant care inbox now, then any new email read, instead of waiting for the clock.
 leaseRenewalRoutes.post('/check', wrap(async (req, res) => {

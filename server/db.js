@@ -1877,7 +1877,9 @@ await db.exec(`
   ALTER TABLE lease_renewals ADD COLUMN IF NOT EXISTS portal_seen INTEGER;
   ALTER TABLE lease_renewals DROP CONSTRAINT IF EXISTS lease_renewals_status_check;
   ALTER TABLE lease_renewals ADD CONSTRAINT lease_renewals_status_check
-    CHECK (status IN ('scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'converted', 'not_renewing', 'closed'));
+    CHECK (status IN ('draft', 'scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'converted', 'not_renewing', 'closed'));
+  -- 'draft' (2026-11-20): a first offer a person saved to finish later. plan holds its words and
+  -- what was typed (rent, fees); nothing went to the tenant or saifsys, and Reem never sends it.
   -- paused: the master stops Reem on every renewal at once; each waits for staff.
   ALTER TABLE lease_renewal_settings ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT false;
   -- bcc: addresses copied silently (Bcc) on every renewal email to a tenant, e.g. accounts.
