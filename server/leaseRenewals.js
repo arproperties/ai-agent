@@ -577,6 +577,9 @@ const ACTIONS = {
   convert: { from: ['agreed', 'papers_ok'], title: (rent) => `Renewed in saifsys · ${aed(rent)}` },
 };
 
+// The steps whose email may carry new admin and chiller fees.
+const CHARGE_STEPS = ['counter', 'accept'];
+
 const rentOf = (v) => {
   const n = Math.round(Number(v));
   if (!(n > 0)) throw bad('Type the yearly rent in AED.');
@@ -620,10 +623,26 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera
   if (action === 'convert') amount = r.agreed;
   // Start takes the fees the person typed; later steps keep the renewal's.
   const fee = (v) => (v === undefined || v === null || v === '' ? null : Math.max(0, Math.round(Number(v) * 100) / 100));
-  const fees = action === 'start' ? { admin: fee(adminFee), chiller: fee(chillerFee), parking: fee(parkingFee), small_store: fee(smallFee), big_store: fee(bigFee), ev: fee(evFee), pest: fee(pestFee) }
+  let fees = action === 'start' ? { admin: fee(adminFee), chiller: fee(chillerFee), parking: fee(parkingFee), small_store: fee(smallFee), big_store: fee(bigFee), ev: fee(evFee), pest: fee(pestFee) }
     // A renewal started before pest control came in has none: left out, saifsys would add the old lease's.
     : r.quote?.fees && { pest: 0, ...r.quote.fees };
-  const quote = amount && action !== 'convert' ? (action !== 'accept' || amount !== r.offer || !r.quote ? await quoteFor(r.lease, amount, n, fees) : r.quote) : r.quote;
+  // A counter-offer or the agreement may change the admin and chiller fees (the tenant agreed
+  // to other charges than offered). Only these two; the rest stay as the renewal has them.
+  let feesChanged = false;
+  if (CHARGE_STEPS.includes(action) && fees) {
+    const admin = fee(adminFee);
+    const chiller = fees.chiller_shown ? fee(chillerFee) : null;
+    if (admin !== null && admin !== round2(fees.admin)) { fees = { ...fees, admin }; feesChanged = true; }
+    if (chiller !== null && chiller !== round2(fees.chiller)) { fees = { ...fees, chiller }; feesChanged = true; }
+  }
+  const quote = amount && action !== 'convert'
+    ? (action !== 'accept' || amount !== r.offer || !r.quote || feesChanged ? await quoteFor(r.lease, amount, n, fees) : r.quote)
+    : r.quote;
+  // saifsys must price the fees asked for. An older saifsys reads an admin fee of 0 as "keep
+  // the old one": stopped here, so no email ever shows the tenant figures saifsys will not use.
+  if (feesChanged && quote && (round2(quote.fees?.admin) !== round2(fees.admin) || round2(quote.fees?.chiller) !== round2(fees.chiller))) {
+    throw bad(`saifsys priced the admin fee at ${aed(quote.fees?.admin || 0)} and the chiller at ${aed(quote.fees?.chiller || 0)}, not what you typed, so nothing was sent. saifsys needs its update for changing fees.`, 409);
+  }
 
   let text;
   if (action === 'start') text = offerText(r, quote, amount);
@@ -643,7 +662,7 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera
     if (!(rera >= 0 && rera <= 20)) throw bad('The increase the RERA index allows is 0 to 20%.');
   }
   const sendOn = action === 'start' ? sendDate(r.lease) : null;
-  return { r, a, s, amount, cheques: n, source, quote, fees, text, rera, sendOn: sendOn > today() ? sendOn : null };
+  return { r, a, s, amount, cheques: n, source, quote, fees, feesChanged, text, rera, sendOn: sendOn > today() ? sendOn : null };
 }
 
 /** The day the offer goes: 120 days before the lease ends. */
@@ -954,6 +973,22 @@ async function sendPlanned(r, user = null) {
   return sendOffer(r, { text, fees: r.plan?.fees, user });
 }
 
+/**
+ * The new admin and chiller fees, with the rent, set on saifsys's renewal before anything is
+ * emailed. saifsys's total afterwards must be the one the email shows: if it is not, the email
+ * stays unsent, so the tenant is never told one figure while the contract says another.
+ */
+async function setCharges(r, p, note) {
+  const { renewal } = await saifsys('charges', {
+    workflow_id: r.workflow_id, rent: p.amount, cheques: p.cheques,
+    admin_fees: p.fees.admin, chiller_charges: p.fees.chiller_shown ? p.fees.chiller : null, note,
+  });
+  const want = round2(p.quote?.grand_total);
+  if (!renewal || Math.abs(round2(renewal.grand_total) - want) > 0.05) {
+    throw bad(`saifsys now has the renewal at ${aed(renewal?.grand_total || 0)} in all, not the ${aed(want)} in this email, so nothing was sent. Check the renewal in saifsys.`, 409);
+  }
+}
+
 /** Send what the person approved, and move the renewal (and saifsys) along with it. */
 export async function send(user, body) {
   const p = await prepare(body);
@@ -993,7 +1028,9 @@ export async function send(user, body) {
   }
 
   if (body.action === 'counter' || body.action === 'index') {
-    await saifsys('rent', { workflow_id: r.workflow_id, rent: p.amount, cheques: p.cheques, note: `${RENT_SOURCES[p.source.kind]}${p.source.pct !== undefined ? ` (+${p.source.pct}%)` : ''}` });
+    const note = `${RENT_SOURCES[p.source.kind]}${p.source.pct !== undefined ? ` (+${p.source.pct}%)` : ''}`;
+    if (p.feesChanged) await setCharges(r, p, note);
+    else await saifsys('rent', { workflow_id: r.workflow_id, rent: p.amount, cheques: p.cheques, note });
     await saifsys('status', { workflow_id: r.workflow_id, status: 'negotiation' });
     r = await update(r.id, { status: 'negotiating', offer: p.amount, cheques: p.cheques, rent_source: p.source, quote: p.quote, tenant_offer: null, waiting: null, reminders: 0 });
     await mail(r, { title, text, user, data: { rent: p.amount, source: p.source } });
@@ -1001,7 +1038,8 @@ export async function send(user, body) {
   }
 
   if (body.action === 'accept') {
-    if (p.amount !== r.offer || p.cheques !== r.cheques) await saifsys('rent', { workflow_id: r.workflow_id, rent: p.amount, cheques: p.cheques, note: 'Agreed with the tenant' });
+    if (p.feesChanged) await setCharges(r, p, 'Agreed with the tenant');
+    else if (p.amount !== r.offer || p.cheques !== r.cheques) await saifsys('rent', { workflow_id: r.workflow_id, rent: p.amount, cheques: p.cheques, note: 'Agreed with the tenant' });
     // Made after the rent is set, so the contract carries the agreed figures. Nothing goes without it.
     const { contract } = await saifsys('contract', { workflow_id: r.workflow_id });
     if (!contract?.data) throw bad('saifsys did not send the tenancy contract PDF, so nothing was emailed. Check the contract template in saifsys, then tap Send again.', 502);
@@ -1634,6 +1672,8 @@ const out = (r) => r && {
   id: r.id, status: r.status, waiting: r.waiting, dispute: r.dispute, error: r.error, offer: r.offer, agreed: r.agreed,
   tenantOffer: r.tenant_offer, cheques: r.cheques, rentSource: r.rent_source, workflowId: r.workflow_id,
   schedule: r.quote?.cheques || null, total: r.quote?.cheques_total ?? null, start: r.quote?.start_date ?? null, end: r.quote?.end_date ?? null,
+  // The admin and chiller fees as the renewal has them now, for the Agree and Counter boxes.
+  fees: r.quote?.fees ? { admin: Number(r.quote.fees.admin) || 0, chiller: Number(r.quote.fees.chiller) || 0, chillerShown: !!r.quote.fees.chiller_shown } : null,
   papers: r.papers, reminders: r.reminders,
   // Taken over from the staff: the tenant can answer in the tenant portal as well as by email.
   portal: r.portal_seen !== null && r.portal_seen !== undefined,
