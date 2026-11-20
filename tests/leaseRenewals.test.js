@@ -507,6 +507,24 @@ test('rewrite with Reem: only the words between greeting and sign-off are rewrit
   await assert.rejects(R.rewrite(r.id, 'Dear Mohamed Saeed,\n\nKind regards,\nTenant Care Team'), /Write a few words first/);
 });
 
+test('a reply never says Dear twice: a greeting or sign-off the AI put in is taken off', () => {
+  assert.equal(R.replyWords('Dear Hoda, thank you for your email. We agree.'), 'Thank you for your email. We agree.');
+  assert.equal(R.replyWords('Dear Hoda,\n\nWe agree.\n\nKind regards,\nTenant Care Team'), 'We agree.');
+  assert.equal(R.replyWords('We will write with regards to the chiller.'), 'We will write with regards to the chiller.');
+});
+
+test('ask Reem: what the person wants said goes to the AI, even with an empty box', async () => {
+  const boss = await setup();
+  stub();
+  const r = await start(boss, 42000);
+  const asked = [];
+  R.useForTests({ rewriteReply: async (x) => { asked.push(x); return 'Dear Mohamed, we are pleased to agree to your offer.'; } });
+  const out = await R.rewrite(r.id, 'Dear Mohamed Saeed,\n\nKind regards,\nTenant Care Team', 'tell him we agree with his offer');
+  assert.equal(asked[0].ask, 'tell him we agree with his offer');
+  assert.equal(asked[0].draft, '');
+  assert.equal(out.text, 'Dear Mohamed Saeed,\n\nWe are pleased to agree to your offer.\n\nKind regards,\nTenant Care Team');
+});
+
 test('charges: each extra listed, VAT taken from saifsys\'s own total, shown as 5% on the charges', () => {
   const q = { proposed_rent: 249375, rera: 300, grand_total: 249375 + 1500 + 2000 + 175 + 300, fees: { admin: 1500, chiller: 0, parking: 2000, small_store: 0, big_store: 0 } };
   const c = R.chargesOf(q);

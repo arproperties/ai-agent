@@ -644,9 +644,11 @@ function Compose({ ask, onClose, onSent }) {
     api.post('/lease-renewals/draft', ask).then((x) => { setD(x); setText(x.text); }).catch((e) => setError(e.message));
   }, [ask]);
   const [rewriting, setRewriting] = useState(false);
+  // What the person wants the reply to say ("tell him we agree with his offer"); Reem writes it from the emails.
+  const [wish, setWish] = useState('');
   const rewrite = async () => {
     setRewriting(true); setError('');
-    try { setText((await api.post(`/lease-renewals/${ask.id}/rewrite`, { text })).text); } catch (e) { setError(e.message); }
+    try { setText((await api.post(`/lease-renewals/${ask.id}/rewrite`, { text, ask: wish })).text); setWish(''); } catch (e) { setError(e.message); }
     setRewriting(false);
   };
   const send = async () => {
@@ -702,6 +704,16 @@ function Compose({ ask, onClose, onSent }) {
             )}
           </div>
 
+          {ask.action === 'reply' && (
+            <form onSubmit={(e) => { e.preventDefault(); if (wish.trim() && !rewriting) rewrite(); }}
+              className="flex items-center gap-2 rounded-2xl border border-stroke bg-surface-2 py-1.5 pl-4 pr-1.5">
+              <Sparkles size={15} className="shrink-0 text-p1" />
+              <input value={wish} onChange={(e) => setWish(e.target.value)} disabled={rewriting} aria-label="Ask Reem to write the reply"
+                placeholder="Tell Reem what to say, e.g. we agree with his offer"
+                className="min-w-0 flex-1 bg-transparent py-1.5 text-sm outline-none placeholder:text-mute" />
+              <Btn primary busy={rewriting} disabled={!wish.trim() || busy}>Write</Btn>
+            </form>
+          )}
           {d.sendOn && <p className="flex items-start gap-1.5 text-xs text-mute"><Clock size={13} className="mt-px shrink-0" /> It is too early for the offer: Reem sends it by itself on {day(d.sendOn)}, 120 days before the lease ends.</p>}
           {ask.action === 'convert' && <p className="text-xs text-mute">saifsys makes the new lease and its cheques now, then this email goes to the tenant.</p>}
           <Problem text={error} />

@@ -71,7 +71,8 @@ Answer by filling in the answer tool:
 - dispute: true when they contest the increase or the renewal: say it is not legal, cite RERA, the Rental Index, Decree 43,
   the Rental Dispute Settlement Centre (RDC), a lawyer or a complaint, or refuse to pay or to leave.
   dispute_note: one line on what they are claiming. null when dispute is false.
-- suggested_reply: a short, polite reply in English that a person could send, using ONLY the facts given (no promises,
+- suggested_reply: a short, polite reply in English that a person could send: only the body, no greeting ("Dear ...")
+  and no sign-off, as both are added, using ONLY the facts given (no promises,
   no new figures, no legal threats). For a question, answer it if the facts do; otherwise null.`;
 
 /** What a tenant's email means, given the renewal's facts and the conversation so far. */
@@ -219,6 +220,8 @@ Rewrite the draft reply you are given into a clear, professional, courteous emai
 Answer by filling in the answer tool: {"reply": string}
 - reply: only the body: no greeting ("Dear ...") and no sign-off, as both are added.
 - Keep what the draft is trying to say. Answer what the tenant last asked, using ONLY the facts given.
+- When the team says what they want the reply to say, that comes first: write the reply that says it, taking the
+  details (figures, terms) from the tenant's emails and the facts. Keep it simple and short.
 - Professional and warm, never cold or pushy; short paragraphs; plain English; no slang, no emojis.
 - No new figures, dates, discounts or promises that are not in the facts or the draft.
 - Never say whether a rent increase is legal or allowed, and never threaten the tenant with a case.`;
@@ -254,9 +257,13 @@ export async function teamEmail({ facts, thread, reason, note, to, sender }) {
 }
 
 /** The person's draft reply, written again by Reem as the building management team. */
-export async function rewriteReply({ facts, thread, draft }) {
-  const out = await askJson(REWRITE, [{ type: 'text', text:
-    `Facts of this renewal:\n${facts}\n\nThe emails, oldest first:\n${thread || '(none yet)'}\n\nThe draft reply to rewrite:\n"""\n${String(draft || '').slice(0, 6000)}\n"""` }], S({ reply: str }));
+export async function rewriteReply({ facts, thread, draft, ask }) {
+  const out = await askJson(REWRITE, [{ type: 'text', text: [
+    `Facts of this renewal:\n${facts}`,
+    `The emails, oldest first:\n${thread || '(none yet)'}`,
+    `The draft reply${ask ? ' so far' : ' to rewrite'}:\n"""\n${String(draft || '').slice(0, 6000) || '(empty)'}\n"""`,
+    ask ? `What the team wants this reply to say:\n"""\n${String(ask).slice(0, 2000)}\n"""` : '',
+  ].filter(Boolean).join('\n\n') }], S({ reply: str }));
   const reply = String(out.reply || '').trim();
   if (!reply) throw new Error('Reem could not rewrite that. Try again.');
   return reply.slice(0, 4000);

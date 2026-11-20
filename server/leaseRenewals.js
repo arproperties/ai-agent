@@ -374,7 +374,18 @@ const notRenewingText = (r) => [dear(r), '',
   `Your tenancy ends on ${longDate(r.lease.end_date)}. Our team will contact you about the move-out inspection and the handover of the keys.`,
   ...SIGN].join('\n');
 
-const replyText = (r, words) => [dear(r), '', String(words || '').trim(), ...SIGN].join('\n');
+/**
+ * The words of a reply between our own greeting and sign-off. The AI sometimes starts its
+ * words with its own "Dear Hoda," or ends with "Kind regards", which doubled them in the
+ * email, so any it put in are taken off first.
+ */
+export function replyWords(words) {
+  let w = String(words || '').trim();
+  w = w.replace(/^(?:dear|hello|hi)\b[^,\n]{0,80},\s*/i, '');
+  w = w.replace(/(?:^|\n)[ \t]*(?:(?:kind|best|warm) regards|regards|sincerely|yours sincerely),?[ \t]*(?:\n[^\n]{0,60}){0,2}\s*$/i, '').trim();
+  return w.charAt(0).toUpperCase() + w.slice(1);
+}
+const replyText = (r, words) => [dear(r), '', replyWords(words), ...SIGN].join('\n');
 
 const reminderText = (r, payee) => (['agreed', 'papers_ok'].includes(r.status)
   ? [dear(r), '', `A reminder that your renewal of ${r.lease.building}, Unit ${r.lease.unit} at ${aed(r.agreed)} a year is waiting for:`,
@@ -1332,8 +1343,12 @@ async function autoPapers(r, check) {
   }
 }
 
-/** "Rewrite with Reem": the reply in the box, written again as the building management team. Nothing is sent. */
-export async function rewrite(id, text) {
+/**
+ * "Rewrite with Reem": the reply in the box, written again as the building management team.
+ * With what the person asked for ("tell him we agree with his offer"), Reem writes the reply
+ * that says that, from the emails, and the box's words are only a starting point. Nothing is sent.
+ */
+export async function rewrite(id, text, ask) {
   const r = await getRenewal(id);
   if (!r) throw bad('Renewal not found', 404);
   // Only the words between the greeting and the sign-off are rewritten; both are put back as they are.
@@ -1341,8 +1356,9 @@ export async function rewrite(id, text) {
   const start = lines[0]?.trim() === dear(r) ? 1 : 0;
   const signAt = lines.findIndex((l) => l.trim() === SIGN[1]);
   const words = lines.slice(start, signAt > start ? signAt : undefined).join('\n').trim();
-  if (!words) throw bad('Write a few words first, then Reem can write them again.');
-  const body = await D.rewriteReply({ facts: factsOf(r, await settings()), thread: await thread(r.id), draft: words });
+  const wish = String(ask || '').trim().slice(0, 2000);
+  if (!words && !wish) throw bad('Write a few words first, then Reem can write them again.');
+  const body = await D.rewriteReply({ facts: factsOf(r, await settings()), thread: await thread(r.id), draft: words, ask: wish });
   return { text: replyText(r, body) };
 }
 
@@ -1937,7 +1953,7 @@ leaseRenewalRoutes.post('/:id/team-mail/draft', wrap(async (req, res) => { res.j
 leaseRenewalRoutes.post('/:id/team-mail', wrap(async (req, res) => { res.json(await teamMailSend(req.user, req.params.id, req.body || {})); }));
 
 // "Rewrite with Reem": the reply in the box, written again as the building management team. Nothing is sent.
-leaseRenewalRoutes.post('/:id/rewrite', wrap(async (req, res) => { res.json(await rewrite(req.params.id, req.body?.text)); }));
+leaseRenewalRoutes.post('/:id/rewrite', wrap(async (req, res) => { res.json(await rewrite(req.params.id, req.body?.text, req.body?.ask)); }));
 
 leaseRenewalRoutes.get('/:id/case-pack', wrap(async (req, res) => {
   const r = await getRenewal(req.params.id);
