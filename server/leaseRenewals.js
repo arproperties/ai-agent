@@ -264,7 +264,9 @@ function offerLines(q, rent) {
     `- Period: ${longDate(q.start_date)} to ${longDate(q.end_date)}`,
     `- Annual rent: ${aed(rent)}`,
     ...c.items.map((x) => `- ${x.label}: ${aed(x.amount)}${x.vat ? ` + ${c.onCharges ? '5% ' : ''}VAT ${aed(x.vat)} = ${aed(x.amount + x.vat)}` : ''}`),
-    ...(c.vat ? [`- ${c.onCharges ? 'Total VAT' : 'VAT'}: ${aed(c.vat)}`] : []),
+    // The VAT total only adds something with two or more charges carrying VAT: with one, its
+    // own line already shows it ("Chiller fee: AED 6,000 + 5% VAT AED 300 = AED 6,300").
+    ...(c.vat && !(c.onCharges && c.items.filter((x) => x.vat).length === 1) ? [`- ${c.onCharges ? 'Total VAT' : 'VAT'}: ${aed(c.vat)}`] : []),
     ...(rera ? [`- Ejari fee: ${aed(rera)}`] : []),
     `- Total: ${aed(total)}`,
     `- Payment by ${q.cheques.length} cheque${q.cheques.length > 1 ? 's' : ''}:`,
