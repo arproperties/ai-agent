@@ -1904,6 +1904,14 @@ await db.exec(`
     sent_at BIGINT
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_renewal_dispute_ready ON lease_renewal_dispute_reminders(renewal_id) WHERE status = 'ready';
+  -- A reply being written to a tenant, kept as it is typed (2026-11-20), so closing the window
+  -- does not lose it: reopened, it is there again, on any device. Gone once a reply is sent.
+  CREATE TABLE IF NOT EXISTS lease_renewal_drafts (
+    renewal_id INTEGER PRIMARY KEY REFERENCES lease_renewals(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at BIGINT NOT NULL
+  );
 `);
 
 // Reading a file in full (2026-10-20). The chunks are cut to overlap for search, so stitched

@@ -17,7 +17,7 @@ import { quoteOf } from './emailQuote.js';
 import { needsModule, userModules } from './modules.js';
 import { inbox, fileInSent, ownWords, claimTenantMail, checkTenantMail } from './tenantCare.js';
 import { askSaifsys, actSaifsys, saifsysConfigured, saifsysActionsConfigured, dubaiDate } from './saifsys/client.js';
-import { readReply, readDocs, advise, nextAsk, caseSummary, rewriteReply, teamEmail } from './leaseRenewalAi.js';
+import { readReply, readDocs, advise, nextAsk, caseSummary, rewriteReply, teamEmail, replyIdeas } from './leaseRenewalAi.js';
 import { caseMailbox } from './caseMail.js';
 import { leaseFile, leaseText } from './leases.js';
 import { cleanAddresses, createDraft, decideDraft, logAction, MAX_RECIPIENTS } from './drafts.js';
@@ -100,7 +100,7 @@ async function indexRent() { return null; }
 
 // Everything that reaches outside, swappable for the tests.
 const D = {
-  ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, nextAsk, caseSummary, rewriteReply, checkMail: checkTenantMail,
+  ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, nextAsk, caseSummary, rewriteReply, replyIdeas, checkMail: checkTenantMail,
   send: sendRaw, file: fileInSent, fetch: fetchMessage, push: sendPush, todo: createTodo, actor: async () => (await inbox())?.email,
   mirror: (action, body) => saifsys(action, body),
   teamEmail, mailbox: caseMailbox, kick: outboxKick,
@@ -939,9 +939,12 @@ export async function bringInPast(user, id) {
 /** The email a step would send, for the person to read. Nothing is sent or saved. */
 export async function draft(user, body) {
   const p = await prepare(body);
+  // A reply: the person's own draft when they started one, else Reem's suggestion.
+  let saved = false;
   if (body.action === 'reply' && !body.words) {
-    const last = await db.prepare(`SELECT reading FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'in' ORDER BY id DESC LIMIT 1`).get(p.r.id || 0);
-    if (last?.reading?.suggestedReply) p.text = replyText(p.r, last.reading.suggestedReply);
+    const kept = await db.prepare('SELECT text FROM lease_renewal_drafts WHERE renewal_id = ?').get(p.r.id || 0);
+    const last = kept ? null : await db.prepare(`SELECT reading FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'in' ORDER BY id DESC LIMIT 1`).get(p.r.id || 0);
+    if (kept) { p.text = kept.text; saved = true; } else if (last?.reading?.suggestedReply) p.text = replyText(p.r, noFigures(last.reading.suggestedReply));
   }
   const cc = p.r.id ? (await onThread(p.r, await inbox(), bccFor(p.s, p.r))).cc : [];
   return {
@@ -949,8 +952,35 @@ export async function draft(user, body) {
     schedule: p.quote?.cheques || null, total: p.quote?.cheques_total ?? null,
     fees: p.quote?.fees || null, charges: p.quote ? chargesOf(p.quote) : null,
     attachments: body.action === 'accept' ? [contractName(p.r)] : [],
-    sendOn: p.sendOn,
+    sendOn: p.sendOn, saved,
   };
+}
+
+/** The reply as it is being typed, kept so closing the window loses nothing. Empty text forgets it. */
+export async function keepDraft(user, id, text) {
+  const r = await getRenewal(id);
+  if (!r) throw bad('Renewal not found', 404);
+  const t = String(text ?? '').slice(0, 20000);
+  if (!t.trim()) await db.prepare('DELETE FROM lease_renewal_drafts WHERE renewal_id = ?').run(r.id);
+  else {
+    await db.prepare(`INSERT INTO lease_renewal_drafts (renewal_id, text, user_id, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT (renewal_id) DO UPDATE SET text = EXCLUDED.text, user_id = EXCLUDED.user_id, updated_at = EXCLUDED.updated_at`).run(r.id, t, user?.id || null, secs());
+  }
+  return { saved: !!t.trim() };
+}
+
+// The ideas for a reply, made once per tenant email: reopening the window asks the AI nothing.
+const ideasMade = new Map();
+
+/** "Tell Reem what to say", ready to tap: the likely answers to the tenant's last email. */
+export async function ideas(id) {
+  const r = await getRenewal(id);
+  if (!r) throw bad('Renewal not found', 404);
+  const last = await db.prepare(`SELECT id FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'in' ORDER BY id DESC LIMIT 1`).get(r.id);
+  if (!last) return { ideas: [] };
+  const key = `${r.id}:${last.id}`;
+  if (!ideasMade.has(key)) ideasMade.set(key, await D.replyIdeas({ facts: factsOf(r, await settings()), thread: await thread(r.id) }));
+  return { ideas: ideasMade.get(key) };
 }
 
 /**
@@ -1088,6 +1118,7 @@ export async function send(user, body) {
   // reply / fix: an email, nothing else moves.
   r = await update(r.id, { waiting: null, reminders: 0 });
   await mail(r, { title, text, user });
+  if (body.action === 'reply') await db.prepare('DELETE FROM lease_renewal_drafts WHERE renewal_id = ?').run(r.id);
   return getRenewal(r.id);
 }
 
@@ -2091,6 +2122,8 @@ leaseRenewalRoutes.post('/:id/team-mail/draft', wrap(async (req, res) => { res.j
 leaseRenewalRoutes.post('/:id/team-mail', wrap(async (req, res) => { res.json(await teamMailSend(req.user, req.params.id, req.body || {})); }));
 
 // "Rewrite with Reem": the reply in the box, written again as the building management team. Nothing is sent.
+leaseRenewalRoutes.put('/:id/reply-draft', wrap(async (req, res) => { res.json(await keepDraft(req.user, req.params.id, req.body?.text)); }));
+leaseRenewalRoutes.get('/:id/reply-ideas', wrap(async (req, res) => { res.json(await ideas(req.params.id)); }));
 leaseRenewalRoutes.post('/:id/rewrite', wrap(async (req, res) => { res.json(await rewrite(req.params.id, req.body?.text, req.body?.ask)); }));
 
 leaseRenewalRoutes.get('/:id/case-pack', wrap(async (req, res) => {

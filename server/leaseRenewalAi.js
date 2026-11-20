@@ -244,6 +244,23 @@ Answer by filling in the answer tool:
 - No new figures, dates, discounts or promises that are not in the facts or the draft.
 - Never say whether a rent increase is legal or allowed, and never threaten the tenant with a case.`;
 
+// One-tap instructions under "Tell Reem what to say", so the team does not have to think of
+// the words: what they most likely want to answer to the tenant's last email.
+const IDEAS = `You help the landlord's team answer a tenant in a Dubai lease renewal. From the facts and the emails, give the 2 or 3
+instructions the team is most likely to give for the reply to the tenant's last email, so they can tap one instead of typing.
+Answer by filling in the answer tool: {"ideas": [string]}
+- Each one short (at most 12 words), in the team's voice, naming the figures that matter, e.g.
+  "Accept her proposal: chiller AED 6,000 + VAT, admin fee waived", "Ask for two more days to review",
+  "Decline politely and keep our offer of AED 59,400".
+- Different choices (accept / ask for time / decline or counter), most likely first. Only from the facts and emails; no new figures.`;
+
+/** The likely answers to the tenant's last email, as instructions to tap. Fast model: it only drafts a few words. */
+export async function replyIdeas({ facts, thread }) {
+  const out = await askJson(IDEAS, [{ type: 'text', text: `Facts of this renewal:\n${facts}\n\nThe emails, oldest first:\n${thread || '(none yet)'}` }],
+    S({ ideas: { type: 'array', items: str } }), 400, FAST_MODEL);
+  return (Array.isArray(out.ideas) ? out.ideas : []).map((x) => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 120)).filter(Boolean).slice(0, 3);
+}
+
 // An email to someone in the company about one renewal (accounts, legal, a colleague), never
 // to the tenant. The reason says what the email asks for; the figures come from the renewal.
 const TEAM = `You write a short internal email from a member of a Dubai landlord's property team to colleagues in the same company
