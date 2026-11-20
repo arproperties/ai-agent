@@ -617,6 +617,36 @@ test('ask Reem: figures the AI writes without terms are taken out; a saifsys tha
   await assert.rejects(R.rewrite(r.id, '', 'waive the admin fee'), /Reem did not write the figures/);
 });
 
+test('a reply being written is kept: reopened it is there, Start again forgets it, Send clears it', async () => {
+  const boss = await setup();
+  stub();
+  const r = await start(boss);
+  assert.equal((await R.draft(boss, { id: r.id, action: 'reply' })).saved, false);
+  await R.keepDraft(boss, r.id, 'Dear Mohamed Saeed,\n\nHalf written');
+  let d = await R.draft(boss, { id: r.id, action: 'reply' });
+  assert.deepEqual([d.text, d.saved], ['Dear Mohamed Saeed,\n\nHalf written', true]);
+  await R.keepDraft(boss, r.id, '');
+  assert.equal((await R.draft(boss, { id: r.id, action: 'reply' })).saved, false, 'Start again');
+  await R.keepDraft(boss, r.id, 'Dear Mohamed Saeed,\n\nReady');
+  await R.send(boss, { id: r.id, action: 'reply', text: 'Dear Mohamed Saeed,\n\nReady' });
+  d = await R.draft(boss, { id: r.id, action: 'reply' });
+  assert.equal(d.saved, false, 'sent: forgotten');
+});
+
+test('reply ideas: made once per tenant email, none before the tenant wrote', async () => {
+  const boss = await setup();
+  stub({ replies: [{ intent: 'counter', amount: 38000, summary: 'Asks for 38,000', asksLess: true, dispute: false }] });
+  const r = await start(boss);
+  let asked = 0;
+  R.useForTests({ replyIdeas: async () => { asked++; return ['Accept AED 38,000', 'Counter at AED 39,000']; } });
+  assert.deepEqual(await R.ideas(r.id), { ideas: [] });
+  await arrives({ text: 'Can you do 38,000?' });
+  await R.readInbound();
+  assert.deepEqual((await R.ideas(r.id)).ideas, ['Accept AED 38,000', 'Counter at AED 39,000']);
+  await R.ideas(r.id);
+  assert.equal(asked, 1, 'reopening asks the AI nothing');
+});
+
 test('send test: the Agree email with the previewed contract goes only to the typed address, and nothing else moves', async () => {
   const boss = await setup();
   stub();

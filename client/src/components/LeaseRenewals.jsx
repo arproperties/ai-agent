@@ -670,20 +670,41 @@ function Compose({ ask, onClose, onSent }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // The text as it came (Reem's or the kept draft), so only the person's own changes are kept.
+  const loaded = useRef(null);
+  const [fresh, setFresh] = useState(0); // "Start again" loads Reem's suggestion anew
   useEffect(() => {
-    api.post('/lease-renewals/draft', ask).then((x) => { setD(x); setText(x.text); }).catch((e) => setError(e.message));
-  }, [ask]);
+    api.post('/lease-renewals/draft', ask).then((x) => { setD(x); setText(x.text); loaded.current = x.text; }).catch((e) => setError(e.message));
+  }, [ask, fresh]);
+  // A reply is kept as it is typed (a second after the last key), so closing the window loses nothing.
+  const reply = ask.action === 'reply' && !!ask.id;
+  const sending = useRef(false); // once Send is tapped, nothing is kept again (the server forgets the draft)
+  useEffect(() => {
+    if (!reply || sending.current || loaded.current === null || text === loaded.current) return undefined;
+    const t = setTimeout(() => { if (sending.current) return; api.put(`/lease-renewals/${ask.id}/reply-draft`, { text }).then(() => { loaded.current = text; setD((x) => (x ? { ...x, saved: true } : x)); }).catch(() => {}); }, 1000);
+    return () => clearTimeout(t);
+  }, [text, reply, ask.id]);
+  const startAgain = async () => {
+    await api.put(`/lease-renewals/${ask.id}/reply-draft`, { text: '' }).catch(() => {});
+    loaded.current = null; setD(null); setFresh((n) => n + 1);
+  };
+  // Ready-made instructions for "Tell Reem what to say", from the tenant's last email.
+  const [ideas, setIdeas] = useState([]);
+  useEffect(() => {
+    if (reply) api.get(`/lease-renewals/${ask.id}/reply-ideas`).then((x) => setIdeas(x.ideas || [])).catch(() => {});
+  }, [reply, ask.id]);
   const [rewriting, setRewriting] = useState(false);
   // What the person wants the reply to say ("tell him we agree with his offer"); Reem writes it from the emails.
   const [wish, setWish] = useState('');
-  const rewrite = async () => {
+  const rewrite = async (idea) => {
     setRewriting(true); setError('');
-    try { setText((await api.post(`/lease-renewals/${ask.id}/rewrite`, { text, ask: wish })).text); setWish(''); } catch (e) { setError(e.message); }
+    if (idea) setWish(idea);
+    try { setText((await api.post(`/lease-renewals/${ask.id}/rewrite`, { text, ask: idea || wish })).text); setWish(''); } catch (e) { setError(e.message); }
     setRewriting(false);
   };
   const send = async () => {
-    setBusy(true); setError('');
-    try { onSent(await api.post('/lease-renewals/send', { ...ask, text })); } catch (e) { setError(e.message); setBusy(false); }
+    setBusy(true); setError(''); sending.current = true;
+    try { onSent(await api.post('/lease-renewals/send', { ...ask, text })); } catch (e) { sending.current = false; setError(e.message); setBusy(false); }
   };
   // "Send test": the same email to an address the person types (their own to begin with).
   // Nothing else happens: saifsys, the renewal and the tenant are left as they are.
@@ -755,6 +776,19 @@ function Compose({ ask, onClose, onSent }) {
               <Btn primary busy={rewriting} disabled={!wish.trim() || busy}>Write</Btn>
             </form>
           )}
+          {reply && (ideas.length > 0 || d.saved) && (
+            <div className="-mt-2 flex flex-wrap items-center gap-1.5">
+              {ideas.map((x) => (
+                <button key={x} type="button" disabled={rewriting || busy} onClick={() => rewrite(x)}
+                  className="rounded-full border border-p1/30 bg-p1/[0.06] px-3 py-1.5 text-left text-xs transition hover:bg-p1/15 disabled:opacity-40">{x}</button>
+              ))}
+              {d.saved && (
+                <span className="ml-auto flex items-center gap-1.5 text-xs text-mute">Your draft is kept
+                  <button type="button" onClick={startAgain} disabled={rewriting || busy} className="underline hover:text-txt">Start again</button>
+                </span>
+              )}
+            </div>
+          )}
           <div className="rounded-2xl border border-dashed border-stroke px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm">Send test to</span>
@@ -778,7 +812,7 @@ function Compose({ ask, onClose, onSent }) {
             </div>
           )}
           <div className="sticky bottom-0 -mx-5 flex flex-wrap justify-end gap-2 border-t border-stroke bg-surface px-5 pb-1 pt-3">
-            {ask.action === 'reply' && <Btn busy={rewriting} disabled={!text.trim() || busy} onClick={rewrite}><Sparkles size={14} /> Rewrite with Reem</Btn>}
+            {ask.action === 'reply' && <Btn busy={rewriting} disabled={!text.trim() || busy} onClick={() => rewrite()}><Sparkles size={14} /> Rewrite with Reem</Btn>}
             <Btn onClick={onClose}>Cancel</Btn>
             <Btn primary busy={busy} disabled={!text.trim() || rewriting} onClick={send}>{d.sendOn ? <><Clock size={14} /> Send on {day(d.sendOn)}</> : <><Send size={14} /> Send</>}</Btn>
           </div>
