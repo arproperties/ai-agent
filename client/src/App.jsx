@@ -20,6 +20,7 @@ import TenantCarePage from './components/TenantCare';
 import MailRoutingPage from './components/MailRouting';
 import AddressBookPage from './components/AddressBook';
 import WhatsAppContactsPage from './components/WhatsAppContacts';
+import NeedsYouPage from './components/NeedsYou';
 import AiKeysPage from './components/AiKeys';
 import AppsPage from './components/Apps';
 import ClaudeMailPage from './components/ClaudeMail';
@@ -270,6 +271,7 @@ export default function App() {
           mailRoutingOpen={panel === 'mailrouting'} onMailRouting={() => { setPanel('mailrouting'); setDrawer(false); }}
           addressBookOpen={panel === 'addressbook'} onAddressBook={() => { setPanel('addressbook'); setDrawer(false); }}
           whatsappOpen={panel === 'whatsapp'} onWhatsApp={() => { setPanel('whatsapp'); setDrawer(false); }}
+          needsOpen={panel === 'needsyou'} onNeeds={() => { setPanel('needsyou'); setDrawer(false); }}
           feedsOpen={panel === 'feeds'} onFeeds={() => { setFeedsView(null); setPanel('feeds'); setDrawer(false); }}
           billingOpen={panel === 'billing'} onBilling={() => { setPanel('billing'); setDrawer(false); }}
           teamActivityOpen={panel === 'team'} onTeamActivity={() => { setPanel('team'); setDrawer(false); }}
@@ -340,6 +342,7 @@ export default function App() {
         {panel === 'mailrouting' && me.role === 'master' && <MailRoutingPage onBack={() => setPanel(null)} />}
         {panel === 'addressbook' && me.role === 'master' && <AddressBookPage onBack={() => setPanel(null)} />}
         {panel === 'whatsapp' && <WhatsAppContactsPage onBack={() => setPanel(null)} />}
+        {panel === 'needsyou' && !me.external && <NeedsYouPage onBack={() => setPanel(null)} onOpenChat={(id) => openChat(id)} />}
         {panel === 'feeds' && me.role === 'master' && <FeedsPage key={feedsView || 'menu'} start={feedsView} onBack={() => { setFeedsView(null); setPanel(null); }} />}
         {panel === 'billing' && me.role === 'master' && <BillingPage onBack={() => setPanel(null)} />}
         {panel === 'team' && me.role === 'master' && <TeamActivityPage onBack={() => setPanel(null)} />}

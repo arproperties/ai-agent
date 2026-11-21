@@ -10,6 +10,8 @@ import { billAs } from './billing.js';
 import { DATA_DIR } from './config.js';
 import { transcribeSpeakers, ask, audioExt } from './ai.js';
 import { isMaster } from './access.js';
+import { createTodo, getTodo } from './todos.js';
+import { userModules } from './modules.js';
 import { requireMaster } from './auth.js';
 
 // Meetings: record a meeting, get back who said what, and a summary.
@@ -87,6 +89,33 @@ export async function createMeeting(userId, { title, speakers = [] }) {
 }
 
 const ownMeeting = (userId, id) => db.prepare('SELECT * FROM meetings WHERE id = ? AND user_id = ?').get(Number(id), userId);
+
+/**
+ * Put a meeting's action items on the person's own to-do list: one (by its place in the list) or
+ * every one not already there. The summary already names who, what and when for each; a to-do is
+ * that sentence with the rest in its notes. An action that went on the list is marked with the
+ * to-do's id in the summary, so pressing the button twice cannot make two. If that to-do was later
+ * deleted the action can be added again. Only the person's own meeting; null when it is not theirs.
+ */
+export async function actionsToTodos(userId, id, index) {
+  const row = await ownMeeting(userId, id);
+  if (!row) return null;
+  const summary = parse(row.summary, null);
+  if (!summary?.actions?.length) throw bad('This meeting has no action items.');
+  const want = index === undefined || index === null ? summary.actions.map((_, i) => i) : [Number(index)];
+  if (want.some((i) => !Number.isInteger(i) || !summary.actions[i])) throw bad('There is no such action item.');
+  const title = row.title || summary.title || 'a meeting';
+  let added = 0;
+  for (const i of want) {
+    const a = summary.actions[i];
+    if (a.todo_id && await getTodo(userId, a.todo_id)) continue; // already on the list: once is enough
+    const notes = [`From the meeting "${title}".`, a.who && a.who !== UNKNOWN ? `Said for: ${a.who}.` : '', a.when ? `When: ${a.when}.` : ''].filter(Boolean).join(' ');
+    a.todo_id = (await createTodo(userId, { text: a.what, notes })).id;
+    added++;
+  }
+  if (added) await db.prepare('UPDATE meetings SET summary = ? WHERE id = ? AND user_id = ?').run(JSON.stringify(summary), row.id, userId);
+  return { added, meeting: await getMeeting(userId, row.id) };
+}
 
 export async function listMeetings(userId, limit = 100) {
   const rows = await db.prepare(`SELECT m.*,
@@ -504,6 +533,12 @@ meetingRoutes.post('/:id/finish', wrap(async (req, res) => {
 meetingRoutes.post('/:id/summarize', wrap(async (req, res) => {
   const m = await resummarize(req.user.id, req.params.id);
   m ? res.json(m) : gone(res);
+}));
+meetingRoutes.post('/:id/todos', wrap(async (req, res) => {
+  // The to-dos live on the To-do screen: without it there would be nowhere to see them.
+  if (!(await userModules(req.user)).includes('todos')) return res.status(403).json({ error: 'You do not have the To-do screen, so there is nowhere to put these.' });
+  const r = await actionsToTodos(req.user.id, req.params.id, req.body?.index);
+  r ? res.json(r) : gone(res);
 }));
 meetingRoutes.patch('/:id', wrap(async (req, res) => {
   const m = await renameMeeting(req.user.id, req.params.id, req.body.title);

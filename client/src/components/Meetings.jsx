@@ -250,10 +250,18 @@ function Detail({ id, team, dm, onOpenFiles, onDeleted }) {
   const [m, setM] = useState(null);
   const [error, setError] = useState('');
   const [openTranscript, setOpenTranscript] = useState(false);
+  const [adding, setAdding] = useState(null); // the action being put on the to-do list, or 'all'
   const player = useRef(null);
 
   const load = useCallback(() => api.get(team ? `/meetings/team/${id}` : `/meetings/${id}`).then(setM).catch((e) => setError(e.message)), [id, team]);
   useEffect(() => { load(); }, [load]);
+  // Action items onto the person's own to-do list: one by its place, or every one not already there.
+  const addToTodo = async (index) => {
+    setAdding(index === undefined ? 'all' : index);
+    setError('');
+    try { setM((await api.post(`/meetings/${id}/todos`, index === undefined ? {} : { index })).meeting); } catch (e) { setError(e.message); }
+    setAdding(null);
+  };
   // Still being written up: check back every few seconds until it is done.
   useEffect(() => {
     if (!m || m.status === 'ready' || m.status === 'failed') return undefined;
@@ -328,10 +336,29 @@ function Detail({ id, team, dm, onOpenFiles, onDeleted }) {
             )}
             {s.actions.length > 0 && (
               <div>
-                <h3 className="mb-1.5 text-[11px] font-medium tracking-[0.14em] text-mute">ACTION ITEMS</h3>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <h3 className="text-[11px] font-medium tracking-[0.14em] text-mute">ACTION ITEMS</h3>
+                  <span className="flex-1" />
+                  {!team && s.actions.some((a) => !a.todo_id) && (
+                    <button onClick={() => addToTodo()} disabled={adding !== null}
+                      className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs text-mute transition hover:bg-white/10 hover:text-txt disabled:opacity-50">
+                      {adding === 'all' ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Add all to my to-do
+                    </button>
+                  )}
+                </div>
                 <ul className="space-y-1.5">
                   {s.actions.map((a, i) => (
-                    <li key={i}><span className={`font-medium ${tone(a.who === UNKNOWN ? null : a.who)}`}>{a.who || UNKNOWN}:</span> {a.what}{a.when && <span className="text-mute"> · {a.when}</span>}</li>
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="min-w-0 flex-1"><span className={`font-medium ${tone(a.who === UNKNOWN ? null : a.who)}`}>{a.who || UNKNOWN}:</span> {a.what}{a.when && <span className="text-mute"> · {a.when}</span>}</span>
+                      {!team && (a.todo_id
+                        ? <span className="flex shrink-0 items-center gap-1 text-xs text-ok"><Check size={12} /> On your to-do</span>
+                        : (
+                          <button onClick={() => addToTodo(i)} disabled={adding !== null} title="Add to my to-do"
+                            className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs text-mute transition hover:bg-white/10 hover:text-txt disabled:opacity-50">
+                            {adding === i ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} To-do
+                          </button>
+                        ))}
+                    </li>
                   ))}
                 </ul>
               </div>

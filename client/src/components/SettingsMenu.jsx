@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MessageCircle, Radar, Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, UsersRound, Activity, FileClock, ChevronRight, Search, NotebookPen, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box, Globe, Monitor } from 'lucide-react';
+import { MessageCircle, BellRing, Radar, Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, UsersRound, Activity, FileClock, ChevronRight, Search, NotebookPen, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box, Globe, Monitor } from 'lucide-react';
 import Icon from './Icon';
 import { CaseTimeSheet } from './CaseRails';
 import { Row, Count } from './NavRow';
@@ -43,7 +43,7 @@ function Group({ title, open, onToggle, count = 0, q = '', children }) {
   );
 }
 
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, whatsappOpen, onWhatsApp, feedsOpen, onFeeds, billingOpen, onBilling, teamActivityOpen, onTeamActivity, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, trackerOpen, onTracker, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, diaryOpen, onDiary, attendanceOpen, onAttendance, reportChecksOpen, onReportChecks, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, claudeMailOpen, onClaudeMail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, whatsappOpen, onWhatsApp, needsOpen, onNeeds, feedsOpen, onFeeds, billingOpen, onBilling, teamActivityOpen, onTeamActivity, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, trackerOpen, onTracker, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, diaryOpen, onDiary, attendanceOpen, onAttendance, reportChecksOpen, onReportChecks, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, claudeMailOpen, onClaudeMail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -92,6 +92,8 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
               className="w-full bg-transparent py-1.5 text-sm outline-none placeholder:text-mute/70" />
           </div>
           <Group title="Work" {...fold('Work')} count={expiring + dueTodos}>
+            {/* Everything Reem has got ready that waits on their tap, across all their chats. */}
+            {!user.external && onNeeds && <Row role="menuitem" icon={<BellRing size={17} strokeWidth={1.75} />} label="Needs you" active={needsOpen} onClick={go(onNeeds)} />}
             {/* The morning page: prices, rates, shares, weather and news. The master's alone. */}
             {user.role === 'master' && onFeeds && <Row role="menuitem" icon={<Newspaper size={17} strokeWidth={1.75} />} label="Feeds" active={feedsOpen} onClick={go(onFeeds)} />}
             {has('shelf') && (
