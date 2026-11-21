@@ -13,7 +13,7 @@ const withQuote = (quote, said) => {
   return said ? `About this part of your answer:\n\n${quoted}\n\n${said}` : `Draft a reply email for this:\n\n${quoted}`;
 };
 
-export default function Composer({ busy, voiceEnabled, carry = [], quote = '', draft = '', onDropQuote, onPickChats, onDropChat, onSend, onStop, onVoiceState, onError }) {
+export default function Composer({ busy, voiceEnabled, carry = [], quote = '', draft = '', edit = null, onDropQuote, onPickChats, onDropChat, onSend, onStop, onVoiceState, onError }) {
   const [text, setText] = useState(draft); // draft: "New chat on this case" starts with the case number typed
   const [files, setFiles] = useState([]);
   const [rec, setRec] = useState(null); // null | 'recording' | 'transcribing'
@@ -28,6 +28,12 @@ export default function Composer({ busy, voiceEnabled, carry = [], quote = '', d
   const grow = (el) => { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 160)}px`; };
 
   useEffect(() => { if (quote) areaRef.current?.focus(); }, [quote]);
+  // Edit on one of their own messages: its words come back into the box to change and send again.
+  useEffect(() => {
+    if (!edit) return;
+    setText(edit.text);
+    requestAnimationFrame(() => { const el = areaRef.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); grow(el); } });
+  }, [edit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = (e) => {
     e?.preventDefault();

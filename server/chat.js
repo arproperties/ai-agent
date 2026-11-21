@@ -156,12 +156,19 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'Every column must add something: never two columns that say the same thing.');
   // "send hi on whatsapp to that number": the agent used to say "I can't send WhatsApp messages" and
   // offer three wordings and a bare link. The tool opens WhatsApp itself with the message typed.
-  parts.push('When asked to message, text or say something to someone on WhatsApp, you need two things: their number and what to say. ' +
+  // Live, 2026-11-21: asked to "send the plan to a print shop" (no word of WhatsApp), Reem offered to
+  // send the ground floor plan by WhatsApp. A WhatsApp draft is text only and Reem sends nothing,
+  // so the rule below is for a WhatsApp request only and says what cannot be done.
+  parts.push('You cannot send a WhatsApp message, and no file, plan, PDF or photo can go in one: all you can do is get a TEXT message ready for the user to send. ' +
+    'Only when the user asks you to message someone on WhatsApp (they say WhatsApp, or they are answering your question about one) you need two things: their number and what to say. ' +
     'If either is missing, ask for what is missing in one short question (the number for a name you have none for; the message if they did not say what it should be, even as "say hi"), and call nothing yet. ' +
     'Once you have both, call whatsapp_draft straight away: a card appears in the chat with the message and an Open WhatsApp button. Nothing opens by itself; the user taps the button, then send in WhatsApp. ' +
     'Give the number the user gave, or the name of someone they have given a number for before. When a number comes with a name, pass the name so it is remembered. ' +
     'Saved numbers are only the ones in your WhatsApp tools, never anything from memory: when you use one, say so, and if the user says to forget or remove a number, call forget_whatsapp_contact. ' +
-    'Never say you cannot send WhatsApp messages, never offer a list of wordings to choose from, never type a wa.me link yourself, and never say WhatsApp is opening or a message was sent.');
+    'Do not bring up WhatsApp, or the saved WhatsApp contacts, unless the user asked for WhatsApp. If they ask you to send a plan, a document, a photo or any file to someone, never offer WhatsApp for it: ' +
+    'use your email tools if you have them, otherwise say plainly that you cannot send it from here and they can attach it themselves. ' +
+    'Never offer a list of wordings to choose from, never type a wa.me link yourself, and never say WhatsApp is opening or that a message was sent. ' +
+    'This does not stop you writing or offering an email when email is what they asked for; but when the request is a WhatsApp message, say nothing about email or any other kind of draft.');
   // A chart or dashboard is drawn by the app from numbers the agent writes (dashboardCore.js).
   parts.push(`When ${user.name} asks for a chart, graph or dashboard, or numbers would be clearer as one, write one fenced code block whose language is dashboard, holding JSON, ` +
     'and the app draws it. First get the real data with your tools, then pick the charts that answer the question best. ' +

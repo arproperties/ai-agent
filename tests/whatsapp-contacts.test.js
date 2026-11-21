@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, makeUser, closeDb } from './helpers/db.js';
-import { saveContact, findContacts, listContacts, whatsappKit } from '../server/whatsapp.js';
+import { saveContact, findContacts, listContacts, whatsappKit, contactRows, addContact, updateContact, deleteContact } from '../server/whatsapp.js';
 
 test.after(() => closeDb());
 
@@ -140,4 +140,71 @@ test('a draft from a saved number says it came from the saved list, so a wrong o
   assert.match(r.text, /saved earlier/);
   assert.match(r.text, /nothing opens by itself/i);
   assert.equal(r.cards.length, 1);
+});
+
+// ---------- the contacts screen ----------
+
+test('a contact added by hand is listed with an id, in any number format', async () => {
+  await reset();
+  const me = await makeUser('Owner');
+  const c = await addContact(me, { name: '  Mr   Francis ', phone: '055 450 1483' });
+  assert.equal(c.name, 'Mr Francis');
+  assert.equal(c.phone, '971554501483');
+  assert.deepEqual((await contactRows(me)).map(({ name, phone }) => ({ name, phone })), [{ name: 'Mr Francis', phone: '971554501483' }]);
+  assert.equal(typeof (await contactRows(me))[0].id, 'number');
+});
+
+test('a bad number or an empty or repeated name is refused', async () => {
+  await reset();
+  const me = await makeUser('Owner');
+  await assert.rejects(addContact(me, { name: 'Sara', phone: '04 123 4567' }), /not a number WhatsApp can open/);
+  await assert.rejects(addContact(me, { name: ' ', phone: '0554501483' }), /Write the name/);
+  await addContact(me, { name: 'Sara', phone: '0554501483' });
+  await assert.rejects(addContact(me, { name: 'sara', phone: '0501234567' }), (e) => e.status === 409 && /already saved/.test(e.message));
+});
+
+test('a contact can be renamed and given a new number, and the agent finds it by the new name', async () => {
+  await reset();
+  const me = await makeUser('Owner');
+  const { id } = await addContact(me, { name: 'Francis', phone: '0554501483' });
+  const changed = await updateContact(me, id, { name: 'Mr Francis', phone: '0501234567' });
+  assert.deepEqual(changed, { id, name: 'Mr Francis', phone: '971501234567' });
+  assert.deepEqual(await findContacts(me, 'Francis'), [{ name: 'Mr Francis', phone: '971501234567' }]);
+  // only the name, or only the number, can be changed
+  assert.equal((await updateContact(me, id, { phone: '0559876543' })).name, 'Mr Francis');
+  assert.equal((await updateContact(me, id, { name: 'Francis K' })).phone, '971559876543');
+  await assert.rejects(updateContact(me, id, { phone: '123' }), /not a number WhatsApp can open/);
+});
+
+test('renaming onto the name of another contact is refused; keeping its own name is fine', async () => {
+  await reset();
+  const me = await makeUser('Owner');
+  const a = await addContact(me, { name: 'Ahmed', phone: '0544387902' });
+  await addContact(me, { name: 'Sara', phone: '0554501483' });
+  await assert.rejects(updateContact(me, a.id, { name: 'SARA' }), (e) => e.status === 409);
+  assert.equal((await updateContact(me, a.id, { name: 'ahmed' })).name, 'ahmed');
+});
+
+test('delete removes the number for good, and the agent asks for it again', async () => {
+  await reset();
+  const me = await makeUser('Owner');
+  const { id } = await addContact(me, { name: 'Francis', phone: '0554501483' });
+  assert.equal(await deleteContact(me, id), true);
+  assert.equal(await deleteContact(me, id), false);
+  assert.deepEqual(await contactRows(me), []);
+  const r = await call({ id: me }, 'whatsapp_draft', { to: 'Francis', message: 'Hi' });
+  assert.equal(r.error, true);
+  assert.match(r.text, /no WhatsApp number saved/);
+});
+
+test('nobody can see, change or delete a contact of someone else by id', async () => {
+  await reset();
+  const alice = await makeUser('Alice');
+  const bob = await makeUser('Bob');
+  const { id } = await addContact(alice, { name: 'Ahmed', phone: '0544387902' });
+  assert.deepEqual(await contactRows(bob), []);
+  assert.equal(await updateContact(bob, id, { name: 'Hacked', phone: '0501234567' }), null);
+  assert.equal(await deleteContact(bob, id), false);
+  assert.deepEqual((await contactRows(alice)).map((c) => c.name), ['Ahmed']);
+  assert.equal((await contactRows(alice))[0].phone, '971544387902');
 });
