@@ -1454,6 +1454,10 @@ function nextStep(r) {
   }
   if (rn.waiting === 'reply') {
     const main = rn.tenantOffer ? ['accept', 'counter'] : ['accept', 'reply'];
+    // The tenant "asking" for the rent we offered is agreeing, often with a condition: say so.
+    if (rn.tenantOffer && Number(rn.tenantOffer) === Number(rn.agreed ?? rn.offer)) {
+      return { tone: 'you', icon: Inbox, title: `The tenant agrees to ${aed(rn.tenantOffer)}`, sub: 'Read their email on the timeline first: they may ask for something with it.', main, more: [...rest(main), 'seen'] };
+    }
     return { tone: 'you', icon: Inbox, title: rn.tenantOffer ? `The tenant asks for ${aed(rn.tenantOffer)}` : 'The tenant replied: answer them', sub: 'Read their email on the timeline.', main, more: [...rest(main), 'seen'] };
   }
   if (rn.waiting === 'no_answer') {
@@ -1572,6 +1576,14 @@ function Advice({ e, newest, onReply, onRemove }) {
   );
 }
 
+// Emails read before 2026-11-21 still say "Tenant asks for" our own offer; shown as agreeing.
+const titleOf = (e, r) => {
+  const rn = r.renewal || {};
+  const same = e.kind === 'in' && e.reading?.intent === 'counter' && e.title === `Tenant asks for ${aed(e.reading.amount)}`
+    && Number(e.reading.amount) === Number(rn.agreed ?? rn.offer);
+  return same ? `Tenant agrees to ${aed(e.reading.amount)}, with conditions in the email` : e.title;
+};
+
 function Event({ e, r, newest, busy, onReadAgain }) {
   const [openBody, setOpenBody] = useState(newest && e.kind === 'in');
   const papers = e.kind === 'papers';
@@ -1596,7 +1608,7 @@ function Event({ e, r, newest, busy, onReadAgain }) {
       <div className={`rounded-2xl border p-3.5 ${e.kind === 'out' ? 'border-p1/25 bg-p1/[0.06]' : e.kind === 'team' ? 'border-sky-400/25 bg-sky-500/[0.05]' : e.reading?.dispute ? 'border-bad/40 bg-bad/[0.06]' : 'border-stroke bg-white/[0.04]'} ${newest ? 'shadow-lg shadow-black/20' : ''}`}>
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <p className="font-medium leading-snug">{e.title}</p>
+            <p className="font-medium leading-snug">{titleOf(e, r)}</p>
             <p className="text-xs text-mute">{who}{e.data?.via === 'portal' ? ' · in the tenant portal' : ''}{e.data?.past ? ' · before the takeover' : ''} · {when(e.at)}{newest ? ' · latest' : ''}</p>
           </div>
           {e.kind === 'out' && e.status === 'failed' && <span className="flex items-center gap-1 text-xs text-bad"><Clock size={12} /> Not sent yet</span>}

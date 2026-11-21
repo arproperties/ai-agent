@@ -1462,7 +1462,11 @@ async function handle(r, e) {
     await set('Tenant emailed (not about the renewal, it seems)', { ...reading, note: 'Matched only by who sent it.' });
     return null;
   }
-  const title = reading.intent === 'counter' ? `Tenant asks for ${aed(reading.amount)}` : (reading.summary || SAYS[reading.intent] || 'Tenant replied');
+  // "Asks for" the very rent we offered reads like a haggle; it is a yes, usually with a
+  // condition in the email (PARK PLACE 702, 2026-11-21). Only the words change, not the intent.
+  const same = reading.intent === 'counter' && Number(reading.amount) === Number(r.agreed ?? r.offer);
+  const title = same ? `Tenant agrees to ${aed(reading.amount)}, with conditions in the email`
+    : reading.intent === 'counter' ? `Tenant asks for ${aed(reading.amount)}` : (reading.summary || SAYS[reading.intent] || 'Tenant replied');
   await set(title, reading);
   await mirror(r, `The tenant replied: ${title}${reading.dispute ? ' (disputes it)' : ''}`, { text: e.body, files });
   await update(r.id, {
