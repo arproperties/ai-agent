@@ -1581,6 +1581,14 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_recurring_payments_head ON recurring_payments(head_id);
 `);
 
+// Recurring payments, a line put in by mistake: deleted by hand. It stays as a marker, so the
+// hourly creator does not make that month again; "Create now" for that month brings it back.
+//   recurring_payment_dues.deleted_at / deleted_by: when and by whom; empty on a live line.
+await db.exec(`
+  ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS deleted_at BIGINT;
+  ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+`);
+
 // Reem's own modules (server/modules.js): a screen a person gets only once the master
 // ticks it on their People profile. The master has them all and is never listed here.
 await db.exec(`

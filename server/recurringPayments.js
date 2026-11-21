@@ -150,8 +150,8 @@ export async function deleteHead(user, id) {
 
 const picks = async () => (await listBuildings()).map((b) => ({ id: b.id, name: b.name }));
 
-const ENTRY = `SELECT p.*, b.name AS building_name, h.name AS head_name, (SELECT count(*)::int FROM recurring_payment_dues d WHERE d.payment_id = p.id) AS payments,
-    EXISTS (SELECT 1 FROM recurring_payment_dues d WHERE d.payment_id = p.id AND d.month = ?) AS has_this_month
+const ENTRY = `SELECT p.*, b.name AS building_name, h.name AS head_name, (SELECT count(*)::int FROM recurring_payment_dues d WHERE d.payment_id = p.id AND d.deleted_at IS NULL) AS payments,
+    EXISTS (SELECT 1 FROM recurring_payment_dues d WHERE d.payment_id = p.id AND d.month = ? AND d.deleted_at IS NULL) AS has_this_month
   FROM recurring_payments p JOIN recurring_buildings b ON b.id = p.building_id LEFT JOIN recurring_heads h ON h.id = p.head_id`;
 const RECEIVED = 'COALESCE((SELECT sum(r.amount) FROM recurring_payment_receipts r WHERE r.due_id = d.id), 0)::float8';
 const DUE = `SELECT d.id, d.payment_id, d.month, d.due_date, d.amount, d.status, d.paid_at, d.paid_on, u.name AS paid_by, ${RECEIVED} AS received,
@@ -201,7 +201,7 @@ export async function listDues(user, query = {}, now = today()) {
   const head = Number(query.head) || 0;
   const units = (await db.prepare(`SELECT min(unit) AS unit FROM recurring_payments WHERE building_id = ANY(?::int[]) AND unit IS NOT NULL
     GROUP BY lower(unit) ORDER BY lower(unit)`).all(ids)).map((r) => r.unit);
-  const rows = (await db.prepare(`${DUE} WHERE d.month = ? AND p.building_id = ANY(?::int[]) ORDER BY d.due_date, lower(p.title), d.id`).all(month, ids))
+  const rows = (await db.prepare(`${DUE} WHERE d.month = ? AND d.deleted_at IS NULL AND p.building_id = ANY(?::int[]) ORDER BY d.due_date, lower(p.title), d.id`).all(month, ids))
     .map(shapeDue).filter((d) => !unit || (d.unit || '').toLowerCase() === unit)
     .filter((d) => (query.head === 'none' ? !d.head : !head || d.head?.id === head));
   const of = (status) => rows.filter((d) => d.status === status);
@@ -237,7 +237,7 @@ export async function getReport(user, query = {}, now = today()) {
     FROM recurring_payment_dues d JOIN recurring_payments p ON p.id = d.payment_id JOIN recurring_buildings b ON b.id = p.building_id
     LEFT JOIN recurring_heads h ON h.id = p.head_id
     LEFT JOIN (SELECT due_id, sum(amount) AS got FROM recurring_payment_receipts GROUP BY due_id) r ON r.due_id = d.id
-    WHERE d.month >= ? AND d.month <= ? AND (?::int IS NULL OR p.building_id = ?::int)
+    WHERE d.month >= ? AND d.month <= ? AND d.deleted_at IS NULL AND (?::int IS NULL OR p.building_id = ?::int)
     GROUP BY p.building_id, b.name, p.head_id, h.name
     ORDER BY lower(b.name), p.building_id, (p.head_id IS NULL), lower(h.name), p.head_id`).all(from, to, one, one);
   const sums = (list) => {
@@ -343,12 +343,15 @@ export async function createNow(user, id, now = today(), date = null) {
   const month = (on || now).slice(0, 7);
   if (!p.active) throw bad(`"${p.title}" is paused. Resume it first.`, 409);
   if (!on && month < p.first_month) throw bad(`"${p.title}" starts in a later month.`, 409);
-  const { id: dueId } = await insertDue(p, month, on || undefined);
+  const when = on || dueDate(month, p.day);
+  const back = await db.prepare(`UPDATE recurring_payment_dues SET deleted_at = NULL, deleted_by = NULL, due_date = ?, amount = ?
+    WHERE payment_id = ? AND month = ? AND deleted_at IS NOT NULL RETURNING id`).run(when, p.amount, p.id, month);
+  const { id: dueId } = back.id ? back : await insertDue(p, month, when);
   if (!dueId) throw bad(on ? `"${p.title}" already has a payment for ${month}.` : "This month's payment is already there.", 409);
-  return shapeDue(await db.prepare(`${DUE} WHERE d.id = ?`).get(dueId));
+  return shapeDue(await dueOf(dueId));
 }
 
-const dueOf = async (id) => (await db.prepare(`${DUE} WHERE d.id = ?`).get(Number(id) || 0)) || null;
+const dueOf = async (id) => (await db.prepare(`${DUE} WHERE d.id = ? AND d.deleted_at IS NULL`).get(Number(id) || 0)) || null;
 
 const RECEIPT = `SELECT r.id, r.due_id, r.account_id, a.name AS account_name, r.amount, r.paid_on, r.attachment, r.created_at, u.name AS by
   FROM recurring_payment_receipts r LEFT JOIN recurring_accounts a ON a.id = r.account_id LEFT JOIN users u ON u.id = r.created_by`;
@@ -456,6 +459,58 @@ export async function setPaid(user, dueId, paid, input = {}, now = today()) {
     await syncDue(d.id);
   });
   return shapeDue(await dueOf(d.id));
+}
+
+/**
+ * A line typed wrong, put right by hand: its due date and its amount. A date in another
+ * month moves the line to that month - refused when the entry has a line there already -
+ * and leaves a deleted marker in the old month, so the creator does not make it again.
+ * The amount cannot be less than what came in already; the line is paid or pending by its
+ * receipts again. Only this line changes, never its entry. null: no such line.
+ */
+export async function updateDue(user, dueId, input = {}) {
+  const d = await dueOf(dueId);
+  if (!d) return null;
+  const on = String(input?.due_date ?? '').trim();
+  if (!DATE.test(on) || new Date(`${on}T00:00:00Z`).toISOString().slice(0, 10) !== on) throw bad('Pick the due date');
+  const typed = String(input?.amount ?? '').trim().replace(/,/g, '');
+  const amount = typed === '' ? NaN : money(typed);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT) throw bad('The amount must be a number more than 0');
+  const month = on.slice(0, 7);
+  await tx(async () => {
+    const now = await db.prepare(`SELECT month, due_date, amount::float8 AS amount, ${RECEIVED} AS received FROM recurring_payment_dues d WHERE d.id = ? FOR UPDATE`).get(d.id);
+    if (amount < money(now.received)) throw bad(`${money(now.received).toFixed(2)} came in on this payment already, so the amount cannot be less than that`);
+    if (month !== now.month) {
+      const there = await db.prepare('SELECT id, deleted_at FROM recurring_payment_dues WHERE payment_id = ? AND month = ? FOR UPDATE').get(d.payment_id, month);
+      if (there && !there.deleted_at) throw bad(`"${d.title}" already has a payment for ${month}. Delete that one first, or pick another date.`, 409);
+      if (there) await db.prepare('DELETE FROM recurring_payment_dues WHERE id = ?').run(there.id);
+    }
+    await db.prepare('UPDATE recurring_payment_dues SET month = ?, due_date = ?, amount = ? WHERE id = ?').run(month, on, amount, d.id);
+    if (month !== now.month) {
+      await db.prepare(`INSERT INTO recurring_payment_dues (payment_id, month, due_date, amount, deleted_at, deleted_by)
+        VALUES (?, ?, ?, ?, ${NOW}, ?)`).run(d.payment_id, now.month, now.due_date, now.amount, user.id);
+    }
+    await syncDue(d.id);
+  });
+  return shapeDue(await dueOf(d.id));
+}
+
+/**
+ * A line put in by mistake, deleted. Only one nothing came in on: its receipts are deleted
+ * first. It stays behind as a marker, so the creator does not make that month again; its
+ * file goes. "Create now" for that month brings the line back. null: no such line.
+ */
+export async function deleteDue(user, dueId) {
+  const d = await dueOf(dueId);
+  if (!d) return null;
+  await tx(async () => {
+    const now = await db.prepare(`SELECT ${RECEIVED} AS received FROM recurring_payment_dues d WHERE d.id = ? FOR UPDATE`).get(d.id);
+    const parts = await db.prepare('SELECT count(*)::int AS n FROM recurring_payment_receipts WHERE due_id = ?').get(d.id);
+    if (parts.n > 0 || now.received > 0) throw bad(`Money came in on "${d.title}". Delete its receipts first, then delete the payment.`, 409);
+    await db.prepare(`UPDATE recurring_payment_dues SET deleted_at = ${NOW}, deleted_by = ?, attachment = NULL WHERE id = ?`).run(user.id, d.id);
+  });
+  dropFile(d.attachment);
+  return { ok: true, id: d.id, title: d.title };
 }
 
 // ---------- the accounts ----------
@@ -576,10 +631,11 @@ export async function deleteTransfer(user, id) {
 const FILE_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const FILE_OF = { due: 'recurring_payment_dues', receipt: 'recurring_payment_receipts', transfer: 'recurring_transfers' };
 const dropFile = (path) => { if (path) rmSync(path, { force: true }); };
+const LIVE = { due: ' AND deleted_at IS NULL', receipt: '', transfer: '' }; // a deleted line keeps no file
 
 /** Keep a file with a receipt, a line (kind 'due', from before receipts) or a transfer; a new one replaces the old. null: no such line. */
 export async function setAttachment(user, kind, id, file) {
-  const row = await db.prepare(`SELECT id, attachment FROM ${FILE_OF[kind]} WHERE id = ?`).get(Number(id) || 0);
+  const row = await db.prepare(`SELECT id, attachment FROM ${FILE_OF[kind]} WHERE id = ?${LIVE[kind]}`).get(Number(id) || 0);
   if (!row) return null;
   const ext = FILE_TYPES[file?.mimetype];
   if (!ext || !file.buffer?.length) throw bad('The attachment must be a picture (JPG, PNG) or a PDF');
@@ -587,6 +643,15 @@ export async function setAttachment(user, kind, id, file) {
   const path = `${DIR}/${kind}-${row.id}-${Date.now()}.${ext}`;
   await writeFile(path, file.buffer);
   await db.prepare(`UPDATE ${FILE_OF[kind]} SET attachment = ? WHERE id = ?`).run(path, row.id);
+  dropFile(row.attachment);
+  return { ok: true };
+}
+
+/** A file kept by mistake, taken off: the line, receipt or transfer stays as it is. null: none there. */
+export async function removeAttachment(user, kind, id) {
+  const row = await db.prepare(`SELECT id, attachment FROM ${FILE_OF[kind]} WHERE id = ?${LIVE[kind]}`).get(Number(id) || 0);
+  if (!row) return null;
+  await db.prepare(`UPDATE ${FILE_OF[kind]} SET attachment = NULL WHERE id = ?`).run(row.id);
   dropFile(row.attachment);
   return { ok: true };
 }
@@ -628,6 +693,8 @@ recurringPaymentRoutes.post('/entries/:id/dues', wrap(async (req, res) => send(r
 recurringPaymentRoutes.get('/dues/:id', wrap(async (req, res) => send(res, await getDue(req.user, req.params.id))));
 recurringPaymentRoutes.post('/dues/:id/paid', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, true, req.body))));
 recurringPaymentRoutes.post('/dues/:id/pending', wrap(async (req, res) => send(res, await setPaid(req.user, req.params.id, false))));
+recurringPaymentRoutes.put('/dues/:id', wrap(async (req, res) => send(res, await updateDue(req.user, req.params.id, req.body))));
+recurringPaymentRoutes.delete('/dues/:id', wrap(async (req, res) => send(res, await deleteDue(req.user, req.params.id))));
 recurringPaymentRoutes.post('/dues/:id/receipts', wrap(async (req, res) => send(res, await addReceipt(req.user, req.params.id, req.body))));
 recurringPaymentRoutes.delete('/receipts/:id', wrap(async (req, res) => send(res, await deleteReceipt(req.user, req.params.id))));
 recurringPaymentRoutes.get('/buildings', wrap(async (req, res) => res.json({ buildings: await listBuildings() })));
@@ -659,6 +726,7 @@ for (const [kind, at] of [['due', '/dues/:id/attachment'], ['receipt', '/receipt
     if (!req.file) throw bad('No file came through');
     send(res, await setAttachment(req.user, kind, req.params.id, req.file));
   }));
+  recurringPaymentRoutes.delete(at, wrap(async (req, res) => send(res, await removeAttachment(req.user, kind, req.params.id))));
   recurringPaymentRoutes.get(at, wrap(async (req, res) => {
     const path = await attachmentPath(kind, req.params.id);
     if (!path) return res.status(404).json({ error: 'Not found' });
