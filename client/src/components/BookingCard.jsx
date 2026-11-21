@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Loader2, Check, X, CalendarPlus, AlertTriangle } from 'lucide-react';
 import { api } from '../lib/api';
+import { whatsappUrl } from '../lib/whatsapp';
 
 // An ARS booking Reem has got ready, waiting for the person. Nothing exists in saifsys
 // until Create is tapped here; saifsys then checks the unit is still free and the price
@@ -60,7 +61,13 @@ export default function BookingCard({ booking: b, onChanged }) {
         {q.unit.building} · Unit {q.unit.unit}
       </p>
       <p className="text-[13px] text-mute">
-        {q.guest.name}{q.guest.new && ' · new guest'}{q.guest.phone && ` · ${q.guest.phone}`}
+        {q.guest.name}{q.guest.new && ' · new guest'}
+        {q.guest.phone && <> · {(() => {
+          // A tap opens WhatsApp with a greeting to the guest typed in; a number WhatsApp
+          // cannot open is shown as it is.
+          const wa = whatsappUrl(q.guest.phone, q.guest.name);
+          return wa ? <a href={wa} target="_blank" rel="noopener noreferrer" title="Open in WhatsApp with a drafted message" className="text-p3 underline">{q.guest.phone}</a> : q.guest.phone;
+        })()}</>}
       </p>
 
       <div className="mt-2.5 border-t border-stroke/60 pt-2.5 text-[13px]">

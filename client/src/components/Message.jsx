@@ -4,6 +4,7 @@ import { Globe } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { rehypeMarkRows, markdownComponents } from '../lib/markRows';
+import { rehypeWhatsApp } from '../lib/whatsapp';
 import { YouTubeCards } from './YouTube';
 import YouTubeRow, { splitYouTube, withoutYouTube } from './YouTubeRow';
 import Icon from './Icon';
@@ -110,6 +111,10 @@ const VOICE = {
   paused: { icon: 'play', label: 'Paused', hint: 'Resume' },
 };
 
+// Table rows shaded by their colour mark, and every phone number a tap away from WhatsApp.
+// One array for the module, so it is not rebuilt on every word that streams in.
+const REPLY_REHYPE = [...rehypeMarkRows, rehypeWhatsApp];
+
 // A reply as it reads: its words, with any drawing shown as a picture where it was written.
 // A YouTube video it links to plays under it.
 function Reply({ content, savedId, onAsk }) {
@@ -121,7 +126,7 @@ function Reply({ content, savedId, onAsk }) {
     <>
       {parts.map((p, i) => (p.youtube ? <YouTubeRow key={i} data={p.youtube} /> : 'dashboard' in p ? <DashboardCard key={i} dashboard={p.dashboard} onAsk={onAsk} />
         : p.dashPending ? <DashboardPending key={i} /> : p.text !== undefined ? (
-        <div key={i} className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypeMarkRows} components={markdownComponents}>{hideMarkers(p.text)}</Markdown></div>
+        <div key={i} className="md break-words text-[15px]"><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={REPLY_REHYPE} components={markdownComponents}>{hideMarkers(p.text)}</Markdown></div>
       ) : p.pending ? <DrawingPending key={i} /> : <DrawingCard key={i} drawing={p.drawing} messageId={savedId} />))}
       <YouTubeCards text={content} className="mt-3 max-w-xl" />
     </>
