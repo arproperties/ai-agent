@@ -6,6 +6,7 @@ import {
   dueDate, createDuePayments, listEntries, listDues, saveEntry, setActive, deleteEntry, createNow, setPaid, addReceipt, deleteReceipt,
   listBuildings, saveBuilding, deleteBuilding, listHeads, saveHead, deleteHead, getReport,
   listAccounts, saveAccount, deleteAccount, getAccount, getDue, listTransfers, addTransfer, deleteTransfer, setAttachment, attachmentPath,
+  updateDue, deleteDue, removeAttachment,
 } from '../server/recurringPayments.js';
 
 test.after(() => closeDb());
@@ -468,4 +469,68 @@ test('money can come in parts, and the line is paid once they add up', async () 
   const back = await setPaid(jessa, due.id, false);
   assert.deepEqual([back.status, back.received, back.left, back.account], ['pending', 0, 5000, null]);
   assert.deepEqual(await balances(), { 'Cash to Mr Amran': 0, 'Cash to Mr Tauqeer': 0 });
+});
+
+test('a line typed wrong: its date and amount are put right, and only that line changes', async () => {
+  const { jessa } = await setup();
+  const e = await saveEntry(jessa, null, { ...washer, day: 30, first_month: '2026-09' }, '2026-10-05');
+  const [sep] = (await listDues(jessa, { month: '2026-09' }, '2026-10-05')).dues;
+
+  await assert.rejects(updateDue(jessa, sep.id, { due_date: '2026-09-31', amount: 150 }), /due date/);
+  await assert.rejects(updateDue(jessa, sep.id, { due_date: '2026-09-09', amount: 0 }), /more than 0/);
+  assert.equal(await updateDue(jessa, 999, { due_date: '2026-09-09', amount: 150 }), null);
+
+  const fixed = await updateDue(jessa, sep.id, { due_date: '2026-09-09', amount: '1,200' });
+  assert.deepEqual([fixed.due_date, fixed.month, fixed.amount, fixed.status], ['2026-09-09', '2026-09', 1200, 'pending']);
+  assert.equal((await listEntries(jessa, '2026-10-05')).entries[0].amount, 150, 'the entry is not touched');
+
+  // Not below what came in; down to it, the line is paid.
+  await addReceipt(jessa, sep.id, { account_id: 1, amount: 1000 }, '2026-10-05');
+  await assert.rejects(updateDue(jessa, sep.id, { due_date: '2026-09-09', amount: 999 }), /1000\.00 came in/);
+  assert.equal((await updateDue(jessa, sep.id, { due_date: '2026-09-09', amount: 1000 })).status, 'paid');
+  assert.equal((await updateDue(jessa, sep.id, { due_date: '2026-09-09', amount: 1100 })).status, 'pending');
+  await setPaid(jessa, sep.id, false);
+
+  // Another month: not where the entry has a line; moved, the old month is not made again.
+  const oct = await createNow(jessa, e.id, '2026-10-05', '2026-10-30');
+  await assert.rejects(updateDue(jessa, sep.id, { due_date: '2026-10-01', amount: 150 }), /already has a payment for 2026-10/);
+  const moved = await updateDue(jessa, oct.id, { due_date: '2026-11-02', amount: 150 });
+  assert.equal(moved.month, '2026-11');
+  await createDuePayments('2026-10-31');
+  assert.deepEqual((await listDues(jessa, { month: '2026-10' }, '2026-10-31')).dues, [], 'the moved month stays empty');
+});
+
+test('a line put in by mistake is deleted, stays deleted, and Create now brings it back', async () => {
+  const { jessa } = await setup();
+  const e = await saveEntry(jessa, null, washer, '2026-10-05');
+  const [due] = (await listDues(jessa, {}, '2026-10-05')).dues;
+  const pdf = { mimetype: 'application/pdf', buffer: Buffer.from('%PDF-1.4') };
+
+  // Its own file can go, and come again.
+  await setAttachment(jessa, 'due', due.id, pdf);
+  const file = await attachmentPath('due', due.id);
+  assert.deepEqual(await removeAttachment(jessa, 'due', due.id), { ok: true });
+  assert.equal(existsSync(file), false);
+  assert.equal((await getDue(jessa, due.id)).due.attachment, false);
+  await setAttachment(jessa, 'due', due.id, pdf);
+  const again = await attachmentPath('due', due.id);
+
+  await addReceipt(jessa, due.id, { account_id: 1, amount: 50 });
+  await assert.rejects(deleteDue(jessa, due.id), /Delete its receipts first/);
+  await setPaid(jessa, due.id, false);
+
+  assert.deepEqual(await deleteDue(jessa, due.id), { ok: true, id: due.id, title: 'Washing machine rent' });
+  assert.equal(existsSync(again), false, 'its file goes with it');
+  assert.equal(await getDue(jessa, due.id), null);
+  assert.equal(await deleteDue(jessa, due.id), null);
+  assert.equal(await setAttachment(jessa, 'due', due.id, pdf), null);
+  assert.deepEqual((await listDues(jessa, {}, '2026-10-05')).dues, []);
+  assert.deepEqual((await getReport(jessa, {}, '2026-10-05')).rows, []);
+  assert.equal(await createDuePayments('2026-10-20'), 0, 'the creator does not make it again');
+  const entry = (await listEntries(jessa, '2026-10-05')).entries[0];
+  assert.deepEqual([entry.payments, entry.has_this_month], [0, false]);
+
+  const back = await createNow(jessa, e.id, '2026-10-20');
+  assert.deepEqual([back.id, back.due_date, back.amount, back.attachment], [due.id, '2026-10-05', 150, false]);
+  assert.deepEqual((await listDues(jessa, {}, '2026-10-20')).dues.map((d) => d.id), [due.id]);
 });
