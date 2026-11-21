@@ -92,6 +92,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [carrying, setCarrying] = useState([]); // titles of the chats this conversation is already using
   const [picking, setPicking] = useState(false); // the bring-in-a-chat sheet is open
   const [quote, setQuote] = useState(''); // part of a reply picked to answer (select → Reply)
+  const [editing, setEditing] = useState(null); // { text, n }: one of their own messages put back in the box to change and send again
   const [focus, setFocus] = useState(null); // { primary, references }: the case this chat is about (server/caseFocus.js)
   const [focusOpen, setFocusOpen] = useState(false); // the case sheet is open, and on which tab
   const [sent, setSent] = useState(0); // messages sent from this screen: what starts the case timer
@@ -564,6 +565,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 onShare={dm && shareIdOf(m) ? () => setSharing(shareIdOf(m)) : undefined}
                 onDelete={savedIdOf(m) && !m.streaming ? () => removeMessage(m) : undefined}
                 onReplyTo={m.role === 'assistant' ? setQuote : undefined}
+                onEdit={m.role === 'user' && m.content && !busy ? () => setEditing({ text: m.content, n: Date.now() }) : undefined}
                 onContinue={m.cut_short && !m.streaming && !busy && i === messages.length - 1 ? () => send('Continue', []) : undefined}
                 onAsk={m.role === 'assistant' && !busy ? (q) => send(q, []) : undefined}
                 onRemoveText={m.role === 'assistant' && savedIdOf(m) && !m.streaming ? (t) => removeText(m, t) : undefined}
@@ -631,7 +633,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           </div>
         )}
         <Composer busy={busy} voiceEnabled={voiceEnabled} carry={carry} draft={draft} onPickChats={() => setPicking(true)}
-          quote={quote} onDropQuote={() => setQuote('')}
+          quote={quote} edit={editing} onDropQuote={() => setQuote('')}
           onDropChat={(id) => setCarry((c) => c.filter((x) => x.id !== id))}
           onSend={send} onStop={stopReply}
           onVoiceState={(s) => { stopSpeaking(); setOrb(s); }} onError={flash} />

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Radar, Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, UsersRound, Activity, FileClock, ChevronRight, Search, NotebookPen, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box, Globe, Monitor } from 'lucide-react';
+import { MessageCircle, Radar, Users, ListTodo, AudioLines, Captions, Languages, Building2, ClipboardList, ListChecks, CalendarCheck, HardHat, Package, Split, Moon, Sun, FileSignature, Inbox, BookUser, Receipt, KeyRound, UsersRound, Activity, FileClock, ChevronRight, Search, NotebookPen, PawPrint, Smile, Timer, Plug, DatabaseBackup, Newspaper, Box, Globe, Monitor } from 'lucide-react';
 import Icon from './Icon';
 import { CaseTimeSheet } from './CaseRails';
 import { Row, Count } from './NavRow';
@@ -43,7 +43,7 @@ function Group({ title, open, onToggle, count = 0, q = '', children }) {
   );
 }
 
-export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, feedsOpen, onFeeds, billingOpen, onBilling, teamActivityOpen, onTeamActivity, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, trackerOpen, onTracker, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, diaryOpen, onDiary, attendanceOpen, onAttendance, reportChecksOpen, onReportChecks, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, claudeMailOpen, onClaudeMail, onPeople }) {
+export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantCare, mailRoutingOpen, onMailRouting, addressBookOpen, onAddressBook, whatsappOpen, onWhatsApp, feedsOpen, onFeeds, billingOpen, onBilling, teamActivityOpen, onTeamActivity, healthOpen, onHealth, backupsOpen, onBackups, aiKeysOpen, onAiKeys, appsOpen, onApps, trackerOpen, onTracker, browserOpen, onBrowser, docRenewalsOpen, onDocRenewals, sharedInbox, sharedInboxOpen, onSharedInbox, filesOpen, todosOpen, translateOpen, meetingsOpen, transcribeOpen, tenantCareOpen, dutiesOpen, checklistsOpen, diaryOpen, onDiary, attendanceOpen, onAttendance, reportChecksOpen, onReportChecks, hasBuildings, buildingsOpen, inventoryOpen, buildings3dOpen, onBuildings3d, modules = [], petOn, onPet, faceOn, onFace, renewalsOpen, onRenewals, onFiles, onTodos, onTranslate, onMeetings, onTranscribe, onTenantCare, onDuties, onChecklists, onBuildings, onInventory, onMemory, onEmail, claudeMailOpen, onClaudeMail, onPeople }) {
   const [open, setOpen] = useState(false);
   const [theme, setWorn] = useState(currentTheme);
   const wrap = useRef(null);
@@ -134,6 +134,8 @@ export default function SettingsMenu({ user, expiring = 0, dueTodos = 0, tenantC
             {user.role === 'master' && <Row role="menuitem" icon={<Split size={17} strokeWidth={1.75} />} label="Mail routing" active={mailRoutingOpen} onClick={go(onMailRouting)} />}
             {/* The company mailboxes Reem may send to. The master's alone. */}
             {user.role === 'master' && <Row role="menuitem" icon={<BookUser size={17} strokeWidth={1.75} />} label="Address book" active={addressBookOpen} onClick={go(onAddressBook)} />}
+            {/* The WhatsApp numbers Reem has for the people they message: their own list, edited by hand. */}
+            {onWhatsApp && <Row role="menuitem" icon={<MessageCircle size={17} strokeWidth={1.75} />} label="WhatsApp contacts" active={whatsappOpen} onClick={go(onWhatsApp)} />}
             {/* Only the master manages people; the server refuses anyone else. */}
             {user.role === 'master' && <Row role="menuitem" icon={<Users size={17} />} label="People" onClick={go(onPeople)} />}
             {/* How each person is using Reem: questions, emails, files, to-dos. The master's alone. */}

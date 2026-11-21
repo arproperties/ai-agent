@@ -21,6 +21,7 @@ import { importRoutes, startImportQueue, kickImports } from './imports.js';
 import { clearDropboxWork } from './dropbox.js';
 import { messengerRoutes } from './messenger.js';
 import { todoRoutes } from './todos.js';
+import { whatsappRoutes } from './whatsapp.js';
 import { routineRoutes } from './routines.js';
 import { teamReminderRoutes, bringOldRemindersIntoTodos } from './teamReminders.js';
 import { responsibilityRoutes } from './responsibilities.js';
@@ -141,6 +142,7 @@ app.use('/api/email', emailRoutes);
 app.use('/api/imports', needsModule('shelf'), importRoutes);
 app.use('/api/messenger', messengerRoutes); // people-to-people chat, separate from the AI chats
 app.use('/api/todos', needsModule('todos'), todoRoutes);
+app.use('/api/whatsapp', whatsappRoutes); // each person's saved WhatsApp numbers: the Settings screen's list
 app.use('/api/team-reminders', teamReminderRoutes); // reminders sent to other people, proposed in chat
 app.use('/api/suggestions', suggestionRoutes); // reminders Reem spots in new email and chat, one tap to keep
 app.use('/api/routines', needsModule('todos'), routineRoutes); // things that come back, kept apart from the one-off todos
