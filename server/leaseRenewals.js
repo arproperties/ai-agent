@@ -1240,6 +1240,23 @@ export async function mark(user, id, what) {
     await step(r, on ? 'Handed back to Reem' : 'Taken over: staff run it by hand', { user });
     return update(r.id, { auto: on, ...(on ? { error: null } : {}) });
   }
+  // The red Dispute label is set by Reem reading an email and never cleared by a calmer one,
+  // so staff decide when it is over (or flag one Reem missed). Settling it does not hand the
+  // lease back to Reem: that stays the separate "Hand back to Reem" tap (the user, 2026-11-21).
+  if (what === 'dispute_off') {
+    if (!r.dispute) return r;
+    await step(r, 'Dispute settled: marked by staff', { user });
+    await db.prepare(`UPDATE lease_renewal_dispute_reminders SET status = 'cancelled' WHERE renewal_id = ? AND status = 'ready'`).run(r.id);
+    return update(r.id, { dispute: null, ...(r.waiting === 'no_answer' ? { waiting: null } : {}) });
+  }
+  if (what === 'dispute_on') {
+    if (r.dispute) return r;
+    if (!OPEN.includes(r.status)) throw bad('This renewal is not open.', 409);
+    await step(r, 'Marked as a dispute by staff', { user });
+    await update(r.id, { dispute: `Marked as a dispute by ${user?.name || 'staff'}.` });
+    if (r.auto) await stopAuto(r, 'staff marked it as a dispute, so Reem will not email the tenant by itself');
+    return getRenewal(r.id);
+  }
   // The tenant already knows (told by phone, or an email sent outside Reem): the same as
   // Not renewing, saifsys too, but nothing is emailed.
   if (what === 'not_renewing_quiet') {

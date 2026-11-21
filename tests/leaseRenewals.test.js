@@ -360,6 +360,30 @@ test('a fresh email from the tenant about something else is let go, and nobody i
   assert.equal((await R.getRenewal(r.id)).waiting, null);
 });
 
+test('the Dispute label by hand: settled takes it off and does not hand back to Reem; Mark as dispute stops Reem', async () => {
+  const boss = await setup();
+  stub({ replies: [{ intent: 'unclear', summary: 'Says it is illegal', dispute: true, disputeNote: 'Claims the increase breaks the index' }] });
+  let r = await start(boss, 42000);
+  await arrives({ text: 'This is illegal, I will go to RDC' });
+  await R.readInbound();
+  r = await R.getRenewal(r.id);
+  assert.equal(r.dispute, 'Claims the increase breaks the index');
+  await db.prepare(`INSERT INTO lease_renewal_dispute_reminders (renewal_id, n, created_at) VALUES (?, 1, 1)`).run(r.id);
+
+  r = await R.mark(boss, r.id, 'dispute_off');
+  assert.equal(r.dispute, null);
+  assert.equal(r.auto, false, 'settling it never hands the lease back to Reem');
+  assert.equal((await db.prepare(`SELECT status FROM lease_renewal_dispute_reminders WHERE renewal_id = ?`).get(r.id)).status, 'cancelled');
+
+  await R.mark(boss, r.id, 'auto_on');
+  r = await R.mark(boss, r.id, 'dispute_on');
+  assert.match(r.dispute, /Marked as a dispute/);
+  assert.equal(r.auto, false, 'a dispute stops Reem emailing by itself');
+  const t = await timeline(r.id);
+  assert.ok(t.includes('step: Dispute settled: marked by staff'));
+  assert.ok(t.includes('step: Marked as a dispute by staff'));
+});
+
 test('the Lease renewals routes are only for those with the module', async () => {
   await setup();
   const staff = { id: await makeUser('Staff'), role: 'user' };

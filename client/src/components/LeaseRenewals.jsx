@@ -1055,6 +1055,8 @@ function Renewal({ id, onBack, chat = null }) {
     if (what === 'close' && !confirm('Take this renewal out of Reem? No more emails or reminders go to the tenant, and you handle it yourself.')) return;
     if (what === 'auto_off' && !confirm('Take over this lease? Reem stops answering the tenant, and you do each step by hand. You can hand it back later.')) return;
     if (what === 'delete_draft' && !confirm('Delete this draft? Nothing has gone to the tenant; the lease goes back to not started.')) return;
+    if (what === 'dispute_off' && !confirm('Mark the dispute as settled? The red label goes and no dispute reminders are made. Reem still does not email the tenant by itself until you tap Hand back to Reem.')) return;
+    if (what === 'dispute_on' && !confirm('Mark this renewal as a dispute? Reem stops emailing the tenant by itself, and staff answer every step by hand.')) return;
     if (what === 'unschedule' && !confirm('Cancel this offer? Nothing has gone to the tenant; you can start it again.')) return;
     setBusy(what);
     try {
@@ -1097,8 +1099,13 @@ function Renewal({ id, onBack, chat = null }) {
     unschedule: { label: 'Cancel the offer', icon: X, run: () => mark('unschedule'), busy: busy === 'unschedule' },
     continue_draft: { label: 'Continue the offer', icon: Mail, run: () => rn.draft?.ask && setSheet({ compose: rn.draft.ask }) },
     delete_draft: { label: 'Delete draft', icon: X, run: () => mark('delete_draft'), busy: busy === 'delete_draft' },
+    dispute_off: { label: 'Dispute settled', icon: ShieldCheck, run: () => mark('dispute_off'), busy: busy === 'dispute_off' },
+    dispute_on: { label: 'Mark as dispute', icon: Scale, run: () => mark('dispute_on'), busy: busy === 'dispute_on' },
   };
+  // The Dispute label on or off, by hand, while the renewal is still open: Reem sets it from an
+  // email but never takes it off, so a settled dispute would otherwise stay red for good.
   const step = nextStep(r);
+  if (['offer_sent', 'negotiating', 'agreed', 'papers_ok'].includes(s)) step.more = [...step.more, rn.dispute ? 'dispute_off' : 'dispute_on'];
   const rise = rn.offer && r.annual_rent ? ((Number(rn.agreed ?? rn.offer) - r.annual_rent) / r.annual_rent) * 100 : null;
 
   return (
