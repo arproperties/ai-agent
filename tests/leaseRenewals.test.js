@@ -384,6 +384,15 @@ test('the Dispute label by hand: settled takes it off and does not hand back to 
   assert.ok(t.includes('step: Marked as a dispute by staff'));
 });
 
+test('a tenant "asking for" the rent we offered is shown as agreeing, not haggling', async () => {
+  const boss = await setup();
+  stub({ replies: [{ intent: 'counter', amount: 42000, summary: 'Fine, but Ejari by transfer', dispute: false }] });
+  const r = await start(boss, 42000);
+  await arrives({ text: 'OK with 42,000 but I pay Ejari by transfer' });
+  await R.readInbound();
+  assert.ok((await timeline(r.id)).includes('in: Tenant agrees to AED 42,000, with conditions in the email'));
+});
+
 test('the Lease renewals routes are only for those with the module', async () => {
   await setup();
   const staff = { id: await makeUser('Staff'), role: 'user' };
