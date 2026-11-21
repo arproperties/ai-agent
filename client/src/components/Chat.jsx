@@ -17,7 +17,7 @@ import InventoryCard from './InventoryCard';
 import ProjectCard from './ProjectCard';
 import CaseCard from './CaseCard';
 import BookingCard from './BookingCard';
-import NoticeCard from './NoticeCard';
+import WhatsAppCard from './WhatsAppCard';import NoticeCard from './NoticeCard';
 import BrowserCard from './BrowserCard';
 import { usePush } from './Notifications';
 import { permission } from '../lib/push';
@@ -81,6 +81,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
   const [plans, setPlans] = useState([]); // project plans made from a file in this chat (master only)
   const [cases, setCases] = useState([]); // case folders got ready from the inbox, waiting for Save (external only)
   const [bookings, setBookings] = useState([]); // ARS bookings got ready in this chat, waiting for Create
+  const [whatsapps, setWhatsapps] = useState([]); // WhatsApp messages got ready in this chat, each waiting for the person to tap Open WhatsApp
   const [notices, setNotices] = useState([]); // tenant notices got ready in this chat, waiting for Send
   const [browsing, setBrowsing] = useState([]); // websites Reem used in this chat, live while it works
   const [suggested, setSuggested] = useState([]); // reminders Reem spotted, waiting for a yes or no
@@ -274,6 +275,13 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
           else if (event === 'tenantNotice') { acted = true; setNotices((ns) => [...ns.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'browser') { acted = true; setBrowsing((bs) => (bs.some((x) => x.id === d.id) ? bs.map((x) => (x.id === d.id ? { ...x, ...d } : x)) : [...bs, d])); toBottom(); }
           else if (event === 'arsBooking') { acted = true; setBookings((bs) => [...bs.filter((x) => x.id !== d.id), d]); toBottom(); }
+          else if (event === 'whatsapp') {
+            // WhatsApp is never opened by itself: the card waits, and its Open WhatsApp button (a
+            // wa.me link: the app on a phone, WhatsApp Web on a computer) is the person's tap.
+            acted = true;
+            setWhatsapps((ws) => [...ws.filter((x) => x.id !== d.id), d]);
+            toBottom();
+          }
           else if (event === 'draft') { acted = true; setDrafts((ds) => [...ds.filter((x) => x.id !== d.id), d]); toBottom(); }
           else if (event === 'delta') {
             if (!reply) setOrb('speaking');
@@ -608,6 +616,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
               <BookingCard key={b.id} booking={b}
                 onChanged={(u) => setBookings((bs) => bs.map((x) => (x.id === u.id ? u : x)))} />
             ))}
+            {whatsapps.map((w) => <WhatsAppCard key={w.id} card={w} />)}
           </div>
         )}
       </div>

@@ -18,6 +18,7 @@ import { inventoryKit } from './inventory.js';
 import { projectKit } from './projects.js';
 import { planKit } from './projectPlans.js';
 import { caseKit } from './caseKit.js';
+import { whatsappKit } from './whatsapp.js';
 import { dropboxKit } from './dropbox.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
@@ -153,6 +154,14 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     'Colours must mean something at a glance: green for good or done, yellow or orange for waiting or in progress, red only for bad, ' +
     'late or urgent, grey for not started. One colour, one meaning, and the colour key lists exactly the colours used, each once. ' +
     'Every column must add something: never two columns that say the same thing.');
+  // "send hi on whatsapp to that number": the agent used to say "I can't send WhatsApp messages" and
+  // offer three wordings and a bare link. The tool opens WhatsApp itself with the message typed.
+  parts.push('When asked to message, text or say something to someone on WhatsApp, you need two things: their number and what to say. ' +
+    'If either is missing, ask for what is missing in one short question (the number for a name you have none for; the message if they did not say what it should be, even as "say hi"), and call nothing yet. ' +
+    'Once you have both, call whatsapp_draft straight away: a card appears in the chat with the message and an Open WhatsApp button. Nothing opens by itself; the user taps the button, then send in WhatsApp. ' +
+    'Give the number the user gave, or the name of someone they have given a number for before. When a number comes with a name, pass the name so it is remembered. ' +
+    'Saved numbers are only the ones in your WhatsApp tools, never anything from memory: when you use one, say so, and if the user says to forget or remove a number, call forget_whatsapp_contact. ' +
+    'Never say you cannot send WhatsApp messages, never offer a list of wordings to choose from, never type a wa.me link yourself, and never say WhatsApp is opening or a message was sent.');
   // A chart or dashboard is drawn by the app from numbers the agent writes (dashboardCore.js).
   parts.push(`When ${user.name} asks for a chart, graph or dashboard, or numbers would be clearer as one, write one fenced code block whose language is dashboard, holding JSON, ` +
     'and the app draws it. First get the real data with your tools, then pick the charts that answer the question best. ' +
@@ -716,6 +725,8 @@ async function runChat(req, res) {
     },
   });
   const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), meetingKit(user.id), memoryKit(user.id), shelf,
+    // WhatsApp opened on their screen with the message typed (their own saved numbers only).
+    whatsappKit(user, { onCard: (c) => send('whatsapp', c) }),
     ...(external ? [] : [sendKit,
       responsibilityKit(user, { conversationId: convId, onCard: (p) => send('responsibility', p) }),
       addressKit(user, { conversationId: convId, onCard: (p) => send('companyAddress', p) }),

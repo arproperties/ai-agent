@@ -2163,6 +2163,23 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_address_proposals_chat ON address_proposals(master_id, conversation_id, id);
 `);
 
+// Whose WhatsApp number is whose, per person (server/whatsapp.js): said once in a chat, then
+// "message Ahmed on WhatsApp" finds it. A table and not the chat memory, because a number has
+// to come back exactly, not as a model's recollection of it. Each person only ever sees their own.
+//   name_key: the name lowercased and trimmed, so "Ahmed" and "ahmed " are one contact.
+//   phone: digits with the country code, as WhatsApp wants it (971501234567).
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS whatsapp_contacts (
+    id SERIAL PRIMARY KEY,
+    user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name     TEXT NOT NULL,
+    name_key TEXT NOT NULL,
+    phone    TEXT NOT NULL,
+    updated_at BIGINT DEFAULT ${NOW},
+    UNIQUE (user_id, name_key)
+  );
+`);
+
 // Rules the master taught an agent by correcting it in a chat (server/lessons.js; the
 // screen calls them Rules). The agent follows them in every chat, with anyone.
 //   lesson_proposals: a rule Reem wrote from the correction, waiting on a "Learn this?"
