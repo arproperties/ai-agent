@@ -9,7 +9,8 @@ import { YouTubeCards } from './YouTube';
 import YouTubeRow, { splitYouTube, withoutYouTube } from './YouTubeRow';
 import Icon from './Icon';
 import Avatar from './Avatar';
-import { hideMarkers } from '../lib/replyDoc';
+import { hideMarkers, documentPart } from '../lib/replyDoc';
+import { api } from '../lib/api';
 import { splitDrawings, withoutDrawings, exportAsked } from '../lib/drawing';
 import { DrawingCard, DrawingPending, DrawingFile } from './Drawing';
 import { splitDashboards, withoutDashboards } from '../../../server/dashboardCore.js';
@@ -185,7 +186,49 @@ function SelectionBar({ rootRef, onListen, onReply, onRemove }) {
 // savedId: the reply's row, which the PDF and AutoCAD files are made from. drawingFrom: the
 // latest drawing up to this reply, for a reply that hands it over as a file.
 // readNow: the reply to a spoken question, to read out as soon as it is shown.
-export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, readNow, onReadStarted, onOpenFile, onShare, onPdf, onDelete, onEdit, onReplyTo, onRemoveText, onContinue, onAsk, savedId, drawingFrom, status }) {
+// A reply long enough to be a finished document (a packet, a letter, a checklist) with a
+// heading of its own. Shorter answers are conversation, and a button on each would be noise.
+const KEEP_MIN = 1200;
+export const worthKeeping = (content) => {
+  const part = documentPart(content);
+  return !!part && part.markdown.length >= KEEP_MIN && /^#{1,3}[ \t]+\S/m.test(part.markdown);
+};
+
+/**
+ * "Save to Shelf" under a long document reply. The boss's AC interview packet was written
+ * in a chat and never kept, so two months later nobody could find it. Keeping was possible,
+ * but hidden inside Make a PDF; here it is one tap. Saved as the same PDF that sheet makes,
+ * named by its heading and filed to a folder like any upload; a second tap finds that copy.
+ */
+function KeepOnShelf({ messageId, content, onOpenFile }) {
+  const [state, setState] = useState(null); // 'busy' | { id, duplicate } | { error }
+  if (!worthKeeping(content)) return null;
+  const keep = async () => {
+    setState('busy');
+    try { setState(await api.post(`/replies/${messageId}/pdf/shelf`)); } catch (e) { setState({ error: e.message }); }
+  };
+  if (state?.id) {
+    return (
+      <button onClick={() => onOpenFile(state.id)}
+        className="glass mt-3 flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs">
+        <Icon name="check" size={14} className="text-p2" />
+        {state.duplicate ? 'Already on your Shelf · Open' : 'Saved to your Shelf · Open'}
+      </button>
+    );
+  }
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <button onClick={keep} disabled={state === 'busy'}
+        className="glass flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs text-txt hover:bg-white/10 disabled:opacity-60">
+        <Icon name={state === 'busy' ? 'spinner' : 'pdf'} size={14} className={state === 'busy' ? 'animate-spin' : 'text-p1'} />
+        {state === 'busy' ? 'Saving to your Shelf…' : 'Save to Shelf'}
+      </button>
+      {state?.error && <span className="text-xs text-bad">{state.error}</span>}
+    </div>
+  );
+}
+
+export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpeak, voiceEnabled, readNow, onReadStarted, onOpenFile, onShare, onPdf, onDelete, onEdit, onReplyTo, onRemoveText, onContinue, onAsk, onKeep, savedId, drawingFrom, status }) {
   const [copied, setCopied] = useState(false);
   const bodyRef = useRef();
   const reading = voice !== 'idle';
@@ -331,6 +374,7 @@ export default function Message({ msg, agent, voice = 'idle', onSpeak, onStopSpe
           </div>
         </div>
       )}
+      {onKeep && !msg.streaming && <KeepOnShelf messageId={onKeep} content={msg.content} onOpenFile={onOpenFile} />}
       {msg.content && !msg.streaming && (
         <div className="mt-2 flex items-center gap-1 text-mute">
           {voiceEnabled && (() => {
