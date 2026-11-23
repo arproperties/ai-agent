@@ -531,6 +531,20 @@ function SearchBox({ value, onChange, placeholder = 'Search by name, party, amou
   );
 }
 
+/**
+ * Search results: the server's ranking first (see the Shelf's search effect), then any file
+ * whose title holds exactly what was typed and the ranking left out. Until the server
+ * answers, only those exact ones, so something shows at once.
+ */
+function searched(files, q, found) {
+  const exact = files.filter((d) => matches(d, q));
+  if (!found || found.q !== q.trim()) return exact;
+  const byId = new Map(files.map((d) => [d.id, d]));
+  const ranked = found.ids.map((id) => byId.get(id)).filter(Boolean);
+  const seen = new Set(ranked.map((d) => d.id));
+  return [...ranked, ...exact.filter((d) => !seen.has(d.id))];
+}
+
 const matches = (d, q) => !q || [d.title, d.name, d.summary, d.folder, d.company, ...(d.tags || [])].join(' ').toLowerCase().includes(q.toLowerCase());
 
 // A top-level card. `preview` ([name, count] pairs) shows what is inside, so the two
@@ -784,6 +798,20 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
   // in the file lists, counts or search. The boss had 449 of them mixed in with his files,
   // each looking like a little .txt, and could not find his real documents among them.
   const files = useMemo(() => (docs || []).filter((d) => d.kind !== 'fact'), [docs]);
+  // The search box asks the server, which searches the way Reem does in chat: any words in
+  // any order, spelling slips, and what is written inside each file. A short pause after
+  // typing, so every key press is not a search.
+  const [found, setFound] = useState(null); // { q, ids }
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) { setFound(null); return undefined; }
+    let live = true;
+    const t = setTimeout(() => {
+      api.get(`/documents/search?q=${encodeURIComponent(term)}`)
+        .then((ids) => live && setFound({ q: term, ids })).catch(() => {});
+    }, 300);
+    return () => { live = false; clearTimeout(t); };
+  }, [q]);
   const facts = useMemo(() => (docs || []).filter((d) => d.kind === 'fact'), [docs]);
   const companies = useMemo(() => {
     const n = files.reduce((m, d) => (d.company ? { ...m, [d.company]: (m[d.company] || 0) + 1 } : m), {});
@@ -802,7 +830,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
   const learnedCount = scopeFacts.length;
   const inFolder = (d) => (folder === 'All' ? true : d.folder === folder);
   // Search always covers every file, whichever level is open.
-  const shown = q ? files.filter((d) => matches(d, q)) : folder === 'Learned' ? scopeFacts : (scope || []).filter(inFolder);
+  const shown = q ? searched(files, q, found) : folder === 'Learned' ? scopeFacts : (scope || []).filter(inFolder);
   const openDoc = open && allDocs?.find((d) => d.id === open);
 
   // A single ZIP dropped on the Shelf is an import; anything else is an ordinary upload.
