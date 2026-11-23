@@ -3,6 +3,7 @@ import { retrievalScope, agentScope, notOtherCases, findChunks } from './knowled
 import { isMaster, masterReach } from './access.js';
 import { copiesOf } from './copies.js';
 import { dubaiDate } from './saifsys/client.js';
+import { saifsysFirst } from './handCopies.js';
 
 // The Shelf, for the agent to look through itself.
 //
@@ -98,15 +99,24 @@ export function byName(docs, query) {
 const label = (text) => text.replace(/^\[[^\]]*\]\s*/, ''); // indexChunks() puts the title in front of every piece
 const day = (secs) => dubaiDate(Number(secs) * 1000);
 // An old issue says so first, with the one that replaced it: the chat answers from the current one.
-const line = (d) => `${d.superseded_by ? `OLD - replaced by #${d.superseded_by}: ` : ''}#${d.id} ${d.title || d.name} (${d.folder || 'Other'}${d.doc_date ? `, ${d.doc_date}` : ''}${d.expires_on ? `; expires ${d.expires_on}` : ''}; file: ${d.name}` +
+// A hand copy of a saifsys document says so too (handCopies.js), and a saifsys copy that has
+// run out says that, so the chat neither answers from an expired licence nor misses a newer one.
+const handNote = (d) => {
+  if (d.newerThan) return `Uploaded by hand, newer than the saifsys copy #${d.newerThan}, which has expired - saifsys needs the new one: `;
+  if (d.handCopyOf) return `OLD - a hand-uploaded copy of #${d.handCopyOf} from saifsys: `;
+  return '';
+};
+const line = (d) => `${d.superseded_by ? `OLD - replaced by #${d.superseded_by}: ` : handNote(d)}#${d.id} ${d.title || d.name} (${d.folder || 'Other'}${d.doc_date ? `, ${d.doc_date}` : ''}${d.expires_on ? `; expires ${d.expires_on}` : ''}; file: ${d.name}` +
   `${d.from_saifsys ? '; from saifsys, where staff keep it up to date' : ''}` +
+  `${d.expired ? '; EXPIRED - saifsys has no newer issue yet' : ''}` +
   `${d.uploader ? `; uploaded by ${d.uploader}${d.created_at ? ` on ${day(d.created_at)}` : ''}` : ''})`;
 
 // A private agent's turn reads only the person's own files, the master's too (agentScope).
 // The master reaches everyone's files but an external person's (access.js). Never the own
 // files of an agent bound to another case (notOtherCases).
 const scopeOf = (user) => (user.ownFilesOnly ? agentScope(user) : notOtherCases(user, isMaster(user) ? masterReach('t') : retrievalScope(user.id)));
-const DOC_COLS = `t.id, t.user_id, t.title, t.name, t.folder, t.company, t.tags, t.summary, t.doc_date, t.expires_on, t.created_at, t.superseded_by,
+const DOC_COLS = `t.id, t.user_id, t.title, t.name, t.folder, t.company, t.tags, t.summary, t.doc_date, t.expires_on, t.created_at, t.superseded_by, t.subject,
+  (SELECT l.doc_type FROM saifsys_company_doc_links l WHERE l.document_id = t.id AND l.version_no = 0 LIMIT 1) AS saifsys_type,
   (EXISTS (SELECT 1 FROM saifsys_company_doc_links l WHERE l.document_id = t.id)
     OR EXISTS (SELECT 1 FROM saifsys_doc_links l WHERE l.document_id = t.id)) AS from_saifsys,
   CASE WHEN t.user_id = ? THEN NULL ELSE coalesce(u.name, u.email) END AS uploader`;
@@ -218,7 +228,8 @@ export async function searchFiles(user, query, uploadedBy) {
   });
   return `${found.length} of ${docs.length} saved files${whose}, best match first. read_file opens one by its number. ` +
     `"About" was written when the file was filed and can be wrong - read the file before stating what it decided, an amount or a date.` +
-    `${found.some((d) => d.superseded_by) ? ' A file marked OLD has been replaced by a newer issue: answer from the current one, and use the old one only when they ask about the old one (and say it is old).' : ''}\n${out.join('\n')}`;
+    `${found.some((d) => d.superseded_by || (d.handCopyOf && !d.newerThan)) ? ' A file marked OLD has been replaced by a newer issue or by the copy in saifsys: answer from the current one, and use the old one only when they ask about the old one (and say it is old).' : ''}` +
+    `${found.some((d) => d.newerThan) ? ' A hand-uploaded file newer than an expired saifsys copy is the current one: answer from it, and tell the user saifsys still has the expired one, so it should be updated there.' : ''}\n${out.join('\n')}`;
 }
 
 /**
@@ -242,8 +253,10 @@ async function rank(user, scope, docs, q, limit) {
 
   // Current issues before old ones, each kept in its order: the renewed licence comes before
   // the one it replaced, whichever matched the words better.
-  const found = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id]) => known.get(id))
+  // And the saifsys copy of a company document before a copy someone uploaded by hand.
+  const ranked = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id]) => known.get(id))
     .sort((a, b) => (a.superseded_by ? 1 : 0) - (b.superseded_by ? 1 : 0));
+  const found = saifsysFirst(ranked, docs, dubaiDate());
   return { found, excerpt };
 }
 
@@ -362,8 +375,9 @@ export const SHELF_TOOLS = [
       'Every file knows who uploaded it: when they ask what someone uploaded or sent to the Shelf, pass uploaded_by, and leave query out to get all of them (the list says what each is, so pick the invoices etc. from it) - ' +
       'never search for the person\'s name inside the files for that. "What has Syed bought", "Said\'s bills" and the like are questions about what that person uploaded; ' +
       'a team member\'s name may be spelt as heard (Syed, Saeed for Said) and is still them. ' +
-      'Company documents (trade licences, Ejari, establishment cards, MOA, VAT and tax certificates) come from saifsys and are kept current there: ' +
-      'when an old and a current issue both come back, answer from the current one.',
+      'Company documents (trade licences, Ejari, establishment cards, MOA, VAT and tax certificates) and employee documents come from saifsys and are kept current there: ' +
+      'answer from the saifsys copy, and when an old and a current issue both come back, from the current one. When saifsys has none, say the file you found was uploaded by hand, by whom and when. ' +
+      'For a tenancy contract\'s terms (rent, dates, cheques), use the lease tools first when you have them. Any other file is searched here as usual.',
     input_schema: {
       type: 'object',
       properties: {
