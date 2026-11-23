@@ -68,7 +68,7 @@ export default function DocumentRenewalsPage({ onBack, start = null }) {
       const company = c.error ? ` Company documents: ${c.error}`
         : c.skipped ? ` Company documents: ${c.skipped}.`
           : ` Company documents: ${c.added || 0} new, ${(c.updated || 0) + (c.renewed || 0)} changed, ${c.removed || 0} removed.`;
-      setSynced((r.skipped ? r.skipped : `Employee documents: ${r.added} new, ${r.updated} changed, ${r.superseded} replaced by a newer one.`) + company);
+      setSynced((r.skipped ? r.skipped : `Employee documents: ${r.added} new, ${r.updated} changed, ${r.superseded} replaced by a newer one${r.removed ? `, ${r.removed} deleted in saifsys` : ''}.`) + company);
       await load();
     } catch (e) { setError(e.message); }
     setSyncing(false);

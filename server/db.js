@@ -2019,6 +2019,36 @@ await db.exec(`
     EXECUTE FUNCTION chunks_follow_category();
 `);
 
+// Read by everyone inside the company, whatever its category: the copies of saifsys's employee
+// documents (Francis, 2026-11-23; saifsysDocSync.js). Not "shared": a file the master shared
+// before it was filed under a private category stays private (knowledge.js retrievalScope).
+// chunks carry it too, kept in step by triggers like category_id, so the search sees it.
+await db.exec(`
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS company_wide BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE chunks ADD COLUMN IF NOT EXISTS company_wide BOOLEAN NOT NULL DEFAULT false;
+
+  CREATE OR REPLACE FUNCTION chunk_takes_company_wide() RETURNS trigger AS $$
+  BEGIN
+    NEW.company_wide := coalesce((SELECT company_wide FROM documents WHERE id = NEW.document_id), false);
+    RETURN NEW;
+  END $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_chunk_takes_company_wide ON chunks;
+  CREATE TRIGGER trg_chunk_takes_company_wide
+    BEFORE INSERT OR UPDATE OF document_id, company_wide ON chunks
+    FOR EACH ROW EXECUTE FUNCTION chunk_takes_company_wide();
+
+  CREATE OR REPLACE FUNCTION chunks_follow_company_wide() RETURNS trigger AS $$
+  BEGIN
+    UPDATE chunks SET company_wide = NEW.company_wide WHERE document_id = NEW.id;
+    RETURN NEW;
+  END $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_chunks_follow_company_wide ON documents;
+  CREATE TRIGGER trg_chunks_follow_company_wide
+    AFTER UPDATE OF company_wide ON documents
+    FOR EACH ROW WHEN (OLD.company_wide IS DISTINCT FROM NEW.company_wide)
+    EXECUTE FUNCTION chunks_follow_company_wide();
+`);
+
 // saifsys's employee documents, copied onto the Shelf (server/saifsysDocSync.js): which
 // saifsys document became which file, when saifsys last changed it, and whether its file
 // has come yet (saifsys may hold the row before the file).
@@ -2109,6 +2139,12 @@ await db.exec(`
   );
   -- Whether saifsys itself holds a file for it (null: not known yet), so a document with none is not offered for fetching.
   ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS saifsys_has_file BOOLEAN;
+  -- saifsys's stored file name for it (a new name is a new file: saifsys stores each upload under a
+  -- fresh one), the name of the file Reem last fetched and read, and whether the employee has left
+  -- (they are read last). See saifsysDocSync.js.
+  ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS file_key TEXT;
+  ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS read_key TEXT;
+  ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS employee_left BOOLEAN NOT NULL DEFAULT false;
   -- saifsys's company documents on the Shelf (saifsysCompanyDocs.js): one row per Shelf copy, by
   -- saifsys document id and version_no (0 = its live, current issue; 1, 2... its earlier issues).
   -- file_key is saifsys's stored file name, which changes whenever a new file replaces the old.
