@@ -68,6 +68,7 @@ import { startAttendance } from './attendanceRead.js';
 import { translateRoutes } from './translate.js';
 import { errorRoutes, recordError } from './errors.js';
 import { replyPdfRoutes } from './replyPdf.js';
+import { searchShelf } from './shelf.js';
 import { meetingShareRoutes } from './meetingShare.js';
 import { drawingRoutes } from './drawing.js';
 import { tenantCareRoutes, startTenantCare } from './tenantCare.js';
@@ -392,6 +393,10 @@ app.get('/api/documents', wrap(async (req, res) => {
 app.get('/api/documents/expiring', needsModule('shelf'), wrap(async (req, res) => {
   const rows = await expiringDocuments(req.user, req.query.days);
   res.json(rows.map((d) => docOut(d, req.user.id)));
+}));
+// The Shelf screen's search box: ids best first, by the same search Reem uses in chat (shelf.js).
+app.get('/api/documents/search', needsModule('shelf'), wrap(async (req, res) => {
+  res.json(await searchShelf(req.user, req.query.q));
 }));
 app.get('/api/documents/:id', wrap(async (req, res) => {
   const doc = await readableDocument(req.user, req.params.id);

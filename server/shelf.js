@@ -179,7 +179,6 @@ export async function searchFiles(user, query, uploadedBy) {
   const docs = await db.prepare(`SELECT ${DOC_COLS} FROM documents t LEFT JOIN users u ON u.id = t.user_id
     WHERE ${scope.sql} AND ${FILES}${by ? ` AND t.user_id IN (${by.map(() => '?').join(',')})` : ''}`)
     .all(user.id, ...scope.params, ...(by ? by.map((p) => p.id) : []));
-  const known = new Map(docs.map((d) => [d.id, d]));
   const whose = by ? ` uploaded by ${by.map((p) => p.name || p.email).join(' or ')}` : '';
 
   // Everything one person uploaded, newest first - the question was who, not what.
@@ -202,22 +201,7 @@ export async function searchFiles(user, query, uploadedBy) {
     }
   }
 
-  // Two lists - named like it, and saying it inside - merged the way search() merges its own.
-  const scores = new Map();
-  const excerpt = new Map();
-  const add = (ids) => ids.forEach((id, rank) => scores.set(id, (scores.get(id) || 0) + 1 / (60 + rank)));
-  add(byName(docs, q).map((d) => d.id));
-  const inside = [];
-  for (const c of await findChunks(user, q, 20, scope)) {
-    if (!known.has(c.document_id)) continue;
-    if (!excerpt.has(c.document_id)) { excerpt.set(c.document_id, label(c.text)); inside.push(c.document_id); }
-  }
-  add(inside);
-
-  // Current issues before old ones, each kept in its order: the renewed licence comes before
-  // the one it replaced, whichever matched the words better.
-  const found = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_FILES).map(([id]) => known.get(id))
-    .sort((a, b) => (a.superseded_by ? 1 : 0) - (b.superseded_by ? 1 : 0));
+  const { found, excerpt } = await rank(user, scope, docs, q, MAX_FILES);
   if (!found.length) {
     return `No saved file${whose} matches "${q}" (${docs.length} files looked through). Before telling the user it is not there, ` +
       'search again with other words - a different spelling of the name, the building, the kind of document.';
@@ -235,6 +219,49 @@ export async function searchFiles(user, query, uploadedBy) {
   return `${found.length} of ${docs.length} saved files${whose}, best match first. read_file opens one by its number. ` +
     `"About" was written when the file was filed and can be wrong - read the file before stating what it decided, an amount or a date.` +
     `${found.some((d) => d.superseded_by) ? ' A file marked OLD has been replaced by a newer issue: answer from the current one, and use the old one only when they ask about the old one (and say it is old).' : ''}\n${out.join('\n')}`;
+}
+
+/**
+ * The files that best answer `q`, best first: by title, name and summary (any words, any
+ * order, spelling slips allowed) merged with what is written inside them. `excerpt` holds
+ * the matching line for files found by their insides.
+ */
+async function rank(user, scope, docs, q, limit) {
+  const known = new Map(docs.map((d) => [d.id, d]));
+  // Two lists - named like it, and saying it inside - merged the way search() merges its own.
+  const scores = new Map();
+  const excerpt = new Map();
+  const add = (ids) => ids.forEach((id, n) => scores.set(id, (scores.get(id) || 0) + 1 / (60 + n)));
+  add(byName(docs, q).map((d) => d.id));
+  const inside = [];
+  for (const c of await findChunks(user, q, Math.max(20, limit), scope)) {
+    if (!known.has(c.document_id)) continue;
+    if (!excerpt.has(c.document_id)) { excerpt.set(c.document_id, label(c.text)); inside.push(c.document_id); }
+  }
+  add(inside);
+
+  // Current issues before old ones, each kept in its order: the renewed licence comes before
+  // the one it replaced, whichever matched the words better.
+  const found = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id]) => known.get(id))
+    .sort((a, b) => (a.superseded_by ? 1 : 0) - (b.superseded_by ? 1 : 0));
+  return { found, excerpt };
+}
+
+/**
+ * The Shelf screen's search box. It matched only what was typed, as one piece, in a title:
+ * "AC interview" never found "HVAC Technician Interview Pack", and nothing looked inside a
+ * file, so people had to remember exact names. Now it is the same search Reem uses in chat.
+ * Returns file ids best first; the screen shows those it lists, in this order.
+ */
+export const SCREEN_RESULTS = 60;
+export async function searchShelf(user, query) {
+  const q = String(query || '').trim().slice(0, 300);
+  if (!q) return [];
+  const scope = scopeOf(user);
+  const docs = await db.prepare(`SELECT ${DOC_COLS} FROM documents t LEFT JOIN users u ON u.id = t.user_id
+    WHERE ${scope.sql} AND ${FILES}`).all(user.id, ...scope.params);
+  const { found } = await rank(user, scope, docs, q, SCREEN_RESULTS);
+  return found.map((d) => d.id);
 }
 
 /**

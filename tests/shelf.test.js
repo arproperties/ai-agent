@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
-import { shelfKit, spellingMatch, soundKey, MAX_LIST } from '../server/shelf.js';
+import { shelfKit, spellingMatch, soundKey, MAX_LIST, searchShelf } from '../server/shelf.js';
 import { libraryCatalog } from '../server/files.js';
 
 test.after(() => closeDb());
@@ -212,4 +212,34 @@ test('the newest-files list leaves captured facts out and says how many files th
   assert.equal(catalog.total, 1, 'facts are not files');
   assert.equal(catalog.files.length, 1);
   assert.match(catalog.files[0], /Trade licence 2026/);
+});
+
+// ---------- the Shelf screen's search box ----------
+// It matched only what was typed, as one piece, in a title: "AC interview" never found
+// "HVAC Technician Interview Pack". Now it is the chat's search.
+
+test('the Shelf search box finds a file by any words in any order, a slip, or what is inside', async () => {
+  const { master } = await fixture();
+  const pack = await doc(master.id, 'HVAC Technician Interview Pack', { text: 'Part 1 technical questions on superheat and subcooling.' });
+  const other = await doc(master.id, 'Tax Invoice – Fan Motor 275 pcs');
+
+  assert.equal((await searchShelf(master, 'interview technician'))[0], pack);
+  assert.equal((await searchShelf(master, 'technican intervew'))[0], pack, 'spelling slips');
+  assert.equal((await searchShelf(master, 'subcooling'))[0], pack, 'a word only inside the file');
+  assert.ok(!(await searchShelf(master, 'interview technician')).includes(other));
+  assert.deepEqual(await searchShelf(master, '   '), []);
+});
+
+test("the Shelf search box never returns someone else's private file", async () => {
+  const { master, rona } = await fixture();
+  await doc(master.id, 'Salary sheet October', { text: 'Salaries for October.' });
+  const pub = await doc(master.id, 'Leave policy handbook', { shared: true });
+  assert.deepEqual(await searchShelf(rona, 'salary sheet'), []);
+  assert.deepEqual(await searchShelf(rona, 'leave policy'), [pub]);
+});
+
+test('learned facts never come back from the Shelf search box', async () => {
+  const { master } = await fixture();
+  await doc(master.id, 'Interview scoring scale 1 to 5', { kind: 'fact', text: 'Interview scoring scale.' });
+  assert.deepEqual(await searchShelf(master, 'interview scoring'), []);
 });
