@@ -4,6 +4,7 @@ import { isMaster, masterReach } from './access.js';
 import { copiesOf } from './copies.js';
 import { dubaiDate } from './saifsys/client.js';
 import { saifsysFirst } from './handCopies.js';
+import { saifsysText } from './saifsysFiles.js';
 
 // The Shelf, for the agent to look through itself.
 //
@@ -324,9 +325,20 @@ export async function readFileParts(user, { id, search, part } = {}) {
     read: { id: d.id, title: d.title || d.name, ...read },
   });
 
+  // A saifsys document's file stays in saifsys: read from there now, with its details on top, not kept.
+  let whole = null;
+  if (d.from_saifsys) {
+    const own = await saifsysText(d).catch((e) => { console.error(`[shelf] #${d.id} not read from saifsys:`, e.message); return null; });
+    whole = own == null
+      ? `${d.summary || ''}\n\n(saifsys could not give the file just now: only its details are here. Say so; do not guess what it says.)`
+      : `${d.summary || ''}\n\n${own}`;
+  }
+
   const want = words(search).filter((w) => w.length >= 3 && !STOP.has(w));
   if (want.length) {
-    const pieces = (await db.prepare('SELECT text FROM chunks WHERE document_id = ? ORDER BY id').all(d.id)).map((r) => label(r.text));
+    const pieces = whole != null
+      ? whole.split(/\n\s*\n/).filter((p) => p.trim())
+      : (await db.prepare('SELECT text FROM chunks WHERE document_id = ? ORDER BY id').all(d.id)).map((r) => label(r.text));
     const hit = pieces.filter((p) => { const has = plain(p); return want.some((w) => has.includes(w)); });
     if (hit.length) {
       let text = hit.join('\n\n');
@@ -338,7 +350,7 @@ export async function readFileParts(user, { id, search, part } = {}) {
     search = `Nothing in it mentions "${String(search).trim()}"; this is the file from the start.`;
   } else search = '';
 
-  const parts = splitParts(await fullText(d.id));
+  const parts = splitParts(whole ?? await fullText(d.id));
   const total = Math.max(1, parts.length);
   const n = Math.min(Math.max(1, Math.floor(Number(part)) || 1), total);
   const where = total === 1 ? 'The whole file.'

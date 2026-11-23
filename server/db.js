@@ -2139,12 +2139,6 @@ await db.exec(`
   );
   -- Whether saifsys itself holds a file for it (null: not known yet), so a document with none is not offered for fetching.
   ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS saifsys_has_file BOOLEAN;
-  -- saifsys's stored file name for it (a new name is a new file: saifsys stores each upload under a
-  -- fresh one), the name of the file Reem last fetched and read, and whether the employee has left
-  -- (they are read last). See saifsysDocSync.js.
-  ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS file_key TEXT;
-  ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS read_key TEXT;
-  ALTER TABLE saifsys_doc_links ADD COLUMN IF NOT EXISTS employee_left BOOLEAN NOT NULL DEFAULT false;
   -- saifsys's company documents on the Shelf (saifsysCompanyDocs.js): one row per Shelf copy, by
   -- saifsys document id and version_no (0 = its live, current issue; 1, 2... its earlier issues).
   -- file_key is saifsys's stored file name, which changes whenever a new file replaces the old.

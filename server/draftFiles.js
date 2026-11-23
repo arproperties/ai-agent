@@ -4,6 +4,7 @@ import { extname } from 'node:path';
 import { db } from './db.js';
 import { DATA_DIR } from './config.js';
 import { emailFile } from './imap.js';
+import { fileBytes } from './saifsysFiles.js';
 
 // Files an agent puts on an email it drafts: one from the user's Shelf (which is also where
 // a file dropped into the chat lands), or one that arrived attached to another email.
@@ -25,7 +26,8 @@ async function shelfFile(userId, name) {
   if (!want) throw new Error('An attachment needs a file name.');
   const like = `%${want.replace(/[\\%_]/g, '\\$&')}%`;
   const rows = await db.prepare(`SELECT id, name, title, mime, path FROM documents
-    WHERE user_id = ? AND path IS NOT NULL AND (lower(name) LIKE ? OR lower(title) LIKE ?) ORDER BY id DESC LIMIT 20`)
+    WHERE user_id = ? AND (path IS NOT NULL OR id IN (SELECT document_id FROM saifsys_doc_links UNION SELECT document_id FROM saifsys_company_doc_links))
+      AND status <> 'removed' AND (lower(name) LIKE ? OR lower(title) LIKE ?) ORDER BY id DESC LIMIT 20`)
     .all(userId, like, like);
   const exact = rows.filter((d) => d.name.toLowerCase() === want || String(d.title || '').toLowerCase() === want);
   // The same file name twice means the newer upload: that is the one just dropped into the chat.
@@ -35,9 +37,11 @@ async function shelfFile(userId, name) {
       ? `More than one saved file matches “${name}”: ${rows.map((d) => d.name).join(', ')}. Use the exact file name.`
       : `There is no saved file called “${name}”. Only files on the user's Shelf, or dropped into this chat, can be attached.`);
   }
-  let buffer;
-  try { buffer = readFileSync(doc.path); } catch { throw new Error(`${doc.name} is listed on the Shelf but its file is missing.`); }
-  return { name: doc.name, mimetype: doc.mime, buffer };
+  // A saifsys document's file is fetched from saifsys now (saifsysFiles.js); any other from here.
+  try {
+    const file = await fileBytes(doc);
+    return { name: doc.name, mimetype: file.mime || doc.mime, buffer: file.buffer };
+  } catch { throw new Error(`${doc.name} is listed on the Shelf but its file is missing.`); }
 }
 
 /**

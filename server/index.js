@@ -87,6 +87,7 @@ import { fromTracker, fromTrackerRoutes, trackerRoutes, startTracker } from './t
 import { uploadLimitMB, MAX_UPLOAD_MB, MAX_DRAWING_MB, MAX_PDF_MB, MAX_IFC_MB } from './dwg.js';
 import { isRevit, REVIT_HELP } from './ifc.js';
 import { roughModelFor } from './rough3d.js';
+import { fileBytes } from './saifsysFiles.js';
 
 const app = express();
 app.set('trust proxy', 1); // correct req.ip / req.secure behind a hosting proxy
@@ -444,10 +445,17 @@ app.post('/api/documents/note', needsModule('shelf'), wrap(async (req, res) => {
 // Shelf lists; everything below that changes a file stays with its owner.
 app.get('/api/documents/:id/file', wrap(async (req, res) => {
   const doc = await readableDocument(req.user, req.params.id);
-  if (!doc?.path) return notFound(res);
-  const inline = !req.query.download && inlineType(doc);
+  if (!doc) return notFound(res);
+  // A saifsys document's file stays in saifsys: fetched now, sent, not kept (saifsysFiles.js).
+  const fromSaifsys = !doc.path && doc.from_saifsys;
+  if (!doc.path && !fromSaifsys) return notFound(res);
+  const file = fromSaifsys ? await fileBytes(doc).catch(() => null) : null;
+  if (fromSaifsys && !file) return notFound(res);
+  const inline = !req.query.download && inlineType(file ? { ...doc, mime: file.mime } : doc);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(doc.name)}`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  if (file) return res.type(inline || 'application/octet-stream').send(file.buffer);
   // dotfiles: the path is the one stored for this file, never the visitor's; a data folder
   // under a dot-named folder (a git worktree under .claude) must not turn every file into a 404.
   res.type(inline || 'application/octet-stream').sendFile(doc.path, { dotfiles: 'allow' });

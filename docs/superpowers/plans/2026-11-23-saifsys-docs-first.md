@@ -122,6 +122,14 @@ Checked against live's 6,599 hand-uploaded files: 33 are matched as copies of a 
 all correct; doubtful ones (e.g. "ARS Vacation Homes Rental" vs "ARS Home Rentals") are left alone.
 Not changed: the few pieces recall() hands the chat before it searches.
 
+## Changed (Francis, 2026-11-23, later the same day)
+Documents stay **only in saifsys**. Reem keeps the details (name, number, dates) for search and
+alerts, never the files: opening one, reading it in chat or attaching it fetches it from saifsys
+then (`server/saifsysFiles.js`), held in memory a few minutes, never saved. The company document
+copies kept since 2026-11-14 (71 files, 59 texts) are removed from the server on the first run;
+backed up on the Mac in ~/Sites/jarvis-backups first. Employee documents: every 15 minutes, all
+internal users read them (`company_wide`), deleted ones hidden after a clean run.
+
 ## Order
 1. Steps 1-3 above: saifsys first, hand copies step aside, the chat's rule. No saifsys work.
 2. A2 employee docs (no saifsys change), with A3.

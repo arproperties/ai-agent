@@ -1,13 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { db, reset, makeUser, closeDb } from './helpers/db.js';
 
 process.env.SAIFSYS_API_KEY = ''; // nothing here may reach the real saifsys
 const cats = await import('../server/docCategories.js');
 const { syncSaifsysDocs, SAIFSYS_TYPES } = await import('../server/saifsysDocSync.js');
+const { forgetHeld } = await import('../server/saifsysFiles.js');
 
 test.after(() => closeDb());
 
@@ -16,14 +15,10 @@ const row = (over) => ({
   issued_at: '2020-01-01', expires_at: '2030-01-01', notes: null, has_file: false, file_name: null, updated_at: '2026-01-02 06:01:46', ...over,
 });
 // saifsys's hr_docs door, as a fake: pages of `per`, and the files it holds.
-// Files go to a folder of the test's own, and "reading" one gives its bytes as text: no AI, no real uploads.
-const UPLOADS = mkdtempSync(join(tmpdir(), 'reem-hr-docs-'));
 function saifsys(docs, { per = 500, files = {} } = {}) {
-  const calls = { pages: 0, files: [], read: [] };
+  const calls = { pages: 0, files: [] };
   return {
     calls,
-    uploadDir: UPLOADS,
-    read: async ({ buffer, name }) => { calls.read.push(name); return buffer.toString(); },
     lookup: async (module, action, { after_id = 0, limit }) => {
       assert.equal(module, 'hr_docs');
       assert.equal(action, 'documents');
@@ -42,6 +37,7 @@ function saifsys(docs, { per = 500, files = {} } = {}) {
 
 async function office() {
   await reset();
+  forgetHeld(); // ids start again after reset: nothing held from an earlier test
   const boss = await makeUser('Boss');
   await db.prepare(`UPDATE users SET role = 'master' WHERE id = ?`).run(boss);
   await cats.seedCategories();
@@ -58,8 +54,8 @@ test('saifsys types map onto the Employee Documents types', () => {
 test('each saifsys document becomes a Shelf file filed under its employee', async () => {
   const { boss } = await office();
   const s = saifsys([row(), row({ id: 2, type: 'National ID', number: '784-1990', expires_at: '2027-02-01' }), row({ id: 3, type: 'Something odd', expires_at: null })]);
-  const r = await syncSaifsysDocs(s);
-  assert.deepEqual(r, { added: 3, updated: 0, superseded: 0, removed: 0, read: 0, waiting: 0 });
+  const r = await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  assert.deepEqual(r, { added: 3, updated: 0, superseded: 0, removed: 0 });
   const [p, eid, odd] = await docs();
   assert.equal(p.user_id, boss, 'the master\'s file');
   assert.equal(p.type, 'Passport');
@@ -82,9 +78,9 @@ test('each saifsys document becomes a Shelf file filed under its employee', asyn
 test('running it again adds nothing', async () => {
   await office();
   const s = saifsys([row(), row({ id: 2 })]);
-  await syncSaifsysDocs(s);
-  const again = await syncSaifsysDocs(s);
-  assert.deepEqual(again, { added: 0, updated: 0, superseded: 0, removed: 0, read: 0, waiting: 0 });
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  const again = await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  assert.deepEqual(again, { added: 0, updated: 0, superseded: 0, removed: 0 });
   assert.equal((await docs()).length, 2);
 });
 
@@ -93,7 +89,7 @@ test('two runs at once add each document once', async () => {
   const list = Array.from({ length: 30 }, (_, i) => row({ id: i + 1, employee_code: `E0${i}` }));
   const a = saifsys(list);
   const b = saifsys(list);
-  await Promise.all([syncSaifsysDocs(a), syncSaifsysDocs(b)]);
+  await Promise.all([syncSaifsysDocs({ lookup: a.lookup, fetchFile: a.fetchFile }), syncSaifsysDocs({ lookup: b.lookup, fetchFile: b.fetchFile })]);
   assert.equal((await docs()).length, 30);
   assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM saifsys_doc_links').get()).n, 30);
 });
@@ -101,120 +97,38 @@ test('two runs at once add each document once', async () => {
 test('every page is read', async () => {
   await office();
   const s = saifsys(Array.from({ length: 5 }, (_, i) => row({ id: i + 1, employee_code: `E0${i}` })), { per: 2 });
-  const r = await syncSaifsysDocs(s);
+  const r = await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
   assert.equal(r.added, 5);
   assert.equal(s.calls.pages, 3);
 });
 
-test('the current file of a document is fetched and read, once, with saifsys\'s details on top', async () => {
+test('the sync brings only the details: no file is fetched until someone opens it', async () => {
   await office();
-  const s = saifsys([row({ has_file: true, file_name: 'passport_1.pdf' }), row({ id: 2, type: 'Visa' })], { files: { 1: 'Nationality: India' } });
-  const r = await syncSaifsysDocs(s);
-  assert.equal(r.read, 1);
-  assert.equal(r.waiting, 0);
-  assert.deepEqual(s.calls.files, [1], 'a document with no file in saifsys is not asked for');
-  const [p, visa] = await docs();
-  assert.ok(p.path && existsSync(p.path));
-  assert.equal(visa.path, null);
-  const text = (await db.prepare('SELECT text FROM chunks WHERE document_id = ?').all(p.id)).map((c) => c.text).join(' ');
-  assert.match(text, /Passport of Sohail Khan \(E00007\), from saifsys/);
-  assert.match(text, /Number P1234567/);
-  assert.match(text, /Nationality: India/);
-
-  await syncSaifsysDocs(s);
-  assert.deepEqual(s.calls.files, [1], 'read once: the same file is not fetched again');
-});
-
-test('a new file under the same saifsys record is read again, though updated_at did not change', async () => {
-  await office();
-  await syncSaifsysDocs(saifsys([row({ has_file: true, file_name: 'passport_1.pdf' })], { files: { 1: 'old scan' } }));
-  const s = saifsys([row({ has_file: true, file_name: 'passport_2.pdf' })], { files: { 1: 'renewed scan' } });
-  const r = await syncSaifsysDocs(s);
-  assert.equal(r.updated, 0, 'saifsys did not say it changed');
-  assert.equal(r.read, 1);
-  const [p] = await docs();
-  assert.equal(readFileSync(p.path, 'utf8'), 'renewed scan');
-  const text = (await db.prepare('SELECT text FROM chunks WHERE document_id = ?').all(p.id)).map((c) => c.text).join(' ');
-  assert.match(text, /renewed scan/);
-  assert.doesNotMatch(text, /old scan/);
-});
-
-test('a few files a run: changed ones first, then current staff, then what runs out soonest', async () => {
-  await office();
-  const files = { 1: 'a', 2: 'b', 3: 'c', 4: 'd', 5: 'e' };
-  const list = [
-    row({ id: 1, employee_code: 'E1', has_file: true, file_name: 'f1', expires_at: '2028-01-01' }),
-    row({ id: 2, employee_code: 'E2', has_file: true, file_name: 'f2', expires_at: '2027-01-01' }),
-    row({ id: 3, employee_code: 'E3', has_file: true, file_name: 'f3', expires_at: '2026-12-01', employee_left: true }),
-    row({ id: 4, employee_code: 'E4', has_file: true, file_name: 'f4', expires_at: '2029-01-01' }),
-  ];
-  const first = saifsys(list, { files });
-  assert.equal((await syncSaifsysDocs({ ...first, readLimit: 2 })).waiting, 2);
-  assert.deepEqual(first.calls.files, [2, 1], 'current staff, soonest expiry first');
-
-  // Document 2 gets a new file: it goes ahead of the two still waiting.
-  const renewed = list.map((d) => (d.id === 2 ? { ...d, file_name: 'f2-new' } : d));
-  const next = saifsys(renewed, { files });
-  await syncSaifsysDocs({ ...next, readLimit: 1 });
-  assert.deepEqual(next.calls.files, [2]);
-
-  const last = saifsys(renewed, { files });
-  assert.equal((await syncSaifsysDocs({ ...last, readLimit: 5 })).waiting, 0);
-  assert.deepEqual(last.calls.files, [4, 3], 'someone who has left comes last');
-});
-
-test('an older issue is not read, only the current one', async () => {
-  await office();
-  const s = saifsys([
-    row({ id: 1, has_file: true, file_name: 'old.pdf', expires_at: '2024-01-01' }),
-    row({ id: 2, has_file: true, file_name: 'new.pdf', expires_at: '2034-01-01' }),
-  ], { files: { 1: 'old', 2: 'new' } });
-  await syncSaifsysDocs(s);
-  assert.deepEqual(s.calls.files, [2]);
-});
-
-test('a document deleted in saifsys is hidden after a clean run, and comes back if saifsys lists it again', async () => {
-  await office();
-  await syncSaifsysDocs(saifsys([row(), row({ id: 2, type: 'Visa' })]));
-  const r = await syncSaifsysDocs(saifsys([row()]));
-  assert.equal(r.removed, 1);
-  assert.deepEqual((await docs()).map((d) => d.status), ['ready', 'removed']);
-  await syncSaifsysDocs(saifsys([row(), row({ id: 2, type: 'Visa' })]));
-  assert.deepEqual((await docs()).map((d) => d.status), ['ready', 'ready']);
-});
-
-test('a run that fails, or that lists nothing or far fewer, hides nothing', async () => {
-  await office();
-  const many = Array.from({ length: 30 }, (_, i) => row({ id: i + 1, employee_code: `E${i + 1}` }));
-  await syncSaifsysDocs(saifsys(many));
-  const broken = saifsys(many, { per: 10 });
-  const lookup = broken.lookup;
-  broken.lookup = async (m, a, p) => { if (Number(p.after_id) > 0) throw new Error('saifsys is down'); return lookup(m, a, p); };
-  await assert.rejects(syncSaifsysDocs(broken));
-  assert.equal((await syncSaifsysDocs(saifsys([]))).removed, 0, 'an empty answer is not "everything was deleted"');
-  assert.equal((await syncSaifsysDocs(saifsys(many.slice(0, 2)))).removed, 0, 'too many at once');
-  assert.ok((await docs()).every((d) => d.status === 'ready'));
+  const s = saifsys([row({ has_file: true, file_name: 'passport.pdf' }), row({ id: 2, type: 'Visa' })], { files: { 1: '%PDF passport' } });
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  assert.deepEqual(s.calls.files, []);
+  assert.ok((await docs()).every((d) => d.path === null));
 });
 
 test('whether saifsys holds a file is kept, and follows saifsys when that changes', async () => {
   await office();
   const has = async () => (await db.prepare('SELECT saifsys_id, saifsys_has_file FROM saifsys_doc_links ORDER BY saifsys_id').all()).map((l) => l.saifsys_has_file);
   const s = saifsys([row({ has_file: true }), row({ id: 2 })], { files: { 1: 'x' } });
-  await syncSaifsysDocs(s);
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
   assert.deepEqual(await has(), [true, false]);
   const s2 = saifsys([row({ has_file: true }), row({ id: 2, has_file: true })], { files: { 1: 'x', 2: 'y' } });
-  await syncSaifsysDocs(s2);
+  await syncSaifsysDocs({ lookup: s2.lookup, fetchFile: s2.fetchFile });
   assert.deepEqual(await has(), [true, true], 'the file uploaded in saifsys later');
 });
 
 test('a date changed in saifsys is taken, unless someone in Reem has set it since', async () => {
   const { boss } = await office();
   const s = saifsys([row(), row({ id: 2, type: 'Visa', expires_at: '2026-11-01' })]);
-  await syncSaifsysDocs(s);
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
   const [, visa] = await docs();
   await db.prepare('UPDATE documents SET expires_on = ?, expiry_confirmed_by = ? WHERE id = ?').run('2028-11-01', boss, visa.id);
   const s2 = saifsys([row({ expires_at: '2031-01-01', updated_at: '2026-10-24 10:00:00' }), row({ id: 2, type: 'Visa', expires_at: '2027-11-01', updated_at: '2026-10-24 10:00:00' })]);
-  const r = await syncSaifsysDocs(s2);
+  const r = await syncSaifsysDocs({ lookup: s2.lookup, fetchFile: s2.fetchFile });
   assert.equal(r.updated, 2);
   const [p, v] = await docs();
   assert.equal(p.expires_on, '2031-01-01');
@@ -229,7 +143,7 @@ test('an older document of the same kind for the same person stops alerting', as
     row({ id: 3, type: 'Visa', expires_at: '2026-11-01' }),
     row({ id: 4, employee_code: 'E00018', employee_name: 'Sohaib', expires_at: '2025-01-01' }),
   ]);
-  const r = await syncSaifsysDocs(s);
+  const r = await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
   assert.equal(r.superseded, 1);
   const [old, renewed, visa, other] = await docs();
   assert.equal(old.superseded_by, renewed.id);
@@ -242,15 +156,17 @@ test('opening a document fetches its file from saifsys there and then', async ()
   const { boss } = await office();
   const { fileFor } = await import('../server/saifsysDocSync.js');
   const s = saifsys([row()], { files: {} });
-  await syncSaifsysDocs(s);
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
   const [p] = await docs();
   const master = { id: boss, role: 'master' };
   await assert.rejects(fileFor(master, p.id, { fetchFile: s.fetchFile }), (e) => e.status === 404 && /saifsys has no file/.test(e.message));
   const now = saifsys([row()], { files: { 1: '%PDF arrived' } });
   const got = await fileFor(master, p.id, { fetchFile: now.fetchFile });
-  assert.equal(readFileSync(got.path, 'utf8'), '%PDF arrived');
+  assert.equal(got.buffer.toString(), '%PDF arrived');
+  const [after] = await docs();
+  assert.equal(after.path, null, 'the file stays in saifsys: nothing is saved here');
   await fileFor(master, p.id, { fetchFile: now.fetchFile });
-  assert.deepEqual(now.calls.files, [1], 'kept: the second open does not ask saifsys again');
+  assert.deepEqual(now.calls.files, [1], 'held in memory a little while: opening it twice asks saifsys once');
 });
 
 test('nobody fetches a file they may not read', async () => {
@@ -259,35 +175,10 @@ test('nobody fetches a file they may not read', async () => {
   const outsider = await makeUser('Outsider');
   await db.prepare('UPDATE users SET external = true WHERE id = ?').run(outsider);
   const s = saifsys([row()], { files: { 1: 'x' } });
-  await syncSaifsysDocs(s);
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
   const [p] = await docs();
   await assert.rejects(fileFor({ id: outsider, role: 'user', external: true }, p.id, { fetchFile: s.fetchFile }), (e) => e.status === 404);
   assert.deepEqual(s.calls.files, [], 'saifsys is not even asked');
-});
-
-test('everyone inside the company reads the saifsys copies; nobody external; hand-uploaded ones stay private', async () => {
-  const { boss } = await office();
-  const { shelfKit } = await import('../server/shelf.js');
-  const user = async (name, external = false) => {
-    const id = await makeUser(name);
-    if (external) await db.prepare('UPDATE users SET external = true WHERE id = ?').run(id);
-    return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  };
-  const staff = await user('Cleaner');
-  const outsider = await user('Outsider', true);
-  await syncSaifsysDocs(saifsys([row({ has_file: true, file_name: 'p.pdf' })], { files: { 1: 'Passport of Sohail Khan, nationality India' } }));
-  // A passport uploaded by hand into the same category, and shared by the master before it was filed.
-  const cat = await db.prepare("SELECT t.id, t.category_id FROM document_types t WHERE t.label = 'Passport'").get();
-  const { id: hand } = await db.prepare(`INSERT INTO documents (user_id, name, title, status, shared, category_id, type_id)
-    VALUES (?, 'r.pdf', 'Passport – Rahul Nair', 'ready', true, ?, ?) RETURNING id`).run(boss, cat.category_id, cat.id);
-  await db.prepare('INSERT INTO chunks (user_id, document_id, text, shared) VALUES (?, ?, ?, true)').run(boss, hand, '[Passport – Rahul Nair] nationality India');
-
-  const search = async (u, q) => (await shelfKit(u).run({ id: 't', name: 'search_files', input: { query: q } })).content;
-  const [copy] = await docs();
-  assert.match(await search(staff, 'Sohail passport'), new RegExp(`#${copy.id} `), 'staff without Document Renewals find it');
-  assert.match(await search(staff, 'nationality India'), new RegExp(`#${copy.id} `), 'by what is written in it too');
-  assert.doesNotMatch(await search(staff, 'Rahul passport'), new RegExp(`#${hand} `), 'the hand-uploaded passport stays private');
-  assert.doesNotMatch(await search(outsider, 'Sohail passport'), new RegExp(`#${copy.id} `), 'nobody external');
 });
 
 // ---------- saifsys's HR API (api/hr/v1), the other way in ----------
@@ -357,7 +248,7 @@ test('no master: nothing to file it under, nothing done', async () => {
   await reset();
   await cats.seedCategories();
   const s = saifsys([row()]);
-  const r = await syncSaifsysDocs(s);
+  const r = await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
   assert.equal(r.added, 0);
   assert.equal(r.skipped, 'no master account');
 });
@@ -369,4 +260,69 @@ test('only the master starts a sync by hand', async () => {
   const s = saifsys([row()]);
   await assert.rejects(syncNow({ id: staff, role: 'user' }, s), (e) => e.status === 403);
   assert.equal((await syncNow({ id: boss, role: 'master' }, s)).added, 1);
+});
+
+test('a document deleted in saifsys is hidden after a clean run, and comes back if saifsys lists it again', async () => {
+  await office();
+  const sync = (list) => { const s = saifsys(list); return syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile }); };
+  await sync([row(), row({ id: 2, type: 'Visa' })]);
+  assert.equal((await sync([row()])).removed, 1);
+  assert.deepEqual((await docs()).map((d) => d.status), ['ready', 'removed']);
+  await sync([row(), row({ id: 2, type: 'Visa' })]);
+  assert.deepEqual((await docs()).map((d) => d.status), ['ready', 'ready']);
+});
+
+test('a run that fails, or that lists nothing or far fewer, hides nothing', async () => {
+  await office();
+  const many = Array.from({ length: 30 }, (_, i) => row({ id: i + 1, employee_code: `E${i + 1}` }));
+  const s = saifsys(many, { per: 10 });
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  const down = async (m, a, p) => { if (Number(p.after_id) > 0) throw new Error('saifsys is down'); return s.lookup(m, a, p); };
+  await assert.rejects(syncSaifsysDocs({ lookup: down, fetchFile: s.fetchFile }));
+  const none = saifsys([]);
+  assert.equal((await syncSaifsysDocs({ lookup: none.lookup })).removed, 0, 'an empty answer is not "everything was deleted"');
+  const two = saifsys(many.slice(0, 2));
+  assert.equal((await syncSaifsysDocs({ lookup: two.lookup })).removed, 0, 'too many at once');
+  assert.ok((await docs()).every((d) => d.status === 'ready'));
+});
+
+test('everyone inside the company reads the saifsys records; nobody external; hand-uploaded ones stay private', async () => {
+  const { boss } = await office();
+  const { shelfKit } = await import('../server/shelf.js');
+  const user = async (name, external = false) => {
+    const id = await makeUser(name);
+    if (external) await db.prepare('UPDATE users SET external = true WHERE id = ?').run(id);
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  };
+  const staff = await user('Cleaner');
+  const outsider = await user('Outsider', true);
+  const s = saifsys([row({ has_file: true, file_name: 'p.pdf' })]);
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  // A passport uploaded by hand into the same category, and shared by the master before it was filed.
+  const cat = await db.prepare("SELECT t.id, t.category_id FROM document_types t WHERE t.label = 'Passport'").get();
+  const { id: hand } = await db.prepare(`INSERT INTO documents (user_id, name, title, status, shared, category_id, type_id)
+    VALUES (?, 'r.pdf', 'Passport – Rahul Nair', 'ready', true, ?, ?) RETURNING id`).run(boss, cat.category_id, cat.id);
+
+  const search = async (u, q) => (await shelfKit(u).run({ id: 't', name: 'search_files', input: { query: q } })).content;
+  const [copy] = await docs();
+  assert.match(await search(staff, 'Sohail passport'), new RegExp(`#${copy.id} `), 'staff without Document Renewals find it');
+  assert.doesNotMatch(await search(staff, 'Rahul passport'), new RegExp(`#${hand} `), 'the hand-uploaded passport stays private');
+  assert.doesNotMatch(await search(outsider, 'Sohail passport'), new RegExp(`#${copy.id} `), 'nobody external');
+});
+
+test('read in chat: the file comes from saifsys and is read then, not kept', async () => {
+  const { boss } = await office();
+  const { shelfKit } = await import('../server/shelf.js');
+  const { saifsysText } = await import('../server/saifsysFiles.js');
+  const s = saifsys([row({ has_file: true, file_name: 'p.pdf' })], { files: { 1: 'Nationality: India' } });
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  const [p] = await docs();
+  // What reading the scan gives, held for the chat's read_file below.
+  assert.equal(await saifsysText(p, { fetchEmployeeFile: s.fetchFile, read: async ({ buffer }) => buffer.toString() }), 'Nationality: India');
+  const master = await db.prepare('SELECT * FROM users WHERE id = ?').get(boss);
+  const out = (await shelfKit(master).run({ id: 't', name: 'read_file', input: { id: p.id } })).content;
+  assert.match(out, /Number P1234567/, "saifsys's details on top");
+  assert.match(out, /Nationality: India/);
+  assert.equal((await docs())[0].path, null);
+  assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM document_texts').get()).n, 0, 'what it says is not kept either');
 });
