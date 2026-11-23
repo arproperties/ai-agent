@@ -569,6 +569,7 @@ export default function Chat({ user, agents, folders, dm, conversationId, voiceE
                 onContinue={m.cut_short && !m.streaming && !busy && i === messages.length - 1 ? () => send('Continue', []) : undefined}
                 onAsk={m.role === 'assistant' && !busy ? (q) => send(q, []) : undefined}
                 onRemoveText={m.role === 'assistant' && savedIdOf(m) && !m.streaming ? (t) => removeText(m, t) : undefined}
+                onKeep={m.role === 'assistant' && !m.streaming && !lastDrawing(m.content || '') ? savedIdOf(m) : undefined}
                 onPdf={savedIdOf(m) && m.content && !(m.role === 'assistant' && lastDrawing(m.content)) ? () => setPdfOf({ id: savedIdOf(m), content: m.content, own: m.role === 'user' }) : undefined} />
             ))}
             {drafts.map((d) => (

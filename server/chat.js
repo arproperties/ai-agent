@@ -238,7 +238,10 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
     // The boss's AC interview packet was a reply in a September chat, never saved; Reem
     // said it did not exist and asked him for its exact name.
     'Work written in an earlier chat (a packet, letter, plan, checklist) may never have been saved: search_chats finds it and read_chat reads it. ' +
-    'Before saying something does not exist, look there too, and never ask them for the exact name of a thing - search by what it is about.');
+    'Before saying something does not exist, look there too, and never ask them for the exact name of a thing - search by what it is about. ' +
+    // A long reply with a heading gets a "Save to Shelf" button under it (Message.jsx, KeepOnShelf).
+    'When you write a finished document for them to keep or use again (a packet, letter, checklist, plan), give it a # heading that names it plainly; ' +
+    'a "Save to Shelf" button then appears under your reply. You cannot save it yourself, so when they ask you to keep or save it, point them to that button.');
   // A member of staff sent a photo of a bill "for the school project" and was told it could
   // not be recorded, and offered a to-do instead. It was on their Shelf all along.
   parts.push(`Every file, photo or video ${user.name} sends in this chat is saved on their Shelf by the app as it arrives, sorted and searchable, ` +
