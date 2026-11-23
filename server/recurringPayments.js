@@ -167,6 +167,8 @@ const shapeEntry = (p) => ({
   id: p.id, title: p.title, building: { id: p.building_id, name: p.building_name }, unit: p.unit, head: shapeHead(p), amount: p.amount, day: p.day,
   auto_create: p.auto_create, first_month: p.first_month, active: p.active, notes: p.notes,
   payments: p.payments, has_this_month: p.has_this_month,
+  created_at: p.created_at == null ? null : Number(p.created_at), // when the entry was made (ms since 1970)
+  created_by_system: p.created_by == null, // no person made it: the system did
 });
 // received: what came in so far, over all its receipts; left: what is still to come.
 // attachment: the line's own file, from before receipts had their own; receipt_files: any receipt has one.
