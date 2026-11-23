@@ -1,21 +1,23 @@
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import { extname } from 'node:path';
-import { createHash } from 'node:crypto';
 import { db, tx } from './db.js';
-import { DATA_DIR } from './config.js';
 import { isMaster } from './access.js';
 import { readableDocument } from './files.js';
-import { askSaifsys, fileFromSaifsys, dubaiHour } from './saifsys/client.js';
+import { askSaifsys, fileFromSaifsys } from './saifsys/client.js';
 import { scanCases } from './renewalCases.js';
+import { fileBytes } from './saifsysFiles.js';
 
 // saifsys's employee documents (passports, visas, Emirates IDs, labour cards, contracts),
 // copied onto the Shelf so Document Renewals, its alerts and its cases work on them like
-// on any file. Read through saifsys's api/jarvis/v1 door (module hr_docs), never its database.
-// saifsys keeps its own copy: this only ever reads it. Run every night, and by the master
-// on the Document Renewals screen.
+// on any file. Read through saifsys's HR API or its api/jarvis/v1 door (module hr_docs), never
+// its database. Run every 15 minutes, and by the master on the Document Renewals screen.
 //
-// A copied file is the master's, filed under Employee Documents (a private category, so
-// only the master and Document Renewals holders see it), and its date and employee count
+// Only the details come across. The files stay in saifsys (Francis, 2026-11-23): opening one,
+// reading it in chat or attaching it fetches it from saifsys there and then (saifsysFiles.js).
+//
+// A copied record is the master's, filed under Employee Documents, and company_wide: every one
+// inside the company reads them (Francis, 2026-11-23; knowledge.js retrievalScope), never anyone
+// external; hand-uploaded files in that category stay private. Its date and employee count
 // as confirmed: a person typed them into saifsys. A later change in saifsys is taken,
 // unless someone in Reem has corrected that date since.
 
@@ -24,7 +26,12 @@ export const SAIFSYS_TYPES = {
   Passport: 'Passport', 'National ID': 'Emirates ID', Visa: 'Residence Visa', LaborCard: 'Labour Card', Contract: 'Labour Contract',
 };
 const OTHER = 'Other employee document';
-const UPLOAD_DIR = `${DATA_DIR}/uploads`;
+// A run that would hide more than this many documents at once stops short and says so: a
+// saifsys answer that leaves documents out by mistake must not empty Document Renewals.
+export const MAX_REMOVED_PER_RUN = 25;
+// What a file is, from its name, so the screens know how to open it before it is fetched.
+const MIME = { '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp' };
+const mimeOf = (name) => MIME[extname(String(name || '')).toLowerCase()] || null;
 
 /** saifsys's file for one document, as bytes. Throws when it has none. */
 async function saifsysFile(id) {
@@ -94,6 +101,9 @@ export async function hrSalary(code, { base = process.env.SAIFSYS_HR_URL, key = 
   return e ? { basic: e.basic, allowance: e.allowance, bonus: e.bonus, total: e.total, paid_by: e.payment_label } : null;
 }
 
+/** One document's file from saifsys, as { buffer, mime }. Never saved (saifsysFiles.js). */
+export const fetchEmployeeFile = (id) => source().fetchFile(id);
+
 /** Where saifsys's documents come from: its HR API when Reem has its key, else its api/jarvis/v1 door. */
 function source() {
   const base = process.env.SAIFSYS_HR_URL;
@@ -110,18 +120,6 @@ async function employeeTypes() {
   return by;
 }
 
-async function attachFile(docId, ownerId, d, fetchFile) {
-  const { buffer, mime } = await fetchFile(d.id);
-  const name = d.file_name || `saifsys-${d.id}`;
-  mkdirSync(`${UPLOAD_DIR}/${ownerId}`, { recursive: true });
-  const path = `${UPLOAD_DIR}/${ownerId}/${docId}${extname(name).toLowerCase().replace(/[^.\w]/g, '')}`;
-  writeFileSync(path, buffer);
-  const kind = mime.startsWith('image/') ? 'image' : 'doc';
-  await db.prepare('UPDATE documents SET path = ?, name = ?, mime = ?, size = ?, hash = ?, kind = ? WHERE id = ?')
-    .run(path, name, mime, buffer.length, createHash('sha256').update(buffer).digest('hex'), kind, docId);
-
-}
-
 const summaryOf = (d) => [
   `From saifsys HR documents (#${d.id}).`,
   d.number && `Number ${d.number}.`,
@@ -131,13 +129,16 @@ const summaryOf = (d) => [
 
 /**
  * Bring saifsys's employee documents up to date on the Shelf. Returns what it did:
- * { added, updated, superseded } (or { skipped } when there is no master to own them). Only the
- * details come across; a file is fetched when it is opened. One document going wrong is logged
- * and skipped, never the whole run.
+ * { added, updated, superseded, removed } (or { skipped } when there is no master to own them).
+ * Only the details come across; a file is fetched from saifsys when it is opened. One document
+ * going wrong is logged and skipped, never the whole run; a document saifsys no longer lists is
+ * hidden only after a run that read every page without an error.
  */
 export async function syncSaifsysDocs(deps = {}) {
   const { lookup } = { ...source(), ...deps };
-  const out = { added: 0, updated: 0, superseded: 0 };
+  const out = { added: 0, updated: 0, superseded: 0, removed: 0 };
+  const seen = new Set();
+  let clean = true;
   const owner = await db.prepare("SELECT id FROM users WHERE role = 'master' ORDER BY id LIMIT 1").get();
   if (!owner) return { ...out, skipped: 'no master account' };
   const types = await employeeTypes();
@@ -147,6 +148,7 @@ export async function syncSaifsysDocs(deps = {}) {
   for (;;) {
     const page = await lookup('hr_docs', 'documents', { after_id: after, limit: 500 });
     for (const d of page.documents || []) {
+      seen.add(d.id);
       try {
         const type = types.get(SAIFSYS_TYPES[d.type] || OTHER) || types.get(OTHER);
         if (!type) continue; // the master took the Employee Documents types away
@@ -157,10 +159,10 @@ export async function syncSaifsysDocs(deps = {}) {
           const link = await db.prepare('SELECT * FROM saifsys_doc_links WHERE saifsys_id = ?').get(d.id);
           if (!link) {
             const title = `${type.label === OTHER ? d.type || 'Document' : type.label} – ${d.employee_name}`.slice(0, 120);
-            const { id } = await db.prepare(`INSERT INTO documents (user_id, name, title, folder, summary, kind, status, tags,
+            const { id } = await db.prepare(`INSERT INTO documents (user_id, name, title, folder, summary, kind, status, tags, company_wide, mime,
                 category_id, type_id, employee_code, employee_name, expires_on, expiry_confirmed_at, link_confirmed_at)
-              VALUES (?, ?, ?, 'HR & Employees', ?, 'doc', 'ready', '[]', ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
-              .run(owner.id, d.file_name || title, title, summaryOf(d), type.category_id, type.id, d.employee_code, d.employee_name,
+              VALUES (?, ?, ?, 'HR & Employees', ?, 'doc', 'ready', '[]', true, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+              .run(owner.id, d.file_name || title, title, summaryOf(d), mimeOf(d.file_name), type.category_id, type.id, d.employee_code, d.employee_name,
                 d.expires_at, d.expires_at ? now : null, now);
             await db.prepare('INSERT INTO saifsys_doc_links (saifsys_id, document_id, changed_at, saifsys_has_file) VALUES (?, ?, ?, ?)').run(d.id, id, d.updated_at, !!d.has_file);
             out.added++;
@@ -178,17 +180,59 @@ export async function syncSaifsysDocs(deps = {}) {
           if (link.saifsys_has_file !== !!d.has_file) {
             await db.prepare('UPDATE saifsys_doc_links SET saifsys_has_file = ? WHERE saifsys_id = ?').run(!!d.has_file, d.id);
           }
+          // A new file in saifsys keeps its own name: the screens open it by that.
+          if (d.file_name) {
+            await db.prepare('UPDATE documents SET name = ?, mime = coalesce(?, mime) WHERE id = ? AND name IS DISTINCT FROM ?')
+              .run(d.file_name, mimeOf(d.file_name), link.document_id, d.file_name);
+          }
+          // saifsys deleted it and now lists it again: back on the Shelf.
+          await db.prepare("UPDATE documents SET status = 'ready' WHERE id = ? AND status = 'removed'").run(link.document_id);
           return link.document_id;
         });
       } catch (e) {
+        clean = false;
         console.error(`[saifsys-docs] saifsys document #${d.id} skipped:`, e.message);
       }
     }
     if (page.next_after_id == null) break;
     after = page.next_after_id;
   }
+  if (clean) out.removed = await removeGone(seen);
   out.superseded = await supersedeOlder();
+  await keepNoFiles();
   return out;
+}
+
+/**
+ * Deleted in saifsys: hidden from the Shelf, the chat and Document Renewals, not deleted, after
+ * a run that read every page without an error. Never more than MAX_REMOVED_PER_RUN at once.
+ */
+async function removeGone(seen) {
+  const links = await db.prepare(`SELECT l.saifsys_id, l.document_id FROM saifsys_doc_links l JOIN documents d ON d.id = l.document_id
+    WHERE d.status <> 'removed'`).all();
+  const gone = links.filter((l) => !seen.has(l.saifsys_id));
+  if (!gone.length) return 0;
+  if (!seen.size || gone.length > MAX_REMOVED_PER_RUN) {
+    console.error(`[saifsys-docs] saifsys no longer lists ${gone.length} documents: too many to hide at once, nothing hidden. Check saifsys.`);
+    return 0;
+  }
+  await db.prepare("UPDATE documents SET status = 'removed' WHERE id = ANY(?::int[])").run(gone.map((l) => l.document_id));
+  return gone.length;
+}
+
+/**
+ * The files stay in saifsys: a copy kept before that was decided (one opened, then saved) is
+ * taken off this server, and every copied record is read by everyone inside the company.
+ */
+async function keepNoFiles() {
+  const kept = await db.prepare(`SELECT d.id, d.path FROM documents d JOIN saifsys_doc_links l ON l.document_id = d.id
+    WHERE d.path IS NOT NULL`).all();
+  for (const k of kept) {
+    if (existsSync(k.path)) unlinkSync(k.path);
+    await db.prepare('UPDATE documents SET path = NULL, hash = NULL WHERE id = ?').run(k.id);
+    await db.prepare('DELETE FROM document_texts WHERE document_id = ?').run(k.id);
+  }
+  await db.prepare('UPDATE documents SET company_wide = true WHERE NOT company_wide AND id IN (SELECT document_id FROM saifsys_doc_links)').run();
 }
 
 /**
@@ -209,46 +253,40 @@ async function supersedeOlder() {
 }
 
 /**
- * A document to open, with its file: when it was copied from saifsys before its file came,
- * saifsys is asked for the file there and then, and it is kept. Only for someone who may
- * read the document at all; anyone else gets the same 404 as a file that is not there.
+ * A document with its file's bytes: { ...doc, buffer, mime, name }. A saifsys document's file is
+ * fetched from saifsys now and not kept. Only for someone who may read the document at all;
+ * anyone else gets the same 404 as a file that is not there, and saifsys is not asked.
  */
 export async function fileFor(user, docId, deps = {}) {
-  const { fetchFile } = { ...source(), ...deps };
-  const missing = (m = 'Not found') => Object.assign(new Error(m), { status: 404 });
   const doc = await readableDocument(user, docId);
-  if (!doc) throw missing();
-  if (doc.path && existsSync(doc.path)) return doc;
-  const link = await db.prepare('SELECT * FROM saifsys_doc_links WHERE document_id = ?').get(doc.id);
-  if (!link) throw missing('This document has no file');
-  try {
-    await attachFile(doc.id, doc.user_id, { id: link.saifsys_id, file_name: null }, fetchFile);
-  } catch {
-    throw missing('saifsys has no file for this document yet');
-  }
-  await db.prepare('UPDATE saifsys_doc_links SET has_file = true WHERE saifsys_id = ?').run(link.saifsys_id);
-  return readableDocument(user, doc.id);
+  if (!doc) throw Object.assign(new Error('Not found'), { status: 404 });
+  const file = await fileBytes(doc, deps.fetchFile ? { fetchEmployeeFile: deps.fetchFile } : deps);
+  return { ...doc, ...file };
 }
 
 /** The master's "Sync now" on the Document Renewals screen. */
 export async function syncNow(user, deps = {}) {
   if (!isMaster(user)) throw Object.assign(new Error('Only the master can do this'), { status: 403 });
-  return syncSaifsysDocs(deps);
+  return syncSaifsysDocsOnce(deps);
 }
 
-/** Every night at 2 (Dubai), and once shortly after start-up. */
+// One run at a time: the master's button during a timed run must not start a second one.
+let running = null;
+export function syncSaifsysDocsOnce(deps) {
+  running ||= syncSaifsysDocs(deps).finally(() => { running = null; });
+  return running;
+}
+
+/** Every 15 minutes, and once shortly after start-up. */
 export function startSaifsysDocSync() {
-  let lastDay = null;
-  // Then the renewal cases: a contract just brought in may be within 60 days of its end.
-  const run = (why) => syncSaifsysDocs()
-    .then(async (r) => console.log(`[saifsys-docs] ${why}:`, JSON.stringify(r), 'cases:', JSON.stringify(await scanCases())))
+  // Then the renewal cases, after a run that changed something: a contract just brought in
+  // may be within 60 days of its end.
+  const run = (why) => syncSaifsysDocsOnce()
+    .then(async (r) => {
+      if (!(r.added || r.updated || r.superseded || r.removed)) return;
+      console.log(`[saifsys-docs] ${why}:`, JSON.stringify(r), 'cases:', JSON.stringify(await scanCases()));
+    })
     .catch((e) => console.error('[saifsys-docs] sync failed:', e.message));
   setTimeout(() => run('after start-up'), 60_000).unref();
-  setInterval(() => {
-    const today = new Date().toDateString();
-    if (dubaiHour() === 2 && lastDay !== today) {
-      lastDay = today;
-      run('nightly');
-    }
-  }, 10 * 60_000).unref();
+  setInterval(() => run('every 15 minutes'), 15 * 60_000).unref();
 }

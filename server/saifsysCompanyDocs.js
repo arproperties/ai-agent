@@ -1,11 +1,8 @@
-import { mkdirSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import { extname } from 'node:path';
-import { createHash } from 'node:crypto';
 import { db, tx } from './db.js';
-import { DATA_DIR } from './config.js';
 import { billAs } from './billing.js';
-import { extractText, describeImage, indexChunks, IMAGE_TYPES } from './knowledge.js';
-import { keepText } from './copies.js';
+import { indexChunks } from './knowledge.js';
 import { askSaifsys, fileFromSaifsys } from './saifsys/client.js';
 
 // saifsys's company documents (HR -> Company Documents: trade licences, MOA, Ejari,
@@ -19,6 +16,10 @@ import { askSaifsys, fileFromSaifsys } from './saifsys/client.js';
 // by (saifsys id, version_no) - 0 being the live one. The live file is read like an upload, so
 // the chat can answer from what is written in it; earlier issues are kept to open, marked
 // superseded by the current one, and the chat leaves them out unless asked for an old one.
+//
+// Only the details come across. The files stay in saifsys (Francis, 2026-11-23): opening one,
+// reading it in chat or attaching it fetches it from saifsys there and then (saifsysFiles.js).
+// The copies of the files Reem kept from 2026-11-14 are taken off this server (keepNoFiles).
 //
 // A copied file is the master's, shared with every internal user (external people reach only
 // their own files), filed under the company documents category with the company as its
@@ -38,24 +39,19 @@ export const COMPANY_TYPES = {
 };
 const OTHER = 'other';
 const LIVE = 0;
-const UPLOAD_DIR = `${DATA_DIR}/uploads`;
 const FOLDER = 'Company & Licenses';
 
-const defaultSource = {
-  lookup: askSaifsys,
-  fetchFile: async (id, version) => {
-    const res = await fileFromSaifsys('company_docs', 'document_file', { id, version: version || undefined });
-    return { buffer: Buffer.from(await res.arrayBuffer()), mime: (res.headers.get('content-type') || 'application/octet-stream').split(';')[0] };
-  },
-  read: readText,
-  uploadDir: UPLOAD_DIR, // tests use their own, never the real uploads
-};
+const defaultSource = { lookup: askSaifsys };
 
-/** What is written in a file: a picture described, anything else read as an upload is. */
-async function readText({ buffer, mime, name }) {
-  if (IMAGE_TYPES.includes(mime)) return describeImage({ buffer, mimetype: mime });
-  return extractText({ buffer, mimetype: mime, originalname: name });
+/** One document's file (an earlier issue's with `version`) from saifsys. Never saved (saifsysFiles.js). */
+export async function fetchCompanyFile(id, version) {
+  const res = await fileFromSaifsys('company_docs', 'document_file', { id, version: version || undefined });
+  return { buffer: Buffer.from(await res.arrayBuffer()), mime: (res.headers.get('content-type') || 'application/octet-stream').split(';')[0] };
 }
+
+// What a file is, from its name, so the screens know how to open it before it is fetched.
+const MIME = { '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp' };
+const mimeOf = (name) => MIME[extname(String(name || '')).toLowerCase()] || null;
 
 const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 
@@ -109,51 +105,17 @@ function detailsOf(d, v = null) {
   ].filter(Boolean).join(' ');
 }
 
-/** Fetch a file from saifsys and put it under the document; returns { buffer, mime, name } or null. */
-async function attach(docId, ownerId, d, v, src) {
-  const f = v || d;
-  if (!f.has_file) return null;
-  const { buffer, mime } = await src.fetchFile(d.id, v ? v.version_no : null);
-  const name = f.file_name || `saifsys-company-${d.id}${v ? `-v${v.version_no}` : ''}`;
-  mkdirSync(`${src.uploadDir}/${ownerId}`, { recursive: true });
-  const old = await db.prepare('SELECT path FROM documents WHERE id = ?').get(docId);
-  const path = `${src.uploadDir}/${ownerId}/${docId}${extname(name).toLowerCase().replace(/[^.\w]/g, '')}`;
-  writeFileSync(path, buffer);
-  if (old?.path && old.path !== path && existsSync(old.path)) unlinkSync(old.path);
-  await db.prepare('UPDATE documents SET path = ?, name = ?, mime = ?, size = ?, hash = ?, kind = ? WHERE id = ?')
-    .run(path, name, mime, buffer.length, createHash('sha256').update(buffer).digest('hex'), mime.startsWith('image/') ? 'image' : 'doc', docId);
-  return { buffer, mime, name };
-}
-
-/**
- * Index what the chat reads: saifsys's details on top, then the file's own words. The live
- * issue's file is read; an earlier issue's is not (it is there to open), so only its details
- * are searchable. A file that cannot be read still leaves the details, never an empty file.
- */
-async function index(docId, d, v, file, src, { reread = true } = {}) {
-  let own = null;
-  if (!v) {
-    if (file && reread) {
-      try {
-        own = String(await src.read(file) || '').replace(/\u0000/g, '');
-      } catch (e) {
-        console.error(`[saifsys-company-docs] #${d.id} could not be read:`, e.message);
-      }
-    } else if (!reread) {
-      own = (await db.prepare('SELECT text FROM document_texts WHERE document_id = ?').get(docId))?.text ?? null;
-    }
-  }
+/** What the chat finds it by: saifsys's details. The file's own words are read when asked for (saifsysFiles.js). */
+async function index(docId, d, v) {
   const doc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(docId);
-  const details = detailsOf(d, v);
-  await indexChunks(doc, own?.trim() ? `${details}\n\n${own}` : details);
-  if (own?.trim()) await keepText(doc, own);
+  await indexChunks(doc, detailsOf(d, v));
   await db.prepare("UPDATE documents SET status = 'ready', error = NULL WHERE id = ?").run(docId);
 }
 
 /**
  * A new Shelf file for one saifsys document (v null) or one of its earlier issues. The row and
  * its link are made together under a lock on the saifsys id, so two runs at once never copy it
- * twice; the file is fetched and read after, outside the transaction (indexing runs its own).
+ * twice; it is indexed after, outside the transaction (indexing runs its own).
  * Returns the new document's id, or null when another run got there first.
  */
 async function addCopy(owner, cat, types, d, v, src, now) {
@@ -161,25 +123,17 @@ async function addCopy(owner, cat, types, d, v, src, now) {
   const id = await tx(async () => {
     await db.prepare("SELECT pg_advisory_xact_lock(hashtext('saifsys_company_doc_links'), ?)").get(d.id);
     if (await db.prepare('SELECT 1 FROM saifsys_company_doc_links WHERE saifsys_id = ? AND version_no = ?').get(d.id, v ? v.version_no : LIVE)) return null;
-    const { id: docId } = await db.prepare(`INSERT INTO documents (user_id, name, title, folder, summary, kind, status, tags, shared,
+    const { id: docId } = await db.prepare(`INSERT INTO documents (user_id, name, title, folder, summary, kind, status, tags, shared, mime,
         category_id, type_id, subject, doc_date, expires_on, expiry_confirmed_at, link_confirmed_at)
-      VALUES (?, ?, ?, ?, ?, 'doc', 'processing', '[]', true, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
-      .run(owner, x.file_name || titleOf(d, v), titleOf(d, v), FOLDER, detailsOf(d, v), cat, types[d.type] || types[OTHER],
+      VALUES (?, ?, ?, ?, ?, 'doc', 'processing', '[]', true, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+      .run(owner, x.file_name || titleOf(d, v), titleOf(d, v), FOLDER, detailsOf(d, v), mimeOf(x.file_name), cat, types[d.type] || types[OTHER],
         d.company_name, x.issued_at, x.expires_at, x.expires_at ? now : null, now);
     await db.prepare(`INSERT INTO saifsys_company_doc_links (saifsys_id, version_no, document_id, company_id, doc_type, changed_at, file_key)
       VALUES (?, ?, ?, ?, ?, ?, ?)`).run(d.id, v ? v.version_no : LIVE, docId, d.company_id, d.type, v ? v.archived_at : d.updated_at, x.file_key || null);
     return docId;
   });
   if (!id) return null;
-  let file = null;
-  try {
-    file = await attach(id, owner, d, v, src);
-  } catch (e) {
-    // Kept with its details. With no file_key, the next run sees a new file and tries again.
-    console.error(`[saifsys-company-docs] #${d.id}${v ? ` v${v.version_no}` : ''} file not fetched:`, e.message);
-    await db.prepare('UPDATE saifsys_company_doc_links SET file_key = NULL WHERE document_id = ?').run(id);
-  }
-  await index(id, d, v, file, src);
+  await index(id, d, v);
   return id;
 }
 
@@ -200,8 +154,8 @@ async function syncOne(owner, cat, types, d, src, now) {
   let live = links.find((l) => l.version_no === LIVE);
 
   // Earlier issues saifsys holds that Reem does not have yet, oldest first. On Renew, saifsys
-  // archives the issue Reem already holds as live: that copy becomes the earlier issue (it keeps
-  // its file and reading), and the new live issue is copied after. It is the same issue when the
+  // archives the issue Reem already holds as live: that copy becomes the earlier issue, and the
+  // new live issue is copied after. It is the same issue when the
   // stored file is the same one, or, with no file on either, when the live row has changed since.
   for (const v of [...(d.versions || [])].sort((a, b) => a.version_no - b.version_no)) {
     if (have.has(v.version_no)) continue;
@@ -210,7 +164,7 @@ async function syncOne(owner, cat, types, d, src, now) {
       await db.prepare('UPDATE saifsys_company_doc_links SET version_no = ?, changed_at = ?, synced_at = ? WHERE saifsys_id = ? AND version_no = ?')
         .run(v.version_no, v.archived_at, now, d.id, LIVE);
       await updateDetails(live.document_id, d, v, now);
-      await index(live.document_id, d, v, null, src);
+      await index(live.document_id, d, v);
       live = null;
       out.renewed++;
     } else if (await addCopy(owner, cat, types, d, v, src, now)) out.added++;
@@ -222,20 +176,12 @@ async function syncOne(owner, cat, types, d, src, now) {
   }
   if (live.changed_at === d.updated_at && live.file_key === (d.file_key || null)) return out;
   await updateDetails(live.document_id, d, null, now);
-  // A different stored name is a new file: saifsys saves every upload under a fresh name.
-  const newFile = live.file_key !== (d.file_key || null);
-  let file = null;
-  if (newFile) {
-    file = await attach(live.document_id, owner, d, null, src);
-    if (!file) {
-      // saifsys no longer holds a file for it: the old one must not be read as current.
-      const doc = await db.prepare('SELECT path FROM documents WHERE id = ?').get(live.document_id);
-      if (doc?.path && existsSync(doc.path)) unlinkSync(doc.path);
-      await db.prepare('UPDATE documents SET path = NULL, hash = NULL WHERE id = ?').run(live.document_id);
-      await db.prepare('DELETE FROM document_texts WHERE document_id = ?').run(live.document_id);
-    }
+  // A different stored name is a new file: saifsys saves every upload under a fresh name. It
+  // keeps its own name here, so the screens open it by that.
+  if (live.file_key !== (d.file_key || null) && d.file_name) {
+    await db.prepare('UPDATE documents SET name = ?, mime = coalesce(?, mime) WHERE id = ?').run(d.file_name, mimeOf(d.file_name), live.document_id);
   }
-  await index(live.document_id, d, null, file, src, { reread: newFile });
+  await index(live.document_id, d, null);
   await db.prepare(`UPDATE saifsys_company_doc_links SET changed_at = ?, file_key = ?, company_id = ?, doc_type = ?, synced_at = ?
     WHERE saifsys_id = ? AND version_no = ?`).run(d.updated_at, d.file_key || null, d.company_id, d.type, now, d.id, LIVE);
   out.updated++;
@@ -338,7 +284,26 @@ export async function syncCompanyDocs(deps = {}) {
     }
   }
   out.superseded = await settleCurrent(cat, types);
+  await keepNoFiles();
   return out;
+}
+
+/**
+ * The files stay in saifsys. The copies Reem kept from 2026-11-14 to 2026-11-23 come off this
+ * server, with what was read from them; the chat finds the documents by their details, and
+ * reads the file from saifsys when asked.
+ */
+async function keepNoFiles() {
+  const kept = await db.prepare(`SELECT d.id, d.path, d.summary FROM documents d
+    WHERE d.id IN (SELECT document_id FROM saifsys_company_doc_links)
+      AND (d.path IS NOT NULL OR EXISTS (SELECT 1 FROM document_texts x WHERE x.document_id = d.id))`).all();
+  for (const k of kept) {
+    if (k.path && existsSync(k.path)) unlinkSync(k.path);
+    await db.prepare('UPDATE documents SET path = NULL, hash = NULL WHERE id = ?').run(k.id);
+    await db.prepare('DELETE FROM document_texts WHERE document_id = ?').run(k.id);
+    const doc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(k.id);
+    await indexChunks(doc, k.summary || doc.title || doc.name); // the summary is saifsys's details
+  }
 }
 
 /** The master's "Sync from saifsys", and the 15-minute timer: billed to the master as one job. */

@@ -544,6 +544,10 @@ export async function findChunks(user, query, k = 20, scope = agentScope(user)) 
  * by whoever holds the Document Renewals module - never an external holder, and never an
  * external person's own file. chunks carry category_id too (db.js), so this works on both.
  *
+ * Except the copies of saifsys's employee documents: Francis decided (2026-11-23) that every
+ * one inside the company reads those, so they are marked company_wide (saifsysDocSync.js).
+ * Nothing else is: a hand-uploaded passport stays as it was. Never anyone external.
+ *
  * `t` is the alias to hang it on, for the queries that already call their table
  * something else.
  */
@@ -555,8 +559,11 @@ export function retrievalScope(userId, t = 't') {
       OR (${t}.category_id IS NOT NULL
           AND EXISTS (SELECT 1 FROM module_access ma JOIN users u ON u.id = ma.user_id
             WHERE ma.user_id = ? AND ma.module = 'document_renewals' AND NOT u.external)
+          AND NOT EXISTS (SELECT 1 FROM users o WHERE o.id = ${t}.user_id AND o.external))
+      OR (${t}.company_wide
+          AND NOT EXISTS (SELECT 1 FROM users r WHERE r.id = ? AND r.external)
           AND NOT EXISTS (SELECT 1 FROM users o WHERE o.id = ${t}.user_id AND o.external)))`,
-    params: [userId, userId, userId],
+    params: [userId, userId, userId, userId],
   };
 }
 

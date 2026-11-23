@@ -76,7 +76,7 @@ test('every saifsys company type has a Reem type, the missing ones added to Comp
   for (const l of Object.values(COMPANY_TYPES)) assert.equal(labels.filter((x) => x === l).length, 1, l);
 });
 
-test('a company document comes across as the master\'s shared file, read, with its earlier issues kept as old', async () => {
+test('a company document comes across as the master\'s shared record, details only, with its earlier issues kept as old', async () => {
   const { boss } = await office();
   const s = saifsys([licence({ versions: [version()] })], { files: { 1: 'licence 2026 text', '1/1': 'licence 2025 text' } });
   const r = await syncCompanyDocs(s);
@@ -92,63 +92,77 @@ test('a company document comes across as the master\'s shared file, read, with i
   assert.ok(cur.expiry_confirmed_at, 'typed into saifsys, so confirmed');
   assert.equal(cur.status, 'ready');
   assert.equal(cur.superseded_by, null);
-  assert.equal(readFileSync(cur.path, 'utf8'), 'licence 2026 text');
-  assert.match(await chunksOf(cur.id), /Current issue of the Trade Licence of Saif Holding LLC[\s\S]*READ: licence 2026 text/);
+  assert.equal(cur.mime, 'application/pdf', 'known from its name, so the screens can open it');
+  // The files stay in saifsys: nothing fetched, nothing saved, nothing read.
+  assert.deepEqual(s.calls.files, []);
+  assert.deepEqual(s.calls.reads, []);
+  assert.equal(cur.path, null);
+  assert.match(await chunksOf(cur.id), /Current issue of the Trade Licence of Saif Holding LLC[\s\S]*Number 123456/);
 
   assert.equal(old.superseded_by, cur.id, 'the earlier issue is replaced by the current one');
-  assert.equal(readFileSync(old.path, 'utf8'), 'licence 2025 text', 'and its file is there to open');
   assert.match(old.title, /earlier issue 2025-01-10 to 2026-01-09/);
-  assert.deepEqual(s.calls.reads, ['Trade Licence 2026.pdf'], 'only the current issue is read');
   assert.match(await chunksOf(old.id), /Earlier issue[\s\S]*not the current issue/);
 
-  // Nothing changed: nothing fetched or read again.
   const again = saifsys([licence({ versions: [version()] })], { files: { 1: 'x', '1/1': 'y' } });
   assert.deepEqual(await syncCompanyDocs(again), { added: 0, updated: 0, renewed: 0, removed: 0, superseded: 0 });
-  assert.deepEqual(again.calls.files, []);
 });
 
-test('renewed in saifsys: the copy Reem had becomes the earlier issue and the new one is current', async () => {
+test('renewed in saifsys: the record Reem had becomes the earlier issue and the new one is current', async () => {
   await office();
-  await syncCompanyDocs(saifsys([licence({ issued_at: '2025-01-10', expires_at: '2026-01-09', file_key: 'tl_2025.pdf', file_name: 'TL 2025.pdf', updated_at: '2025-01-12 10:00:00' })],
-    { files: { 1: 'licence 2025 text' } }));
+  await syncCompanyDocs(saifsys([licence({ issued_at: '2025-01-10', expires_at: '2026-01-09', file_key: 'tl_2025.pdf', file_name: 'TL 2025.pdf', updated_at: '2025-01-12 10:00:00' })]));
   const [before] = await docs();
 
-  const s = saifsys([licence({ versions: [version({ file_key: 'tl_2025.pdf' })] })], { files: { 1: 'licence 2026 text' } });
-  const r = await syncCompanyDocs(s);
+  const r = await syncCompanyDocs(saifsys([licence({ versions: [version({ file_key: 'tl_2025.pdf' })] })]));
   assert.equal(r.renewed, 1);
   assert.equal(r.added, 1);
-  assert.deepEqual(s.calls.files, ['1'], 'the old file is not fetched again');
   const [old, cur] = await docs();
-  assert.equal(old.id, before.id, 'the same Shelf file, now the earlier issue');
-  assert.equal(readFileSync(old.path, 'utf8'), 'licence 2025 text');
+  assert.equal(old.id, before.id, 'the same Shelf record, now the earlier issue');
   assert.equal(old.superseded_by, cur.id);
   assert.equal(cur.expires_on, '2027-01-09');
-  assert.match(await chunksOf(cur.id), /licence 2026 text/);
+  assert.match(await chunksOf(cur.id), /Current issue/);
   assert.doesNotMatch(await chunksOf(old.id), /Current issue/);
 });
 
-test('a new file saved over the live one is fetched and read again; a details change is not', async () => {
+test('a new file saved over the live one takes its name; a date corrected in Reem stays', async () => {
   await office();
-  await syncCompanyDocs(saifsys([licence()], { files: { 1: 'first text' } }));
+  await syncCompanyDocs(saifsys([licence()]));
   const [doc] = await docs();
 
-  const edited = saifsys([licence({ file_key: 'tl_fixed.pdf', updated_at: '2026-11-02 09:00:00' })], { files: { 1: 'fixed text' } });
+  const edited = saifsys([licence({ file_key: 'tl_fixed.pdf', file_name: 'TL fixed.jpg', updated_at: '2026-11-02 09:00:00' })]);
   assert.equal((await syncCompanyDocs(edited)).updated, 1);
-  assert.deepEqual(edited.calls.reads, ['Trade Licence 2026.pdf']);
-  assert.equal(readFileSync((await docs())[0].path, 'utf8'), 'fixed text');
-  assert.match(await chunksOf(doc.id), /fixed text/);
-  assert.doesNotMatch(await chunksOf(doc.id), /first text/);
+  assert.deepEqual(edited.calls.files, [], 'nothing fetched: the file stays in saifsys');
+  const [renamed] = await docs();
+  assert.equal(renamed.name, 'TL fixed.jpg');
+  assert.equal(renamed.mime, 'image/jpeg');
 
   // Someone in Reem corrected the expiry: a later details change in saifsys keeps it.
   await db.prepare("UPDATE documents SET expires_on = '2027-02-01', expiry_confirmed_by = (SELECT id FROM users LIMIT 1) WHERE id = ?").run(doc.id);
-  const details = saifsys([licence({ file_key: 'tl_fixed.pdf', number: '999', expires_at: '2027-01-30', updated_at: '2026-11-03 09:00:00' })], { files: {} });
-  assert.equal((await syncCompanyDocs(details)).updated, 1);
-  assert.deepEqual(details.calls.files, [], 'no fetch');
-  assert.deepEqual(details.calls.reads, [], 'no reading');
+  assert.equal((await syncCompanyDocs(saifsys([licence({ file_key: 'tl_fixed.pdf', file_name: 'TL fixed.jpg', number: '999', expires_at: '2027-01-30', updated_at: '2026-11-03 09:00:00' })]))).updated, 1);
   const [after] = await docs();
   assert.equal(after.expires_on, '2027-02-01', 'the date corrected in Reem stays');
   assert.match(after.summary, /Number 999/);
-  assert.match(await chunksOf(doc.id), /Number 999[\s\S]*fixed text/, 'the new details over the text already read');
+  assert.match(await chunksOf(doc.id), /Number 999/);
+});
+
+test('the copies Reem kept before (files and what was read from them) come off the server', async () => {
+  const { boss } = await office();
+  await syncCompanyDocs(saifsys([licence()]));
+  const [doc] = await docs();
+  const { writeFileSync } = await import('node:fs');
+  const path = join(UPLOADS, `kept-${doc.id}.pdf`);
+  writeFileSync(path, 'old copy');
+  await db.prepare('UPDATE documents SET path = ?, hash = ? WHERE id = ?').run(path, 'h', doc.id);
+  await db.prepare('INSERT INTO document_texts (document_id, text) VALUES (?, ?)').run(doc.id, 'licence text read before');
+  await db.prepare('INSERT INTO chunks (user_id, document_id, text, shared) VALUES (?, ?, ?, true)').run(boss, doc.id, 'licence text read before');
+
+  await syncCompanyDocs(saifsys([licence()]));
+  const { existsSync } = await import('node:fs');
+  assert.equal(existsSync(path), false);
+  const [after] = await docs();
+  assert.equal(after.path, null);
+  assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM document_texts WHERE document_id = ?').get(doc.id)).n, 0);
+  assert.doesNotMatch(await chunksOf(doc.id), /read before/);
+  assert.match(await chunksOf(doc.id), /Current issue of the Trade Licence/, 'still found by its details');
 });
 
 test('two live trade licences for one company: the one that runs out last is current; Other papers are never compared', async () => {
@@ -182,8 +196,6 @@ test('deleted in saifsys: hidden from the Shelf and the chat after a clean run, 
 
   // saifsys stops answering on the second page: nothing is hidden.
   await assert.rejects(syncCompanyDocs(saifsys([two[0], licence({ id: 3, file_key: 'c' })], { per: 1, failPage: true })));
-  // One document fails (its new file cannot be fetched): nothing is hidden either.
-  await syncCompanyDocs(saifsys([licence({ id: 1, file_key: 'new', updated_at: 'later' })], { files: {} }));
   assert.equal((await docs()).filter((d) => d.status === 'removed').length, 0);
 
   const r = await syncCompanyDocs(saifsys([two[0]], { files: { 1: 'a' } }));

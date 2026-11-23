@@ -6,6 +6,7 @@ import { db, reset, makeUser, closeDb } from './helpers/db.js';
 process.env.SAIFSYS_API_KEY = ''; // nothing here may reach the real saifsys
 const cats = await import('../server/docCategories.js');
 const { syncSaifsysDocs, SAIFSYS_TYPES } = await import('../server/saifsysDocSync.js');
+const { forgetHeld } = await import('../server/saifsysFiles.js');
 
 test.after(() => closeDb());
 
@@ -36,6 +37,7 @@ function saifsys(docs, { per = 500, files = {} } = {}) {
 
 async function office() {
   await reset();
+  forgetHeld(); // ids start again after reset: nothing held from an earlier test
   const boss = await makeUser('Boss');
   await db.prepare(`UPDATE users SET role = 'master' WHERE id = ?`).run(boss);
   await cats.seedCategories();
@@ -53,7 +55,7 @@ test('each saifsys document becomes a Shelf file filed under its employee', asyn
   const { boss } = await office();
   const s = saifsys([row(), row({ id: 2, type: 'National ID', number: '784-1990', expires_at: '2027-02-01' }), row({ id: 3, type: 'Something odd', expires_at: null })]);
   const r = await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
-  assert.deepEqual(r, { added: 3, updated: 0, superseded: 0 });
+  assert.deepEqual(r, { added: 3, updated: 0, superseded: 0, removed: 0 });
   const [p, eid, odd] = await docs();
   assert.equal(p.user_id, boss, 'the master\'s file');
   assert.equal(p.type, 'Passport');
@@ -78,7 +80,7 @@ test('running it again adds nothing', async () => {
   const s = saifsys([row(), row({ id: 2 })]);
   await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
   const again = await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
-  assert.deepEqual(again, { added: 0, updated: 0, superseded: 0 });
+  assert.deepEqual(again, { added: 0, updated: 0, superseded: 0, removed: 0 });
   assert.equal((await docs()).length, 2);
 });
 
@@ -160,19 +162,22 @@ test('opening a document fetches its file from saifsys there and then', async ()
   await assert.rejects(fileFor(master, p.id, { fetchFile: s.fetchFile }), (e) => e.status === 404 && /saifsys has no file/.test(e.message));
   const now = saifsys([row()], { files: { 1: '%PDF arrived' } });
   const got = await fileFor(master, p.id, { fetchFile: now.fetchFile });
-  assert.equal(readFileSync(got.path, 'utf8'), '%PDF arrived');
+  assert.equal(got.buffer.toString(), '%PDF arrived');
+  const [after] = await docs();
+  assert.equal(after.path, null, 'the file stays in saifsys: nothing is saved here');
   await fileFor(master, p.id, { fetchFile: now.fetchFile });
-  assert.deepEqual(now.calls.files, [1], 'kept: the second open does not ask saifsys again');
+  assert.deepEqual(now.calls.files, [1], 'held in memory a little while: opening it twice asks saifsys once');
 });
 
 test('nobody fetches a file they may not read', async () => {
   await office();
   const { fileFor } = await import('../server/saifsysDocSync.js');
-  const staff = await makeUser('Staff');
+  const outsider = await makeUser('Outsider');
+  await db.prepare('UPDATE users SET external = true WHERE id = ?').run(outsider);
   const s = saifsys([row()], { files: { 1: 'x' } });
   await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
   const [p] = await docs();
-  await assert.rejects(fileFor({ id: staff, role: 'user' }, p.id, { fetchFile: s.fetchFile }), (e) => e.status === 404);
+  await assert.rejects(fileFor({ id: outsider, role: 'user', external: true }, p.id, { fetchFile: s.fetchFile }), (e) => e.status === 404);
   assert.deepEqual(s.calls.files, [], 'saifsys is not even asked');
 });
 
@@ -255,4 +260,69 @@ test('only the master starts a sync by hand', async () => {
   const s = saifsys([row()]);
   await assert.rejects(syncNow({ id: staff, role: 'user' }, s), (e) => e.status === 403);
   assert.equal((await syncNow({ id: boss, role: 'master' }, s)).added, 1);
+});
+
+test('a document deleted in saifsys is hidden after a clean run, and comes back if saifsys lists it again', async () => {
+  await office();
+  const sync = (list) => { const s = saifsys(list); return syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile }); };
+  await sync([row(), row({ id: 2, type: 'Visa' })]);
+  assert.equal((await sync([row()])).removed, 1);
+  assert.deepEqual((await docs()).map((d) => d.status), ['ready', 'removed']);
+  await sync([row(), row({ id: 2, type: 'Visa' })]);
+  assert.deepEqual((await docs()).map((d) => d.status), ['ready', 'ready']);
+});
+
+test('a run that fails, or that lists nothing or far fewer, hides nothing', async () => {
+  await office();
+  const many = Array.from({ length: 30 }, (_, i) => row({ id: i + 1, employee_code: `E${i + 1}` }));
+  const s = saifsys(many, { per: 10 });
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  const down = async (m, a, p) => { if (Number(p.after_id) > 0) throw new Error('saifsys is down'); return s.lookup(m, a, p); };
+  await assert.rejects(syncSaifsysDocs({ lookup: down, fetchFile: s.fetchFile }));
+  const none = saifsys([]);
+  assert.equal((await syncSaifsysDocs({ lookup: none.lookup })).removed, 0, 'an empty answer is not "everything was deleted"');
+  const two = saifsys(many.slice(0, 2));
+  assert.equal((await syncSaifsysDocs({ lookup: two.lookup })).removed, 0, 'too many at once');
+  assert.ok((await docs()).every((d) => d.status === 'ready'));
+});
+
+test('everyone inside the company reads the saifsys records; nobody external; hand-uploaded ones stay private', async () => {
+  const { boss } = await office();
+  const { shelfKit } = await import('../server/shelf.js');
+  const user = async (name, external = false) => {
+    const id = await makeUser(name);
+    if (external) await db.prepare('UPDATE users SET external = true WHERE id = ?').run(id);
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  };
+  const staff = await user('Cleaner');
+  const outsider = await user('Outsider', true);
+  const s = saifsys([row({ has_file: true, file_name: 'p.pdf' })]);
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  // A passport uploaded by hand into the same category, and shared by the master before it was filed.
+  const cat = await db.prepare("SELECT t.id, t.category_id FROM document_types t WHERE t.label = 'Passport'").get();
+  const { id: hand } = await db.prepare(`INSERT INTO documents (user_id, name, title, status, shared, category_id, type_id)
+    VALUES (?, 'r.pdf', 'Passport – Rahul Nair', 'ready', true, ?, ?) RETURNING id`).run(boss, cat.category_id, cat.id);
+
+  const search = async (u, q) => (await shelfKit(u).run({ id: 't', name: 'search_files', input: { query: q } })).content;
+  const [copy] = await docs();
+  assert.match(await search(staff, 'Sohail passport'), new RegExp(`#${copy.id} `), 'staff without Document Renewals find it');
+  assert.doesNotMatch(await search(staff, 'Rahul passport'), new RegExp(`#${hand} `), 'the hand-uploaded passport stays private');
+  assert.doesNotMatch(await search(outsider, 'Sohail passport'), new RegExp(`#${copy.id} `), 'nobody external');
+});
+
+test('read in chat: the file comes from saifsys and is read then, not kept', async () => {
+  const { boss } = await office();
+  const { shelfKit } = await import('../server/shelf.js');
+  const { saifsysText } = await import('../server/saifsysFiles.js');
+  const s = saifsys([row({ has_file: true, file_name: 'p.pdf' })], { files: { 1: 'Nationality: India' } });
+  await syncSaifsysDocs({ lookup: s.lookup, fetchFile: s.fetchFile });
+  const [p] = await docs();
+  // What reading the scan gives, held for the chat's read_file below.
+  assert.equal(await saifsysText(p, { fetchEmployeeFile: s.fetchFile, read: async ({ buffer }) => buffer.toString() }), 'Nationality: India');
+  const master = await db.prepare('SELECT * FROM users WHERE id = ?').get(boss);
+  const out = (await shelfKit(master).run({ id: 't', name: 'read_file', input: { id: p.id } })).content;
+  assert.match(out, /Number P1234567/, "saifsys's details on top");
+  assert.match(out, /Nationality: India/);
+  assert.equal((await docs())[0].path, null);
+  assert.equal((await db.prepare('SELECT COUNT(*)::int n FROM document_texts').get()).n, 0, 'what it says is not kept either');
 });

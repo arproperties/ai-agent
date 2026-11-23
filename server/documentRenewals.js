@@ -21,6 +21,8 @@ import { createDraft, decideDraft, draftOut, getDraft } from './drafts.js';
 import { keepFiles } from './draftFiles.js';
 import { kick } from './outbox.js';
 import { listAddresses } from './addressBook.js';
+import { fileBytes } from './saifsysFiles.js';
+import { createHash } from 'node:crypto';
 
 // Document Renewals, the screen (client/src/components/DocumentRenewals.jsx): every
 // categorised Shelf file this person may read, by the employee or the company it is for,
@@ -240,10 +242,12 @@ const TERMS_READ_VERSION = 2;
  */
 export async function contractTerms(user, docId, { fetch = fileFor, read = readReturnedDoc } = {}) {
   const doc = await fetch(user, docId);
+  // The file comes from saifsys each time; its hash says whether it is the one already read.
+  const hash = createHash('sha256').update(doc.buffer).digest('hex');
   const kept = doc.terms_read;
-  if (kept?.hash && kept.hash === doc.hash && kept.v === TERMS_READ_VERSION) return kept;
+  if (kept?.hash && kept.hash === hash && kept.v === TERMS_READ_VERSION) return kept;
   if (!/^(application\/pdf|image\/)/.test(doc.mime || '')) throw Object.assign(new Error('Reem can only read a contract that is a PDF or a photo'), { status: 400 });
-  const terms = { ...(await read({ mime: doc.mime, data: readFileSync(doc.path).toString('base64') })), hash: doc.hash, v: TERMS_READ_VERSION };
+  const terms = { ...(await read({ mime: doc.mime, data: doc.buffer.toString('base64') })), hash, v: TERMS_READ_VERSION };
   await db.prepare('UPDATE documents SET terms_read = ? WHERE id = ?').run(JSON.stringify(terms), doc.id);
   return terms;
 }
@@ -393,7 +397,7 @@ export async function sendCaseEmail(user, caseId, { to, cc = [], subject, body, 
     const d = own.get(id);
     if (!d) throw Object.assign(new Error('That document is not one of this employee\'s'), { status: 400 });
     const doc = await fetch(user, id);
-    files.push({ name: `${d.type} - ${c.employee_name || c.employee_code}${extname(doc.name || doc.path || '') || '.pdf'}`.replace(/[\\/:*?"<>|]+/g, '-'), mimetype: doc.mime, buffer: readFileSync(doc.path) });
+    files.push({ name: `${d.type} - ${c.employee_name || c.employee_code}${extname(doc.name || doc.path || '') || '.pdf'}`.replace(/[\\/:*?"<>|]+/g, '-'), mimetype: doc.mime, buffer: doc.buffer });
   }
   let draft = await createDraft(user.id, { to, cc, subject: String(subject || '').trim(), body: String(body || '').trim(), from: acc.email, attachments: keepFiles(user.id, files) });
   draft = await decideDraft(user.id, draft.id, true);
@@ -453,8 +457,9 @@ const staff = () => db.prepare('SELECT id, name, email FROM users WHERE NOT exte
 /** A case as its page shows it: the document, the employee from saifsys, pay against payroll, the timeline. */
 async function casePage(user, id) {
   const c = await cases.getCase(user, id);
-  const doc = await db.prepare(`SELECT d.id, d.title, d.name, d.expires_on, d.path IS NOT NULL AS has_file, t.label AS type, t.opens_case
-    FROM documents d LEFT JOIN document_types t ON t.id = d.type_id WHERE d.id = ?`).get(c.document_id);
+  const doc = await db.prepare(`SELECT d.id, d.title, d.name, d.expires_on, (d.path IS NOT NULL OR coalesce(l.saifsys_has_file, false)) AS has_file, t.label AS type, t.opens_case
+    FROM documents d LEFT JOIN document_types t ON t.id = d.type_id LEFT JOIN saifsys_doc_links l ON l.document_id = d.id
+    WHERE d.id = ?`).get(c.document_id);
   let employee = null;
   let compare = null;
   if (c.employee_code) {
@@ -507,12 +512,16 @@ proTaskRoutes.get('/', wrap(async (req, res) => { res.json({ tasks: await proTas
 proTaskRoutes.get('/:id', wrap(async (req, res) => { res.json(await proTasks.taskView(req.user, req.params.id)); }));
 proTaskRoutes.get('/:id/files/:docId', wrap(async (req, res) => {
   const d = await proTasks.taskFile(req.user, req.params.id, req.params.docId);
-  if (!d.path) return res.status(404).json({ error: 'This paper has no file yet' });
+  // A saifsys paper's file stays in saifsys: fetched now, sent, not kept.
+  const file = !d.path ? await fileBytes(d).catch(() => null) : null;
+  if (!d.path && !file) return res.status(404).json({ error: 'This paper has no file yet' });
+  if (file) d.mime = file.mime;
   // The type is the one the uploader's browser claimed, so only safe types open in the app; an
   // HTML or SVG file shown on our address could act as the PRO who opened it. The rest download.
   const inline = inlineType(d);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(d.name || 'file')}`);
+  if (file) return res.type(inline || 'application/octet-stream').send(file.buffer);
   res.type(inline || 'application/octet-stream').sendFile(d.path, { dotfiles: 'allow' });
 }));
 proTaskRoutes.post('/:id/files', caseUpload.single('file'), wrap(async (req, res) => {

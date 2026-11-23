@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { db, reset, makeUser, makeDoc, closeDb } from './helpers/db.js';
@@ -47,7 +48,8 @@ test('the contract is read once and kept, and read again only when its file chan
   let reads = 0;
   const deps = {
     salary: async (code) => { assert.equal(code, 'E-0042'); return record; },
-    fetch: async (user, docId) => db.prepare('SELECT * FROM documents WHERE id = ?').get(docId),
+    // As fileFor gives it: the document with its file's bytes (from saifsys, for a saifsys copy).
+    fetch: async (user, docId) => { const d = await db.prepare('SELECT * FROM documents WHERE id = ?').get(docId); return { ...d, buffer: readFileSync(d.path) }; },
     read: async ({ mime, data }) => { reads++; assert.equal(mime, 'application/pdf'); assert.ok(data); return read({ allowance: 2800, total: 4800 }); },
   };
   const a = await contractSalary(boss, 'E-0042', deps);
@@ -55,11 +57,11 @@ test('the contract is read once and kept, and read again only when its file chan
   assert.equal(a.document.id, id);
   await contractSalary(boss, 'E-0042', deps);
   assert.equal(reads, 1, 'kept');
-  await db.prepare(`UPDATE documents SET hash = 'h2' WHERE id = ?`).run(id);
+  writeFileSync(path, '%PDF contract, renewed'); // a new file: its bytes differ
   await contractSalary(boss, 'E-0042', deps);
   assert.equal(reads, 2, 'a new file is read again');
   // A reading kept from before the other terms were read (no version) is read once more.
-  await db.prepare(`UPDATE documents SET terms_read = ? WHERE id = ?`).run(JSON.stringify({ ...read(), hash: 'h2' }), id);
+  await db.prepare(`UPDATE documents SET terms_read = ? WHERE id = ?`).run(JSON.stringify({ ...read(), hash: createHash('sha256').update('%PDF contract, renewed').digest('hex') }), id);
   const b = await contractSalary(boss, 'E-0042', deps);
   assert.equal(reads, 3, 'an old reading is refreshed');
   assert.equal(b.terms.allowance, 2800, 'what the contract says comes back with the comparison');

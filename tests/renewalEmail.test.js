@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { db, reset, makeUser, makeDoc, closeDb } from './helpers/db.js';
@@ -69,7 +69,8 @@ test('a renewal email goes to the PRO: addresses to pick from, who and the new p
 test('Send: an email from the user\'s mailbox, To and Cc, with the ticked documents attached, and the case notes it', async () => {
   const { boss, caseId, contract, passport } = await office();
   let kicked = 0;
-  const fetch = async (user, id) => db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+  // As fileFor gives it: the document with its file's bytes.
+  const fetch = async (user, id) => { const d = await db.prepare('SELECT * FROM documents WHERE id = ?').get(id); return { ...d, buffer: readFileSync(d.path) }; };
   const out = await sendCaseEmail(boss, caseId, {
     to: ['pro@example.com'], cc: 'boss@example.com; hr2@example.com', subject: 'Renewal', body: 'Please renew.', document_ids: [contract, passport],
   }, { fetch, mailbox, kick: () => { kicked++; }, allowed: true });
@@ -113,7 +114,8 @@ test('the master\'s switch in settings lets Send go out', async () => {
   const { boss, caseId, contract } = await office();
   await rc.saveCaseSettings(boss, { send_on: true });
   let kicked = 0;
-  const fetch = async (user, id) => db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+  // As fileFor gives it: the document with its file's bytes.
+  const fetch = async (user, id) => { const d = await db.prepare('SELECT * FROM documents WHERE id = ?').get(id); return { ...d, buffer: readFileSync(d.path) }; };
   const out = await sendCaseEmail(boss, caseId, { to: 'pro@example.com', subject: 's', body: 'b', document_ids: [contract] }, { fetch, mailbox, kick: () => { kicked++; } });
   assert.equal(out.status, 'approved');
   assert.equal(kicked, 1);
