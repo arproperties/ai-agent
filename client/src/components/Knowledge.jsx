@@ -780,23 +780,29 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
   const zipRef = useRef();
   const dirRef = useRef();
 
+  // Facts Reem picked up in chat are not files: they live only under "Learned in chat", never
+  // in the file lists, counts or search. The boss had 449 of them mixed in with his files,
+  // each looking like a little .txt, and could not find his real documents among them.
+  const files = useMemo(() => (docs || []).filter((d) => d.kind !== 'fact'), [docs]);
+  const facts = useMemo(() => (docs || []).filter((d) => d.kind === 'fact'), [docs]);
   const companies = useMemo(() => {
-    const n = (docs || []).reduce((m, d) => (d.company ? { ...m, [d.company]: (m[d.company] || 0) + 1 } : m), {});
+    const n = files.reduce((m, d) => (d.company ? { ...m, [d.company]: (m[d.company] || 0) + 1 } : m), {});
     return { n, names: Object.keys(n).sort((a, b) => n[b] - n[a] || a.localeCompare(b)) };
-  }, [docs]);
-  const others = (docs || []).filter((d) => !d.company);
+  }, [files]);
+  const others = files.filter((d) => !d.company);
   // A company emptied by moving its last file out falls back to the list of companies.
   const inCompany = company && companies.n[company] ? company : null;
-  const scope = group === 'others' ? others : inCompany ? docs.filter((d) => d.company === inCompany) : null;
+  const scope = group === 'others' ? others : inCompany ? files.filter((d) => d.company === inCompany) : null;
+  const scopeFacts = group === 'others' ? facts.filter((d) => !d.company) : inCompany ? facts.filter((d) => d.company === inCompany) : [];
   const go = (g, c = null) => { setGroup(g); setCompany(c); setFolder('All'); };
 
   // Folders narrow the files inside a company or Others. "Learned" is a pseudo-folder
   // over kind rather than folder: a plain list of captured facts to prune.
   const counts = (scope || []).reduce((m, d) => ({ ...m, [d.folder]: (m[d.folder] || 0) + 1 }), {});
-  const learnedCount = (scope || []).filter((d) => d.kind === 'fact').length;
-  const inFolder = (d) => (folder === 'All' ? true : folder === 'Learned' ? d.kind === 'fact' : d.folder === folder);
+  const learnedCount = scopeFacts.length;
+  const inFolder = (d) => (folder === 'All' ? true : d.folder === folder);
   // Search always covers every file, whichever level is open.
-  const shown = q ? (docs || []).filter((d) => matches(d, q)) : (scope || []).filter(inFolder);
+  const shown = q ? files.filter((d) => matches(d, q)) : folder === 'Learned' ? scopeFacts : (scope || []).filter(inFolder);
   const openDoc = open && allDocs?.find((d) => d.id === open);
 
   // A single ZIP dropped on the Shelf is an import; anything else is an ordinary upload.
@@ -825,7 +831,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
           </button>
           <div className="min-w-0 flex-1">
             <h1 className="text-[22px] font-light leading-tight">Shelf</h1>
-            <p className="text-xs text-mute">{docs ? `${docs.length} files · sorted automatically` : 'Loading…'}</p>
+            <p className="text-xs text-mute">{docs ? `${files.length} files · sorted automatically` : 'Loading…'}</p>
           </div>
           <button onClick={() => setWriting(true)} disabled={uploading}
             className="glass flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition hover:bg-white/10 active:scale-95 disabled:opacity-60">
@@ -896,7 +902,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
                 <ExpiringSoon docs={docs} onOpen={(d) => setOpen(d.id)} />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <GroupCard icon={Building2} tone="text-sky-300" bg="from-sky-500/30 to-sky-500/5" label="Companies"
-                    sub={`${companies.names.length} ${companies.names.length === 1 ? 'company' : 'companies'} · ${docs.length - others.length} ${docs.length - others.length === 1 ? 'file' : 'files'}`}
+                    sub={`${companies.names.length} ${companies.names.length === 1 ? 'company' : 'companies'} · ${files.length - others.length} ${files.length - others.length === 1 ? 'file' : 'files'}`}
                     preview={companies.names.map((c) => [c, companies.n[c]])} empty="Files that name a company gather here"
                     onClick={() => go('companies')} />
                   <GroupCard icon={Folder} tone="text-mute" bg="from-white/15 to-white/[0.03]" label="Others"
@@ -904,7 +910,7 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
                     preview={Object.entries(others.reduce((m, d) => ({ ...m, [d.folder]: (m[d.folder] || 0) + 1 }), {})).sort((a, b) => b[1] - a[1])}
                     empty="Everything else - personal papers, notes, photos" onClick={() => go('others')} />
                 </div>
-                <FileGrid title="RECENT FILES" files={[...docs].sort((a, b) => b.created_at - a.created_at || b.id - a.id).slice(0, 10)} onOpen={setViewing} />
+                <FileGrid title="RECENT FILES" files={[...files].sort((a, b) => b.created_at - a.created_at || b.id - a.id).slice(0, 10)} onOpen={setViewing} />
               </>
             ) : group === 'companies' && !inCompany ? (
               <section>
@@ -957,7 +963,9 @@ export function FilesPage({ folders, me, onBack, onOpenChat }) {
 
 // ---------- compact version for an agent's own files (inside the agent sheet) ----------
 export function FilesPanel({ agentId, hint, folders, me }) {
-  const { docs, load, upload, write, uploading, notes } = useFiles(agentId);
+  const { docs: all, load, upload, write, uploading, notes } = useFiles(agentId);
+  // Only real files here too; learned facts are reviewed under Shelf → Learned in chat.
+  const docs = all?.filter((d) => d.kind !== 'fact');
   const [open, setOpen] = useState(null);
   const [writing, setWriting] = useState(false);
   const ref = useRef();

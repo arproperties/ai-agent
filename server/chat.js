@@ -23,6 +23,7 @@ import { dropboxKit } from './dropbox.js';
 import { routineKit } from './routines.js';
 import { meetingKit } from './meetings.js';
 import { shelfKit, splitParts } from './shelf.js';
+import { chatSearchKit } from './chatSearch.js';
 import { noticeKit } from './notices.js';
 import { isAudio, readAudio } from './transcripts.js';
 import { saifsysKit, saifsysActionKit } from './saifsys/index.js';
@@ -233,7 +234,11 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   parts.push(`You can look through ${user.name}'s saved files yourself: search_files finds them by title, file name and what is written inside, ` +
     'and read_file opens one. <file_library> is only the newest few and <knowledge> is only a first guess at what matters, ' +
     'so a file missing from both may still be saved. Never say a file is not on the Shelf, or that you cannot open a saved file, ' +
-    'until search_files has come back empty - and when a name was spoken, try another spelling first.');
+    'until search_files has come back empty - and when a name was spoken, try another spelling first. ' +
+    // The boss's AC interview packet was a reply in a September chat, never saved; Reem
+    // said it did not exist and asked him for its exact name.
+    'Work written in an earlier chat (a packet, letter, plan, checklist) may never have been saved: search_chats finds it and read_chat reads it. ' +
+    'Before saying something does not exist, look there too, and never ask them for the exact name of a thing - search by what it is about.');
   // A member of staff sent a photo of a bill "for the school project" and was told it could
   // not be recorded, and offered a to-do instead. It was on their Shelf all along.
   parts.push(`Every file, photo or video ${user.name} sends in this chat is saved on their Shelf by the app as it arrives, sorted and searchable, ` +
@@ -732,6 +737,8 @@ async function runChat(req, res) {
     },
   });
   const kits = [todoKit(user.id, ctx), routineKit(user.id, ctx), meetingKit(user.id), memoryKit(user.id), shelf,
+    // Their own earlier chats: work written in a chat and never saved to the Shelf.
+    chatSearchKit(user, { conversationId: convId }),
     // WhatsApp opened on their screen with the message typed (their own saved numbers only).
     whatsappKit(user, { onCard: (c) => send('whatsapp', c) }),
     ...(external ? [] : [sendKit,

@@ -331,7 +331,7 @@ export const SHELF_TOOLS = [
     name: 'search_files',
     description: "Look through the user's saved files (their Shelf, and what was shared with them) by title, file name and what is written inside. " +
       'Use it whenever they ask for a file, or about something a file would answer, and it is not already in <knowledge>. ' +
-      'Always use it before saying a file is not there. Names are often spelt as they were heard: if nothing comes back, try another spelling or other words. ' +
+      'Always use it, and search_chats for work written in an earlier chat, before saying a file is not there; never ask them for its exact name. Names are often spelt as they were heard: if nothing comes back, try another spelling or other words. ' +
       'Every file knows who uploaded it: when they ask what someone uploaded or sent to the Shelf, pass uploaded_by, and leave query out to get all of them (the list says what each is, so pick the invoices etc. from it) - ' +
       'never search for the person\'s name inside the files for that. "What has Syed bought", "Said\'s bills" and the like are questions about what that person uploaded; ' +
       'a team member\'s name may be spelt as heard (Syed, Saeed for Said) and is still them. ' +
