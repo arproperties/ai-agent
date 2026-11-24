@@ -1563,6 +1563,21 @@ await db.exec(`
     WHERE d.attachment IS NOT NULL AND EXISTS (SELECT 1 FROM recurring_payment_receipts r WHERE r.due_id = d.id AND r.attachment = d.attachment);
 `);
 
+// Recurring payments, more files for a receipt: a receipt keeps its own attachment, and any
+// number of further files here (a cheque's two sides, a slip and a photo).
+//   recurring_payment_receipt_files: one row per further file, a path under data/recurring.
+// The rows go with their receipt; the files on disk are removed by server/recurringPayments.js.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_payment_receipt_files (
+    id SERIAL PRIMARY KEY,
+    receipt_id INTEGER NOT NULL REFERENCES recurring_payment_receipts(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_recurring_payment_receipt_files_receipt ON recurring_payment_receipt_files(receipt_id);
+`);
+
 // Recurring payments, what the money is for: the module's own income heads ("Shop",
 // "DEWA", "Washing Machine"), one list for every building, typed by the accountants.
 //   recurring_heads: the list.
