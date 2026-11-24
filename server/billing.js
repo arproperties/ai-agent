@@ -62,6 +62,7 @@ export const JOBS = {
   feeds: { name: 'Feeds', about: 'The morning feed: prices, rates and news looked up, and questions about them' },
   project_planner: { name: 'Project planner', about: 'Reading a project file and writing its full plan' },
   report_checks: { name: 'Autonomous Agents', about: 'The background agents: finding work reports among the new files, checking them, and their monthly reports' },
+  store_camera: { name: 'Store camera', about: 'Counting the items a saifsys store camera sees' },
   other: { name: 'Other', about: 'Anything else' },
 };
 
