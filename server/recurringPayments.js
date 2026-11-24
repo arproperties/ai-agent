@@ -323,12 +323,26 @@ export async function setActive(user, id, active, now = today()) {
   return shapeEntry(await entryOf(user, p.id, now));
 }
 
-/** Only an entry that never created a line can go; one with lines is paused instead. */
-export async function deleteEntry(user, id) {
+/**
+ * An entry that never created a line can go. One with lines goes only when that is asked for
+ * in so many words (withPayments): every line, receipt and file goes with it, and the money is
+ * out of those accounts again. Without it, one with lines is paused instead.
+ */
+export async function deleteEntry(user, id, withPayments = false) {
   const p = await entryOf(user, id);
   if (!p) return null;
-  if (p.payments > 0) throw bad(`"${p.title}" already has payments, so it cannot be deleted. Pause it instead.`, 409);
+  if (p.payments > 0 && !withPayments) throw bad(`"${p.title}" already has payments, so it cannot be deleted. Pause it instead.`, 409);
+  // The files of its lines and receipts, found first: the rows go with the entry (ON DELETE CASCADE).
+  const files = p.payments > 0 ? await db.prepare(`
+    SELECT d.attachment AS path FROM recurring_payment_dues d WHERE d.payment_id = ? AND d.attachment IS NOT NULL
+    UNION ALL
+    SELECT r.attachment FROM recurring_payment_receipts r JOIN recurring_payment_dues d ON d.id = r.due_id
+      WHERE d.payment_id = ? AND r.attachment IS NOT NULL
+    UNION ALL
+    SELECT f.path FROM recurring_payment_receipt_files f JOIN recurring_payment_receipts r ON r.id = f.receipt_id
+      JOIN recurring_payment_dues d ON d.id = r.due_id WHERE d.payment_id = ?`).all(p.id, p.id, p.id) : [];
   await db.prepare('DELETE FROM recurring_payments WHERE id = ?').run(p.id);
+  files.forEach((f) => dropFile(f.path));
   return { ok: true };
 }
 
@@ -358,7 +372,15 @@ const shapeReceipt = (r) => ({
   id: r.id, amount: r.amount, paid_on: r.paid_on, account: r.account_id ? { id: r.account_id, name: r.account_name } : null,
   by: r.by, at: Number(r.created_at), attachment: !!r.attachment,
 });
-const receiptsOf = async (dueId) => (await db.prepare(`${RECEIPT} WHERE r.due_id = ? ORDER BY r.paid_on, r.id`).all(dueId)).map(shapeReceipt);
+// Each receipt with its further files (files: [{ id }]), besides its own attachment.
+const receiptsOf = async (dueId) => {
+  const rows = (await db.prepare(`${RECEIPT} WHERE r.due_id = ? ORDER BY r.paid_on, r.id`).all(dueId)).map(shapeReceipt);
+  for (const r of rows) {
+    r.files = (await db.prepare('SELECT id FROM recurring_payment_receipt_files WHERE receipt_id = ? ORDER BY id').all(r.id))
+      .map((f) => ({ id: f.id }));
+  }
+  return rows;
+};
 
 /**
  * Put a line in step with its receipts: paid once they add up to its amount, pending till
@@ -418,11 +440,13 @@ export async function addReceipt(user, dueId, input = {}, now = today()) {
 export async function deleteReceipt(user, id) {
   const r = await db.prepare('SELECT id, due_id, attachment FROM recurring_payment_receipts WHERE id = ?').get(Number(id) || 0);
   if (!r) return null;
+  const extra = await db.prepare('SELECT path FROM recurring_payment_receipt_files WHERE receipt_id = ?').all(r.id);
   await tx(async () => {
     await db.prepare('DELETE FROM recurring_payment_receipts WHERE id = ?').run(r.id);
     await syncDue(r.due_id);
   });
   dropFile(r.attachment);
+  extra.forEach((f) => dropFile(f.path));
   return shapeDue(await dueOf(r.due_id));
 }
 
@@ -437,11 +461,14 @@ export async function setPaid(user, dueId, paid, input = {}, now = today()) {
   if (!d) return null;
   if (!paid) {
     const files = await db.prepare('SELECT attachment FROM recurring_payment_receipts WHERE due_id = ? AND attachment IS NOT NULL').all(d.id);
+    const extra = await db.prepare(`SELECT f.path FROM recurring_payment_receipt_files f
+      JOIN recurring_payment_receipts r ON r.id = f.receipt_id WHERE r.due_id = ?`).all(d.id);
     await tx(async () => {
       await db.prepare('DELETE FROM recurring_payment_receipts WHERE due_id = ?').run(d.id);
       await syncDue(d.id);
     });
     files.forEach((f) => dropFile(f.attachment));
+    extra.forEach((f) => dropFile(f.path));
     return shapeDue(await dueOf(d.id));
   }
   const { account, on } = await readReceipt(input, now);
@@ -595,6 +622,32 @@ export async function setAttachment(user, kind, id, file) {
 
 export const attachmentPath = async (kind, id) => (await db.prepare(`SELECT attachment FROM ${FILE_OF[kind]} WHERE id = ?`).get(Number(id) || 0))?.attachment || null;
 
+/** One more file for a receipt, kept beside its own attachment. null: no such receipt. */
+export async function addReceiptFile(user, receiptId, file) {
+  const r = await db.prepare('SELECT id FROM recurring_payment_receipts WHERE id = ?').get(Number(receiptId) || 0);
+  if (!r) return null;
+  const ext = FILE_TYPES[file?.mimetype];
+  if (!ext || !file.buffer?.length) throw bad('The attachment must be a picture (JPG, PNG) or a PDF');
+  mkdirSync(DIR, { recursive: true });
+  const path = `${DIR}/receipt-${r.id}-${Date.now()}.${ext}`;
+  await writeFile(path, file.buffer);
+  const { id } = await db.prepare('INSERT INTO recurring_payment_receipt_files (receipt_id, path, created_by) VALUES (?, ?, ?) RETURNING id')
+    .run(r.id, path, user?.id ?? null);
+  return { ok: true, id };
+}
+
+export const receiptFilePath = async (id) =>
+  (await db.prepare('SELECT path FROM recurring_payment_receipt_files WHERE id = ?').get(Number(id) || 0))?.path || null;
+
+/** One further file of a receipt gone, row and file. null: no such file. */
+export async function deleteReceiptFile(user, id) {
+  const f = await db.prepare('SELECT id, path FROM recurring_payment_receipt_files WHERE id = ?').get(Number(id) || 0);
+  if (!f) return null;
+  await db.prepare('DELETE FROM recurring_payment_receipt_files WHERE id = ?').run(f.id);
+  dropFile(f.path);
+  return { ok: true };
+}
+
 // ---------- the timer ----------
 
 const EVERY = 60 * 60_000;
@@ -624,7 +677,7 @@ recurringPaymentRoutes.get('/', wrap(async (req, res) => res.json(await listDues
 recurringPaymentRoutes.get('/entries', wrap(async (req, res) => res.json(await listEntries(req.user))));
 recurringPaymentRoutes.post('/entries', wrap(async (req, res) => res.json(await saveEntry(req.user, null, req.body))));
 recurringPaymentRoutes.put('/entries/:id', wrap(async (req, res) => send(res, await saveEntry(req.user, req.params.id, req.body))));
-recurringPaymentRoutes.delete('/entries/:id', wrap(async (req, res) => send(res, await deleteEntry(req.user, req.params.id))));
+recurringPaymentRoutes.delete('/entries/:id', wrap(async (req, res) => send(res, await deleteEntry(req.user, req.params.id, req.query.with_payments === '1'))));
 recurringPaymentRoutes.post('/entries/:id/active', wrap(async (req, res) => send(res, await setActive(req.user, req.params.id, req.body?.active))));
 recurringPaymentRoutes.post('/entries/:id/dues', wrap(async (req, res) => send(res, await createNow(req.user, req.params.id, today(), req.body?.date))));
 recurringPaymentRoutes.get('/dues/:id', wrap(async (req, res) => send(res, await getDue(req.user, req.params.id))));
@@ -667,3 +720,15 @@ for (const [kind, at] of [['due', '/dues/:id/attachment'], ['receipt', '/receipt
     res.set('Cache-Control', 'private, max-age=3600').set('X-Content-Type-Options', 'nosniff').sendFile(path);
   }));
 }
+
+// A receipt's further files: add one (field "photo", like the rest), open one, delete one.
+recurringPaymentRoutes.post('/receipts/:id/files', upload.single('photo'), wrap(async (req, res) => {
+  if (!req.file) throw bad('No file came through');
+  send(res, await addReceiptFile(req.user, req.params.id, req.file));
+}));
+recurringPaymentRoutes.get('/receipt-files/:id/attachment', wrap(async (req, res) => {
+  const path = await receiptFilePath(req.params.id);
+  if (!path) return res.status(404).json({ error: 'Not found' });
+  res.set('Cache-Control', 'private, max-age=3600').set('X-Content-Type-Options', 'nosniff').sendFile(path);
+}));
+recurringPaymentRoutes.delete('/receipt-files/:id', wrap(async (req, res) => send(res, await deleteReceiptFile(req.user, req.params.id))));
