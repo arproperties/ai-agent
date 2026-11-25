@@ -5,6 +5,7 @@ import { saifsysConfigured } from './client.js';
 import * as ars from './ars.js';
 import * as hr from './hr.js';
 import * as fleet from './fleet.js';
+import * as realestate from './realestate.js';
 import { ACTIONS, actionKeys, setActions, bookingKit, bookingRoutes } from './booking.js';
 
 // saifsys, module by module — the same workspaces as its launcher. Each module that has
@@ -22,7 +23,7 @@ export { saifsysConfigured } from './client.js';
 export const MODULES = [
   { key: 'operations', label: 'Operations' },
   { key: 'cleaning', label: 'Cleaning' },
-  { key: 'realestate', label: 'Real Estate' },
+  { key: 'realestate', label: 'Real Estate', ...realestate },
   { key: 'construction', label: 'Construction' },
   { key: 'ars', label: 'ARS Home Rentals', ...ars },
   { key: 'grocery', label: 'Grocery' },
