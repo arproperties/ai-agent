@@ -8,6 +8,7 @@ import { compose, sendRaw, friendlySmtp } from './smtp.js';
 import { ask } from './ai.js';
 import { sendPush } from './push.js';
 import { mailText } from './mailText.js';
+import { sentLine } from './emailQuote.js';
 
 // Mail routing: the one mailbox the whole company is written to (a Gmail everyone used to
 // share), and who each email is for.
@@ -273,7 +274,7 @@ export function forwardText(mail, reason, { dropped = false } = {}) {
     ...(dropped ? ['', 'The attachments were too big to forward. They are still in the shared mailbox.'] : []),
     '', '---------- Forwarded message ----------',
     `From: ${sender}`,
-    `Date: ${mail.date ? new Date(mail.date).toUTCString() : ''}`,
+    `Date: ${mail.date ? sentLine(mail.date) : ''}`,
     `Subject: ${mail.subject || '(no subject)'}`,
     `To: ${(mail.to || []).join(', ')}`,
     ...(mail.cc?.length ? [`Cc: ${mail.cc.join(', ')}`] : []),
@@ -365,7 +366,7 @@ async function relay(acc, m, id, uidValidity, { send = sendRaw, summarize = summ
 export async function sendAnswer(acc, row, { ref, uid = null, uidValidity = null, by, who, answer, at, attachments = [], user = null },
   { send = sendRaw, summarize = summarizeSent } = {}) {
   const to = row.reply_addr || row.from_addr;
-  const quote = row.preview ? `\n\nOn ${new Date(Number(row.at) * 1000).toUTCString()}, ${row.from_name || row.from_addr} wrote:\n> ${row.preview}` : '';
+  const quote = row.preview ? `\n\nOn ${sentLine(Number(row.at) * 1000)}, ${row.from_name || row.from_addr} wrote:\n> ${row.preview}` : '';
   const built = await compose({
     from: { address: acc.email }, to: [to], subject: replySubject(row.subject),
     text: `${answer}${quote}`, inReplyTo: row.message_id || undefined, references: row.message_id || undefined,

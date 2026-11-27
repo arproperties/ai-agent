@@ -24,7 +24,7 @@ Photos and files appear as [photo] or [file: name]: you cannot see inside them, 
 
 const pad = (n) => String(n).padStart(2, '0');
 const stamp = (ts) => {
-  const d = new Date(ts * 1000);
+  const d = new Date(ts * 1000 + 4 * 3600e3); // Dubai time: the server runs on UTC
   return `${d.getUTCDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()]} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 };
 
