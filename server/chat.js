@@ -331,7 +331,10 @@ function systemPrompt(user, agent, team, memories, knowledge, library, mailbox, 
   // recalled) comes after the cache mark, or it would spoil the match.
   // Dubai time: the server runs on UTC, and between midnight and 4 am Dubai that is still yesterday.
   const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Dubai', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
-  const context = [`Current date and time: ${now} (Dubai, UTC+04:00).`];
+  // Older chats still hold email times in UTC (before 27 Nov 2026 the mail tools wrote them that
+  // way), and Reem once told someone an email went at "10:11" when it left at 2:11 PM Dubai.
+  const context = [`Current date and time: ${now} (Dubai, UTC+04:00). ` +
+    'Always give times in Dubai time. Any time marked UTC or GMT, here or earlier in this chat, is 4 hours behind Dubai: add 4 hours before you say it, and correct an earlier answer of yours that gave a UTC time as if it were Dubai time.'];
   if (pinned.length) {
     context.push(`<key_facts>\nKey facts ${user.name} pinned: who people are, which side they are on, how things are done. ` +
       'They hold in every answer and every draft, unless this conversation says otherwise:\n' +
