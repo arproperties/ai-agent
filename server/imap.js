@@ -163,7 +163,9 @@ imapRoutes.delete('/', async (req, res) => {
 
 // ---------- tools for the agents (same inputs/outputs as the Outlook ones) ----------
 const person = (list) => (list || []).map((a) => `${a.name || ''} <${a.address || ''}>`.trim()).join(', ') || 'unknown';
-const stamp = (d) => (d ? new Date(d).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'unknown date');
+// Reem reads these times out to people in Dubai, so they are written in Dubai time (UTC+4,
+// no daylight saving). In UTC she quoted 10:11 for an email sent at 2:11 PM and confused people.
+const stamp = (d) => (d ? new Date(new Date(d).getTime() + 4 * 3600e3).toISOString().slice(0, 16).replace('T', ' ') + ' Dubai time' : 'unknown date');
 const hasAttachment = (node) => !!node && (node.disposition === 'attachment' || (node.childNodes || []).some(hasAttachment));
 
 async function folders(c, box) {

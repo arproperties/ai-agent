@@ -210,7 +210,7 @@ export async function emlText(buffer, readInner, depth = 0) {
   const files = (m.attachments || []).filter((a) => a.contentDisposition !== 'inline' || !a.contentType?.startsWith('image/'))
     .map((a) => ({ name: a.filename || 'attachment', mimetype: a.contentType, size: a.size || a.content.length, read: async () => a.content }));
   return emailText({
-    from: addresses(m.from), to: addresses(m.to), cc: addresses(m.cc), date: m.date?.toISOString().slice(0, 16).replace('T', ' '),
+    from: addresses(m.from), to: addresses(m.to), cc: addresses(m.cc), date: m.date && `${new Date(m.date.getTime() + 4 * 3600e3).toISOString().slice(0, 16).replace('T', ' ')} Dubai time`,
     subject: m.subject, body: m.text || stripHtml(m.html), attachments: files.length ? await readInnerFiles(files, readInner, depth) : '',
   });
 }

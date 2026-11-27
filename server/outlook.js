@@ -115,7 +115,9 @@ outlookCallback.get('/callback', async (req, res) => {
 
 // ---------- tools for the agents (definitions in email.js) ----------
 const person = (r) => (r?.emailAddress ? `${r.emailAddress.name || ''} <${r.emailAddress.address || ''}>`.trim() : 'unknown');
-const stamp = (iso) => new Date(iso).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+// Reem reads these times out to people in Dubai, so they are written in Dubai time (UTC+4,
+// no daylight saving). In UTC she quoted 10:11 for an email sent at 2:11 PM and confused people.
+const stamp = (iso) => new Date(new Date(iso).getTime() + 4 * 3600e3).toISOString().slice(0, 16).replace('T', ' ') + ' Dubai time';
 const SUMMARY = 'id,subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments';
 
 async function searchEmail(userId, { query = '', folder, unread_only, since, limit = 10 }) {
