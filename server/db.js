@@ -1604,6 +1604,64 @@ await db.exec(`
   ALTER TABLE recurring_payment_dues ADD COLUMN IF NOT EXISTS deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 `);
 
+// Recurring payments, the activity list: one line each time somebody adds, changes or deletes
+// an entry, a payment, a receipt, a transfer or a file. Written by server/recurringPayments.js
+// and only ever read after that - a deleted entry or receipt is gone from its own table, and
+// this is what is left to say it was there.
+//   recurring_activity: who (the name is kept too, so it outlives the person's account) did
+//     what (action) and when. title, building, unit, month and amount are copied here as they
+//     were at that moment, because the row they describe may be deleted later. ref_kind and
+//     ref_id say which row it was. old: filled in from what was already kept, on the day the
+//     list was first made (see below), not written when it happened.
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_activity (
+    id SERIAL PRIMARY KEY,
+    at BIGINT NOT NULL DEFAULT ${NOW},
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    user_name TEXT,
+    action TEXT NOT NULL,
+    ref_kind TEXT,
+    ref_id INTEGER,
+    title TEXT,
+    building TEXT,
+    unit TEXT,
+    month TEXT,
+    amount DOUBLE PRECISION,
+    detail TEXT,
+    old BOOLEAN NOT NULL DEFAULT false
+  );
+  CREATE INDEX IF NOT EXISTS idx_recurring_activity_at ON recurring_activity(at);
+`);
+// The list starts with what was already known: who added each entry, receipt and transfer
+// that is still there, and which payments were deleted. Only while the list is empty, in one
+// statement, so it happens once. Edits, and deletions of entries, receipts and transfers from
+// before this day, were never kept anywhere and cannot be shown.
+await db.exec(`
+  INSERT INTO recurring_activity (at, user_id, user_name, action, ref_kind, ref_id, title, building, unit, month, amount, detail, old)
+  SELECT x.* FROM (
+    SELECT p.created_at AS at, p.created_by, u.name, 'entry_added' AS action, 'entry' AS ref_kind, p.id, p.title, b.name AS building, p.unit,
+        NULL::text AS month, p.amount::float8 AS amount, NULL::text AS detail, true AS old
+      FROM recurring_payments p JOIN recurring_buildings b ON b.id = p.building_id LEFT JOIN users u ON u.id = p.created_by
+    UNION ALL
+    SELECT r.created_at, r.created_by, u.name, 'money_received', 'receipt', r.id, p.title, b.name, p.unit, d.month, r.amount::float8,
+        'Into ' || COALESCE(a.name, 'an account') || ' on ' || r.paid_on, true
+      FROM recurring_payment_receipts r JOIN recurring_payment_dues d ON d.id = r.due_id JOIN recurring_payments p ON p.id = d.payment_id
+      JOIN recurring_buildings b ON b.id = p.building_id LEFT JOIN recurring_accounts a ON a.id = r.account_id LEFT JOIN users u ON u.id = r.created_by
+    UNION ALL
+    SELECT t.created_at, t.created_by, u.name, 'transfer_added', 'transfer', t.id, f.name || ' → ' || o.name, NULL, NULL, NULL, t.amount::float8,
+        'Dated ' || t.date || COALESCE(' · ' || t.notes, ''), true
+      FROM recurring_transfers t JOIN recurring_accounts f ON f.id = t.from_account_id JOIN recurring_accounts o ON o.id = t.to_account_id
+      LEFT JOIN users u ON u.id = t.created_by
+    UNION ALL
+    SELECT d.deleted_at, d.deleted_by, u.name, 'payment_deleted', 'payment', d.id, p.title, b.name, p.unit, d.month, d.amount::float8,
+        'Deleted, or moved to another month', true
+      FROM recurring_payment_dues d JOIN recurring_payments p ON p.id = d.payment_id JOIN recurring_buildings b ON b.id = p.building_id
+      LEFT JOIN users u ON u.id = d.deleted_by WHERE d.deleted_at IS NOT NULL
+  ) x
+  WHERE x.at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM recurring_activity)
+  ORDER BY x.at;
+`);
+
 // Reem's own modules (server/modules.js): a screen a person gets only once the master
 // ticks it on their People profile. The master has them all and is never listed here.
 await db.exec(`
