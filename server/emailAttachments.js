@@ -1,4 +1,5 @@
 import { IMAGE_TYPES, extractText, describeImage } from './knowledge.js';
+import { isHeic, heicToJpeg } from './officeFiles.js';
 
 // Reading a file that came attached to an email. The mailbox modules (imap.js, outlook.js)
 // fetch the bytes; what a file says is worked out here, the same way the chat's 📎 does it,
@@ -34,8 +35,10 @@ export async function attachmentText({ name, mimetype, buffer }) {
   if (buffer.length > MAX_BYTES) throw new Error(`${name} is too large to read (over ${MAX_BYTES / 1024 / 1024} MB).`);
   const ext = key(name).split('.').pop();
   const type = IMAGE_TYPES.includes(mimetype) ? mimetype : IMAGE_EXT[ext];
+  // An iPhone photo is turned into a JPEG first: the AI only looks at the common picture types.
   const text = type
     ? await describeImage({ buffer, mimetype: type })
+    : isHeic(name, mimetype) ? await describeImage({ buffer: await heicToJpeg(buffer), mimetype: 'image/jpeg' })
     : await extractText({ buffer, mimetype: String(mimetype || ''), originalname: name });
   const clean = String(text || '').replace(/\u0000/g, '').trim();
   if (!clean) throw new Error(`No readable text found in ${name}`);

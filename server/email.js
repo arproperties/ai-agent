@@ -38,7 +38,7 @@ export const EMAIL_READ_TOOLS = [
   },
   {
     name: 'read_attachment',
-    description: 'Read the contents of one file attached to an email: PDF (including scanned ones), Word (.docx), text/CSV and images. ' +
+    description: 'Read the contents of one file attached to an email: PDF (including scanned ones), Word (.docx), Excel (.xlsx/.xls/.ods), PowerPoint (.pptx), OpenDocument, RTF, attached emails (.eml/.msg), ZIPs, text/CSV and images (including iPhone HEIC). ' +
       'Takes the email id from search_email and the attachment name as read_email listed it. Returns the text of the file. ' +
       'It only reads: nothing is saved, and the email is not marked as read.',
     input_schema: {

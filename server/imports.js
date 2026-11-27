@@ -3,7 +3,8 @@ import multer from 'multer';
 import { readFileSync } from 'node:fs';
 import { db } from './db.js';
 import { billAs } from './billing.js';
-import { saveUpload, processDocument } from './files.js';
+import { saveUpload, processDocument, fileName } from './files.js';
+import { isHeic, heicToJpeg, jpegName } from './officeFiles.js';
 import { chatAgents } from './access.js';
 import { sendPush } from './push.js';
 
@@ -203,6 +204,13 @@ importRoutes.post('/:id/files', upload.array('files', 10), async (req, res) => {
   let duplicates = 0;
   // One at a time: two copies of the same file in one batch must meet the dedup check in turn.
   for (const f of req.files || []) {
+    // iPhone photos out of a ZIP become JPEGs here, the same as a single upload (index.js).
+    if (isHeic(fileName(f), f.mimetype)) {
+      try {
+        Object.assign(f, { buffer: await heicToJpeg(f.buffer), mimetype: 'image/jpeg', originalname: Buffer.from(jpegName(fileName(f)), 'utf8').toString('latin1') });
+        f.size = f.buffer.length;
+      } catch { continue; }
+    }
     const { doc, duplicate } = await saveUpload(req.user.id, null, f);
     if (duplicate) { duplicates++; continue; }
     await db.prepare(`UPDATE documents SET status = 'queued', import_id = ? WHERE id = ?`).run(imp.id, doc.id);

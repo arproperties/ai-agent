@@ -73,11 +73,16 @@ const KEEP = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json', html: 'text/html',
   xml: 'text/xml', yaml: 'text/plain', yml: 'text/plain', log: 'text/plain', tsv: 'text/tab-separated-values',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
+  xls: 'application/vnd.ms-excel', ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', odp: 'application/vnd.oasis.opendocument.presentation',
+  odt: 'application/vnd.oasis.opendocument.text', rtf: 'application/rtf', eml: 'message/rfc822', msg: 'application/vnd.ms-outlook',
+  heic: 'image/heic', heif: 'image/heif',
 };
 // Left out on purpose, and counted so the summary can say so.
 const SKIP = {
   voice: ['opus', 'ogg', 'oga', 'm4a', 'mp3', 'aac', 'wav', 'amr', 'caf', 'weba'],
-  excel: ['xlsx', 'xls', 'xlsm', 'xlsb', 'ods', 'numbers'],
+  excel: ['xlsb', 'numbers'], // the Excel kinds the Shelf cannot read yet
   contacts: ['vcf'],
   videos: ['mp4', 'mov', '3gp', 'avi', 'mkv', 'webm', 'm4v', 'wmv'],
   archives: ['rar', 'zip', '7z', 'tar', 'gz', 'tgz'],
