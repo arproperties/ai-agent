@@ -1,6 +1,6 @@
 import express from 'express';
 import multer from 'multer';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { ROOT, DATA_DIR, PORT, MODELS, VOICES, COLORS, AGENT_ICONS, FOLDERS } from './config.js';
 import { db, tx } from './db.js';
 import { transcribe, ask } from './ai.js';
@@ -11,7 +11,8 @@ import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence, masterR
 import { deleteMessage, editReply, chat, chatWorking, stopChat } from './chat.js';
 import { addMemory, memoryChain, MAX_PINNED } from './knowledge.js';
 import { memoryReviewRoutes } from './memoryReview.js';
-import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument, editDocumentKind, kindFieldsIn } from './files.js';
+import { saveUpload, saveNote, processDocument, deleteDocument, inlineType, docxPreview, fileName, setShared, setSharedMany, pickCompany, userCompanies, expiringDocuments, DOC_SELECT, docOut, readableDocuments, readableDocument, editDocumentKind, kindFieldsIn } from './files.js';
+import { isHeic, heicToJpeg, jpegName } from './officeFiles.js';
 import { outlookRoutes, outlookCallback } from './outlook.js';
 import { imapRoutes } from './imap.js';
 import { adminRoutes, accessOfMe } from './admin.js';
@@ -114,9 +115,24 @@ const fromDisk = (req, res, next) => {
   res.on('close', () => { for (const p of temps) rmSync(p, { force: true }); });
   next();
 };
+// An iPhone photo (HEIC) becomes a JPEG as it arrives, so the chat, the Shelf and case folders
+// show and read it like any other picture; browsers other than Safari cannot show HEIC at all.
+const heicAsJpeg = async (req, res, next) => {
+  try {
+    for (const f of req.files || (req.file ? [req.file] : [])) {
+      if (!isHeic(fileName(f), f.mimetype)) continue;
+      const jpeg = await heicToJpeg(f.buffer);
+      writeFileSync(f.path, jpeg);
+      Object.assign(f, { mimetype: 'image/jpeg', size: jpeg.length, originalname: Buffer.from(jpegName(fileName(f)), 'utf8').toString('latin1') });
+    }
+    next();
+  } catch {
+    next(Object.assign(new Error('That iPhone photo could not be opened. Try sending it as a JPEG.'), { status: 400 }));
+  }
+};
 const upload = {
-  array: (...a) => [multerUpload.array(...a), fromDisk, withinLimit],
-  single: (...a) => [multerUpload.single(...a), fromDisk, withinLimit],
+  array: (...a) => [multerUpload.array(...a), fromDisk, withinLimit, heicAsJpeg],
+  single: (...a) => [multerUpload.single(...a), fromDisk, withinLimit, heicAsJpeg],
 };
 // A Diary page carries its pen strokes, which can be more than the usual 1 MB. Signed-in
 // people only, so nobody outside can send big bodies; the usual parser then skips it.

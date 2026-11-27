@@ -21,7 +21,7 @@ const Model3D = lazy(() => import('./Model3D'));
 
 // .rvt is accepted so that sending one gets an explanation (export it as IFC) rather than a
 // file picker that will not let it be chosen.
-export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.dwg,.dxf,.ifc,.rvt,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv';
+export const FILE_TYPES = 'image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.3gp,.pdf,.docx,.dwg,.dxf,.ifc,.rvt,.txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.log,.tsv,.xlsx,.xlsm,.xls,.ods,.pptx,.odp,.odt,.rtf,.eml,.msg,.heic,.heif';
 export const isIfc = (d) => /\.ifc$/i.test(d?.name || '');
 export const isCad = (d) => /\.(dwg|dxf)$/i.test(d?.name || '');
 // A PDF or picture whose filing says it is a building drawing: Reem can trace it into 3D

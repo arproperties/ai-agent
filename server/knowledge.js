@@ -12,6 +12,7 @@ import { EMBED_MODEL } from './config.js';
 import { isDrawing, readDrawing } from './dwg.js';
 import { isIfc, isRevit, ifcHeader, readIfc, REVIT_HELP } from './ifc.js';
 import { pdfTextLayer, scrambledArabic } from './pdfText.js';
+import { isOffice, officeText, isHeic, heicToJpeg } from './officeFiles.js';
 
 export { pdfTextLayer, scrambledArabic };
 
@@ -22,8 +23,9 @@ const TEXT_EXT = ['txt', 'md', 'csv', 'json', 'html', 'xml', 'yaml', 'yml', 'log
 
 // ---------- extraction ----------
 // onProgress(label): a line to show while a long PDF is read page by page.
-export async function extractText({ buffer, mimetype, originalname }, { onProgress } = {}) {
+export async function extractText({ buffer, mimetype, originalname }, { onProgress, depth = 0 } = {}) {
   const ext = originalname.split('.').pop().toLowerCase();
+  mimetype = String(mimetype || '');
   if (mimetype === 'application/pdf' || ext === 'pdf') {
     const { text, pages, readPages } = await pdfTextLayer(buffer);
     return readPages ? readPdfPages(buffer, pages, { name: originalname, onProgress }) : text;
@@ -36,8 +38,21 @@ export async function extractText({ buffer, mimetype, originalname }, { onProgre
     return readIfc(buffer, originalname);
   }
   if (isRevit(originalname)) throw new Error(`${originalname}: ${REVIT_HELP}`);
+  if (isOffice(originalname)) {
+    onProgress?.(`Reading ${originalname}…`);
+    return officeText(buffer, originalname, readInner, { depth });
+  }
   if (mimetype.startsWith('text/') || TEXT_EXT.includes(ext)) return buffer.toString('utf8');
   throw new Error(`Unsupported file type: ${originalname}`);
+}
+
+// A file found inside an email or a ZIP: pictures are looked at, everything else read as above.
+const IMAGE_BY_EXT = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+async function readInner(f, { depth }) {
+  const type = IMAGE_TYPES.includes(f.mimetype) ? f.mimetype : IMAGE_BY_EXT[f.originalname.split('.').pop().toLowerCase()];
+  if (type) return describeImage({ buffer: f.buffer, mimetype: type });
+  if (isHeic(f.originalname, f.mimetype)) return describeImage({ buffer: await heicToJpeg(f.buffer), mimetype: 'image/jpeg' });
+  return extractText(f, { depth });
 }
 
 

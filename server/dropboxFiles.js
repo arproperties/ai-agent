@@ -45,6 +45,10 @@ export const MIME = {
   mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', m4v: 'video/x-m4v', '3gp': 'video/3gpp',
   txt: 'text/plain', md: 'text/plain', csv: 'text/csv', json: 'application/json', html: 'text/html', xml: 'text/xml',
   dwg: 'application/acad', dxf: 'application/dxf', ifc: 'application/x-step',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
+  xls: 'application/vnd.ms-excel', ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', odp: 'application/vnd.oasis.opendocument.presentation',
+  odt: 'application/vnd.oasis.opendocument.text', rtf: 'application/rtf', eml: 'message/rfc822', msg: 'application/vnd.ms-outlook',
 };
 const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 const VIDEO_EXT = ['mp4', 'mov', 'webm', 'm4v', '3gp'];
