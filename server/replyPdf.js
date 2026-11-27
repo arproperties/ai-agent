@@ -6,6 +6,7 @@ import { db } from './db.js';
 import { canUseAgent, chatAgents } from './access.js';
 import { saveUpload, processDocument } from './files.js';
 import { documentPart, renderPdf, unsupportedScript, pdfName } from './replyDoc.js';
+import { olderVersions, markReplaced } from './shelfVersions.js';
 
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -43,5 +44,13 @@ replyPdfRoutes.post('/:id/pdf/shelf', wrap(async (req, res) => {
   const f = { buffer: bytes, originalname: Buffer.from(name, 'utf8').toString('latin1'), mimetype: 'application/pdf', size: bytes.length };
   const { doc, duplicate } = await saveUpload(req.user.id, agentId, f, m.conversation_id);
   if (!duplicate) await processDocument(doc, f, part.markdown, agentId ? [] : await chatAgents(req.user));
-  res.json({ id: doc.id, name: doc.name, duplicate });
+  // An older copy of the same form, for the "Does this replace…?" question under the button.
+  const replaces = await olderVersions(req.user.id, doc, part.title, m.content);
+  res.json({ id: doc.id, name: doc.name, duplicate, replaces });
+}));
+
+// Their Yes to that question: the older copy is marked OLD, replaced by the one just saved.
+replyPdfRoutes.post('/shelf/:id/replaces', wrap(async (req, res) => {
+  if (!await markReplaced(req.user.id, req.params.id, req.body?.old)) throw bad('That file could not be marked as replaced', 404);
+  res.json({ ok: true });
 }));

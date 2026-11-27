@@ -209,11 +209,16 @@ function KeepOnShelf({ messageId, content, onOpenFile }) {
   };
   if (state?.id) {
     return (
-      <button onClick={() => onOpenFile(state.id)}
-        className="glass mt-3 flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs">
-        <Icon name="check" size={14} className="text-p2" />
-        {state.duplicate ? 'Already on your Shelf · Open' : 'Saved to your Shelf · Open'}
-      </button>
+      <div className="mt-3">
+        <button onClick={() => onOpenFile(state.id)}
+          className="glass flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs">
+          <Icon name="check" size={14} className="text-p2" />
+          {state.duplicate ? 'Already on your Shelf · Open' : 'Saved to your Shelf · Open'}
+        </button>
+        {(state.replaces || []).map((old) => (
+          <ReplacesOld key={old.id} newId={state.id} old={old} />
+        ))}
+      </div>
     );
   }
   return (
@@ -224,6 +229,37 @@ function KeepOnShelf({ messageId, content, onOpenFile }) {
         {state === 'busy' ? 'Saving to your Shelf…' : 'Save to Shelf'}
       </button>
       {state?.error && <span className="text-xs text-bad">{state.error}</span>}
+    </div>
+  );
+}
+
+/**
+ * "Does this replace …?" under a saved reply, for each older copy of the same form on the
+ * Shelf. The Ayla AC checklist was saved again and again, every copy current, and staff were
+ * handed two forms for one job. Yes marks the old copy OLD; No leaves both as they are.
+ */
+function ReplacesOld({ newId, old }) {
+  const [state, setState] = useState(null); // 'busy' | 'done' | 'kept' | { error }
+  if (state === 'kept') return null;
+  const yes = async () => {
+    setState('busy');
+    try { await api.post(`/replies/shelf/${newId}/replaces`, { old: old.id }); setState('done'); } catch (e) { setState({ error: e.message }); }
+  };
+  if (state === 'done') {
+    return <p className="mt-2 text-xs text-mute">Marked "{old.title}" #{old.id} as OLD. This one is now the current copy.</p>;
+  }
+  return (
+    <div className="glass mt-2 rounded-2xl px-3.5 py-2.5 text-xs">
+      <p className="text-txt">Does this replace "{old.title}" #{old.id}?</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button onClick={yes} disabled={state === 'busy'}
+          className="rounded-full bg-p1 px-3 py-1 font-medium text-white disabled:opacity-60">
+          {state === 'busy' ? 'Marking…' : 'Yes, mark old'}
+        </button>
+        <button onClick={() => setState('kept')} disabled={state === 'busy'}
+          className="rounded-full px-3 py-1 text-mute hover:bg-white/10">No, keep both</button>
+        {state?.error && <span className="text-bad">{state.error}</span>}
+      </div>
     </div>
   );
 }
