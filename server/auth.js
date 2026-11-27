@@ -80,6 +80,11 @@ async function otherAccounts(req, res, activeId) {
   return kept;
 }
 
+/** The other accounts signed in on this browser, for copying a chat across (chatCopy.js). */
+export async function accountsSignedInHere(req, res, activeId) {
+  return (await otherAccounts(req, res, activeId)).map((o) => o.user);
+}
+
 // Simple in-memory brute-force guard: 10 failed attempts per 15 minutes, counted both per
 // IP+email and per account. The account count stops someone who keeps changing connection;
 // it only blocks new sign-ins, so people already signed in carry on.

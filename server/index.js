@@ -6,6 +6,7 @@ import { db, tx } from './db.js';
 import { transcribe, ask } from './ai.js';
 import { spoken, prepare, cachedPath, claim, streamTo, timingsFor } from './tts.js';
 import { authRoutes, requireUser, requireMaster } from './auth.js';
+import { chatCopyRoutes } from './chatCopy.js';
 import { agentOut, agentIn, agentLinks, setAgentCase } from './agents.js';
 import { chatAgents, listedAgents, canUseAgent, isMaster, externalFence, masterReach } from './access.js';
 import { deleteMessage, editReply, chat, chatWorking, stopChat } from './chat.js';
@@ -363,6 +364,7 @@ app.patch('/api/conversations/:id', wrap(async (req, res) => {
   if (!r.changes) return notFound(res);
   res.json({ ok: true, title });
 }));
+app.use('/api/conversations', chatCopyRoutes); // "Copy to <other account>" in a chat's menu
 app.delete('/api/conversations/:id', wrap(async (req, res) => {
   await db.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?').run(Number(req.params.id), req.user.id);
   res.json({ ok: true });

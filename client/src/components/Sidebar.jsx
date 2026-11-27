@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, X, Users, Eye, ChevronRight, MoreHorizontal, Pencil, Pin, PinOff } from 'lucide-react';
+import { Search, X, Users, Eye, ChevronRight, MoreHorizontal, Pencil, Pin, PinOff, Copy } from 'lucide-react';
 import { api } from '../lib/api';
 import { groupChats } from '../lib/chatGroups';
 import Icon from './Icon';
@@ -51,6 +51,25 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
   const searchRef = useRef(null);
   const [menuFor, setMenuFor] = useState(null); // chat whose ⋯ menu is open
   const [renaming, setRenaming] = useState(null); // { id, title } while a name is being typed
+  // The person's other accounts signed in on this browser, for "Copy to …" in a chat's menu:
+  // a chat worked out in the private account can be moved to the business one (chatCopy.js).
+  // Asked each time a menu opens, since an account can be signed out elsewhere.
+  const [others, setOthers] = useState([]);
+  const [copyNote, setCopyNote] = useState('');
+  useEffect(() => {
+    if (menuFor == null) return;
+    api.get('/auth/accounts').then((r) => setOthers(r.accounts || [])).catch(() => setOthers([]));
+  }, [menuFor]);
+  const copyTo = async (convId, account) => {
+    setMenuFor(null);
+    try {
+      await api.post(`/conversations/${convId}/copy`, { to: account.id });
+      setCopyNote(`Copied to ${account.name}. Switch to that account to see it under Today.`);
+    } catch (e) {
+      setCopyNote(e.message || 'Could not copy the chat');
+    }
+    setTimeout(() => setCopyNote(''), 5000);
+  };
   const cancelRename = useRef(false);
   const [teamOpen, setTeamOpen] = useState(() => { try { return localStorage.getItem('teamOpen') === '1'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('teamOpen', teamOpen ? '1' : '0'); } catch { /* private window */ } }, [teamOpen]);
@@ -123,7 +142,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
         </button>
         {open && (<>
           <div className="fixed inset-0 z-40" onClick={() => setMenuFor(null)} />
-          <div className="absolute right-1 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg border border-stroke bg-surface py-1 text-sm shadow-xl">
+          <div className="absolute right-1 top-full z-50 mt-1 w-56 overflow-hidden rounded-lg border border-stroke bg-surface py-1 text-sm shadow-xl">
             <button onClick={() => { setMenuFor(null); onPinConv(c.id, !c.pinned_at); }}
               className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-white/10">
               {c.pinned_at ? <><PinOff size={14} /> Unpin</> : <><Pin size={14} /> Pin</>}
@@ -132,6 +151,12 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
               className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-white/10">
               <Pencil size={14} /> Rename
             </button>
+            {others.map((a) => (
+              <button key={a.id} onClick={() => copyTo(c.id, a)}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-white/10">
+                <Copy size={14} className="shrink-0" /> <span className="truncate">Copy to {a.name}</span>
+              </button>
+            ))}
             <button onClick={() => { setMenuFor(null); onDeleteConv(c.id); }}
               className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-bad hover:bg-white/10">
               <Icon name="trash" size={14} /> Delete
@@ -245,6 +270,7 @@ export default function Sidebar({ user, agents, convs, activeConvId, filesOpen, 
         )}
       </div>
 
+      {copyNote && <p role="status" className="mx-3 mb-2 rounded-lg bg-white/10 px-3 py-2 text-xs leading-snug">{copyNote}</p>}
       {/* relative: the settings menu opens against this, so it spans the sidebar. */}
       <div className="relative border-t border-stroke/60 p-2 pb-safe">
         <div className="flex items-center gap-1 rounded-lg px-1.5 py-2">
