@@ -441,9 +441,9 @@ function NoticeSheet({ lease, mode, onClose, onDone }) {
         </div>
       ) : (
         <div className="space-y-3">
-          <p className="text-sm text-mute">Emails legal@ sent to {lease.email}. Pick the notice: it goes on the unit's record with its own date. Nothing is sent again.</p>
+          <p className="text-sm text-mute">Emails our team sent to {lease.email}, found in legal@'s mailbox (from legal@, or from another of our addresses with legal@ copied). Pick the notice: it goes on the unit's record with its own date. Nothing is sent again.</p>
           {!sent ? <div className="grid place-items-center py-8 text-mute"><Loader2 className="animate-spin" /></div> : sent.emails.length === 0 ? (
-            <p className="text-sm">None found in legal@'s mailbox.</p>
+            <p className="text-sm">None found in legal@'s mailbox: no email from our team to this tenant there.</p>
           ) : (
             <ul className="space-y-2">
               {sent.emails.map((e) => (
@@ -451,7 +451,7 @@ function NoticeSheet({ lease, mode, onClose, onDone }) {
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium">{e.subject || '(no subject)'}</p>
-                      <p className="text-xs text-mute">{when(e.at)}</p>
+                      <p className="text-xs text-mute">{when(e.at)}{e.from ? ` · from ${e.from}` : ''}</p>
                       <p className="mt-1 line-clamp-2 text-sm text-mute">{e.preview}</p>
                     </div>
                     <Btn primary busy={busy === e.messageId} disabled={!!busy} onClick={() => record({ messageId: e.messageId }, e.messageId)}>Use this</Btn>

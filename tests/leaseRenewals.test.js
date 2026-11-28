@@ -1793,9 +1793,13 @@ test('legal notice already sent: picked from legal@\'s Sent, or typed in; Bring 
   const where = { lease_id: LEASE.lease_id, end_date: LEASE.end_date };
   const sent = { messageId: '<n1@legal>', from: 'legal@ainalreempro.com', to: [LEASE.email], cc: [], bcc: [], subject: 'Non-renewal of Unit 610', text: 'Dear Mohamed, not renewed.', at: 1784000000, raw: null, attachments: [] };
   const other = { ...sent, messageId: '<x@legal>', to: ['someone@else.com'], subject: 'Other unit' };
-  world.past = [other, sent];
+  // Unit 107's notice went from tenantcare@ with legal@ copied: it is listed too. A stranger's email is not.
+  const viaCare = { ...sent, messageId: '<c1@care>', from: 'tenantcare@ainalreempro.com', cc: ['legal@ainalreempro.com'], subject: 'Notice via Tenant care', at: 1784050000 };
+  const stranger = { ...sent, messageId: '<s1@x>', from: 'agent@else.com', subject: 'Not ours' };
+  world.past = [other, sent, viaCare, stranger];
   const list = await R.legalSent(boss, where);
-  assert.deepEqual(list.emails.map((e) => e.messageId), ['<n1@legal>'], 'only emails to this tenant');
+  assert.deepEqual(list.emails.map((e) => e.messageId), ['<c1@care>', '<n1@legal>'], 'our team\'s emails to this tenant, newest first');
+  await assert.rejects(R.recordNotice(boss, { ...where, messageId: '<s1@x>' }), /no longer in legal/);
 
   const r = await R.recordNotice(boss, { ...where, messageId: '<n1@legal>' });
   assert.equal(r.status, 'notice');

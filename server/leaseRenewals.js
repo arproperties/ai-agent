@@ -1396,15 +1396,23 @@ export async function noticeReply(user, id, body = {}) {
 
 const legalSince = (lease) => Math.floor(Date.parse(`${addDays(lease.end_date, -400)}T00:00:00Z`) / 1000);
 
-/** The emails legal@ sent this tenant, newest first, to pick the notice Legal already sent. Nothing is kept. */
+/**
+ * The emails our team sent this tenant that are in legal@'s mailbox, newest first, to pick the
+ * notice already sent. Not only from legal@: Unit 107's notice went from tenantcare@ with
+ * legal@ copied (2026-11-27). Nothing is kept.
+ */
+const fromUs = (m, acc) => {
+  const from = String(m.from || '').toLowerCase();
+  return from === String(acc.email).toLowerCase() || from.endsWith(`@${String(acc.email).toLowerCase().split('@')[1]}`);
+};
 export async function legalSent(user, { lease_id: leaseId, end_date: endDate } = {}) {
   const lease = await noticeLease(leaseId, endDate);
   const acc = await legalBox();
   const tenant = String(lease.email).trim().toLowerCase();
-  const mails = (await D.past(acc, tenant, legalSince(lease))).filter((m) => String(m.from || '').toLowerCase() === String(acc.email).toLowerCase() && onMail(m, tenant));
+  const mails = (await D.past(acc, tenant, legalSince(lease))).filter((m) => fromUs(m, acc) && onMail(m, tenant));
   return {
     to: lease.email,
-    emails: mails.reverse().slice(0, 20).map((m) => ({ messageId: m.messageId, subject: m.subject, at: m.at, preview: String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 240) })),
+    emails: mails.reverse().slice(0, 20).map((m) => ({ messageId: m.messageId, from: m.from, subject: m.subject, at: m.at, preview: String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 240) })),
   };
 }
 
@@ -1418,9 +1426,9 @@ export async function recordNotice(user, body = {}) {
   if (body.messageId) {
     const acc = await legalBox();
     const tenant = String(lease.email).trim().toLowerCase();
-    const m = (await D.past(acc, tenant, legalSince(lease))).find((x) => x.messageId === body.messageId && onMail(x, tenant));
+    const m = (await D.past(acc, tenant, legalSince(lease))).find((x) => x.messageId === body.messageId && fromUs(x, acc) && onMail(x, tenant));
     if (!m) throw bad('That email is no longer in legal@\'s mailbox.', 404);
-    ev = { subject: String(m.subject || '').slice(0, 300), text: tenantWords(m.text).slice(0, 20000) || String(m.text || '').slice(0, 20000), messageId: m.messageId, raw: m.raw, at: m.at, from: acc.email, attachments: m.attachments || [] };
+    ev = { subject: String(m.subject || '').slice(0, 300), text: tenantWords(m.text).slice(0, 20000) || String(m.text || '').slice(0, 20000), messageId: m.messageId, raw: m.raw, at: m.at, from: String(m.from || acc.email).toLowerCase(), attachments: m.attachments || [] };
   } else {
     const date = String(body.date || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today()) throw bad('Pick the date Legal sent it.');
