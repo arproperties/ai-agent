@@ -58,6 +58,7 @@ import { serverHealthRoutes, startServerHealth } from './serverHealth.js';
 import { backupRoutes, startBackupReminder } from './backups.js';
 import { startCaseBriefs } from './caseBrief.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
+import { companyPdcRoutes, startCompanyPdc } from './companyPdc.js';
 import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
@@ -145,6 +146,7 @@ app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; che
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
 app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
+app.use('/api/from-saifsys/company-pdc', fromSaifsys, companyPdcRoutes); // the saifsys Post Dated Cheques screens (the company's own cheques), by the same door
 app.use('/api/from-tracker', fromTracker, fromTrackerRoutes); // the activity tracker on each employee PC sends its day; own key per PC, see tracker.js
 app.use('/api/connector/business', mailConnectorDoor); // the business mail connector asks which person's mailbox a link opens; this machine only (mailConnector.js)
 app.use('/api/connector', connectorRoutes); // the AOL connector server asks which mailbox a link opens; this machine only (apps.js)
@@ -202,6 +204,7 @@ app.use('/api/cases', caseShareRoutes); // a case folder emailed, or its link tu
 app.use('/api/cases', caseRoutes); // an external person's case folders, got ready from their inbox in chat (external only)
 app.use('/api/case-focus', caseFocusRoutes); // the case a chat is about, its references (module case_focus)
 app.use('/api/recurring-payments', recurringPaymentRoutes); // what should come in each month from a building, pending until paid
+app.use('/api/company-pdc', companyPdcRoutes); // the company's own post-dated cheques, given and received (the master's here; the screens are saifsys's)
 app.use('/api/hr-link', hrLinkRoutes); // which HR employee each account is, by employee code (master only)
 app.use('/api/file-access', fileAccessRoutes); // whose files a person may read besides their own (master only)
 app.use('/api/ai-keys', aiKeyRoutes); // the company's AI keys and anyone's own (master only)
@@ -683,7 +686,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // they only start with LOCAL_SENDING=on: a local copy of the live database holds the live
   // mailboxes and real people's phones, and would answer tenants the live server already answered.
   const sending = process.env.NODE_ENV === 'production' || process.env.LOCAL_SENDING === 'on';
-  if (!sending) console.log('[local] tenant care, renewals, mail routing, reminders, buildings, legal cases, case folders and recurring payments are off (LOCAL_SENDING=on starts them)');
+  if (!sending) console.log('[local] tenant care, renewals, mail routing, reminders, buildings, legal cases, case folders, recurring payments and company cheque alerts are off (LOCAL_SENDING=on starts them)');
   // The buzz when a to-do or a routine falls due. The badge and the first screen are
   // unchanged and keep working on their own if this timer ever stops.
   if (sending) startReminders();
@@ -701,6 +704,7 @@ app.listen(PORT, '0.0.0.0', () => {
   if (sending) {
     billAs({ userId: null, job: 'buildings' }, startBuildings); // buzzes a building's administrator when a staff job needs them
     billAs({ userId: null, job: 'other' }, startRecurringPayments); // creates each recurring payment's line on its day of the month
+    startCompanyPdc(); // the daily email about company cheques due within a week, overdue (once each): real mailboxes, so the same rule
   }
   // meeting recordings that were still waiting to be transcribed when the server stopped
   startMeetings().catch((e) => console.error('[meetings]', e.message));

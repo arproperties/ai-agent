@@ -1624,6 +1624,109 @@ await db.exec(`
   );
 `);
 
+// Company post-dated cheques (server/companyPdc.js): the company's own cheques, the ones it
+// gives and the ones it is given - not a tenant's lease cheques, which are saifsys's. The
+// saifsys screens (Loan Tracker → Post Dated Cheques) only show this.
+//   company_pdcs: one cheque. company_id is saifsys's company; each company has its own list.
+//     status_other is the name typed for the status "other". deleted_at / deleted_by: a cheque
+//     deleted by hand stays as a record of who took it off and when, and keeps no file.
+//   company_pdc_history: every change of status, the first one being "Added".
+//   company_pdc_alert_recipients: who else is emailed, per company, and for which alerts.
+//   company_pdc_alerts: each alert once. ref_key names the step: "2026-12-20:d3" (three days
+//     before that cheque date), ":o1" (the second week overdue), ":c7" (seven days after that
+//     deposit), "h12" (the bounce written as history line 12). It is written as "sending"
+//     before its emails go and given its end after. A failed one is kept and tried again,
+//     on so many different hours (tries counts them, tried_at is when the last was counted), then it
+//     is "gave_up"; any other result is final. sent_to: who got it.
+//   company_pdc_alert_settings: how each company wants its emails (see below).
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS company_pdcs (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL,
+    company_name TEXT,
+    direction TEXT NOT NULL CHECK (direction IN ('issued', 'received')),
+    party_name TEXT NOT NULL,
+    cheque_no TEXT NOT NULL,
+    bank TEXT,
+    cheque_date TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    purpose TEXT,
+    location TEXT,
+    reference TEXT,
+    approved_by TEXT,
+    issued_by TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    status_other TEXT,
+    status_date TEXT,
+    notes TEXT,
+    attachment TEXT,
+    original_name TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at BIGINT,
+    deleted_at BIGINT,
+    deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_company_pdcs_company ON company_pdcs(company_id, status, cheque_date);
+
+  CREATE TABLE IF NOT EXISTS company_pdc_history (
+    id SERIAL PRIMARY KEY,
+    pdc_id INTEGER NOT NULL REFERENCES company_pdcs(id) ON DELETE CASCADE,
+    from_status TEXT,
+    from_other TEXT,
+    to_status TEXT NOT NULL,
+    to_other TEXT,
+    changed_on TEXT NOT NULL,
+    note TEXT,
+    changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW}
+  );
+  CREATE INDEX IF NOT EXISTS idx_company_pdc_history_pdc ON company_pdc_history(pdc_id);
+
+  CREATE TABLE IF NOT EXISTS company_pdc_alert_recipients (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL,
+    email TEXT NOT NULL,
+    on_due BOOLEAN NOT NULL DEFAULT TRUE,
+    on_bounce BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT DEFAULT ${NOW},
+    UNIQUE (company_id, email)
+  );
+
+  CREATE TABLE IF NOT EXISTS company_pdc_alerts (
+    id SERIAL PRIMARY KEY,
+    pdc_id INTEGER NOT NULL REFERENCES company_pdcs(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    ref_key TEXT NOT NULL,
+    sent_to TEXT,
+    result TEXT NOT NULL,
+    error TEXT,
+    tries INTEGER NOT NULL DEFAULT 0,
+    tried_at BIGINT,
+    created_at BIGINT DEFAULT ${NOW},
+    UNIQUE (pdc_id, kind, ref_key)
+  );
+  ALTER TABLE company_pdc_alerts ADD COLUMN IF NOT EXISTS tries INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE company_pdc_alerts ADD COLUMN IF NOT EXISTS tried_at BIGINT;
+
+  -- How a company wants its cheque emails: whether and at what hour (Dubai) the daily one goes,
+  -- how many days before the cheque date, how often once overdue, how long after a deposit that
+  -- has not cleared, and whether a bounce is emailed at once. No row: the defaults in companyPdc.js.
+  CREATE TABLE IF NOT EXISTS company_pdc_alert_settings (
+    company_id INTEGER PRIMARY KEY,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    hour INTEGER NOT NULL DEFAULT 8,
+    due_days INTEGER[] NOT NULL DEFAULT '{7,3,1,0}',
+    overdue_every_days INTEGER NOT NULL DEFAULT 7,
+    deposited_days INTEGER[] NOT NULL DEFAULT '{3,7,14}',
+    bounce_now BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at BIGINT DEFAULT ${NOW}
+  );
+`);
+
 // Tenant notices (server/notices.js): what a watchman saw at a unit, with photos, emailed
 // to that unit's tenant from the Tenant care inbox.
 //   tenant_notices: one row per report. building and unit are saifsys's own spellings,
