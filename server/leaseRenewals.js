@@ -17,7 +17,7 @@ import { quoteOf } from './emailQuote.js';
 import { needsModule, userModules } from './modules.js';
 import { inbox, fileInSent, ownWords, claimTenantMail, checkTenantMail } from './tenantCare.js';
 import { askSaifsys, actSaifsys, saifsysConfigured, saifsysActionsConfigured, dubaiDate } from './saifsys/client.js';
-import { readReply, readDocs, advise, nextAsk, caseSummary, rewriteReply, teamEmail, replyIdeas } from './leaseRenewalAi.js';
+import { readReply, readDocs, advise, nextAsk, caseSummary, rewriteReply, teamEmail, replyIdeas, noticeEmail } from './leaseRenewalAi.js';
 import { caseMailbox } from './caseMail.js';
 import { leaseFile, leaseText } from './leases.js';
 import { cleanAddresses, createDraft, decideDraft, logAction, MAX_RECIPIENTS } from './drafts.js';
@@ -103,7 +103,7 @@ const D = {
   ask: askSaifsys, act: actSaifsys, readReply, readDocs, indexRent, advise, nextAsk, caseSummary, rewriteReply, replyIdeas, checkMail: checkTenantMail,
   send: sendRaw, file: fileInSent, fetch: fetchMessage, push: sendPush, todo: createTodo, actor: async () => (await inbox())?.email,
   mirror: (action, body) => saifsys(action, body),
-  teamEmail, mailbox: caseMailbox, kick: outboxKick,
+  teamEmail, noticeEmail, mailbox: caseMailbox, kick: outboxKick,
   now: () => Date.now(),
 };
 export const useForTests = (over) => Object.assign(D, over);
@@ -492,7 +492,7 @@ export async function resend() {
   if (!acc) return 0;
   const rows = await db.prepare(`SELECT e.id, e.raw, r.lease FROM lease_renewal_events e JOIN lease_renewals r ON r.id = e.renewal_id
     WHERE e.kind = 'out' AND e.status = 'failed' AND e.tries < ?
-      AND r.status NOT IN ('converted', 'not_renewing', 'closed')
+      AND r.status NOT IN ('converted', 'not_renewing', 'closed', 'notice')
       AND (e.tried_at IS NULL OR e.tried_at <= ? - LEAST(180 * power(2, e.tries - 1), 21600))
     ORDER BY e.id LIMIT 20`).all(MAX_TRIES, secs());
   const s = await settings();
@@ -1270,6 +1270,228 @@ export async function release(user, { lease_id: leaseId, end_date: endDate }) {
   return { ok: true };
 }
 
+// ---------- notice of non-renewal, from Legal ----------
+//
+// A held lease the company will not renew: Legal tells the tenant by email, from the legal@
+// mailbox whoever taps Send (the user, 2026-11-28). It becomes the unit's renewal with status
+// 'notice', so it has the same page and timeline as any renewal, and shows under Moving out.
+// Reem never sends anything on it by itself: no offer, no reminders, no retries through
+// Tenant care. Tenant care is copied so a reply-all comes back here; an email the tenant sends
+// to legal@ alone comes in only when a person taps Bring in emails. A notice Legal already
+// sent from their own mailbox can be picked from its Sent folder instead of sending another.
+
+export const LEGAL_ADDRESS = 'legal@ainalreempro.com';
+
+/** The legal@ mailbox, connected in Reem with sending on. */
+async function legalBox() {
+  const acc = await db.prepare(`SELECT * FROM imap_accounts WHERE lower(email) = ? AND can_write AND smtp_host IS NOT NULL ORDER BY user_id LIMIT 1`).get(LEGAL_ADDRESS);
+  if (!acc) throw bad(`${LEGAL_ADDRESS} is not connected in Reem with sending on. Connect it under Email first.`, 409);
+  return acc;
+}
+
+/** Whether a renewal is Legal's notice (or was, before the tenant agreed to leave). */
+async function isNotice(r) {
+  if (r.status === 'notice') return true;
+  return !!(await db.prepare(`SELECT 1 FROM lease_renewal_events WHERE renewal_id = ? AND data->>'legal' = 'true' LIMIT 1`).get(r.id));
+}
+
+const noticeFacts = (lease, hold) => [
+  `Tenant: ${lease.tenant}. Email: ${lease.email}.`,
+  `Unit: ${lease.building}, Unit ${lease.unit}${lease.unit_type ? ` (${lease.unit_type})` : ''}.`,
+  `Current lease: ${longDate(lease.start_date)} to ${longDate(lease.end_date)}, ${aed(lease.annual_rent)} a year.`,
+  `The lease ends on ${longDate(lease.end_date)} and will not be renewed.`,
+  hold?.reason ? `Reason noted by the team: ${hold.reason}` : '',
+].filter(Boolean).join('\n');
+
+/** The lease a new notice is for: in saifsys's list, with an email, and with no renewal started. */
+async function noticeLease(leaseId, endDate) {
+  const lease = (await dueLeases()).find((l) => l.lease_id === Number(leaseId) && l.end_date === endDate);
+  if (!lease) throw bad(`That lease is not in saifsys's list of leases ending within ${DAYS_AHEAD} days.`, 404);
+  if (!String(lease.email || '').includes('@')) throw bad('saifsys has no email for this tenant. Add it in saifsys first.', 409);
+  const had = await db.prepare('SELECT status FROM lease_renewals WHERE lease_id = ? AND end_date = ?').get(lease.lease_id, lease.end_date);
+  if (had) throw bad(had.status === 'notice' ? 'Legal\'s notice is already on this lease.' : 'A renewal is already started for this lease: cancel it first.', 409);
+  return lease;
+}
+
+/** A new renewal row for Legal's notice. */
+async function newNotice(user, lease) {
+  const made = await db.prepare(`INSERT INTO lease_renewals (lease_id, end_date, lease, status, started_by, auto)
+    VALUES (?, ?, ?, 'notice', ?, false) ON CONFLICT (lease_id, end_date) DO NOTHING RETURNING id`)
+    .get(lease.lease_id, lease.end_date, JSON.stringify(lease), user?.id || null);
+  if (!made) throw bad('A renewal is already started for this lease.', 409);
+  return getRenewal(made.id);
+}
+
+/** Legal's draft, notice or reply, for the person to read and change. Nothing is sent. */
+export async function noticeDraft(user, { id, lease_id: leaseId, end_date: endDate, note } = {}) {
+  if (id) {
+    const r = await getRenewal(id);
+    if (!r || !(await isNotice(r))) throw bad('Not found', 404);
+    const first = await db.prepare(`SELECT subject FROM lease_renewal_events WHERE renewal_id = ? AND data->>'legal' = 'true' AND subject IS NOT NULL ORDER BY at, id LIMIT 1`).get(r.id);
+    return D.noticeEmail({ facts: noticeFacts(r.lease, await holdOf(r.lease_id, r.end_date)), thread: await thread(r.id), kind: 'reply', note, subject: first?.subject || null });
+  }
+  const lease = await noticeLease(leaseId, endDate);
+  const hold = await holdOf(lease.lease_id, lease.end_date);
+  return D.noticeEmail({ facts: noticeFacts(lease, hold), thread: '', kind: 'notice', reason: hold?.reason || '', note });
+}
+
+/**
+ * One email from legal@ to the tenant, on the renewal's thread, Tenant care copied. Sent now,
+ * not queued: if the mail server refuses it nothing is kept and the person is told, so a
+ * legal email never sits half-sent or goes later through another mailbox.
+ */
+async function legalMail(r, { subject, text, title, user }) {
+  const acc = await legalBox();
+  const care = await inbox();
+  const ids = (await db.prepare(`SELECT message_id FROM lease_renewal_events WHERE renewal_id = ? AND message_id IS NOT NULL ORDER BY at, id`).all(r.id)).map((t) => t.message_id);
+  const { quote, cc: onIt } = ids.length ? await onThread(r, acc) : { quote: null, cc: [] };
+  const cc = [...new Set([...(care?.email ? [care.email.toLowerCase()] : []), ...onIt])].filter((x) => x !== LEGAL_ADDRESS && x !== String(r.lease.email).toLowerCase());
+  const m = await compose({
+    from: { name: 'Legal Department', address: acc.email }, to: [r.lease.email], cc, subject, text, quote,
+    ...(ids.length ? { inReplyTo: ids[ids.length - 1], references: ids.join(' ') } : {}),
+  });
+  try {
+    await D.send(acc, decrypt(acc.password_enc), m);
+  } catch (e) {
+    throw bad(`The email did not go: ${friendlySmtp(e, acc.smtp_host)}`, 502);
+  }
+  await D.file(acc, m.raw).catch((e) => console.warn('[lease renewals] could not file the legal email in Sent:', e.message));
+  await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, subject, message_id, raw, status, data, user_id, at)
+    VALUES (?, 'out', ?, ?, ?, ?, ?, 'sent', ?, ?, ?)`)
+    .run(r.id, title, text, subject, m.messageId, m.raw, JSON.stringify({ legal: true, from: acc.email, cc }), user?.id || null, secs());
+  await update(r.id, { last_out_at: secs(), waiting: null });
+}
+
+const cleanText = (body) => {
+  const subject = String(body.subject || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const text = String(body.text || '').trim().slice(0, 20000);
+  if (!subject || !text) throw bad('Write the subject and the email first.');
+  return { subject, text };
+};
+
+/** Send Legal's notice: the lease becomes a 'notice' renewal and everyone with Lease renewals is told. */
+export async function sendNotice(user, body = {}) {
+  const { subject, text } = cleanText(body);
+  const lease = await noticeLease(body.lease_id, body.end_date);
+  await legalBox();
+  const r = await newNotice(user, lease);
+  try {
+    await legalMail(r, { subject, text, title: 'Notice of non-renewal sent by Legal', user });
+  } catch (e) {
+    await db.prepare(`DELETE FROM lease_renewals WHERE id = ? AND status = 'notice'`).run(r.id); // nothing went: the lease is as it was
+    throw e;
+  }
+  await tell(r, `Legal sent the notice of non-renewal. The tenant leaves when the lease ends, ${longDate(r.lease.end_date)}.`);
+  return getRenewal(r.id);
+}
+
+/** Legal's reply to the tenant on a notice, from legal@. */
+export async function noticeReply(user, id, body = {}) {
+  const r = await getRenewal(id);
+  if (!r || !(await isNotice(r))) throw bad('Not found', 404);
+  const { subject, text } = cleanText(body);
+  await legalMail(r, { subject, text, title: 'Legal replied', user });
+  return getRenewal(r.id);
+}
+
+const legalSince = (lease) => Math.floor(Date.parse(`${addDays(lease.end_date, -400)}T00:00:00Z`) / 1000);
+
+/** The emails legal@ sent this tenant, newest first, to pick the notice Legal already sent. Nothing is kept. */
+export async function legalSent(user, { lease_id: leaseId, end_date: endDate } = {}) {
+  const lease = await noticeLease(leaseId, endDate);
+  const acc = await legalBox();
+  const tenant = String(lease.email).trim().toLowerCase();
+  const mails = (await D.past(acc, tenant, legalSince(lease))).filter((m) => String(m.from || '').toLowerCase() === String(acc.email).toLowerCase() && onMail(m, tenant));
+  return {
+    to: lease.email,
+    emails: mails.reverse().slice(0, 20).map((m) => ({ messageId: m.messageId, subject: m.subject, at: m.at, preview: String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 240) })),
+  };
+}
+
+/**
+ * The notice Legal already sent, recorded instead of sending another: picked from legal@'s
+ * Sent folder (messageId), or typed in with its date when it cannot be found there.
+ */
+export async function recordNotice(user, body = {}) {
+  const lease = await noticeLease(body.lease_id, body.end_date);
+  let ev;
+  if (body.messageId) {
+    const acc = await legalBox();
+    const tenant = String(lease.email).trim().toLowerCase();
+    const m = (await D.past(acc, tenant, legalSince(lease))).find((x) => x.messageId === body.messageId && onMail(x, tenant));
+    if (!m) throw bad('That email is no longer in legal@\'s mailbox.', 404);
+    ev = { subject: String(m.subject || '').slice(0, 300), text: tenantWords(m.text).slice(0, 20000) || String(m.text || '').slice(0, 20000), messageId: m.messageId, raw: m.raw, at: m.at, from: acc.email, attachments: m.attachments || [] };
+  } else {
+    const date = String(body.date || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today()) throw bad('Pick the date Legal sent it.');
+    const { subject, text } = cleanText(body);
+    ev = { subject, text, messageId: null, raw: null, at: Math.floor(Date.parse(`${date}T08:00:00Z`) / 1000), from: LEGAL_ADDRESS, attachments: [], manual: true };
+  }
+  const r = await newNotice(user, lease);
+  const { id: eventId } = await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, subject, message_id, raw, status, data, user_id, at)
+    VALUES (?, 'out', ?, ?, ?, ?, ?, 'sent', ?, ?, ?) RETURNING id`)
+    .run(r.id, 'Notice of non-renewal sent by Legal', ev.text, ev.subject, ev.messageId, ev.raw,
+      JSON.stringify({ legal: true, past: true, from: ev.from, ...(ev.manual ? { manual: true } : {}) }), user?.id || null, ev.at);
+  for (const a of ev.attachments) {
+    const mime = String(a.contentType || '').toLowerCase();
+    if (!FILE_TYPES[mime] || !a.content?.length || a.content.length > MAX_FILE) continue;
+    await keep(r.id, eventId, { name: a.filename || `file.${FILE_TYPES[mime]}`, mime, buffer: a.content });
+  }
+  await update(r.id, { last_out_at: ev.at });
+  await step(r, `Legal's notice recorded: it was sent from ${ev.from}${ev.manual ? ' (typed in by hand)' : ''}`, { user });
+  await tell(r, `Legal's notice of non-renewal is recorded. The tenant leaves when the lease ends, ${longDate(r.lease.end_date)}.`);
+  return getRenewal(r.id);
+}
+
+/**
+ * "Bring in emails": the emails with the tenant in legal@ and the Tenant care inbox, onto
+ * the notice's timeline. Only when a person taps it, never by itself (the user, 2026-11-28).
+ * Safe to tap again: an email already there is skipped. Nothing is removed and nothing is
+ * read by the AI; a newest email from the tenant waits for a person.
+ */
+export async function bringInNotice(user, id) {
+  const r = await getRenewal(id);
+  if (!r || !(await isNotice(r))) throw bad('Not found', 404);
+  const tenant = String(r.lease.email || '').trim().toLowerCase();
+  const first = await db.prepare(`SELECT min(at) AS at FROM lease_renewal_events WHERE renewal_id = ? AND kind IN ('in', 'out')`).get(r.id);
+  const since = Math.min(Number(first?.at) || secs(), secs()) - 60 * 86400;
+  const boxes = [await legalBox(), await inbox()].filter(Boolean);
+  const ours = boxes.map((b) => String(b.email).toLowerCase());
+  const domain = ours[0].split('@')[1];
+  const have = new Set((await db.prepare('SELECT message_id FROM lease_renewal_events WHERE renewal_id = ? AND message_id IS NOT NULL').all(r.id)).map((x) => x.message_id));
+  const twice = new Set();
+  const added = [];
+  for (const acc of boxes) {
+    for (const m of await D.past(acc, tenant, since)) {
+      const from = String(m.from || '').toLowerCase();
+      const fromTenant = from === tenant;
+      if (!onMail(m, tenant) || (!fromTenant && !(ours.includes(from) || from.endsWith(`@${domain}`)))) continue;
+      const key = `${from}|${m.subject || ''}|${Math.floor((m.at || 0) / 60)}`;
+      if ((m.messageId && have.has(m.messageId)) || twice.has(key)) continue;
+      twice.add(key);
+      const subject = String(m.subject || '').slice(0, 300);
+      const { id: eventId } = await db.prepare(`INSERT INTO lease_renewal_events (renewal_id, kind, title, body, subject, message_id, raw, status, data, at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+        .run(r.id, fromTenant ? 'in' : 'out', `${fromTenant ? 'Tenant emailed' : `Emailed the tenant from ${from}`}${subject ? `: ${subject}` : ''}`.slice(0, 300),
+          tenantWords(m.text).slice(0, 20000), subject, m.messageId, m.raw, fromTenant ? 'read' : 'sent',
+          JSON.stringify({ past: true, legal: from === LEGAL_ADDRESS, from, name: m.name || null }), m.at || secs());
+      for (const a of m.attachments || []) {
+        const mime = String(a.contentType || '').toLowerCase();
+        if (!FILE_TYPES[mime] || !a.content?.length || a.content.length > MAX_FILE) continue;
+        await keep(r.id, eventId, { name: a.filename || `file.${FILE_TYPES[mime]}`, mime, buffer: a.content });
+      }
+      if (m.messageId) have.add(m.messageId);
+      added.push(eventId);
+    }
+  }
+  if (added.length) {
+    const last = await db.prepare(`SELECT id, kind FROM lease_renewal_events WHERE renewal_id = ? AND kind IN ('in', 'out') ORDER BY at DESC, id DESC LIMIT 1`).get(r.id);
+    if (last?.kind === 'in' && added.includes(last.id)) await update(r.id, { waiting: 'reply', last_in_at: secs() });
+    else if (last?.kind === 'out' && r.waiting === 'reply') await update(r.id, { waiting: null });
+  }
+  return { n: added.length, renewal: await getRenewal(r.id) };
+}
+
 export async function mark(user, id, what) {
   const r = await getRenewal(id);
   if (!r) throw bad('Renewal not found', 404);
@@ -1314,7 +1536,7 @@ export async function mark(user, id, what) {
   }
   if (what === 'dispute_on') {
     if (r.dispute) return r;
-    if (!OPEN.includes(r.status)) throw bad('This renewal is not open.', 409);
+    if (!OPEN.includes(r.status) && r.status !== 'notice') throw bad('This renewal is not open.', 409);
     await step(r, 'Marked as a dispute by staff', { user });
     await update(r.id, { dispute: `Marked as a dispute by ${user?.name || 'staff'}.` });
     if (r.auto) await stopAuto(r, 'staff marked it as a dispute, so Reem will not email the tenant by itself');
@@ -1326,6 +1548,13 @@ export async function mark(user, id, what) {
     if (!ACTIONS.not_renewing.from.includes(r.status)) throw bad('This renewal is already finished.', 409);
     await saifsys('status', { workflow_id: r.workflow_id, status: 'rejected', note: `The tenant is not renewing: they leave when the lease ends, ${longDate(r.lease.end_date)}` });
     await step(r, `Not renewing: leaves when the lease ends, ${longDate(r.lease.end_date)} (no email sent, the tenant already knew)`, { user });
+    return update(r.id, { status: 'not_renewing', waiting: null });
+  }
+  // The tenant agreed to leave after Legal's notice: Moving out, as any tenant not renewing.
+  // No saifsys renewal was ever started for it, so saifsys is not told.
+  if (what === 'notice_agrees') {
+    if (r.status !== 'notice') throw bad('Only a lease with a legal notice can be marked like this.', 409);
+    await step(r, `Tenant agreed to leave when the lease ends, ${longDate(r.lease.end_date)}`, { user });
     return update(r.id, { status: 'not_renewing', waiting: null });
   }
   if (what === 'close') {
@@ -1504,6 +1733,13 @@ async function handle(r, e) {
     return tell(r, 'The tenant emailed about this renewal. It is handled outside Reem: answer from your mailbox.');
   }
   await update(r.id, { last_in_at: Number(e.at) || secs() });
+  // A reply to Legal's notice of non-renewal: there is no offer to read it against, so it is
+  // kept, waits for a person and they are told. Reem never answers it.
+  if (r.status === 'notice') {
+    await set('Tenant replied to the notice', { note: 'A reply to the legal notice: read it and answer from the renewal page.' });
+    await update(r.id, { waiting: 'reply' });
+    return tell(r, 'The tenant replied to the legal notice. Open it to answer.');
+  }
 
   // Papers for an agreed renewal: read and checked against saifsys's cheque schedule.
   if (['agreed', 'papers_ok'].includes(r.status) && files.length) {
@@ -2132,7 +2368,7 @@ leaseRenewalRoutes.get('/', wrap(async (req, res) => {
   const leases = saifsysConfigured() ? await dueLeases() : [];
   // Not renewing stays for good: after the end date it shows as Closed (the tenant left as
   // agreed), never under Expired with the leases that ran out with nothing done.
-  const rows = (await db.prepare(`SELECT * FROM lease_renewals WHERE status IN ('draft', 'scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'not_renewing')
+  const rows = (await db.prepare(`SELECT * FROM lease_renewals WHERE status IN ('draft', 'scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'not_renewing', 'notice')
     OR updated_at > ${NOW} - 30 * 86400`).all()).map(ROW);
   const byLease = new Map(rows.map((r) => [`${r.lease_id}:${r.end_date}`, r]));
   const holds = new Map((await db.prepare(`SELECT h.lease_id, h.end_date, h.reason, h.created_at AS at, u.name AS by
@@ -2189,7 +2425,7 @@ leaseRenewalRoutes.get('/:id', wrap(async (req, res) => {
     e.error = d?.status === 'failed' ? d.error || 'It could not be sent.' : null;
   }
   res.json({
-    ...card(r.lease, r, await holdOf(r.lease_id, r.end_date)), advisors: (await advisors(await settings())).length, paused: !!(await settings()).paused,
+    ...card(r.lease, r, await holdOf(r.lease_id, r.end_date)), legal: await isNotice(r), legalFrom: LEGAL_ADDRESS, advisors: (await advisors(await settings())).length, paused: !!(await settings()).paused,
     // Who "Ask advisors" offers: the picked advisors (ticked), then the person's own agents.
     askable: (await askable(req.user, await settings())).map(({ id, name, icon, color, picked }) => ({ id, name, icon, color, picked })),
     events: events.map((e) => ({ ...e, at: Number(e.at), files: files.filter((f) => f.event_id === e.id) })),
@@ -2205,6 +2441,13 @@ leaseRenewalRoutes.get('/:id/files/:file', wrap(async (req, res) => {
 
 // On hold: staff stop a lease's renewal from starting, with the reason; Release takes it off.
 leaseRenewalRoutes.post('/hold', wrap(async (req, res) => { res.json(await hold(req.user, req.body || {})); }));
+// Legal's notice of non-renewal: drafted by AI, sent from legal@, or one Legal already sent recorded.
+leaseRenewalRoutes.post('/notice/draft', wrap(async (req, res) => { res.json(await noticeDraft(req.user, req.body || {})); }));
+leaseRenewalRoutes.get('/notice/sent', wrap(async (req, res) => { res.json(await legalSent(req.user, { lease_id: req.query.lease_id, end_date: req.query.end_date })); }));
+leaseRenewalRoutes.post('/notice/record', wrap(async (req, res) => { res.json(out(await recordNotice(req.user, req.body || {}))); }));
+leaseRenewalRoutes.post('/notice', wrap(async (req, res) => { res.json(out(await sendNotice(req.user, req.body || {}))); }));
+leaseRenewalRoutes.post('/:id/notice/reply', wrap(async (req, res) => { res.json(out(await noticeReply(req.user, req.params.id, req.body || {}))); }));
+leaseRenewalRoutes.post('/:id/notice/bring-in', wrap(async (req, res) => { const { n, renewal } = await bringInNotice(req.user, req.params.id); res.json({ n, renewal: out(renewal) }); }));
 leaseRenewalRoutes.put('/hold', wrap(async (req, res) => { res.json(await editHold(req.user, req.body || {})); }));
 leaseRenewalRoutes.post('/hold/release', wrap(async (req, res) => { res.json(await release(req.user, req.body || {})); }));
 leaseRenewalRoutes.get('/fees/:leaseId', wrap(async (req, res) => { res.json(await startFees(req.params.leaseId)); }));

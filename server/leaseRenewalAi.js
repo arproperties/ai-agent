@@ -291,6 +291,36 @@ export async function teamEmail({ facts, thread, reason, note, to, sender }) {
   return { subject, body };
 }
 
+const NOTICE = `You write an email from the legal team of a Dubai landlord to a tenant whose lease will NOT be renewed.
+Answer by filling in the answer tool: {"subject": string, "body": string}
+- kind "notice": the first email. Say clearly and politely that the landlord does not intend to renew the tenancy when it ends,
+  give the end date and the reason given, ask the tenant to confirm by reply that they will hand the unit back on that date,
+  and say the team will arrange the move-out inspection and the return of the keys.
+- kind "reply": answer the tenant's latest email in the thread, in the same calm, firm tone, keeping to what the legal team wants said.
+- subject: for a notice, "Notice of non-renewal: <building>, Unit <unit>"; for a reply, "Re: " and the thread's subject if given.
+- body: "Dear <tenant name>," then short paragraphs, then "Kind regards," and "Legal Department" on its own line.
+- Use ONLY the facts given. Never invent a date, figure, law article or reason. Never threaten, never promise anything not in the facts.
+- Never say the tenant must leave by law, and never cite a law, unless the legal team's own words say so.
+- Plain professional English. No emojis, no markdown.
+- Never mention Reem, AI or drafts.`;
+
+/** The legal team's notice that the lease is not renewed, or its reply to the tenant: for a person to read and change. */
+export async function noticeEmail({ facts, thread, kind, reason, note, subject }) {
+  const out = await askJson(NOTICE, [{ type: 'text', text: [
+    `Kind: ${kind === 'reply' ? 'reply' : 'notice'}`,
+    `Facts of the lease:\n${facts}`,
+    reason ? `Why the lease is not renewed (the team's words): ${reason}` : '',
+    `The emails with the tenant, oldest first:\n${thread || '(none yet)'}`,
+    subject ? `The thread's subject: ${subject}` : '',
+    note ? `What the legal team wrote in the email box: either a few words of what they want said, or an earlier draft with their own changes. ` +
+      `Write the email from it, keeping every change, name, date and wording they put in:\n"""\n${String(note).slice(0, 8000)}\n"""` : '',
+  ].filter(Boolean).join('\n\n') }], S({ subject: str, body: str }), 2000);
+  const subj = String(out.subject || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const body = String(out.body || '').trim().slice(0, 8000);
+  if (!subj || !body) throw new Error('Reem could not write that email. Try again.');
+  return { subject: subj, body };
+}
+
 /** The person's draft reply, written again by Reem as the building management team. */
 export async function rewriteReply({ facts, thread, draft, ask }) {
   const out = await askJson(REWRITE, [{ type: 'text', text: [

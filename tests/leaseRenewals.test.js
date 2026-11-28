@@ -1716,3 +1716,104 @@ test('Take over: a last email from the tenant nobody answered waits for a person
   const own = await start(boss2);
   await assert.rejects(R.bringInPast(boss2, own.id), /Only a renewal taken over/);
 });
+
+// ---------- Legal's notice of non-renewal ----------
+
+async function legalMailbox() {
+  const legal = await makeUser('Mohammed Legal');
+  await db.prepare(`INSERT INTO imap_accounts (user_id, email, host, port, username, password_enc, smtp_host, can_write)
+    VALUES (?, 'legal@ainalreempro.com', 'imap.titan.email', 993, 'legal@ainalreempro.com', ?, 'smtp.titan.email', true)`).run(legal, encrypt('pw'));
+  return legal;
+}
+const fromLine = (m) => /^From: .*$/m.exec(m.raw.toString())?.[0] || '';
+const noticeAi = () => R.useForTests({ noticeEmail: async ({ kind, reason }) => ({ subject: kind === 'reply' ? 'Re: Notice' : 'Notice of non-renewal', body: `Dear tenant, ${reason || 'reply'}` }) });
+
+test('legal notice: drafted with the hold reason, sent from legal@ with Tenant care copied; nothing else of Reem\'s touches it', async () => {
+  const boss = await setup();
+  stub();
+  noticeAi();
+  const where = { lease_id: LEASE.lease_id, end_date: LEASE.end_date };
+  await assert.rejects(R.sendNotice(boss, { ...where, subject: 'x', text: 'y' }), /not connected in Reem with sending on/);
+  await legalMailbox();
+  await R.hold(boss, { ...where, reason: 'Owner is selling the unit' });
+  const d = await R.noticeDraft(boss, where);
+  assert.match(d.body, /Owner is selling the unit/);
+
+  let r = await R.sendNotice(boss, { ...where, subject: d.subject, text: d.body });
+  assert.equal(r.status, 'notice');
+  assert.equal(world.sent.length, 1);
+  assert.match(fromLine(world.sent[0]), /legal@ainalreempro\.com/);
+  assert.deepEqual(world.sent[0].envelope.to.sort(), ['care@company.com', 'tenant@mail.com']);
+  assert.ok(!world.acts.length, 'nothing started in saifsys');
+  assert.match(world.pushes.at(-1), /Legal sent the notice/);
+  await assert.rejects(R.sendNotice(boss, { ...where, subject: 'x', text: 'y' }), /already on this lease/);
+
+  // Reem's own rounds leave it alone: no offer, no reminder, no nudge.
+  world.now = Date.parse('2026-08-30T06:00:00Z');
+  await R.sendDue(); await R.chase(); await R.disputeChase(); await R.resend();
+  R.resetNudge();
+  assert.equal(await R.nudge(), 0);
+  assert.equal(world.sent.length, 1);
+
+  // A reply-all to Tenant care lands on it, waits for a person, and is not read as a renewal answer.
+  const notice = (await db.prepare(`SELECT message_id FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'out'`).get(r.id)).message_id;
+  world.replies = [{ intent: 'accept', summary: 'SHOULD NOT BE READ', dispute: false }];
+  assert.equal(await arrives({ inReplyTo: notice, text: 'I need more time' }), true);
+  await R.readInbound();
+  r = await R.getRenewal(r.id);
+  assert.equal(r.waiting, 'reply');
+  assert.equal(world.replies.length, 1, 'the AI renewal reader was not used');
+  assert.equal(world.sent.length, 1, 'Reem did not answer it');
+
+  // Legal's reply goes from legal@ on the same thread; the tenant agreeing moves it to Moving out.
+  await R.noticeReply(boss, r.id, { subject: 'Re: Notice of non-renewal', text: 'We can discuss the date.' });
+  assert.match(fromLine(world.sent[1]), /legal@ainalreempro\.com/);
+  assert.match(world.sent[1].raw.toString(), new RegExp(`In-Reply-To: ${notice.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.equal((await R.getRenewal(r.id)).waiting, null);
+  r = await R.mark(boss, r.id, 'notice_agrees');
+  assert.equal(r.status, 'not_renewing');
+  await R.noticeReply(boss, r.id, { subject: 'Re: x', text: 'Thank you.' }); // still answerable from legal@
+  assert.equal(world.sent.length, 3);
+});
+
+test('legal notice: a send the mail server refuses keeps nothing, so it can be tried again', async () => {
+  const boss = await setup();
+  stub();
+  await legalMailbox();
+  R.useForTests({ send: async () => { throw new Error('mailbox busy'); } });
+  const where = { lease_id: LEASE.lease_id, end_date: LEASE.end_date };
+  await assert.rejects(R.sendNotice(boss, { ...where, subject: 'Notice', text: 'Dear tenant' }), /did not go/);
+  assert.equal((await db.prepare('SELECT count(*)::int AS n FROM lease_renewals').get()).n, 0);
+});
+
+test('legal notice already sent: picked from legal@\'s Sent, or typed in; Bring in emails adds the rest only when tapped', async () => {
+  const boss = await setup();
+  stub();
+  await legalMailbox();
+  const where = { lease_id: LEASE.lease_id, end_date: LEASE.end_date };
+  const sent = { messageId: '<n1@legal>', from: 'legal@ainalreempro.com', to: [LEASE.email], cc: [], bcc: [], subject: 'Non-renewal of Unit 610', text: 'Dear Mohamed, not renewed.', at: 1784000000, raw: null, attachments: [] };
+  const other = { ...sent, messageId: '<x@legal>', to: ['someone@else.com'], subject: 'Other unit' };
+  world.past = [other, sent];
+  const list = await R.legalSent(boss, where);
+  assert.deepEqual(list.emails.map((e) => e.messageId), ['<n1@legal>'], 'only emails to this tenant');
+
+  const r = await R.recordNotice(boss, { ...where, messageId: '<n1@legal>' });
+  assert.equal(r.status, 'notice');
+  assert.equal(world.sent.length, 0, 'nothing sent again');
+  const ev = await db.prepare(`SELECT kind, subject, message_id, at FROM lease_renewal_events WHERE renewal_id = ? AND kind = 'out'`).get(r.id);
+  assert.deepEqual([ev.subject, ev.message_id, Number(ev.at)], ['Non-renewal of Unit 610', '<n1@legal>', 1784000000]);
+
+  // The tenant's answer to legal@ alone: only with the button, and once.
+  world.past = [sent, { ...sent, messageId: '<t1@mail>', from: LEASE.email, to: ['legal@ainalreempro.com'], subject: 'Re: Non-renewal', text: 'Ok I will leave', at: 1784100000 }];
+  assert.equal((await R.bringInNotice(boss, r.id)).n, 1);
+  assert.equal((await R.getRenewal(r.id)).waiting, 'reply');
+  assert.equal((await R.bringInNotice(boss, r.id)).n, 0, 'tapped again: nothing twice');
+
+  // Typed in by hand when it is not in the mailbox.
+  await reset();
+  const boss2 = await setup();
+  stub();
+  await assert.rejects(R.recordNotice(boss2, { ...where, date: '2099-01-01', subject: 'x', text: 'y' }), /Pick the date/);
+  const r2 = await R.recordNotice(boss2, { ...where, date: '2026-07-01', subject: 'Notice', text: 'Dear tenant' });
+  assert.equal(r2.status, 'notice');
+});
