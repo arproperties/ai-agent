@@ -1106,6 +1106,48 @@ test('scheduled: a person can send it now or cancel it', async () => {
   assert.equal(r.status, 'offer_sent');
 });
 
+test('on hold: no start, no scheduled offer, no nudge, with the reason shown; released, it goes on', async () => {
+  const boss = await setup();
+  stub();
+  await assert.rejects(R.hold(boss, { lease_id: LEASE.lease_id, end_date: LEASE.end_date, reason: '  ' }), /Say why/);
+  const h = await R.hold(boss, { lease_id: LEASE.lease_id, end_date: LEASE.end_date, reason: 'Owner is selling the unit' });
+  assert.deepEqual([h.reason, h.by], ['Owner is selling the unit', 'Boss']);
+  await assert.rejects(R.hold(boss, { lease_id: LEASE.lease_id, end_date: LEASE.end_date, reason: 'again' }), /already on hold/);
+  await assert.rejects(autoStart(boss), /on hold: Owner is selling the unit \(Boss\)/);
+  R.resetNudge();
+  assert.equal(await R.nudge(), 0, 'a held lease is not nudged');
+  assert.equal(world.sent.length, 0);
+
+  await R.release(boss, { lease_id: LEASE.lease_id, end_date: LEASE.end_date });
+  await assert.rejects(R.release(boss, { lease_id: LEASE.lease_id, end_date: LEASE.end_date }), /not on hold/);
+  assert.equal((await autoStart(boss)).status, 'offer_sent', 'released: it starts as normal');
+  const kept = await db.prepare('SELECT reason, released_at FROM lease_renewal_holds').all();
+  assert.equal(kept.length, 1, 'the released hold and its reason are kept');
+  assert.ok(kept[0].released_at);
+});
+
+test('on hold: a scheduled offer waits on its day and goes once released; the timeline keeps the reason', async () => {
+  const boss = await setup();
+  const later = { ...LEASE, end_date: '2026-12-31' };
+  stub({ leases: [later] });
+  const r = await autoStart(boss);
+  assert.equal(r.status, 'scheduled');
+  await R.hold(boss, { lease_id: later.lease_id, end_date: later.end_date, reason: 'Legal case open' });
+  world.now = Date.parse('2026-09-02T06:00:00Z');
+  await R.sendDue();
+  assert.equal(world.sent.length, 0, 'held: nothing sent');
+  assert.equal((await R.getRenewal(r.id)).waiting, null, 'and no error raised');
+  await assert.rejects(R.mark(boss, r.id, 'send_now'), /on hold/);
+  await R.release(boss, { lease_id: later.lease_id, end_date: later.end_date });
+  await R.sendDue();
+  assert.equal((await R.getRenewal(r.id)).status, 'offer_sent');
+  const steps = await timeline(r.id);
+  assert.ok(steps.includes('step: Put on hold: Legal case open'));
+  assert.ok(steps.includes('step: Hold released (it was: Legal case open)'));
+  // Once the offer has gone, a hold is refused: Take over is the way to stop Reem then.
+  await assert.rejects(R.hold(boss, { lease_id: later.lease_id, end_date: later.end_date, reason: 'late' }), /already gone/);
+});
+
 test('the RERA check: leases 120 days from the end that nobody started are told once, in one push', async () => {
   const boss = await setup();
   stub({ leases: [LEASE, { ...LEASE, lease_id: 295, unit: '611' }, { ...LEASE, lease_id: 296, end_date: '2026-12-31' }] });
