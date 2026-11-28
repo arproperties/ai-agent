@@ -1245,6 +1245,21 @@ export async function hold(user, { lease_id: leaseId, end_date: endDate, reason 
   return holdOf(lease.lease_id, lease.end_date);
 }
 
+/**
+ * The reason changed while the lease is still on hold. Once released the reason is the record
+ * and is never changed (the user, 2026-11-28): only a hold still on can be edited.
+ */
+export async function editHold(user, { lease_id: leaseId, end_date: endDate, reason }) {
+  const why = String(reason || '').trim().slice(0, 500);
+  if (!why) throw bad('Say why it is on hold.');
+  const h = await db.prepare(`UPDATE lease_renewal_holds SET reason = ? WHERE lease_id = ? AND end_date = ? AND released_at IS NULL RETURNING id`)
+    .get(why, Number(leaseId) || 0, String(endDate || ''));
+  if (!h) throw bad('This lease is no longer on hold, so its reason cannot be changed.', 409);
+  const r = ROW(await db.prepare('SELECT * FROM lease_renewals WHERE lease_id = ? AND end_date = ?').get(Number(leaseId), String(endDate)));
+  if (r) await step(r, `Hold reason changed: ${why}`, { user });
+  return holdOf(leaseId, endDate);
+}
+
 /** Take a lease off hold: it can be started again. The hold and its reason are kept. */
 export async function release(user, { lease_id: leaseId, end_date: endDate }) {
   const h = await db.prepare(`UPDATE lease_renewal_holds SET released_at = ?, released_by = ? WHERE lease_id = ? AND end_date = ? AND released_at IS NULL RETURNING reason`)
@@ -2190,6 +2205,7 @@ leaseRenewalRoutes.get('/:id/files/:file', wrap(async (req, res) => {
 
 // On hold: staff stop a lease's renewal from starting, with the reason; Release takes it off.
 leaseRenewalRoutes.post('/hold', wrap(async (req, res) => { res.json(await hold(req.user, req.body || {})); }));
+leaseRenewalRoutes.put('/hold', wrap(async (req, res) => { res.json(await editHold(req.user, req.body || {})); }));
 leaseRenewalRoutes.post('/hold/release', wrap(async (req, res) => { res.json(await release(req.user, req.body || {})); }));
 leaseRenewalRoutes.get('/fees/:leaseId', wrap(async (req, res) => { res.json(await startFees(req.params.leaseId)); }));
 leaseRenewalRoutes.post('/draft', wrap(async (req, res) => { res.json(await draft(req.user, req.body || {})); }));
