@@ -601,6 +601,8 @@ async function prepare({ id, lease_id: leaseId, action, rent, cheques, pct, rera
     if (lease.saifsys_renewal) throw bad(`The staff already have a renewal for this lease in saifsys (${lease.saifsys_renewal}).`, 409);
     if (lease.saifsys_rejected) throw bad('The staff rejected this renewal in saifsys. Open it and tap Take over to carry it on here.', 409);
     if (!String(lease.email || '').includes('@')) throw bad('saifsys has no email for this tenant. Add it in saifsys first.', 409);
+    const h = await holdOf(lease.lease_id, lease.end_date);
+    if (h) throw heldError(h);
     // A saved draft of the offer is no start: it is finished from here.
     if (await db.prepare(`SELECT 1 FROM lease_renewals WHERE lease_id = ? AND end_date = ? AND status <> 'draft'`).get(lease.lease_id, lease.end_date)) throw bad('This renewal has already started.', 409);
     r = { id: null, lease, status: null };
@@ -1013,6 +1015,8 @@ async function sendPlanned(r, user = null) {
   const lease = (await dueLeases()).find((l) => l.lease_id === r.lease_id && l.end_date === r.end_date);
   if (!lease) throw bad('saifsys no longer lists this lease as ending, so nothing was sent.', 409);
   if (lease.saifsys_renewal) throw bad(`The staff started a renewal for this lease in saifsys (${lease.saifsys_renewal}), so nothing was sent.`, 409);
+  const h = await holdOf(r.lease_id, r.end_date);
+  if (h) throw heldError(h);
   // The reply-by date in the words moves to two weeks from the day it goes.
   const text = String(r.plan?.text || '').split(r.plan?.by || '\u0000').join(replyBy());
   return sendOffer(r, { text, fees: r.plan?.fees, user });
@@ -1207,6 +1211,50 @@ export async function reread(id, eventId) {
 }
 
 /** Steps without an email: the papers are fine, the tenant's email needs no answer, or the person takes it from here. */
+// ---------- on hold ----------
+//
+// Staff stop a lease's renewal from starting and say why (the user, 2026-11-28: "staff said
+// don't send renewals for this unit but nobody knew the reason"). While held nothing goes to
+// the tenant: Start is refused, a scheduled offer is not sent, and the RERA nudge leaves it
+// out. Only before the offer has gone: once the tenant has it, Take over is the way to stop Reem.
+
+/** The hold on a lease and end date now, with who put it on, or null. */
+export async function holdOf(leaseId, endDate) {
+  return (await db.prepare(`SELECT h.id, h.reason, h.created_at AS at, u.name AS by FROM lease_renewal_holds h LEFT JOIN users u ON u.id = h.user_id
+    WHERE h.lease_id = ? AND h.end_date = ? AND h.released_at IS NULL`).get(Number(leaseId) || 0, String(endDate || ''))) || null;
+}
+
+async function heldKeys() {
+  return new Set((await db.prepare('SELECT lease_id, end_date FROM lease_renewal_holds WHERE released_at IS NULL').all()).map((h) => `${h.lease_id}:${h.end_date}`));
+}
+
+const heldError = (h) => bad(`This lease is on hold: ${h.reason}${h.by ? ` (${h.by})` : ''}. Release the hold first.`, 409);
+
+/** Put a lease on hold. Its renewal, if there is one, gets the reason on its timeline. */
+export async function hold(user, { lease_id: leaseId, end_date: endDate, reason }) {
+  const why = String(reason || '').trim().slice(0, 500);
+  if (!why) throw bad('Say why it is on hold.');
+  const lease = (await dueLeases()).find((l) => l.lease_id === Number(leaseId) && l.end_date === endDate);
+  if (!lease) throw bad(`That lease is not in saifsys's list of leases ending within ${DAYS_AHEAD} days.`, 404);
+  const r = ROW(await db.prepare('SELECT * FROM lease_renewals WHERE lease_id = ? AND end_date = ?').get(lease.lease_id, lease.end_date));
+  if (r && !['draft', 'scheduled'].includes(r.status)) throw bad('The offer has already gone to the tenant, so it cannot be put on hold. Use Take over to stop Reem on it.', 409);
+  const made = await db.prepare(`INSERT INTO lease_renewal_holds (lease_id, end_date, reason, user_id, created_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (lease_id, end_date) WHERE released_at IS NULL DO NOTHING RETURNING id`).get(lease.lease_id, lease.end_date, why, user?.id || null, secs());
+  if (!made) throw bad('This lease is already on hold.', 409);
+  if (r) await step(r, `Put on hold: ${why}`, { user });
+  return holdOf(lease.lease_id, lease.end_date);
+}
+
+/** Take a lease off hold: it can be started again. The hold and its reason are kept. */
+export async function release(user, { lease_id: leaseId, end_date: endDate }) {
+  const h = await db.prepare(`UPDATE lease_renewal_holds SET released_at = ?, released_by = ? WHERE lease_id = ? AND end_date = ? AND released_at IS NULL RETURNING reason`)
+    .get(secs(), user?.id || null, Number(leaseId) || 0, String(endDate || ''));
+  if (!h) throw bad('This lease is not on hold.', 409);
+  const r = ROW(await db.prepare('SELECT * FROM lease_renewals WHERE lease_id = ? AND end_date = ?').get(Number(leaseId), String(endDate)));
+  if (r) await step(r, `Hold released (it was: ${h.reason})`, { user });
+  return { ok: true };
+}
+
 export async function mark(user, id, what) {
   const r = await getRenewal(id);
   if (!r) throw bad('Renewal not found', 404);
@@ -1790,7 +1838,9 @@ export async function disputeChase() {
 /** Scheduled offers whose day has come, sent by Reem. One that fails stops, for staff to Send now. */
 export async function sendDue() {
   if ((await settings()).paused) return;
-  const rows = await db.prepare(`SELECT id FROM lease_renewals WHERE status = 'scheduled' AND auto AND end_date <= ? ORDER BY end_date, id`)
+  // A lease on hold waits quietly: no error, no push. Released, it goes on the next round.
+  const rows = await db.prepare(`SELECT id FROM lease_renewals r WHERE status = 'scheduled' AND auto AND end_date <= ?
+    AND NOT EXISTS (SELECT 1 FROM lease_renewal_holds h WHERE h.lease_id = r.lease_id AND h.end_date = r.end_date AND h.released_at IS NULL) ORDER BY end_date, id`)
     .all(addDays(today(), SEND_AT));
   for (const { id } of rows) {
     const r = await getRenewal(id);
@@ -1815,8 +1865,9 @@ export async function nudge() {
   nudgedAt = D.now();
   const started = new Set((await db.prepare('SELECT lease_id, end_date FROM lease_renewals').all()).map((x) => `${x.lease_id}:${x.end_date}`));
   const told = new Set((await db.prepare('SELECT lease_id, end_date FROM lease_renewal_nudges').all()).map((x) => `${x.lease_id}:${x.end_date}`));
+  const held = await heldKeys();
   const fresh = (await dueLeases()).filter((l) => daysLeft(l.end_date) <= SEND_AT && !l.saifsys_renewal && !l.saifsys_rejected
-    && !started.has(`${l.lease_id}:${l.end_date}`) && !told.has(`${l.lease_id}:${l.end_date}`));
+    && !started.has(`${l.lease_id}:${l.end_date}`) && !told.has(`${l.lease_id}:${l.end_date}`) && !held.has(`${l.lease_id}:${l.end_date}`));
   if (!fresh.length) return 0;
   for (const l of fresh) await db.prepare('INSERT INTO lease_renewal_nudges (lease_id, end_date) VALUES (?, ?) ON CONFLICT DO NOTHING').run(l.lease_id, l.end_date);
   const one = fresh.length === 1 ? `${fresh[0].building} ${fresh[0].unit}` : `${fresh.length} leases`;
@@ -1873,11 +1924,13 @@ const out = (r) => r && {
 };
 
 const daysLeft = (end) => daysBetween(today(), end);
-const card = (l, r) => ({
+const card = (l, r, hold = null) => ({
   lease_id: l.lease_id, building: l.building, unit: l.unit, unit_type: l.unit_type, bedrooms: l.bedrooms, tenant: l.tenant, email: l.email || null,
   premises_number: l.premises_number || null, ejari: l.ejari || null, start_date: l.start_date, end_date: l.end_date,
   annual_rent: l.annual_rent, cheques: l.cheques, days_left: daysLeft(l.end_date), saifsys_renewal: l.saifsys_renewal || null,
   saifsys_rejected: !!l.saifsys_rejected,
+  // On hold: why, who and when, so nobody wonders later why it never started.
+  hold: hold ? { reason: hold.reason, by: hold.by || null, at: Number(hold.at) } : null,
   renewal: out(r),
 });
 
@@ -2067,8 +2120,10 @@ leaseRenewalRoutes.get('/', wrap(async (req, res) => {
   const rows = (await db.prepare(`SELECT * FROM lease_renewals WHERE status IN ('draft', 'scheduled', 'offer_sent', 'negotiating', 'agreed', 'papers_ok', 'not_renewing')
     OR updated_at > ${NOW} - 30 * 86400`).all()).map(ROW);
   const byLease = new Map(rows.map((r) => [`${r.lease_id}:${r.end_date}`, r]));
-  const list = leases.map((l) => { const k = `${l.lease_id}:${l.end_date}`; const r = byLease.get(k); byLease.delete(k); return card(l, r); });
-  for (const r of byLease.values()) list.push(card(r.lease, r)); // renewed or ended since: still shown a while
+  const holds = new Map((await db.prepare(`SELECT h.lease_id, h.end_date, h.reason, h.created_at AS at, u.name AS by
+    FROM lease_renewal_holds h LEFT JOIN users u ON u.id = h.user_id WHERE h.released_at IS NULL`).all()).map((h) => [`${h.lease_id}:${h.end_date}`, h]));
+  const list = leases.map((l) => { const k = `${l.lease_id}:${l.end_date}`; const r = byLease.get(k); byLease.delete(k); return card(l, r, holds.get(k)); });
+  for (const r of byLease.values()) list.push(card(r.lease, r, holds.get(`${r.lease_id}:${r.end_date}`))); // renewed or ended since: still shown a while
   const s = await settings();
   const acc = await inbox();
   res.json({
@@ -2119,7 +2174,7 @@ leaseRenewalRoutes.get('/:id', wrap(async (req, res) => {
     e.error = d?.status === 'failed' ? d.error || 'It could not be sent.' : null;
   }
   res.json({
-    ...card(r.lease, r), advisors: (await advisors(await settings())).length, paused: !!(await settings()).paused,
+    ...card(r.lease, r, await holdOf(r.lease_id, r.end_date)), advisors: (await advisors(await settings())).length, paused: !!(await settings()).paused,
     // Who "Ask advisors" offers: the picked advisors (ticked), then the person's own agents.
     askable: (await askable(req.user, await settings())).map(({ id, name, icon, color, picked }) => ({ id, name, icon, color, picked })),
     events: events.map((e) => ({ ...e, at: Number(e.at), files: files.filter((f) => f.event_id === e.id) })),
@@ -2133,6 +2188,9 @@ leaseRenewalRoutes.get('/:id/files/:file', wrap(async (req, res) => {
     .set('Content-Disposition', `inline; filename="${encodeURIComponent(f.name)}"`).type(f.mime).send(await readFile(f.path));
 }));
 
+// On hold: staff stop a lease's renewal from starting, with the reason; Release takes it off.
+leaseRenewalRoutes.post('/hold', wrap(async (req, res) => { res.json(await hold(req.user, req.body || {})); }));
+leaseRenewalRoutes.post('/hold/release', wrap(async (req, res) => { res.json(await release(req.user, req.body || {})); }));
 leaseRenewalRoutes.get('/fees/:leaseId', wrap(async (req, res) => { res.json(await startFees(req.params.leaseId)); }));
 leaseRenewalRoutes.post('/draft', wrap(async (req, res) => { res.json(await draft(req.user, req.body || {})); }));
 leaseRenewalRoutes.post('/send', wrap(async (req, res) => { res.json(out(await send(req.user, req.body || {}))); }));

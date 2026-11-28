@@ -1937,6 +1937,21 @@ await db.exec(`
     user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     updated_at BIGINT NOT NULL
   );
+  -- On hold (2026-11-28): staff stop a lease's renewal from starting, with the reason, so later
+  -- everyone knows why. Kept by lease and end date, so a lease can be held before any renewal
+  -- exists. While held nothing goes to the tenant: no Start, no scheduled offer, no RERA nudge.
+  -- Released holds stay (released_at set), so the reason is never lost.
+  CREATE TABLE IF NOT EXISTS lease_renewal_holds (
+    id SERIAL PRIMARY KEY,
+    lease_id INTEGER NOT NULL,
+    end_date TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at BIGINT NOT NULL,
+    released_at BIGINT,
+    released_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_renewal_holds_on ON lease_renewal_holds(lease_id, end_date) WHERE released_at IS NULL;
 `);
 
 // Reading a file in full (2026-10-20). The chunks are cut to overlap for search, so stitched

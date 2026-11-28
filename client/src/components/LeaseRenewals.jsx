@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExternalLink, Loader2, AlertTriangle, Send, Check, X, Mail, Inbox, FileText, ShieldCheck, ShieldAlert, Scale,
-  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles, Trash2, Eye, EyeOff, Settings as Gear, History, BellRing,
+  CircleDot, Clock, ChevronLeft, Paperclip, Reply, HandCoins, Ban, Repeat, FolderDown, ArrowRight, MoreHorizontal, RefreshCw, Copy, Search, Sparkles, Trash2, Eye, EyeOff, Settings as Gear, History, BellRing, CirclePause,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import Page from './Page';
@@ -37,6 +37,7 @@ const DONE = ['converted', 'not_renewing', 'closed'];
 /** What a lease's card says: its renewal's state, or how near the end is. */
 function chipOf(l) {
   const r = l.renewal;
+  if (l.hold) return ['On hold', 'warn'];
   if (r?.dispute && !DONE.includes(r.status)) return ['Dispute', 'bad'];
   if (r?.waiting) return WAITING[r.waiting];
   if (r?.status === 'scheduled') return [`Sends ${day(r.sendOn)}`, 'p1'];
@@ -102,6 +103,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
   const [open, setOpen] = useState(openFirst || null); // a renewal's id
   const [starting, setStarting] = useState(null); // a lease to start
   const [history, setHistory] = useState(null); // a lease whose renewal the staff ran in saifsys
+  const [holding, setHolding] = useState(null); // a lease to put on hold, or one on hold to see why
   const [settingsOpen, setSettingsOpen] = useState(false); // the master's settings, in a sheet so they don't sit under the list
   // The Expired tab: every lease that ended unrenewed, or only those ending between two dates.
   const [expired, setExpired] = useState(null);
@@ -135,7 +137,9 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
     ['all', 'All', leases.filter((l) => !leftAsAgreed(l) || l.days_left >= -30)],
     ['you', 'Needs you', leases.filter(needsYou)],
     ['going', 'In progress', leases.filter((l) => l.renewal && !DONE.includes(l.renewal.status))],
-    ['new', 'Not started', leases.filter((l) => !l.renewal && !l.saifsys_renewal && !l.saifsys_rejected)],
+    ['new', 'Not started', leases.filter((l) => !l.renewal && !l.saifsys_renewal && !l.saifsys_rejected && !l.hold)],
+    // Staff stopped these from starting, with the reason (the user, 2026-11-28).
+    ['hold', 'On hold', leases.filter((l) => l.hold)],
     ['done', 'Done', leases.filter((l) => l.renewal && DONE.includes(l.renewal.status) && !movingOut(l))],
     // Soonest move-out first: the inspection and the keys to arrange.
     ['moving', 'Moving out', leases.filter(movingOut).sort((a, b) => a.days_left - b.days_left)],
@@ -202,7 +206,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
           {tab === 'expired' && <Problem text={expiredError} />}
           {shown.length === 0 ? <p className="pt-12 text-center text-sm text-mute">Nothing here.</p> : (
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : inSaifsys(l) ? setHistory(l) : l.expired ? null : setStarting(l))} />)}
+              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.hold ? setHolding(l) : inSaifsys(l) ? setHistory(l) : l.expired ? null : setStarting(l))} />)}
             </ul>
           )}
         </div>
@@ -213,7 +217,9 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
         </Sheet>
       )}
       {history && <SaifsysSheet lease={history} onClose={() => setHistory(null)} onTaken={(r) => { setHistory(null); load(); if (r?.id) setOpen(r.id); }} />}
-      {starting && <StartSheet lease={starting} onClose={() => setStarting(null)} onDone={(r) => { setStarting(null); load(); if (r?.id) setOpen(r.id); }} />}
+      {starting && <StartSheet lease={starting} onClose={() => setStarting(null)} onDone={(r) => { setStarting(null); load(); if (r?.id) setOpen(r.id); }}
+        onHold={() => { setHolding(starting); setStarting(null); }} />}
+      {holding && <HoldSheet lease={holding} onClose={() => setHolding(null)} onDone={() => { setHolding(null); load(); }} />}
     </Page>
   );
 }
@@ -240,13 +246,70 @@ function LeaseCard({ l, onOpen }) {
           <span className="text-xs text-mute">{movingOut(l) ? 'leaves' : leftAsAgreed(l) ? 'left' : l.days_left < 0 ? 'ended' : 'ends'} {day(l.end_date)}</span>
         </div>
         {r?.dispute && live && <p className="flex items-start gap-1.5 text-xs text-bad"><Scale size={13} className="mt-0.5 shrink-0" /> {r.dispute}</p>}
+        {l.hold && <HoldLine hold={l.hold} />}
         {!r && (l.premises_number || l.ejari) && (
           <p className="truncate text-xs text-mute">{[l.premises_number && `Premises ${l.premises_number}`, l.ejari && `Ejari ${l.ejari}`].filter(Boolean).join(' · ')}</p>
         )}
-        {!r && !l.expired && !l.saifsys_renewal && !l.saifsys_rejected && <p className="text-xs text-p1">{l.days_left <= 120 ? 'Check the RERA index to start' : 'Tap to start the renewal'}</p>}
+        {!r && !l.hold && !l.expired && !l.saifsys_renewal && !l.saifsys_rejected && <p className="text-xs text-p1">{l.days_left <= 120 ? 'Check the RERA index to start' : 'Tap to start the renewal'}</p>}
         {inSaifsys(l) && <p className="text-xs text-p1">Tap to see what the staff did in saifsys</p>}
       </button>
     </li>
+  );
+}
+
+// ---------- on hold ----------
+
+/** Why a lease is on hold, who put it on and when: on its card and on the renewal. */
+const HoldLine = ({ hold }) => (
+  <p className="flex items-start gap-1.5 text-xs text-warn">
+    <CirclePause size={13} className="mt-0.5 shrink-0" />
+    <span><b>On hold:</b> {hold.reason} <span className="text-mute">· {[hold.by, day(new Date(hold.at * 1000).toISOString())].filter(Boolean).join(', ')}</span></span>
+  </p>
+);
+
+/**
+ * Put a lease on hold with the reason, or see why it is held and Release it. While held Reem
+ * sends nothing: no offer, no scheduled offer, no reminder to start it.
+ */
+function HoldSheet({ lease, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const h = lease.hold;
+  const run = async () => {
+    if (h && !confirm('Release the hold? The renewal can be started again, and a scheduled offer goes on its day.')) return;
+    setBusy(true); setError('');
+    try {
+      await api.post(h ? '/lease-renewals/hold/release' : '/lease-renewals/hold', { lease_id: lease.lease_id, end_date: lease.end_date, ...(h ? {} : { reason }) });
+      onDone();
+    } catch (e) { setError(e.message); setBusy(false); }
+  };
+  return (
+    <Sheet title={`${lease.building} · Unit ${lease.unit}`} icon={<CirclePause size={18} className="text-warn" />} wide="text" onClose={onClose}>
+      <div className="space-y-4">
+        <p className="text-sm text-mute">{lease.tenant} · ends {day(lease.end_date)}</p>
+        {h ? (
+          <div className="rounded-2xl border border-warn/40 bg-warn/[0.06] p-4">
+            <p className="text-xs font-medium tracking-[0.14em] text-warn">ON HOLD</p>
+            <p className="mt-1.5 whitespace-pre-wrap">{h.reason}</p>
+            <p className="mt-2 text-xs text-mute">{[h.by, day(new Date(h.at * 1000).toISOString())].filter(Boolean).join(' · ')}</p>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm">Reem sends nothing to this tenant while it is on hold. Say why, so everyone knows later.</p>
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} autoFocus maxLength={500} placeholder="e.g. Owner is selling the unit"
+              className="block min-h-28 w-full resize-y rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm outline-none focus:border-p1/60" />
+          </>
+        )}
+        <Problem text={error} />
+        <div className="flex justify-end gap-2">
+          <Btn onClick={onClose}>Cancel</Btn>
+          {h
+            ? <Btn primary busy={busy} onClick={run}><Check size={14} /> Release the hold</Btn>
+            : <Btn primary busy={busy} disabled={!reason.trim()} onClick={run}><CirclePause size={14} /> Put on hold</Btn>}
+        </div>
+      </div>
+    </Sheet>
   );
 }
 
@@ -370,7 +433,7 @@ const EXTRAS = [['parking', 'Additional parking slot', 'additional_parking_fee']
 const EV_FEE = 700; // a year, with VAT on top, in cheque 1
 
 /** Start: the rent we choose and the cheques, then the offer to read before it goes. */
-function StartSheet({ lease, onClose, onDone }) {
+function StartSheet({ lease, onClose, onDone, onHold }) {
   const current = Number(lease.annual_rent);
   const [rent, setRent] = useState(String(Math.round(current)));
   const [pct, setPct] = useState('0');
@@ -576,6 +639,11 @@ function StartSheet({ lease, onClose, onDone }) {
               )}
             </div>
             <div className="hidden md:block">{writeBtn}</div>
+            {onHold && (
+              <button onClick={onHold} className="flex w-full items-center justify-center gap-1.5 text-xs text-mute transition hover:text-warn">
+                <CirclePause size={13} /> Don't start: put on hold
+              </button>
+            )}
             <CurrentLease leaseId={lease.lease_id} compact />
           </div>
         </aside>
@@ -585,6 +653,11 @@ function StartSheet({ lease, onClose, onDone }) {
       <div className="sticky bottom-0 -mx-5 mt-4 border-t border-stroke bg-surface px-5 pb-1 pt-3 md:hidden">
         <div className="mb-2 flex items-baseline justify-between text-sm"><span className="text-mute">Total</span><b>{aed(total)}</b></div>
         {writeBtn}
+        {onHold && (
+          <button onClick={onHold} className="mt-2 flex w-full items-center justify-center gap-1.5 py-1 text-xs text-mute transition hover:text-warn">
+            <CirclePause size={13} /> Don't start: put on hold
+          </button>
+        )}
       </div>
     </Sheet>
   );
@@ -1001,7 +1074,7 @@ function AskFigure({ r, action, onClose, onNext }) {
 function Renewal({ id, onBack, chat = null }) {
   const [r, setR] = useState(null);
   const [error, setError] = useState('');
-  const [sheet, setSheet] = useState(null); // { figure: action } | { compose: ask } | { lease: id }
+  const [sheet, setSheet] = useState(null); // { figure: action } | { compose: ask } | { lease: id } | { hold: true }
   // The panel on the right: Ask AI (the chat beside this renewal) or Email someone, one at a time.
   const [side, setSide] = useState(null); // { kind: 'chat', conv } | { kind: 'team' }
   const [leaving, setLeaving] = useState(false); // the panel is sliding out: it goes once the slide ends
@@ -1152,6 +1225,19 @@ function Renewal({ id, onBack, chat = null }) {
                   </div>
                 )}
               </div>
+              {/* On hold, or (before the offer goes) the way to hold it. */}
+              {r.hold ? (
+                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-warn/30 pt-3">
+                  <div className="min-w-0 flex-1 basis-56"><HoldLine hold={r.hold} /></div>
+                  <Btn onClick={() => setSheet({ hold: true })}><Check size={14} /> Release</Btn>
+                </div>
+              ) : ['draft', 'scheduled'].includes(s) && (
+                <div className="mt-3 border-t border-stroke pt-3">
+                  <button onClick={() => setSheet({ hold: true })} className="flex items-center gap-1.5 text-xs text-mute transition hover:text-warn">
+                    <CirclePause size={13} /> Put on hold
+                  </button>
+                </div>
+              )}
               {rn.dispute && !DONE.includes(s) && (
                 <p className="mt-3 flex items-start gap-2 border-t border-bad/30 pt-3 text-sm"><Scale size={15} className="mt-0.5 shrink-0 text-bad" /><span><b className="text-bad">The tenant disputes it:</b> <span className="text-mute">{rn.dispute}</span></span></p>
               )}
@@ -1245,6 +1331,7 @@ function Renewal({ id, onBack, chat = null }) {
       {sheet?.figure && <AskFigure r={r} action={sheet.figure} onClose={() => setSheet(null)} onNext={(ask) => setSheet({ compose: ask })} />}
       {sheet?.compose && <Compose ask={sheet.compose} onClose={() => setSheet(null)} onSent={done} />}
       {sheet?.lease && <LeaseSheet id={sheet.lease} onClose={() => setSheet(null)} />}
+      {sheet?.hold && <HoldSheet lease={r} onClose={() => setSheet(null)} onDone={done} />}
       {/* The chat beside the renewal: the same chat as everywhere, which already knows this lease.
           On a computer it sits on the right and the page makes room; on a phone it covers the page. */}
       {side?.kind === 'team' && (
