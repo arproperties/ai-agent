@@ -206,7 +206,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
           {tab === 'expired' && <Problem text={expiredError} />}
           {shown.length === 0 ? <p className="pt-12 text-center text-sm text-mute">Nothing here.</p> : (
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.hold ? setHolding(l) : inSaifsys(l) ? setHistory(l) : l.expired ? null : setStarting(l))} />)}
+              {shown.map((l) => <LeaseCard key={`${l.lease_id}:${l.end_date}`} l={l} onHold={() => setHolding(l)} onOpen={() => (l.renewal ? setOpen(l.renewal.id) : l.hold ? setHolding(l) : inSaifsys(l) ? setHistory(l) : l.expired ? null : setStarting(l))} />)}
             </ul>
           )}
         </div>
@@ -224,11 +224,15 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
   );
 }
 
-function LeaseCard({ l, onOpen }) {
+function LeaseCard({ l, onOpen, onHold }) {
   const r = l.renewal;
   const live = r && !DONE.includes(r.status);
+  const fresh = !r && !l.expired && !l.saifsys_renewal && !l.saifsys_rejected;
+  // Hold sits on the card itself, so staff see it without opening anything (the user, 2026-11-28).
+  // Only before the offer goes: not started, a draft, or scheduled.
+  const canHold = !l.hold && (fresh || ['draft', 'scheduled'].includes(r?.status));
   return (
-    <li>
+    <li className="relative">
       <button onClick={onOpen} disabled={!r && !!l.expired && !inSaifsys(l)}
         className={`flex h-full w-full flex-col gap-2 rounded-2xl border bg-white/[0.04] p-4 text-left transition hover:bg-white/[0.07] disabled:cursor-default ${needsYou(l) ? 'border-warn/50' : 'border-stroke'}`}>
         <div className="flex w-full items-start gap-2">
@@ -250,9 +254,18 @@ function LeaseCard({ l, onOpen }) {
         {!r && (l.premises_number || l.ejari) && (
           <p className="truncate text-xs text-mute">{[l.premises_number && `Premises ${l.premises_number}`, l.ejari && `Ejari ${l.ejari}`].filter(Boolean).join(' · ')}</p>
         )}
-        {!r && !l.hold && !l.expired && !l.saifsys_renewal && !l.saifsys_rejected && <p className="text-xs text-p1">{l.days_left <= 120 ? 'Check the RERA index to start' : 'Tap to start the renewal'}</p>}
+        {/* The bottom row keeps room for the Hold button, which sits over it (a button cannot be inside the card's button). */}
+        {(canHold || (fresh && !l.hold)) && (
+          <p className={`flex items-center pr-24 text-xs text-p1 ${canHold ? 'min-h-8' : ''}`}>{fresh ? (l.days_left <= 120 ? 'Check the RERA index to start' : 'Tap to start the renewal') : ''}</p>
+        )}
         {inSaifsys(l) && <p className="text-xs text-p1">Tap to see what the staff did in saifsys</p>}
       </button>
+      {canHold && (
+        <button onClick={onHold} title="Don't start this renewal, and say why"
+          className="absolute bottom-4 right-4 flex items-center gap-1.5 rounded-full border border-warn/50 bg-warn/10 px-3 py-1.5 text-xs font-medium text-warn transition hover:bg-warn/20">
+          <CirclePause size={13} /> Hold
+        </button>
+      )}
     </li>
   );
 }
@@ -640,8 +653,8 @@ function StartSheet({ lease, onClose, onDone, onHold }) {
             </div>
             <div className="hidden md:block">{writeBtn}</div>
             {onHold && (
-              <button onClick={onHold} className="flex w-full items-center justify-center gap-1.5 text-xs text-mute transition hover:text-warn">
-                <CirclePause size={13} /> Don't start: put on hold
+              <button onClick={onHold} className="flex w-full items-center justify-center gap-1.5 rounded-full border border-warn/50 bg-warn/10 py-2 text-sm font-medium text-warn transition hover:bg-warn/20">
+                <CirclePause size={14} /> Don't start: put on hold
               </button>
             )}
             <CurrentLease leaseId={lease.lease_id} compact />
@@ -654,8 +667,8 @@ function StartSheet({ lease, onClose, onDone, onHold }) {
         <div className="mb-2 flex items-baseline justify-between text-sm"><span className="text-mute">Total</span><b>{aed(total)}</b></div>
         {writeBtn}
         {onHold && (
-          <button onClick={onHold} className="mt-2 flex w-full items-center justify-center gap-1.5 py-1 text-xs text-mute transition hover:text-warn">
-            <CirclePause size={13} /> Don't start: put on hold
+          <button onClick={onHold} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-warn/50 bg-warn/10 py-2 text-sm font-medium text-warn transition hover:bg-warn/20">
+            <CirclePause size={14} /> Don't start: put on hold
           </button>
         )}
       </div>
@@ -1233,7 +1246,7 @@ function Renewal({ id, onBack, chat = null }) {
                 </div>
               ) : ['draft', 'scheduled'].includes(s) && (
                 <div className="mt-3 border-t border-stroke pt-3">
-                  <button onClick={() => setSheet({ hold: true })} className="flex items-center gap-1.5 text-xs text-mute transition hover:text-warn">
+                  <button onClick={() => setSheet({ hold: true })} className="flex items-center gap-1.5 rounded-full border border-warn/50 bg-warn/10 px-3 py-1.5 text-xs font-medium text-warn transition hover:bg-warn/20">
                     <CirclePause size={13} /> Put on hold
                   </button>
                 </div>
