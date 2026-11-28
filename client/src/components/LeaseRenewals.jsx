@@ -28,7 +28,7 @@ const when = (secs) => {
 
 const STATUS = {
   draft: ['Draft', 'warn'], scheduled: ['Offer ready', 'p1'], offer_sent: ['Offer sent', 'p1'], negotiating: ['Negotiating', 'p1'], agreed: ['Waiting for papers', 'p1'], papers_ok: ['Ready to convert', 'ok'],
-  converted: ['Renewed', 'ok'], not_renewing: ['Not renewing', 'mute'], closed: ['Closed', 'mute'],
+  converted: ['Renewed', 'ok'], not_renewing: ['Not renewing', 'mute'], closed: ['Closed', 'mute'], notice: ['Notice sent · vacating', 'warn'],
 };
 const WAITING = { reply: ['Tenant replied', 'warn'], papers: ['Papers to check', 'warn'], no_answer: ['No answer', 'bad'], error: ['Problem', 'bad'] };
 const CHIP = { warn: 'bg-warn/15 text-warn', p1: 'bg-p1/20 text-txt', bad: 'bg-bad/15 text-bad', ok: 'bg-ok/15 text-ok', mute: 'bg-white/10 text-mute' };
@@ -37,7 +37,8 @@ const DONE = ['converted', 'not_renewing', 'closed'];
 /** What a lease's card says: its renewal's state, or how near the end is. */
 function chipOf(l) {
   const r = l.renewal;
-  if (l.hold) return ['On hold', 'warn'];
+  if (r?.status === 'notice' && !r.waiting && !r.dispute) return STATUS.notice;
+  if (l.hold && !r) return ['On hold', 'warn'];
   if (r?.dispute && !DONE.includes(r.status)) return ['Dispute', 'bad'];
   if (r?.waiting) return WAITING[r.waiting];
   if (r?.status === 'scheduled') return [`Sends ${day(r.sendOn)}`, 'p1'];
@@ -51,7 +52,8 @@ function chipOf(l) {
 }
 // Moving out: the tenant said no in Reem and the lease is still running; they leave on its end
 // date. Once it ends saifsys drops it from this list and it shows under Expired.
-function movingOut(l) { return !l.expired && l.renewal?.status === 'not_renewing' && l.days_left >= 0; }
+// Legal's notice of non-renewal ('notice') is here too: everyone sees the unit is going vacant.
+function movingOut(l) { return !l.expired && ['not_renewing', 'notice'].includes(l.renewal?.status) && l.days_left >= 0; }
 // Closed: the end date passed and the tenant left as agreed. Shown under Done, not Expired.
 function leftAsAgreed(l) { return l.renewal?.status === 'not_renewing' && l.days_left < 0; }
 // Rejected: the staff rejected the renewal in saifsys, and Reem has none.
@@ -104,6 +106,7 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
   const [starting, setStarting] = useState(null); // a lease to start
   const [history, setHistory] = useState(null); // a lease whose renewal the staff ran in saifsys
   const [holding, setHolding] = useState(null); // a lease to put on hold, or one on hold to see why
+  const [notice, setNotice] = useState(null); // { lease, mode: 'write' | 'sent' }: Legal's notice of non-renewal
   const [settingsOpen, setSettingsOpen] = useState(false); // the master's settings, in a sheet so they don't sit under the list
   // The Expired tab: every lease that ended unrenewed, or only those ending between two dates.
   const [expired, setExpired] = useState(null);
@@ -136,10 +139,10 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
     // A month after they left, a closed one is only under Done.
     ['all', 'All', leases.filter((l) => !leftAsAgreed(l) || l.days_left >= -30)],
     ['you', 'Needs you', leases.filter(needsYou)],
-    ['going', 'In progress', leases.filter((l) => l.renewal && !DONE.includes(l.renewal.status))],
+    ['going', 'In progress', leases.filter((l) => l.renewal && !DONE.includes(l.renewal.status) && l.renewal.status !== 'notice')],
     ['new', 'Not started', leases.filter((l) => !l.renewal && !l.saifsys_renewal && !l.saifsys_rejected && !l.hold)],
     // Staff stopped these from starting, with the reason (the user, 2026-11-28).
-    ['hold', 'On hold', leases.filter((l) => l.hold)],
+    ['hold', 'On hold', leases.filter((l) => l.hold && l.renewal?.status !== 'notice')],
     ['done', 'Done', leases.filter((l) => l.renewal && DONE.includes(l.renewal.status) && !movingOut(l))],
     // Soonest move-out first: the inspection and the keys to arrange.
     ['moving', 'Moving out', leases.filter(movingOut).sort((a, b) => a.days_left - b.days_left)],
@@ -219,7 +222,9 @@ export default function LeaseRenewalsPage({ onBack, open: openFirst, chat = null
       {history && <SaifsysSheet lease={history} onClose={() => setHistory(null)} onTaken={(r) => { setHistory(null); load(); if (r?.id) setOpen(r.id); }} />}
       {starting && <StartSheet lease={starting} onClose={() => setStarting(null)} onDone={(r) => { setStarting(null); load(); if (r?.id) setOpen(r.id); }}
         onHold={() => { setHolding(starting); setStarting(null); }} />}
-      {holding && <HoldSheet lease={holding} onClose={() => setHolding(null)} onDone={() => { setHolding(null); load(); }} />}
+      {holding && <HoldSheet lease={holding} onClose={() => setHolding(null)} onDone={() => { setHolding(null); load(); }}
+        onNotice={(mode) => { setNotice({ lease: holding, mode }); setHolding(null); }} />}
+      {notice && <NoticeSheet lease={notice.lease} mode={notice.mode} onClose={() => setNotice(null)} onDone={(r) => { setNotice(null); load(); if (r?.id) setOpen(r.id); }} />}
     </Page>
   );
 }
@@ -284,7 +289,7 @@ const HoldLine = ({ hold }) => (
  * Put a lease on hold with the reason, or see why it is held and Release it. While held Reem
  * sends nothing: no offer, no scheduled offer, no reminder to start it.
  */
-function HoldSheet({ lease, onClose, onDone }) {
+function HoldSheet({ lease, onClose, onDone, onNotice }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -324,6 +329,16 @@ function HoldSheet({ lease, onClose, onDone }) {
               className="block min-h-28 w-full resize-y rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm outline-none focus:border-p1/60" />
           </>
         )}
+        {h && !editing && onNotice && (
+          <div className="rounded-2xl border border-stroke bg-white/[0.03] p-4">
+            <p className="font-medium">Notice of non-renewal</p>
+            <p className="mt-1 text-sm text-mute">Legal tells the tenant the lease is not renewed. It goes from {'legal@ainalreempro.com'}, and the whole conversation is kept on the unit, like any renewal.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Btn primary onClick={() => onNotice('write')}><Sparkles size={14} /> Write the notice</Btn>
+              <Btn onClick={() => onNotice('sent')}><Mail size={14} /> Legal already sent it</Btn>
+            </div>
+          </div>
+        )}
         <Problem text={error} />
         <div className="flex justify-end gap-2">
           <Btn onClick={editing ? () => { setEditing(false); setError(''); } : onClose}>Cancel</Btn>
@@ -334,6 +349,121 @@ function HoldSheet({ lease, onClose, onDone }) {
             : <Btn primary busy={busy} disabled={!reason.trim()} onClick={run}><CirclePause size={14} /> Put on hold</Btn>}
         </div>
       </div>
+    </Sheet>
+  );
+}
+
+// ---------- Legal's notice of non-renewal ----------
+
+const fieldCls = 'w-full rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm outline-none focus:border-p1/60';
+
+/**
+ * An email from legal@ to the tenant, written with the AI's help: the person says what they want
+ * (or nothing), Reem drafts it, they change it and send. Used for the notice and for replies.
+ */
+function LegalCompose({ draftBody, sendTo, intro, sendLabel, firstText = '', onSent }) {
+  const [note, setNote] = useState(firstText);
+  const [subject, setSubject] = useState('');
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const write = async () => {
+    setBusy('ai'); setError('');
+    try {
+      const d = await api.post('/lease-renewals/notice/draft', { ...draftBody, note: text.trim() || note.trim() || undefined });
+      setSubject(d.subject); setText(d.body);
+    } catch (e) { setError(e.message); }
+    setBusy('');
+  };
+  const send = async () => {
+    if (!confirm('Send this email to the tenant from legal@ainalreempro.com?')) return;
+    setBusy('send'); setError('');
+    try { onSent(await api.post(sendTo, { ...draftBody, subject, text })); } catch (e) { setError(e.message); setBusy(''); }
+  };
+  return (
+    <div className="space-y-3">
+      {intro && <p className="text-sm text-mute">{intro}</p>}
+      {!text && (
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="What should it say? (optional) e.g. the owner is selling, keys back on the end date"
+          className={`${fieldCls} min-h-20 resize-y`} />
+      )}
+      <Btn primary={!text} busy={busy === 'ai'} onClick={write}><Sparkles size={14} /> {text ? 'Write again with AI (keeps your changes)' : 'Write it with AI'}</Btn>
+      {(text || subject) && (
+        <>
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className={fieldCls} />
+          <textarea value={text} onChange={(e) => setText(e.target.value)} aria-label="Email" className={`${fieldCls} h-[40dvh] min-h-56 resize-y leading-relaxed`} />
+        </>
+      )}
+      {!text && <button onClick={() => setText(' ')} className="text-xs text-mute underline-offset-2 hover:text-txt hover:underline">Write it myself</button>}
+      <Problem text={error} />
+      {text.trim() && (
+        <div className="flex justify-end">
+          <Btn primary busy={busy === 'send'} disabled={!subject.trim()} onClick={send}><Send size={14} /> {sendLabel}</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Legal's notice: written now and sent from legal@, or the one Legal already sent, picked from legal@'s Sent. */
+function NoticeSheet({ lease, mode, onClose, onDone }) {
+  const where = { lease_id: lease.lease_id, end_date: lease.end_date };
+  const [sent, setSent] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const [manual, setManual] = useState(false);
+  const [m, setM] = useState({ date: '', subject: '', text: '' });
+  useEffect(() => {
+    if (mode !== 'sent') return;
+    api.get(`/lease-renewals/notice/sent?lease_id=${lease.lease_id}&end_date=${lease.end_date}`).then(setSent).catch((e) => { setError(e.message); setSent({ emails: [] }); });
+  }, [mode, lease.lease_id, lease.end_date]);
+  const record = async (body, key) => {
+    setBusy(key); setError('');
+    try { onDone(await api.post('/lease-renewals/notice/record', { ...where, ...body })); } catch (e) { setError(e.message); setBusy(''); }
+  };
+  return (
+    <Sheet title={`Notice · ${lease.building} ${lease.unit}`} icon={<Mail size={18} className="text-mute" />} wide="text" onClose={onClose}>
+      <p className="mb-4 text-sm text-mute">{lease.tenant} · {lease.email} · lease ends {day(lease.end_date)}</p>
+      {mode === 'write' ? (
+        <LegalCompose draftBody={where} sendTo="/lease-renewals/notice" sendLabel="Send from legal@"
+          intro="Reem writes it from the lease and the hold reason. It goes from legal@ainalreempro.com, with Tenant care copied so the reply comes back here." onSent={onDone} />
+      ) : manual ? (
+        <div className="space-y-3">
+          <p className="text-sm text-mute">Not in legal@'s mailbox? Type in when it went and paste what it said, so it is on the unit's record. Nothing is sent.</p>
+          <input type="date" value={m.date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setM({ ...m, date: e.target.value })} className={fieldCls} />
+          <input value={m.subject} onChange={(e) => setM({ ...m, subject: e.target.value })} placeholder="Subject" className={fieldCls} />
+          <textarea value={m.text} onChange={(e) => setM({ ...m, text: e.target.value })} placeholder="The email Legal sent" className={`${fieldCls} min-h-40 resize-y`} />
+          <Problem text={error} />
+          <div className="flex justify-end gap-2">
+            <Btn onClick={() => setManual(false)}>Back</Btn>
+            <Btn primary busy={busy === 'manual'} disabled={!m.date || !m.subject.trim() || !m.text.trim()} onClick={() => record(m, 'manual')}><Check size={14} /> Record it</Btn>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-sm text-mute">Emails legal@ sent to {lease.email}. Pick the notice: it goes on the unit's record with its own date. Nothing is sent again.</p>
+          {!sent ? <div className="grid place-items-center py-8 text-mute"><Loader2 className="animate-spin" /></div> : sent.emails.length === 0 ? (
+            <p className="text-sm">None found in legal@'s mailbox.</p>
+          ) : (
+            <ul className="space-y-2">
+              {sent.emails.map((e) => (
+                <li key={e.messageId} className="rounded-2xl border border-stroke bg-white/[0.03] p-3.5">
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">{e.subject || '(no subject)'}</p>
+                      <p className="text-xs text-mute">{when(e.at)}</p>
+                      <p className="mt-1 line-clamp-2 text-sm text-mute">{e.preview}</p>
+                    </div>
+                    <Btn primary busy={busy === e.messageId} disabled={!!busy} onClick={() => record({ messageId: e.messageId }, e.messageId)}>Use this</Btn>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Problem text={error} />
+          <button onClick={() => setManual(true)} className="text-xs text-mute underline-offset-2 hover:text-txt hover:underline">Not here? Type it in</button>
+        </div>
+      )}
     </Sheet>
   );
 }
@@ -1130,6 +1260,16 @@ function Renewal({ id, onBack, chat = null }) {
     setBusy('');
   };
   // A renewal taken over from saifsys: the emails the staff and the tenant wrote before it, onto the timeline.
+  // Legal's notice: the emails with the tenant in legal@ and Tenant care, only when tapped.
+  const bringLegal = async () => {
+    setBusy('legal'); setError(''); setChecked('');
+    try {
+      const { n } = await api.post(`/lease-renewals/${id}/notice/bring-in`);
+      setChecked(n ? `${n} email${n > 1 ? 's' : ''} brought in.` : 'No new emails with this tenant.');
+      await load();
+    } catch (e) { setError(e.message); }
+    setBusy('');
+  };
   const bringPast = async () => {
     setBusy('past'); setError(''); setChecked('');
     try {
@@ -1155,6 +1295,7 @@ function Renewal({ id, onBack, chat = null }) {
     if (what === 'delete_draft' && !confirm('Delete this draft? Nothing has gone to the tenant; the lease goes back to not started.')) return;
     if (what === 'dispute_off' && !confirm('Mark the dispute as settled? The red label goes and no dispute reminders are made. Reem still does not email the tenant by itself until you tap Hand back to Reem.')) return;
     if (what === 'dispute_on' && !confirm('Mark this renewal as a dispute? Reem stops emailing the tenant by itself, and staff answer every step by hand.')) return;
+    if (what === 'notice_agrees' && !confirm(`Mark that the tenant agrees to leave when the lease ends (${day(r.end_date)})?`)) return;
     if (what === 'unschedule' && !confirm('Cancel this offer? Nothing has gone to the tenant; you can start it again.')) return;
     setBusy(what);
     try {
@@ -1199,10 +1340,13 @@ function Renewal({ id, onBack, chat = null }) {
     delete_draft: { label: 'Delete draft', icon: X, run: () => mark('delete_draft'), busy: busy === 'delete_draft' },
     dispute_off: { label: 'Dispute settled', icon: ShieldCheck, run: () => mark('dispute_off'), busy: busy === 'dispute_off' },
     dispute_on: { label: 'Mark as dispute', icon: Scale, run: () => mark('dispute_on'), busy: busy === 'dispute_on' },
+    legal_reply: { label: 'Reply from legal@', icon: Reply, run: () => setSheet({ legalReply: '' }) },
+    legal_bring: { label: 'Bring in emails', icon: Inbox, run: () => bringLegal(), busy: busy === 'legal' },
+    notice_agrees: { label: 'Tenant agrees to leave', icon: Check, run: () => mark('notice_agrees'), busy: busy === 'notice_agrees' },
   };
   // The Dispute label on or off, by hand, while the renewal is still open: Reem sets it from an
   // email but never takes it off, so a settled dispute would otherwise stay red for good.
-  const step = nextStep(r);
+  const step = r.legal ? noticeStep(r) : nextStep(r);
   if (['offer_sent', 'negotiating', 'agreed', 'papers_ok'].includes(s)) step.more = [...step.more, rn.dispute ? 'dispute_off' : 'dispute_on'];
   const rise = rn.offer && r.annual_rent ? ((Number(rn.agreed ?? rn.offer) - r.annual_rent) / r.annual_rent) * 100 : null;
 
@@ -1220,10 +1364,10 @@ function Renewal({ id, onBack, chat = null }) {
               <p className="truncate text-sm text-mute">{r.building} · Unit {r.unit} · {r.email}</p>
             </div>
             <Stat label="Current" value={aed(r.annual_rent)} muted />
-            <ArrowRight size={16} className="hidden shrink-0 text-mute sm:block" />
-            <Stat label={`${rn.agreed ? 'Agreed' : 'Our offer'}${rn.rentSource?.kind === 'rera_index' ? ' · RERA index' : rn.rentSource?.kind === 'dld_api' ? ' · DLD API' : rn.rentSource?.kind === 'saifsys' ? ' · the staff\'s, in saifsys' : ''}`}
+            {rn.offer !== null && rn.offer !== undefined && <ArrowRight size={16} className="hidden shrink-0 text-mute sm:block" />}
+            {rn.offer !== null && rn.offer !== undefined && <Stat label={`${rn.agreed ? 'Agreed' : 'Our offer'}${rn.rentSource?.kind === 'rera_index' ? ' · RERA index' : rn.rentSource?.kind === 'dld_api' ? ' · DLD API' : rn.rentSource?.kind === 'saifsys' ? ' · the staff\'s, in saifsys' : ''}`}
               value={aed(rn.agreed ?? rn.offer)} strong
-              extra={rise !== null && Math.abs(rise) >= 0.05 ? <span className={rise > 0 ? 'text-ok' : 'text-warn'}>{rise > 0 ? '+' : ''}{rise.toFixed(1)}%</span> : null} />
+              extra={rise !== null && Math.abs(rise) >= 0.05 ? <span className={rise > 0 ? 'text-ok' : 'text-warn'}>{rise > 0 ? '+' : ''}{rise.toFixed(1)}%</span> : null} />}
             {rn.tenantOffer && !rn.agreed && <Stat label="Tenant asks" value={aed(rn.tenantOffer)} />}
             {s === 'converted' && rn.start
               ? <Stat label="New term" value={`${day(rn.start)} – ${day(rn.end)}`} />
@@ -1301,7 +1445,7 @@ function Renewal({ id, onBack, chat = null }) {
                   </button>
                 )}
               </div>
-              <Timeline r={r} busy={busy} onReadAgain={readAgain} onRemove={removeAdvice} onReply={!DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
+              <Timeline r={r} busy={busy} onReadAgain={readAgain} onRemove={removeAdvice} onReply={r.legal ? (words) => setSheet({ legalReply: words || '' }) : !DONE.includes(s) ? (words) => setSheet({ compose: { id, action: 'reply', words } }) : null} />
             </div>
           </div>
 
@@ -1357,6 +1501,12 @@ function Renewal({ id, onBack, chat = null }) {
       {sheet?.compose && <Compose ask={sheet.compose} onClose={() => setSheet(null)} onSent={done} />}
       {sheet?.lease && <LeaseSheet id={sheet.lease} onClose={() => setSheet(null)} />}
       {sheet?.hold && <HoldSheet lease={r} onClose={() => setSheet(null)} onDone={done} />}
+      {sheet && 'legalReply' in sheet && (
+        <Sheet title="Reply from legal@" icon={<Reply size={18} className="text-mute" />} wide="text" onClose={() => setSheet(null)}>
+          <LegalCompose draftBody={{ id }} sendTo={`/lease-renewals/${id}/notice/reply`} sendLabel="Send from legal@" firstText={sheet.legalReply}
+            intro={`To ${r.email}, from legal@ainalreempro.com, on the same thread.`} onSent={done} />
+        </Sheet>
+      )}
       {/* The chat beside the renewal: the same chat as everywhere, which already knows this lease.
           On a computer it sits on the right and the page makes room; on a phone it covers the page. */}
       {side?.kind === 'team' && (
@@ -1533,6 +1683,22 @@ const NEXT_TONE = {
 };
 
 /** Where the renewal stands, in one line, and the one or two steps that fit; the rest under More. */
+/** What now on Legal's notice of non-renewal. Reem never emails on it by itself. */
+function noticeStep(r) {
+  const rn = r.renewal;
+  const more = [rn.status === 'notice' ? 'notice_agrees' : null, rn.status === 'notice' ? (rn.dispute ? 'dispute_off' : 'dispute_on') : null].filter(Boolean);
+  if (rn.status === 'not_renewing') {
+    return { tone: 'done', icon: Ban, title: r.days_left < 0 ? `Closed: the tenant left on ${day(r.end_date)}` : `Tenant agreed to leave on ${day(r.end_date)}`,
+      sub: 'After Legal\'s notice. Arrange the move-out inspection and the keys.', main: ['legal_reply', 'legal_bring'], more: [] };
+  }
+  if (rn.waiting === 'reply') {
+    return { tone: rn.dispute ? 'bad' : 'you', icon: Inbox, title: 'The tenant replied to the notice', sub: 'Read their email on the timeline, then answer from legal@.', main: ['legal_reply', 'legal_bring'], more: [...more, 'seen'] };
+  }
+  return { tone: 'wait', icon: Clock, title: `Notice sent · the unit goes vacant on ${day(r.end_date)}`,
+    sub: `${rn.lastOutAt ? `Last email ${when(rn.lastOutAt)}. ` : ''}A reply-all comes here by itself; a reply to legal@ only comes in when you tap Bring in emails.`,
+    main: ['legal_reply', 'legal_bring'], more };
+}
+
 function nextStep(r) {
   const rn = r.renewal;
   const s = rn.status;
@@ -1703,7 +1869,7 @@ function Event({ e, r, newest, busy, onReadAgain }) {
   const [tint, Ico] = papers ? [ok ? 'bg-ok/15 text-ok' : 'bg-warn/15 text-warn', ok ? ShieldCheck : ShieldAlert]
     : e.reading?.dispute ? ['bg-bad/15 text-bad', Scale] : DOT[e.kind];
   // An email from before a takeover: whoever on the staff wrote it, from the Tenant care inbox or their own.
-  const who = e.kind === 'in' ? r.tenant : e.kind === 'out' && e.data?.past ? (e.data.name || e.data.from || 'Tenant care') : e.kind === 'team' ? `${e.by || 'Someone'}, from ${e.data?.from || 'their mailbox'}` : e.by || 'Reem';
+  const who = e.kind === 'in' ? r.tenant : e.kind === 'out' && e.data?.legal && !e.data?.past ? `${e.by || 'Legal'}, from ${e.data.from}` : e.kind === 'out' && e.data?.past ? (e.data.name || e.data.from || 'Tenant care') : e.kind === 'team' ? `${e.by || 'Someone'}, from ${e.data?.from || 'their mailbox'}` : e.by || 'Reem';
   const sending = e.kind === 'team' && ['pending', 'approved', 'sending'].includes(e.status);
 
   if (e.kind === 'step') {
