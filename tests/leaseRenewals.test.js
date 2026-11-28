@@ -1118,7 +1118,11 @@ test('on hold: no start, no scheduled offer, no nudge, with the reason shown; re
   assert.equal(await R.nudge(), 0, 'a held lease is not nudged');
   assert.equal(world.sent.length, 0);
 
+  const edited = await R.editHold(boss, { lease_id: LEASE.lease_id, end_date: LEASE.end_date, reason: 'Owner selling; buyer moves in' });
+  assert.equal(edited.reason, 'Owner selling; buyer moves in', 'the reason can be changed while on hold');
   await R.release(boss, { lease_id: LEASE.lease_id, end_date: LEASE.end_date });
+  await assert.rejects(R.editHold(boss, { lease_id: LEASE.lease_id, end_date: LEASE.end_date, reason: 'changed later' }), /no longer on hold/,
+    'once released the reason is the record');
   await assert.rejects(R.release(boss, { lease_id: LEASE.lease_id, end_date: LEASE.end_date }), /not on hold/);
   assert.equal((await autoStart(boss)).status, 'offer_sent', 'released: it starts as normal');
   const kept = await db.prepare('SELECT reason, released_at FROM lease_renewal_holds').all();

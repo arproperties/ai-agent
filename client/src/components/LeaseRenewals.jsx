@@ -288,25 +288,35 @@ function HoldSheet({ lease, onClose, onDone }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // While on hold the reason can be changed; once released it is the record and stays as it was.
+  const [editing, setEditing] = useState(false);
   const h = lease.hold;
-  const run = async () => {
-    if (h && !confirm('Release the hold? The renewal can be started again, and a scheduled offer goes on its day.')) return;
+  const where = { lease_id: lease.lease_id, end_date: lease.end_date };
+  const call = async (fn) => {
     setBusy(true); setError('');
-    try {
-      await api.post(h ? '/lease-renewals/hold/release' : '/lease-renewals/hold', { lease_id: lease.lease_id, end_date: lease.end_date, ...(h ? {} : { reason }) });
-      onDone();
-    } catch (e) { setError(e.message); setBusy(false); }
+    try { await fn(); onDone(); } catch (e) { setError(e.message); setBusy(false); }
   };
+  const run = () => {
+    if (h && !confirm('Release the hold? The renewal can be started again, and a scheduled offer goes on its day. The reason can no longer be changed after this.')) return;
+    call(() => api.post(h ? '/lease-renewals/hold/release' : '/lease-renewals/hold', { ...where, ...(h ? {} : { reason }) }));
+  };
+  const save = () => call(() => api.put('/lease-renewals/hold', { ...where, reason }));
   return (
     <Sheet title={`${lease.building} · Unit ${lease.unit}`} icon={<CirclePause size={18} className="text-warn" />} wide="text" onClose={onClose}>
       <div className="space-y-4">
         <p className="text-sm text-mute">{lease.tenant} · ends {day(lease.end_date)}</p>
-        {h ? (
+        {h && !editing ? (
           <div className="rounded-2xl border border-warn/40 bg-warn/[0.06] p-4">
-            <p className="text-xs font-medium tracking-[0.14em] text-warn">ON HOLD</p>
+            <div className="flex items-center gap-2">
+              <p className="flex-1 text-xs font-medium tracking-[0.14em] text-warn">ON HOLD</p>
+              <button onClick={() => { setReason(h.reason); setEditing(true); }} className="text-xs text-mute underline-offset-2 transition hover:text-txt hover:underline">Edit reason</button>
+            </div>
             <p className="mt-1.5 whitespace-pre-wrap">{h.reason}</p>
             <p className="mt-2 text-xs text-mute">{[h.by, day(new Date(h.at * 1000).toISOString())].filter(Boolean).join(' · ')}</p>
           </div>
+        ) : h ? (
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} autoFocus maxLength={500}
+            className="block min-h-28 w-full resize-y rounded-2xl border border-stroke bg-black/20 px-3 py-2.5 text-sm outline-none focus:border-p1/60" />
         ) : (
           <>
             <p className="text-sm">Reem sends nothing to this tenant while it is on hold. Say why, so everyone knows later.</p>
@@ -316,8 +326,10 @@ function HoldSheet({ lease, onClose, onDone }) {
         )}
         <Problem text={error} />
         <div className="flex justify-end gap-2">
-          <Btn onClick={onClose}>Cancel</Btn>
-          {h
+          <Btn onClick={editing ? () => { setEditing(false); setError(''); } : onClose}>Cancel</Btn>
+          {editing
+            ? <Btn primary busy={busy} disabled={!reason.trim() || reason.trim() === h.reason} onClick={save}><Check size={14} /> Save reason</Btn>
+            : h
             ? <Btn primary busy={busy} onClick={run}><Check size={14} /> Release the hold</Btn>
             : <Btn primary busy={busy} disabled={!reason.trim()} onClick={run}><CirclePause size={14} /> Put on hold</Btn>}
         </div>
@@ -1242,7 +1254,7 @@ function Renewal({ id, onBack, chat = null }) {
               {r.hold ? (
                 <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-warn/30 pt-3">
                   <div className="min-w-0 flex-1 basis-56"><HoldLine hold={r.hold} /></div>
-                  <Btn onClick={() => setSheet({ hold: true })}><Check size={14} /> Release</Btn>
+                  <Btn onClick={() => setSheet({ hold: true })}><CirclePause size={14} /> Edit or release</Btn>
                 </div>
               ) : ['draft', 'scheduled'].includes(s) && (
                 <div className="mt-3 border-t border-stroke pt-3">
