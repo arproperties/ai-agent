@@ -56,9 +56,9 @@ import { caseShareRoutes, publicCaseRoutes } from './caseShare.js';
 import { caseFocusRoutes, claimPastChats } from './caseFocus.js';
 import { serverHealthRoutes, startServerHealth } from './serverHealth.js';
 import { backupRoutes, startBackupReminder } from './backups.js';
+import { companyPdcRoutes, startCompanyPdc } from './companyPdc.js';
 import { startCaseBriefs } from './caseBrief.js';
 import { recurringPaymentRoutes, startRecurringPayments } from './recurringPayments.js';
-import { companyPdcRoutes, startCompanyPdc } from './companyPdc.js';
 import { fromSaifsys } from './fromSaifsys.js';
 import { suggestionRoutes } from './suggestions.js';
 import { pushRoutes } from './push.js';
@@ -145,8 +145,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/outlook', outlookCallback); // Microsoft sign-in returns here; checked by its one-time state
 app.use('/api/errors', errorRoutes); // browsers report crashes here, signed in or not
 app.use('/api/from-saifsys/inventory', fromSaifsys, inventoryRoutes); // the saifsys Building Inventory screens; own key, see fromSaifsys.js
-app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api/from-saifsys/company-pdc', fromSaifsys, companyPdcRoutes); // the saifsys Post Dated Cheques screens (the company's own cheques), by the same door
+app.use('/api/from-saifsys/recurring-payments', fromSaifsys, recurringPaymentRoutes); // the saifsys Recurring Payments screens, by the same door
 app.use('/api/from-tracker', fromTracker, fromTrackerRoutes); // the activity tracker on each employee PC sends its day; own key per PC, see tracker.js
 app.use('/api/connector/business', mailConnectorDoor); // the business mail connector asks which person's mailbox a link opens; this machine only (mailConnector.js)
 app.use('/api/connector', connectorRoutes); // the AOL connector server asks which mailbox a link opens; this machine only (apps.js)
